@@ -191,15 +191,6 @@ class HookEntry : IXposedHookLoadPackage {
         }
     }
 
-    private fun isTargetCaller(): Boolean {
-        val uid = Binder.getCallingUid()
-        return loadTargetUids().contains(uid)
-    }
-
-    private fun invalidateTargetUids() {
-        systemServerTargetUids = null
-    }
-
     // Smoke-check at install time: every private AOSP field/ctor we touch
     // by reflection in the writeToParcel hooks. Returns the keys that
     // failed (missing or wrong-typed). Empty list = all good.

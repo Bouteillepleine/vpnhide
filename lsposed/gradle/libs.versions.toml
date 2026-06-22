@@ -5,6 +5,7 @@ compose-bom = "2026.06.00"
 activity-compose = "1.13.0"
 core-ktx = "1.18.0"
 gobley = "0.3.7"
+detekt = "1.23.8"
 
 [libraries]
 core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx" }
@@ -22,3 +23,4 @@ kotlin-atomicfu = { id = "org.jetbrains.kotlin.plugin.atomicfu", version.ref = "
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 gobley-cargo = { id = "dev.gobley.cargo", version.ref = "gobley" }
 gobley-uniffi = { id = "dev.gobley.uniffi", version.ref = "gobley" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }

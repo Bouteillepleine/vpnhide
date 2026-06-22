@@ -25,6 +25,7 @@ These short files cover everything specific to this repo. Skipping them leads to
 - [docs/changelog.md](docs/changelog.md) — changelog storage (`changelog.d/` fragments + history JSON), `./scripts/changelog.py` usage
 - [docs/releasing.md](docs/releasing.md) — `./scripts/release.py` usage, version-bump flow
 - [kmod/BUILDING.md](kmod/BUILDING.md) — kernel-module build (one-command DDK via `./kmod/build.py`, GKI matrix, troubleshooting)
+- [lsposed/AGENTS.md](lsposed/AGENTS.md) — Kotlin module: architecture, the load-bearing abstractions to reuse (don't reinvent), and quality gates (ktlint + detekt). Read before adding Kotlin code.
 
 ## Workflow rules
 

@@ -1,0 +1,76 @@
+# detekt overrides on top of the bundled default config
+# (buildUponDefaultConfig = true in app/build.gradle.kts).
+#
+# Goal: catch the smell ktlint can't — god-functions, high complexity,
+# dead code, common bug patterns — without bikeshedding AI-written Compose
+# code to death. Pre-existing findings are frozen in baseline.xml, so this
+# only bites NEW code. Tune thresholds here as the team learns what's noise.
+
+build:
+  # Any finding not in the baseline fails the build.
+  maxIssues: 0
+
+complexity:
+  LongMethod:
+    # The whole reason for this gate: loadDashboardState was 830 lines.
+    # @Composable UI builders are legitimately long, so they're exempt —
+    # LargeClass / file length still bounds god-screens.
+    threshold: 60
+    ignoreAnnotated: ['Composable']
+  CyclomaticComplexMethod:
+    threshold: 20
+    ignoreAnnotated: ['Composable']
+  CognitiveComplexMethod:
+    threshold: 20
+    ignoreAnnotated: ['Composable']
+  LongParameterList:
+    # Data classes (KmodLoadStatus has 13 fields) and Compose slot APIs
+    # (TargetPickerScreen) legitimately take many params.
+    functionThreshold: 8
+    constructorThreshold: 14
+    ignoreDefaultParameters: true
+    ignoreAnnotated: ['Composable']
+  LargeClass:
+    threshold: 600
+  NestedBlockDepth:
+    threshold: 5
+  TooManyFunctions:
+    # Noisy on Compose files (one @Composable per UI piece) and DAOs.
+    active: false
+
+exceptions:
+  # This codebase deliberately catches Throwable/Exception around reflection,
+  # root shells, and AOSP-drift fail-open paths. Flagging every one is pure noise.
+  TooGenericExceptionCaught:
+    active: false
+  SwallowedException:
+    active: false
+  TooGenericExceptionThrown:
+    active: false
+
+style:
+  # Line length is already enforced by ktlint (pre-commit + CI) — no double-up.
+  MaxLineLength:
+    active: false
+  # Pinned dp/color/bit constants are everywhere in UI + hook code.
+  MagicNumber:
+    active: false
+  # Compose imports use foundation.layout.* / material3.* / runtime.* idiomatically.
+  WildcardImport:
+    active: false
+  ReturnCount:
+    # Guard-clause-heavy parsers (classifyKmodProblem) read better with early returns.
+    active: false
+  ForbiddenComment:
+    active: false
+  # Keep UnusedPrivateMember / UnusedPrivateProperty ON — they catch dead code
+  # like the fork's never-called parsePmList.
+
+comments:
+  # KDoc-presence opinions are noise for an internal module.
+  active: false
+
+naming:
+  FunctionNaming:
+    # @Composable functions are PascalCase by Compose convention.
+    ignoreAnnotated: ['Composable']
