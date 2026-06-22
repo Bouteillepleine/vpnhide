@@ -109,6 +109,42 @@ internal fun parseConfigLines(raw: String): List<String> =
         .filter { it.isNotEmpty() && !it.startsWith("#") }
         .toList()
 
+/**
+ * Parse `key=value` lines into a map. Values are kept verbatim (not trimmed) —
+ * callers that need trimming do it themselves. Lines without an `=` are
+ * dropped; the value keeps any further `=` (split limit 2). Single source for
+ * every status-file / module.prop style blob this app reads back over root.
+ */
+internal fun parseKeyValueLines(raw: String): Map<String, String> =
+    raw
+        .lineSequence()
+        .mapNotNull {
+            val parts = it.split("=", limit = 2)
+            if (parts.size == 2) parts[0] to parts[1] else null
+        }.toMap()
+
+private val PM_PACKAGE_UID_LINE = Regex("^package:(\\S+) uid:(\\S+)")
+
+/**
+ * Parse `pm list packages -U [--user all]` output (the form *without* `-f`,
+ * so the token after `package:` is the package name, not an APK path) into
+ * `package → uids`. Multi-profile packages report comma-separated UIDs
+ * (`uid:10187,1010187`); repeated lines for the same package are unioned.
+ * UIDs that aren't integers are dropped. The `-f` variant has a different
+ * shape and is parsed separately in [AppListCache].
+ */
+internal fun parsePackageUidMap(raw: String): Map<String, List<Int>> {
+    val out = LinkedHashMap<String, MutableList<Int>>()
+    raw.lineSequence().forEach { line ->
+        val m = PM_PACKAGE_UID_LINE.find(line) ?: return@forEach
+        val uids = out.getOrPut(m.groupValues[1]) { mutableListOf() }
+        m.groupValues[2].split(',').forEach { token ->
+            token.trim().toIntOrNull()?.let(uids::add)
+        }
+    }
+    return out
+}
+
 internal fun parseVpnIfaceStates(raw: String): List<Pair<String, String>> =
     raw
         .lineSequence()
@@ -176,12 +212,7 @@ internal fun cleanupStaleZygiskStatus(
 
     val props =
         try {
-            statusFile
-                .readLines()
-                .mapNotNull {
-                    val parts = it.split("=", limit = 2)
-                    if (parts.size == 2) parts[0] to parts[1] else null
-                }.toMap()
+            parseKeyValueLines(statusFile.readText())
         } catch (e: Exception) {
             VpnHideLog.w(TAG, "cleanupStaleZygiskStatus: failed to read heartbeat: ${e.message}")
             emptyMap()

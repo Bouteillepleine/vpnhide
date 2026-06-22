@@ -100,14 +100,9 @@ internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
     // UIDs: `package:com.android.chrome uid:10187,1010187`. Each UID
     // becomes its own entry in the reverse map so observer lookups
     // from any profile resolve back to the same package name.
-    val pmLine = Regex("^package:(\\S+) uid:(\\S+)")
     val uidToPkg = mutableMapOf<Int, String>()
-    sections["pm_packages"]?.lines()?.forEach { line ->
-        val m = pmLine.find(line) ?: return@forEach
-        val pkg = m.groupValues[1]
-        for (id in m.groupValues[2].split(',')) {
-            id.toIntOrNull()?.let { uidToPkg[it] = pkg }
-        }
+    parsePackageUidMap(sections["pm_packages"].orEmpty()).forEach { (pkg, uids) ->
+        uids.forEach { uidToPkg[it] = pkg }
     }
 
     return TargetsSnapshot(
