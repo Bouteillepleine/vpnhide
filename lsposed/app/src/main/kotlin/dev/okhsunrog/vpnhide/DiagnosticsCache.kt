@@ -2,6 +2,7 @@ package dev.okhsunrog.vpnhide
 
 import android.content.Context
 import android.net.ConnectivityManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,11 +31,8 @@ import kotlinx.coroutines.withContext
  *   protection panel and the Diagnostics screen.
  *
  * Once [State.Ready] is reached, [run] becomes a no-op — results don't
- * change mid-process. The only path back to "please retry" requires
- * killing the process (new launch = fresh cache) or calling [reset]
- * (currently unused; reserved for explicit force-refresh flows, e.g.
- * "new kernel module just installed, please verify from a fresh
- * process" style prompts if we ever want them).
+ * change mid-process. The only path back to "please retry" is killing the
+ * process (a new launch starts with a fresh cache).
  */
 internal object DiagnosticsCache {
     sealed interface State {
@@ -77,27 +75,14 @@ internal object DiagnosticsCache {
         inflight = scope.launch { doRun(context.applicationContext) }
     }
 
-    /** Used by the retry button in the "VPN off" banner. Same as [run]
-     * but bypasses the `VpnOff` short-circuit (which [run] doesn't
-     * actually have — the guard above covers NotRun/VpnOff both — so
-     * this is really just a named alias for readability at the
-     * callsite).
+    /** Used by the retry button in the "VPN off" banner — a readable alias
+     * for [run] at the call site (the [run] guard already permits a re-run
+     * from both NotRun and VpnOff).
      */
     fun retry(
         scope: CoroutineScope,
         context: Context,
     ) = run(scope, context)
-
-    /** Drop any cached result. Next [run] will execute fresh.
-     * Not wired to any UI at the moment — reserved for scenarios like
-     * "user installed a new module and wants to force a re-run from the
-     * same process". Normal refreshes never need this because results
-     * are fixed for the process lifetime.
-     */
-    fun reset() {
-        inflight?.cancel()
-        _state.value = State.NotRun
-    }
 
     private suspend fun doRun(appContext: Context) {
         _state.value = State.Running
@@ -116,6 +101,11 @@ internal object DiagnosticsCache {
                 }
             _state.value = State.Ready(results)
             StartupTrace.mark("diagnostics_cache_done")
+        } catch (e: CancellationException) {
+            // A cancelled job (e.g. the screen left) must propagate so
+            // structured concurrency unwinds — never get reinterpreted as a
+            // VpnOff result.
+            throw e
         } catch (e: Exception) {
             // Failures leave us in VpnOff so the user sees the retry UI
             // rather than a frozen spinner. Real-world causes here are

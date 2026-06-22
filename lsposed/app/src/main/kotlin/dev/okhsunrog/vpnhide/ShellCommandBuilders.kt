@@ -3,6 +3,31 @@ package dev.okhsunrog.vpnhide
 internal const val SELF_PM_PACKAGES_BEGIN = "__VPNHIDE_SELF_PM_PACKAGES_BEGIN__"
 internal const val SELF_PM_PACKAGES_END = "__VPNHIDE_SELF_PM_PACKAGES_END__"
 
+internal const val SYSTEM_DATA_FILE_CONTEXT = "u:object_r:system_data_file:s0"
+
+/**
+ * The chmod/chown/chcon tail applied to a `/data/system` file so that
+ * system_server (group=system) can read it while untrusted apps get EACCES,
+ * and so anti-tamper SDKs can't read our marker files. Returns the steps as
+ * separate parts meant to be joined with `" ; "` — matching how the save
+ * commands assemble. `chcon` failure is tolerated (`|| true`) for devices/
+ * filesystems without SELinux labelling support, and is the last step so the
+ * overall `su -c` exit code stays 0 on such devices.
+ *
+ * Previously each save path hand-wrote this tail slightly differently (one
+ * omitted `chcon` entirely on the empty branch, one lacked the `|| true`
+ * fail-safe), risking a permission/SELinux drift. Single source now.
+ */
+internal fun systemDataFilePermsParts(
+    path: String,
+    mode: String,
+): List<String> =
+    listOf(
+        "chmod $mode $path 2>/dev/null",
+        "chown root:system $path 2>/dev/null",
+        "chcon $SYSTEM_DATA_FILE_CONTEXT $path 2>/dev/null || true",
+    )
+
 internal fun buildPackageUidsExpression(
     packageName: String,
     outputVariable: String,
@@ -62,7 +87,7 @@ internal fun buildEnsureSelfInTargetsCommand(selfPkg: String): String =
               fi
               echo "added:${'$'}PATH_TO_UPDATE"
             }
-            """.trimIndent().replace("\n", " "),
+            """.trimIndent(),
         )
         append("; ensure_line $KMOD_TARGETS /data/adb/vpnhide_kmod 644 0 1")
         append("; ensure_line $ZYGISK_TARGETS /data/adb/vpnhide_zygisk 644 0 1")

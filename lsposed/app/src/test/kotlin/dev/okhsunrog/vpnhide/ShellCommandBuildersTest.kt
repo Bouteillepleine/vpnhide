@@ -75,6 +75,37 @@ class ShellCommandBuildersTest {
     }
 
     @Test
+    fun `self target command is syntactically valid shell`() {
+        // Guards against the flatten bug: collapsing the ensure_line() shell
+        // function onto one line (`replace("\n", " ")`) dropped the separators
+        // before `fi`, producing `then return fi` — a syntax error that broke
+        // startup on-device. The other tests only do substring checks and
+        // never parse the script, so this one runs `sh -n`.
+        val cmd = buildEnsureSelfInTargetsCommand("dev.okhsunrog.vpnhide")
+        val proc =
+            ProcessBuilder("sh", "-n", "-c", cmd)
+                .redirectErrorStream(true)
+                .start()
+        val out = proc.inputStream.bufferedReader().readText()
+        val exitCode = proc.waitFor()
+        assertEquals("sh -n reported a syntax error: $out", 0, exitCode)
+    }
+
+    @Test
+    fun `system data file perms set mode group context and tolerate chcon failure`() {
+        val parts = systemDataFilePermsParts("/data/system/vpnhide_uids.txt", "640")
+
+        assertEquals(
+            listOf(
+                "chmod 640 /data/system/vpnhide_uids.txt 2>/dev/null",
+                "chown root:system /data/system/vpnhide_uids.txt 2>/dev/null",
+                "chcon $SYSTEM_DATA_FILE_CONTEXT /data/system/vpnhide_uids.txt 2>/dev/null || true",
+            ),
+            parts,
+        )
+    }
+
+    @Test
     fun `self target output extracts seeded package list`() {
         val output =
             """

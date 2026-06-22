@@ -135,10 +135,9 @@ private data class RefreshContext(
 private fun MainScreen(onReady: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val appContext = context.applicationContext
+    val startupCoordinator = remember(appContext) { StartupCoordinator(appContext) }
     var currentTab by remember { mutableStateOf(Tab.Dashboard) }
-    var selfNeedsRestart by remember { mutableStateOf<Boolean?>(null) }
-    var selfTargetError by remember { mutableStateOf<String?>(null) }
-    var selfTargetAttempt by remember { mutableIntStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
     var searchActive by remember { mutableStateOf(false) }
     var showSystem by remember { mutableStateOf(false) }
@@ -150,28 +149,15 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     val dashboardState by DashboardCache.state.collectAsState()
     val dashboardError by DashboardCache.error.collectAsState()
     val rootSnapshot by RootSnapshotCache.snapshot.collectAsState()
+    val selfTargetState by startupCoordinator.selfTargetState.collectAsState()
+    val selfNeedsRestart =
+        (selfTargetState as? StartupSelfTargetState.Ready)?.selfNeedsRestart
+    val selfTargetError =
+        (selfTargetState as? StartupSelfTargetState.Failed)?.message
     val refreshRestart = selfNeedsRestart ?: false
 
-    LaunchedEffect(selfTargetAttempt) {
-        selfNeedsRestart = null
-        selfTargetError = null
-        StartupTrace.mark("self_targets_start")
-        val preparation =
-            withContext(Dispatchers.IO) {
-                val preparation = ensureSelfInTargets(context.packageName)
-                if (preparation.rootAvailable) {
-                    RootSnapshotCache.seedPmPackages(preparation.pmPackages)
-                    cleanupStaleZygiskStatus(context, preparation.currentBootId)
-                }
-                preparation
-            }
-        StartupTrace.mark("self_targets_done")
-        if (preparation.rootAvailable) {
-            selfNeedsRestart = preparation.selfNeedsRestart
-        } else {
-            StartupTrace.mark("self_targets_failed")
-            selfTargetError = preparation.error ?: "root preparation failed"
-        }
+    LaunchedEffect(startupCoordinator) {
+        startupCoordinator.prepareSelfTargets()
     }
 
     // Start the app-scoped caches as soon as the self-target preparation
@@ -181,10 +167,7 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     // prewarms during splash, but without racing the self-target root shell.
     LaunchedEffect(selfNeedsRestart) {
         val r = selfNeedsRestart ?: return@LaunchedEffect
-        if (selfTargetError != null) return@LaunchedEffect
-        AppListCache.ensureLoaded(scope, context)
-        DashboardCache.ensureLoaded(scope, context, r)
-        if (!r) DiagnosticsCache.run(scope, context)
+        startupCoordinator.ensureInitialCaches(scope, r)
     }
 
     // Protection depends on the same root snapshot as Dashboard. Let
@@ -193,18 +176,14 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     // as that shared snapshot exists, TargetsCache parses it from memory and
     // Protection is still prewarmed before a normal tab switch.
     LaunchedEffect(selfNeedsRestart, rootSnapshot) {
-        if (selfNeedsRestart != null && rootSnapshot != null) {
-            TargetsCache.ensureLoaded(scope, context)
-        }
+        startupCoordinator.ensureProtectionCacheAfterRootSnapshot(scope, selfNeedsRestart, rootSnapshot)
     }
 
     // Hold the splash screen until the first Dashboard frame can render
     // with real content. Without this, the user sees splash → brief
     // selfNeedsRestart-null spinner → brief Dashboard state-null spinner
     // → content, with each spinner swap being visible flicker.
-    val uiReady =
-        selfTargetError != null ||
-            (selfNeedsRestart != null && (dashboardState != null || dashboardError != null))
+    val uiReady = startupCoordinator.isUiReady(dashboardState, dashboardError)
     var fullyDrawnReady by remember { mutableStateOf(false) }
     ReportDrawnWhen { fullyDrawnReady }
     LaunchedEffect(uiReady) {
@@ -223,7 +202,7 @@ private fun MainScreen(onReady: () -> Unit = {}) {
         val observer =
             LifecycleEventObserver { _, event ->
                 if (event == Lifecycle.Event.ON_RESUME) {
-                    UpdateCheckCache.ensureFresh(scope, BuildConfig.VERSION_NAME)
+                    startupCoordinator.ensureUpdateFresh(scope)
                 }
             }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -283,8 +262,7 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                                     RefreshContext(
                                         loading = dashboardLoading,
                                         onRefresh = {
-                                            DashboardCache.refresh(scope, context, refreshRestart)
-                                            UpdateCheckCache.refresh(scope, BuildConfig.VERSION_NAME)
+                                            startupCoordinator.refreshDashboard(scope, refreshRestart)
                                         },
                                     )
                                 }
@@ -293,8 +271,7 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                                     RefreshContext(
                                         loading = appListLoading || targetsLoading,
                                         onRefresh = {
-                                            AppListCache.refresh(scope, context)
-                                            TargetsCache.refresh(scope, context)
+                                            startupCoordinator.refreshProtection(scope)
                                         },
                                     )
                                 }
@@ -415,7 +392,7 @@ private fun MainScreen(onReady: () -> Unit = {}) {
         if (preparationError != null) {
             RootPreparationErrorScreen(
                 modifier = Modifier.padding(innerPadding),
-                onRetry = { selfTargetAttempt += 1 },
+                onRetry = { startupCoordinator.retrySelfTargets(scope) },
             )
         } else if (restart == null) {
             Box(

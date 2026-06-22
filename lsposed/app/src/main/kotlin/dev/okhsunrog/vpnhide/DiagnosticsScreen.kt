@@ -1,6 +1,5 @@
 package dev.okhsunrog.vpnhide
 
-import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
@@ -15,8 +14,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FiberManualRecord
-import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -29,25 +26,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.FileProvider
 import dev.okhsunrog.vpnhide.checks.CheckOutput
 import dev.okhsunrog.vpnhide.checks.CheckStatus
-import dev.okhsunrog.vpnhide.checks.checkGetifaddrs
-import dev.okhsunrog.vpnhide.checks.checkIoctlSiocgifconf
-import dev.okhsunrog.vpnhide.checks.checkIoctlSiocgifflags
-import dev.okhsunrog.vpnhide.checks.checkIoctlSiocgifmtu
-import dev.okhsunrog.vpnhide.checks.checkNetlinkGetlink
-import dev.okhsunrog.vpnhide.checks.checkNetlinkGetroute
-import dev.okhsunrog.vpnhide.checks.checkProcNetDev
-import dev.okhsunrog.vpnhide.checks.checkProcNetFibTrie
-import dev.okhsunrog.vpnhide.checks.checkProcNetIfInet6
-import dev.okhsunrog.vpnhide.checks.checkProcNetIpv6Route
-import dev.okhsunrog.vpnhide.checks.checkProcNetRoute
-import dev.okhsunrog.vpnhide.checks.checkProcNetTcp
-import dev.okhsunrog.vpnhide.checks.checkProcNetTcp6
-import dev.okhsunrog.vpnhide.checks.checkProcNetUdp
-import dev.okhsunrog.vpnhide.checks.checkProcNetUdp6
-import dev.okhsunrog.vpnhide.checks.checkSysClassNet
 import dev.okhsunrog.vpnhide.generated.IfaceLists
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -75,6 +55,18 @@ internal data class CheckResults(
     val java: List<CheckResult>,
 ) {
     val all get() = native + java
+}
+
+/** Number of passed checks out of those that actually ran (NETWORK_BLOCKED
+ * probes report `passed == null` and are excluded from the denominator). */
+internal data class CheckScore(
+    val passed: Int,
+    val total: Int,
+)
+
+internal fun List<CheckResult>.score(): CheckScore {
+    val scored = filter { it.passed != null }
+    return CheckScore(passed = scored.count { it.passed == true }, total = scored.size)
 }
 
 internal suspend fun isVpnActive(): Boolean {
@@ -126,9 +118,8 @@ fun DiagnosticsScreen(
     val networkBlocked = results?.native?.any { it.passed == null } == true
     val summary =
         results?.let { r ->
-            val scored = r.all.filter { it.passed != null }
-            val passed = scored.count { it.passed == true }
-            String.format(summaryFmt, passed, scored.size)
+            val score = r.all.score()
+            String.format(summaryFmt, score.passed, score.total)
         }
 
     Column(
@@ -261,50 +252,13 @@ fun DiagnosticsScreen(
                 )
             }
         } else {
-            // Save / Share buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedButton(
-                    onClick = { saveLauncher.launch(debugZipFile!!.name) },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(
-                        Icons.Default.Save,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.btn_save_debug))
-                }
-                Button(
-                    onClick = {
-                        val uri =
-                            FileProvider.getUriForFile(
-                                context,
-                                "${context.packageName}.fileprovider",
-                                debugZipFile!!,
-                            )
-                        val intent =
-                            Intent(Intent.ACTION_SEND).apply {
-                                type = "application/zip"
-                                putExtra(Intent.EXTRA_STREAM, uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                        context.startActivity(Intent.createChooser(intent, null))
-                    },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(
-                        Icons.Default.Share,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.btn_share_debug))
-                }
-            }
+            FileSaveShareRow(
+                saveLabel = stringResource(R.string.btn_save_debug),
+                shareLabel = stringResource(R.string.btn_share_debug),
+                sharePrimary = true,
+                onSave = { saveLauncher.launch(debugZipFile!!.name) },
+                onShare = { shareFileViaProvider(context, debugZipFile!!, "application/zip") },
+            )
         }
 
         Spacer(Modifier.height(16.dp))
@@ -448,49 +402,13 @@ private fun LogcatRecordCard() {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            OutlinedButton(
-                                onClick = { saveLauncher.launch(last.name) },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Icon(
-                                    Icons.Default.Save,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(stringResource(R.string.btn_save))
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    val uri =
-                                        FileProvider.getUriForFile(
-                                            context,
-                                            "${context.packageName}.fileprovider",
-                                            last,
-                                        )
-                                    val intent =
-                                        Intent(Intent.ACTION_SEND).apply {
-                                            type = "text/plain"
-                                            putExtra(Intent.EXTRA_STREAM, uri)
-                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                        }
-                                    context.startActivity(Intent.createChooser(intent, null))
-                                },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Icon(
-                                    Icons.Default.Share,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(stringResource(R.string.btn_share_debug))
-                            }
-                        }
+                        FileSaveShareRow(
+                            saveLabel = stringResource(R.string.btn_save),
+                            shareLabel = stringResource(R.string.btn_share_debug),
+                            sharePrimary = false,
+                            onSave = { saveLauncher.launch(last.name) },
+                            onShare = { shareFileViaProvider(context, last, "text/plain") },
+                        )
                         Spacer(Modifier.height(8.dp))
                     }
                     Button(
@@ -528,26 +446,6 @@ private fun formatSize(bytes: Long): String {
 }
 
 @Composable
-private fun StatusBanner(
-    text: String,
-    containerColor: Color,
-    contentColor: Color,
-) {
-    Card(
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = containerColor),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = contentColor,
-            modifier = Modifier.padding(12.dp),
-        )
-    }
-}
-
-@Composable
 private fun SectionHeader(title: String) {
     Text(
         text = title,
@@ -559,20 +457,11 @@ private fun SectionHeader(title: String) {
 
 @Composable
 private fun CheckCard(r: CheckResult) {
-    val darkTheme = isSystemInDarkTheme()
     val actualColor =
-        if (darkTheme) {
-            when (r.passed) {
-                true -> Color(0xFF1B5E20).copy(alpha = 0.3f)
-                false -> Color(0xFFB71C1C).copy(alpha = 0.3f)
-                null -> MaterialTheme.colorScheme.surfaceVariant
-            }
-        } else {
-            when (r.passed) {
-                true -> Color(0xFFE8F5E9)
-                false -> Color(0xFFFFEBEE)
-                null -> MaterialTheme.colorScheme.surfaceVariant
-            }
+        when (r.passed) {
+            true -> StatusColors.successContainer()
+            false -> StatusColors.errorContainer()
+            null -> MaterialTheme.colorScheme.surfaceVariant
         }
 
     val badgeText =
@@ -586,8 +475,8 @@ private fun CheckCard(r: CheckResult) {
 
     val badgeColor =
         when (r.passed) {
-            true -> Color(0xFF2E7D32)
-            false -> Color(0xFFC62828)
+            true -> StatusColors.successBadge
+            false -> StatusColors.errorAccent
             null -> MaterialTheme.colorScheme.onSurfaceVariant
         }
 
@@ -641,26 +530,9 @@ internal fun runAllChecks(
     val res = context.resources
 
     val native =
-        listOf(
-            nativeCheck(res.getString(R.string.check_ioctl_flags)) { checkIoctlSiocgifflags() },
-            nativeCheck(res.getString(R.string.check_ioctl_mtu)) { checkIoctlSiocgifmtu() },
-            nativeCheck(res.getString(R.string.check_ioctl_conf)) { checkIoctlSiocgifconf() },
-            nativeCheck(res.getString(R.string.check_getifaddrs)) { checkGetifaddrs() },
-            nativeCheck(res.getString(R.string.check_netlink_getlink)) { checkNetlinkGetlink() },
-            nativeCheck(res.getString(R.string.check_netlink_getroute)) { checkNetlinkGetroute() },
-            nativeCheck(res.getString(R.string.check_proc_route)) { checkProcNetRoute() },
-            nativeCheck(res.getString(R.string.check_proc_ipv6_route)) { checkProcNetIpv6Route() },
-            nativeCheck(res.getString(R.string.check_proc_if_inet6)) { checkProcNetIfInet6() },
-            nativeCheck(res.getString(R.string.check_proc_tcp)) { checkProcNetTcp() },
-            nativeCheck(res.getString(R.string.check_proc_tcp6)) { checkProcNetTcp6() },
-            nativeCheck(res.getString(R.string.check_proc_udp)) { checkProcNetUdp() },
-            nativeCheck(res.getString(R.string.check_proc_udp6)) { checkProcNetUdp6() },
-            nativeCheck(res.getString(R.string.check_proc_dev)) { checkProcNetDev() },
-            nativeCheck(res.getString(R.string.check_proc_fib_trie)) { checkProcNetFibTrie() },
-            nativeCheck(res.getString(R.string.check_sys_class_net)) { checkSysClassNet() },
-            checkNetworkInterfaceEnum(res.getString(R.string.check_net_iface_enum)),
-            checkProcNetRouteJava(res.getString(R.string.check_proc_route_java)),
-        )
+        NATIVE_CHECKS.map { spec -> nativeCheck(res.getString(spec.labelRes), spec.run) } +
+            checkNetworkInterfaceEnum(res.getString(R.string.check_net_iface_enum)) +
+            checkProcNetRouteJava(res.getString(R.string.check_proc_route_java))
 
     val java =
         listOf(
@@ -674,10 +546,8 @@ internal fun runAllChecks(
             checkProxyHost(res.getString(R.string.check_proxy_host)),
         )
 
-    val all = native + java
-    val scored = all.filter { it.passed != null }
-    val passed = scored.count { it.passed == true }
-    VpnHideLog.i(TAG, "=== SUMMARY: $passed/${scored.size} passed ===")
+    val score = (native + java).score()
+    VpnHideLog.i(TAG, "=== SUMMARY: ${score.passed}/${score.total} passed ===")
 
     return CheckResults(native = native, java = java)
 }
@@ -706,7 +576,7 @@ private fun nativeCheck(
 //  Java API checks
 // ==========================================================================
 
-private fun checkHasTransportVpn(
+internal fun checkHasTransportVpn(
     cm: ConnectivityManager,
     name: String,
 ): CheckResult {
@@ -724,7 +594,7 @@ private fun checkHasTransportVpn(
     return CheckResult(name, !hasVpn, detail)
 }
 
-private fun checkHasCapabilityNotVpn(
+internal fun checkHasCapabilityNotVpn(
     cm: ConnectivityManager,
     name: String,
 ): CheckResult {
@@ -735,7 +605,7 @@ private fun checkHasCapabilityNotVpn(
     return CheckResult(name, notVpn, detail)
 }
 
-private fun checkTransportInfo(
+internal fun checkTransportInfo(
     cm: ConnectivityManager,
     name: String,
 ): CheckResult {
@@ -771,7 +641,7 @@ private fun checkNetworkInterfaceEnum(name: String): CheckResult =
     }
 
 @Suppress("DEPRECATION")
-private fun checkAllNetworksVpn(
+internal fun checkAllNetworksVpn(
     cm: ConnectivityManager,
     name: String,
 ): CheckResult {
@@ -815,7 +685,7 @@ private fun checkActiveNetworkVpn(
     return CheckResult(name, !hasVpn, detail)
 }
 
-private fun checkLinkPropertiesIfname(
+internal fun checkLinkPropertiesIfname(
     cm: ConnectivityManager,
     name: String,
 ): CheckResult {
@@ -944,9 +814,8 @@ private suspend fun exportDebugZip(
             // Diagnostics results
             val diagText =
                 buildString {
-                    val scored = checkResults.all.filter { it.passed != null }
-                    val passed = scored.count { it.passed == true }
-                    appendLine("=== Diagnostics: $passed/${scored.size} passed ===")
+                    val score = checkResults.all.score()
+                    appendLine("=== Diagnostics: ${score.passed}/${score.total} passed ===")
                     appendLine()
                     appendLine("--- Native level ---")
                     for (c in checkResults.native) {

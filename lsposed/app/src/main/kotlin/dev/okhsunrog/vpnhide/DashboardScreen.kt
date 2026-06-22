@@ -2,7 +2,6 @@ package dev.okhsunrog.vpnhide
 
 import android.content.Intent
 import android.net.Uri
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -79,11 +78,10 @@ fun DashboardScreen(
         // practice landed on "lavender" and "pink" on user devices — those
         // read as "note", not "problem". Same hardcoded pairs the module-
         // status cards use for active/inactive.
-        val darkTheme = isSystemInDarkTheme()
-        val errorBg = if (darkTheme) Color(0xFFB71C1C).copy(alpha = 0.3f) else Color(0xFFFFEBEE)
-        val errorHeader = if (darkTheme) Color(0xFFEF9A9A) else Color(0xFFC62828)
-        val warningBg = if (darkTheme) Color(0xFFE65100).copy(alpha = 0.2f) else Color(0xFFFFF3E0)
-        val warningHeader = if (darkTheme) Color(0xFFFFB74D) else Color(0xFFE65100)
+        val errorBg = StatusColors.errorContainer()
+        val errorHeader = StatusColors.errorHeader()
+        val warningBg = StatusColors.warningContainer()
+        val warningHeader = StatusColors.warningHeader()
         val onBannerColor = MaterialTheme.colorScheme.onSurface
 
         val s = state
@@ -234,7 +232,6 @@ private fun ModuleCard(
     state: ModuleState,
     selfNeedsRestart: Boolean = false,
 ) {
-    val darkTheme = isSystemInDarkTheme()
     when (state) {
         is ModuleState.NotInstalled -> {
             ModuleCardShell(
@@ -270,23 +267,15 @@ private fun ModuleCard(
                     },
                 dotColor =
                     when {
-                        broken != null -> Color(0xFFB71C1C)
-                        active -> Color(0xFF4CAF50)
-                        else -> Color(0xFFFF9800)
+                        broken != null -> StatusColors.errorDot
+                        active -> StatusColors.successDot
+                        else -> StatusColors.warningAccent
                     },
                 containerColor =
                     when {
-                        broken != null -> {
-                            if (darkTheme) Color(0xFFB71C1C).copy(alpha = 0.3f) else Color(0xFFFFEBEE)
-                        }
-
-                        active -> {
-                            if (darkTheme) Color(0xFF1B5E20).copy(alpha = 0.3f) else Color(0xFFE8F5E9)
-                        }
-
-                        else -> {
-                            if (darkTheme) Color(0xFFE65100).copy(alpha = 0.2f) else Color(0xFFFFF3E0)
-                        }
+                        broken != null -> StatusColors.errorContainer()
+                        active -> StatusColors.successContainer()
+                        else -> StatusColors.warningContainer()
                     },
             )
         }
@@ -295,7 +284,6 @@ private fun ModuleCard(
 
 @Composable
 private fun LsposedCard(state: LsposedState) {
-    val darkTheme = isSystemInDarkTheme()
     val moduleName = stringResource(R.string.dashboard_lsposed_module)
     val installedVersion = BuildConfig.VERSION_NAME
     when (state) {
@@ -314,8 +302,8 @@ private fun LsposedCard(state: LsposedState) {
                 name = moduleName,
                 version = installedVersion,
                 subtitle = stringResource(R.string.dashboard_installed_inactive),
-                dotColor = Color(0xFFFF9800),
-                containerColor = if (darkTheme) Color(0xFFE65100).copy(alpha = 0.2f) else Color(0xFFFFF3E0),
+                dotColor = StatusColors.warningAccent,
+                containerColor = StatusColors.warningContainer(),
             )
         }
 
@@ -324,8 +312,8 @@ private fun LsposedCard(state: LsposedState) {
                 name = moduleName,
                 version = installedVersion,
                 subtitle = stringResource(R.string.dashboard_reboot_needed),
-                dotColor = Color(0xFFFF9800),
-                containerColor = if (darkTheme) Color(0xFFE65100).copy(alpha = 0.2f) else Color(0xFFFFF3E0),
+                dotColor = StatusColors.warningAccent,
+                containerColor = StatusColors.warningContainer(),
             )
         }
 
@@ -341,8 +329,8 @@ private fun LsposedCard(state: LsposedState) {
                 name = moduleName,
                 version = installedVersion,
                 subtitle = subtitle,
-                dotColor = Color(0xFF4CAF50),
-                containerColor = if (darkTheme) Color(0xFF1B5E20).copy(alpha = 0.3f) else Color(0xFFE8F5E9),
+                dotColor = StatusColors.successDot,
+                containerColor = StatusColors.successContainer(),
             )
         }
     }
@@ -399,12 +387,11 @@ private fun ModuleCardShell(
 
 @Composable
 private fun NativeInstallRecommendationCard(recommendation: NativeInstallRecommendation) {
-    val darkTheme = isSystemInDarkTheme()
     val containerColor =
         if (recommendation.preferKmod) {
-            if (darkTheme) Color(0xFF0D47A1).copy(alpha = 0.28f) else Color(0xFFE3F2FD)
+            StatusColors.infoContainer()
         } else {
-            if (darkTheme) Color(0xFF4E342E).copy(alpha = 0.32f) else Color(0xFFFFF3E0)
+            StatusColors.zygiskRecommendContainer()
         }
 
     Card(
@@ -492,14 +479,13 @@ private fun NativeInstallRecommendationCard(recommendation: NativeInstallRecomme
 
 @Composable
 private fun NativeProtectionCard(result: NativeResult) {
-    val darkTheme = isSystemInDarkTheme()
     val (containerColor, statusText, statusColor) =
         when (result) {
             is NativeResult.Ok -> {
                 Triple(
-                    if (darkTheme) Color(0xFF1B5E20).copy(alpha = 0.3f) else Color(0xFFE8F5E9),
+                    StatusColors.successContainer(),
                     stringResource(R.string.dashboard_protection_ok),
-                    Color(0xFF4CAF50),
+                    StatusColors.successDot,
                 )
             }
 
@@ -510,13 +496,8 @@ private fun NativeProtectionCard(result: NativeResult) {
                     } else {
                         stringResource(R.string.dashboard_protection_fail)
                     }
-                val color = if (result.passed > 0) Color(0xFFFF9800) else Color(0xFFC62828)
-                val bg =
-                    if (result.passed > 0) {
-                        if (darkTheme) Color(0xFFE65100).copy(alpha = 0.2f) else Color(0xFFFFF3E0)
-                    } else {
-                        if (darkTheme) Color(0xFFB71C1C).copy(alpha = 0.3f) else Color(0xFFFFEBEE)
-                    }
+                val color = if (result.passed > 0) StatusColors.warningAccent else StatusColors.errorAccent
+                val bg = if (result.passed > 0) StatusColors.warningContainer() else StatusColors.errorContainer()
                 Triple(bg, text, color)
             }
 
@@ -538,22 +519,21 @@ private fun NativeProtectionCard(result: NativeResult) {
 
 @Composable
 private fun JavaProtectionCard(result: JavaResult) {
-    val darkTheme = isSystemInDarkTheme()
     val (containerColor, statusText, statusColor) =
         when (result) {
             is JavaResult.Ok -> {
                 Triple(
-                    if (darkTheme) Color(0xFF1B5E20).copy(alpha = 0.3f) else Color(0xFFE8F5E9),
+                    StatusColors.successContainer(),
                     stringResource(R.string.dashboard_protection_ok),
-                    Color(0xFF4CAF50),
+                    StatusColors.successDot,
                 )
             }
 
             is JavaResult.Fail -> {
                 Triple(
-                    if (darkTheme) Color(0xFFB71C1C).copy(alpha = 0.3f) else Color(0xFFFFEBEE),
+                    StatusColors.errorContainer(),
                     stringResource(R.string.dashboard_protection_fail),
-                    Color(0xFFC62828),
+                    StatusColors.errorAccent,
                 )
             }
 
@@ -606,26 +586,6 @@ private fun ProtectionCardShell(
 }
 
 @Composable
-private fun StatusBanner(
-    text: String,
-    containerColor: Color,
-    contentColor: Color,
-) {
-    Card(
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = containerColor),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = contentColor,
-            modifier = Modifier.padding(12.dp),
-        )
-    }
-}
-
-@Composable
 private fun DashboardLoadErrorCard(
     title: String,
     message: String,
@@ -665,12 +625,11 @@ private fun DashboardLoadErrorCard(
 @Composable
 private fun UpdateAvailableCard(info: UpdateInfo) {
     val context = LocalContext.current
-    val darkTheme = isSystemInDarkTheme()
     Card(
         shape = RoundedCornerShape(12.dp),
         colors =
             CardDefaults.cardColors(
-                containerColor = if (darkTheme) Color(0xFF0D47A1).copy(alpha = 0.28f) else Color(0xFFE3F2FD),
+                containerColor = StatusColors.infoContainer(),
             ),
         modifier = Modifier.fillMaxWidth(),
     ) {
