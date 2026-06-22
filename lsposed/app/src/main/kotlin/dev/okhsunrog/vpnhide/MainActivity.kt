@@ -146,9 +146,12 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     val targetsLoading by TargetsCache.loading.collectAsState()
     val dashboardLoading by DashboardCache.loading.collectAsState()
     val dashboardState by DashboardCache.state.collectAsState()
+    val dashboardError by DashboardCache.error.collectAsState()
+    val rootSnapshot by RootSnapshotCache.snapshot.collectAsState()
     val refreshRestart = selfNeedsRestart ?: false
 
     LaunchedEffect(Unit) {
+        StartupTrace.mark("self_targets_start")
         selfNeedsRestart =
             withContext(Dispatchers.IO) {
                 val preparation = ensureSelfInTargets(context.packageName)
@@ -158,30 +161,34 @@ private fun MainScreen(onReady: () -> Unit = {}) {
         StartupTrace.mark("self_targets_done")
     }
 
-    // Kick off both Protection caches as early as possible so tab
-    // switches into Protection render instantly instead of paying the
-    // per-screen pm + icon + root-shell cost each time.
-    LaunchedEffect(Unit) {
-        AppListCache.ensureLoaded(scope, context)
-        TargetsCache.ensureLoaded(scope, context)
-    }
-
-    // Pre-warm Dashboard (needed for first frame) and Diagnostics (needed
-    // when user switches to Diagnostics tab) as soon as selfNeedsRestart
-    // is resolved. Dashboard prewarm here — not in DashboardScreen's own
-    // LaunchedEffect — so it runs while the splash is still held, not
-    // only after MainScreen has rendered.
+    // Start the app-scoped caches as soon as the self-target preparation
+    // is resolved. Keep that preparation first: it mutates the target files
+    // and determines whether this app process needs a restart, so Dashboard
+    // must not derive protection state from a stale answer. Protection still
+    // prewarms during splash, but without racing the self-target root shell.
     LaunchedEffect(selfNeedsRestart) {
         val r = selfNeedsRestart ?: return@LaunchedEffect
+        AppListCache.ensureLoaded(scope, context)
         DashboardCache.ensureLoaded(scope, context, r)
         if (!r) DiagnosticsCache.run(scope, context)
+    }
+
+    // Protection depends on the same root snapshot as Dashboard. Let
+    // Dashboard own the initial root snapshot so a transient shell timeout
+    // cannot make startup immediately do a second expensive retry. As soon
+    // as that shared snapshot exists, TargetsCache parses it from memory and
+    // Protection is still prewarmed before a normal tab switch.
+    LaunchedEffect(selfNeedsRestart, rootSnapshot) {
+        if (selfNeedsRestart != null && rootSnapshot != null) {
+            TargetsCache.ensureLoaded(scope, context)
+        }
     }
 
     // Hold the splash screen until the first Dashboard frame can render
     // with real content. Without this, the user sees splash → brief
     // selfNeedsRestart-null spinner → brief Dashboard state-null spinner
     // → content, with each spinner swap being visible flicker.
-    val uiReady = selfNeedsRestart != null && dashboardState != null
+    val uiReady = selfNeedsRestart != null && (dashboardState != null || dashboardError != null)
     var fullyDrawnReady by remember { mutableStateOf(false) }
     ReportDrawnWhen { fullyDrawnReady }
     LaunchedEffect(uiReady) {

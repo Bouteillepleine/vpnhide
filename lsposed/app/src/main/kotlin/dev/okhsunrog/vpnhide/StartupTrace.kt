@@ -14,6 +14,13 @@ internal object StartupTrace {
         Log.i(STARTUP_TAG, "event=$event elapsedMs=${elapsedMs()}")
     }
 
+    fun metric(
+        name: String,
+        valueMs: Long,
+    ) {
+        Log.i(STARTUP_TAG, "metric=$name valueMs=$valueMs elapsedMs=${elapsedMs()}")
+    }
+
     fun dashboardReady() {
         if (readyLogged.compareAndSet(false, true)) {
             Log.i(STARTUP_TAG, "event=dashboard_ready elapsedMs=${elapsedMs()}")

@@ -2,6 +2,7 @@ package dev.okhsunrog.vpnhide
 
 import android.content.Context
 import android.net.ConnectivityManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,6 +31,9 @@ internal object DashboardCache {
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+
     private var inflight: Job? = null
 
     fun ensureLoaded(
@@ -37,7 +41,7 @@ internal object DashboardCache {
         context: Context,
         selfNeedsRestart: Boolean,
     ) {
-        if (_state.value != null || inflight?.isActive == true) return
+        if (_state.value != null || _error.value != null || inflight?.isActive == true) return
         inflight = scope.launch { reload(context, selfNeedsRestart) }
     }
 
@@ -47,7 +51,9 @@ internal object DashboardCache {
         selfNeedsRestart: Boolean,
     ) {
         inflight?.cancel()
-        inflight = scope.launch { reload(context, selfNeedsRestart) }
+        RootSnapshotCache.invalidate()
+        _error.value = null
+        inflight = scope.launch { reload(context, selfNeedsRestart, forceRootRefresh = true) }
     }
 
     /** Invalidate so the next `ensureLoaded` call reloads. Used after
@@ -57,21 +63,36 @@ internal object DashboardCache {
      */
     fun invalidate() {
         _state.value = null
+        _error.value = null
     }
 
     private suspend fun reload(
         context: Context,
         selfNeedsRestart: Boolean,
+        forceRootRefresh: Boolean = false,
     ) {
         _loading.value = true
         try {
             val cm = context.getSystemService(ConnectivityManager::class.java)
+            val rootSnapshot =
+                if (forceRootRefresh) {
+                    RootSnapshotCache.refresh()
+                } else {
+                    RootSnapshotCache.getOrLoad()
+                }
             val next =
                 withContext(Dispatchers.IO) {
-                    loadDashboardState(cm, context.applicationContext, selfNeedsRestart)
+                    loadDashboardState(cm, context.applicationContext, selfNeedsRestart, rootSnapshot)
                 }
             StartupTrace.mark("dashboard_state_loaded")
             _state.value = next
+            _error.value = null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            StartupTrace.mark("dashboard_state_failed")
+            _error.value = e.message ?: e.javaClass.simpleName
+            VpnHideLog.w("VpnHide-Dashboard", "dashboard reload failed: ${e.message}", e)
         } finally {
             _loading.value = false
         }

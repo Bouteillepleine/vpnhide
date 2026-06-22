@@ -102,9 +102,11 @@ internal object DiagnosticsCache {
     private suspend fun doRun(appContext: Context) {
         _state.value = State.Running
         try {
+            StartupTrace.mark("diagnostics_cache_start")
             val vpnActive = withContext(Dispatchers.IO) { isVpnActive() }
             if (!vpnActive) {
                 _state.value = State.VpnOff
+                StartupTrace.mark("diagnostics_cache_vpn_off")
                 return
             }
             val results =
@@ -113,12 +115,14 @@ internal object DiagnosticsCache {
                     runAllChecks(cm, appContext)
                 }
             _state.value = State.Ready(results)
+            StartupTrace.mark("diagnostics_cache_done")
         } catch (e: Exception) {
             // Failures leave us in VpnOff so the user sees the retry UI
             // rather than a frozen spinner. Real-world causes here are
             // transient (root dropped, shell exec failure) and a retry
             // usually works.
             _state.value = State.VpnOff
+            StartupTrace.mark("diagnostics_cache_failed")
             VpnHideLog.w("VpnHide-Diag", "runAllChecks failed: ${e.message}")
         }
     }

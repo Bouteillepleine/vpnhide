@@ -32,6 +32,7 @@ internal const val ZYGISK_STATUS_FILE_NAME = "vpnhide_zygisk_active"
  *  in milliseconds; this only fires if the su binary is genuinely stuck
  *  (e.g. waiting on a GUI prompt that the user dismissed). */
 internal const val SU_DEFAULT_TIMEOUT_SEC: Long = 10
+private const val SELF_TARGETS_TIMEOUT_SEC: Long = 4
 
 /**
  * Returns exit code and stdout. Exit code -1 means the su binary
@@ -62,7 +63,7 @@ internal fun suExec(
 
             val finished = proc.waitFor(timeoutSec, TimeUnit.SECONDS)
             if (!finished) {
-                Log.w(TAG, "su exec timed out after ${timeoutSec}s: $cmd")
+                Log.w(TAG, "su exec timed out after ${timeoutSec}s: ${commandPreview(cmd)}")
                 proc.destroyForcibly()
             }
             // After destroyForcibly the pipes close and the drains exit;
@@ -80,10 +81,43 @@ internal fun suExec(
         -1 to ""
     }
 
+private fun commandPreview(cmd: String): String {
+    val preview =
+        cmd
+            .lineSequence()
+            .map { it.trimEnd() }
+            .filter { it.isNotBlank() }
+            .take(12)
+            .joinToString("\n")
+    return if (preview.length <= 800) preview else preview.take(800) + "..."
+}
+
 internal suspend fun suExecAsync(
     cmd: String,
     timeoutSec: Long = SU_DEFAULT_TIMEOUT_SEC,
 ): Pair<Int, String> = withContext(Dispatchers.IO) { suExec(cmd, timeoutSec) }
+
+internal fun parseVpnIfaceStates(raw: String): List<Pair<String, String>> =
+    raw
+        .lineSequence()
+        .mapNotNull { line ->
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) return@mapNotNull null
+
+            val legacyParts = trimmed.split("=", limit = 2)
+            if (legacyParts.size == 2) {
+                return@mapNotNull legacyParts[0].trim() to legacyParts[1].trim()
+            }
+
+            val marker = "/operstate:"
+            val markerIndex = trimmed.indexOf(marker)
+            if (markerIndex <= 0) return@mapNotNull null
+            val path = trimmed.substring(0, markerIndex)
+            val iface = path.substringAfterLast('/').trim()
+            val state = trimmed.substring(markerIndex + marker.length).trim()
+            if (iface.isEmpty()) null else iface to state
+        }.filter { (name, _) -> IfaceLists.isVpnIface(name) }
+        .toList()
 
 /**
  * Single source of truth for "is a VPN currently up?". Both the dashboard
@@ -94,18 +128,19 @@ internal suspend fun suExecAsync(
  * from issue #86, `MyVPN`, `wg-client`).
  */
 internal fun isVpnActiveBlocking(): Boolean {
-    val (exitCode, output) = suExec("ls /sys/class/net/ 2>/dev/null")
+    val (exitCode, output) =
+        suExec(
+            "grep -H . /sys/class/net/*/operstate 2>/dev/null",
+        )
     if (exitCode != 0) return false
-    val vpnIfaces =
-        output.lines().map { it.trim() }.filter { name -> IfaceLists.isVpnIface(name) }
+    val vpnIfaces = parseVpnIfaceStates(output)
     if (vpnIfaces.isEmpty()) {
         VpnHideLog.d(TAG, "isVpnActive: no VPN interfaces found")
         return false
     }
-    return vpnIfaces.any { iface ->
-        val (_, state) = suExec("cat /sys/class/net/$iface/operstate 2>/dev/null")
-        val up = state.trim() == "unknown" || state.trim() == "up"
-        VpnHideLog.d(TAG, "isVpnActive: $iface operstate=${state.trim()} up=$up")
+    return vpnIfaces.any { (iface, state) ->
+        val up = state == "unknown" || state == "up"
+        VpnHideLog.d(TAG, "isVpnActive: $iface operstate=$state up=$up")
         up
     }
 }
@@ -165,8 +200,11 @@ internal fun cleanupStaleZygiskStatus(
  * applied to the current process, restart needed for zygisk).
  * Called once at app startup; result is shared with all screens.
  */
-internal fun ensureSelfInTargets(selfPkg: String): SelfTargetPreparation {
-    val (exitCode, out) = suExec(buildEnsureSelfInTargetsCommand(selfPkg))
+internal fun ensureSelfInTargets(
+    selfPkg: String,
+    timeoutSec: Long = SELF_TARGETS_TIMEOUT_SEC,
+): SelfTargetPreparation {
+    val (exitCode, out) = suExec(buildEnsureSelfInTargetsCommand(selfPkg), timeoutSec = timeoutSec)
     if (exitCode != 0) {
         VpnHideLog.w(TAG, "ensureSelfInTargets: batch failed (exit=$exitCode): ${out.trim()}")
         return SelfTargetPreparation(rootAvailable = false, selfNeedsRestart = false, currentBootId = null)
