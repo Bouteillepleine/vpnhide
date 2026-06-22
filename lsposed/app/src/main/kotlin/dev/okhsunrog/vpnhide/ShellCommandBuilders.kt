@@ -87,7 +87,7 @@ internal fun buildEnsureSelfInTargetsCommand(selfPkg: String): String =
               fi
               echo "added:${'$'}PATH_TO_UPDATE"
             }
-            """.trimIndent().replace("\n", " "),
+            """.trimIndent(),
         )
         append("; ensure_line $KMOD_TARGETS /data/adb/vpnhide_kmod 644 0 1")
         append("; ensure_line $ZYGISK_TARGETS /data/adb/vpnhide_zygisk 644 0 1")
