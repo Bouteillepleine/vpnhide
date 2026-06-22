@@ -373,8 +373,7 @@ fun AppHidingScreen(
                 if (exitCode == 0) {
                     snackMessage =
                         resources.getString(R.string.hiding_save_success, hiddenCount, observerCount)
-                    DashboardCache.invalidate()
-                    TargetsCache.refresh(scope, context)
+                    TargetsCache.refreshAfterSave(scope, context)
                 } else if (exitCode == -1) {
                     snackMessage = resources.getString(R.string.save_failed_root)
                     dirty = true

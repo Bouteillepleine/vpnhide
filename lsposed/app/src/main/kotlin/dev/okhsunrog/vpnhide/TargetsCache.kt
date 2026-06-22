@@ -76,9 +76,17 @@ internal object TargetsCache {
         inflight = scope.launch { reload(context.applicationContext, forceRootRefresh = true) }
     }
 
+    fun refreshAfterSave(
+        scope: CoroutineScope,
+        context: Context,
+    ) {
+        DashboardCache.invalidate()
+        refresh(scope, context)
+    }
+
     /** Drop the cached snapshot so the next subscriber triggers a
-     * fresh load. Save handlers call this because they just mutated
-     * one of the files this cache mirrors.
+     * fresh load. Use [refreshAfterSave] when a Protection save should
+     * also invalidate Dashboard counts.
      */
     fun invalidate() {
         _snapshot.value = null

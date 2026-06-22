@@ -348,11 +348,7 @@ fun AppPickerScreen(
                 val totalSelected = allApps.count { it.anySelected }
                 if (exitCode == 0) {
                     snackMessage = resources.getString(R.string.save_success, totalSelected)
-                    // Target counts shown on the Dashboard just changed;
-                    // invalidate so next open reflects them without a
-                    // manual refresh tap.
-                    DashboardCache.invalidate()
-                    TargetsCache.refresh(scope, context)
+                    TargetsCache.refreshAfterSave(scope, context)
                 } else if (exitCode == -1) {
                     snackMessage = resources.getString(R.string.save_failed_root)
                     dirty = true
