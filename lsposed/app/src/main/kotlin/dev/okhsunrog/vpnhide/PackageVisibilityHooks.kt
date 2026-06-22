@@ -149,29 +149,20 @@ internal object PackageVisibilityHooks {
         }
 
     private fun watchConfigFiles() {
-        val observer =
-            // CLOSE_WRITE + MOVED_TO only — see HookEntry.watchTargetUidsFile
-            // for why MODIFY is intentionally absent.
-            object : FileObserver(File("/data/system"), CREATE or CLOSE_WRITE or MOVED_TO) {
-                override fun onEvent(
-                    event: Int,
-                    path: String?,
-                ) {
-                    when (path) {
-                        "vpnhide_hidden_pkgs.txt" -> {
-                            HookLog.i("VpnHide/PV: hidden_pkgs changed, invalidating")
-                            hiddenPackages = null
-                        }
+        fileObserver =
+            watchSystemDataDir { path ->
+                when (path) {
+                    "vpnhide_hidden_pkgs.txt" -> {
+                        HookLog.i("VpnHide/PV: hidden_pkgs changed, invalidating")
+                        hiddenPackages = null
+                    }
 
-                        "vpnhide_observer_uids.txt" -> {
-                            HookLog.i("VpnHide/PV: observer_uids changed, invalidating")
-                            observerUids = null
-                        }
+                    "vpnhide_observer_uids.txt" -> {
+                        HookLog.i("VpnHide/PV: observer_uids changed, invalidating")
+                        observerUids = null
                     }
                 }
             }
-        fileObserver = observer
-        observer.startWatching()
         HookLog.i("VpnHide/PV: watching /data/system for config changes")
     }
 

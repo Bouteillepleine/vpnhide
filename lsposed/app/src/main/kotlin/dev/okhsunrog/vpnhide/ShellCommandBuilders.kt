@@ -6,6 +6,37 @@ internal const val SELF_PM_PACKAGES_END = "__VPNHIDE_SELF_PM_PACKAGES_END__"
 internal const val SYSTEM_DATA_FILE_CONTEXT = "u:object_r:system_data_file:s0"
 
 /**
+ * Canonical on-disk body for a managed vpnhide config file: the `# Managed …`
+ * header comment followed by [lines], newline-terminated. This is the format
+ * [parseConfigLines] reads back (the header comment and blank lines are
+ * dropped on read), so every Save path produces an identical file shape.
+ */
+internal fun managedConfigBody(
+    header: String,
+    lines: List<String>,
+): String = (listOf(header) + lines).joinToString(separator = "\n", postfix = "\n")
+
+/**
+ * Shell fragment writing a managed config file via a base64 round-trip:
+ * `echo '<b64>' | base64 -d > path`. base64 sidesteps every quoting/escaping
+ * hazard from package names or the header text inside the single `su -c`
+ * string. Callers append their own `chmod` / dir-guard / perms tail — those
+ * differ per file (644 vs system_data_file 640), see [systemDataFilePermsParts].
+ */
+internal fun buildConfigWriteCommand(
+    path: String,
+    header: String,
+    lines: List<String>,
+): String {
+    val b64 =
+        android.util.Base64.encodeToString(
+            managedConfigBody(header, lines).toByteArray(),
+            android.util.Base64.NO_WRAP,
+        )
+    return "echo '$b64' | base64 -d > $path"
+}
+
+/**
  * The chmod/chown/chcon tail applied to a `/data/system` file so that
  * system_server (group=system) can read it while untrusted apps get EACCES,
  * and so anti-tamper SDKs can't read our marker files. Returns the steps as

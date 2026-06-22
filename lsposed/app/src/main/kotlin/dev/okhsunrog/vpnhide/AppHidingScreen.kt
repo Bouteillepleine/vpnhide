@@ -133,8 +133,6 @@ private fun buildHidingSaveCommand(
     hiddenPkgs: List<String>,
     observerPkgs: List<String>,
 ): String {
-    fun encode(body: String): String = android.util.Base64.encodeToString(body.toByteArray(), android.util.Base64.NO_WRAP)
-
     val parts = mutableListOf<String>()
 
     // Hidden list: package names, one per line.
@@ -142,9 +140,7 @@ private fun buildHidingSaveCommand(
     // untrusted apps get EACCES because /data/system/ is mode 0775 (the
     // file's "other" bits decide reachability). Prevents apps from
     // enumerating the hidden-package list to fingerprint vpnhide.
-    val hiddenBody = "$header\n" + hiddenPkgs.joinToString("\n") + if (hiddenPkgs.isNotEmpty()) "\n" else ""
-    val hiddenB64 = encode(hiddenBody)
-    parts += "echo '$hiddenB64' | base64 -d > $SS_HIDDEN_PKGS_FILE"
+    parts += buildConfigWriteCommand(SS_HIDDEN_PKGS_FILE, header, hiddenPkgs)
     parts += systemDataFilePermsParts(SS_HIDDEN_PKGS_FILE, "640")
 
     // Observer list: resolved UIDs. Same 0640 root:system rationale.

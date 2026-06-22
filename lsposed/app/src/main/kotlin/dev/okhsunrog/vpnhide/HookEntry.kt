@@ -344,31 +344,15 @@ class HookEntry : IXposedHookLoadPackage {
      * cached UID set so the next writeToParcel call re-reads it.
      */
     private fun watchTargetUidsFile() {
-        val dir = "/data/system"
         val filename = "vpnhide_uids.txt"
-        val observer =
-            object : android.os.FileObserver(
-                File(dir),
-                // CLOSE_WRITE + MOVED_TO is enough: the writers we control
-                // either do a single short `> file` redirect (one write +
-                // close) or atomic-rename via `mv`. MODIFY would fire
-                // mid-write on multi-write writers and let the hook read
-                // a partially-populated file before the writer closes.
-                CREATE or CLOSE_WRITE or MOVED_TO,
-            ) {
-                override fun onEvent(
-                    event: Int,
-                    path: String?,
-                ) {
-                    if (path == filename) {
-                        HookLog.i("VpnHide: $filename changed (event=$event), invalidating UID cache")
-                        systemServerTargetUids = null
-                    }
+        targetUidsFileObserver =
+            watchSystemDataDir { path ->
+                if (path == filename) {
+                    HookLog.i("VpnHide: $filename changed, invalidating UID cache")
+                    systemServerTargetUids = null
                 }
             }
-        targetUidsFileObserver = observer
-        observer.startWatching()
-        HookLog.i("VpnHide: watching $dir for $filename changes (inotify)")
+        HookLog.i("VpnHide: watching /data/system for $filename changes (inotify)")
     }
 
     /**
