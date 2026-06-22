@@ -7,11 +7,9 @@ import android.graphics.drawable.Drawable
 import android.os.Process
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -55,16 +53,16 @@ internal fun labelWithUsers(
 /**
  * App-scoped cache for the installed-app list. Loaded asynchronously
  * at startup; Protection screens subscribe to `apps` and render
- * instantly on tab switch.
- *
- * [refreshCounter] increments on every refresh — screens that maintain
- * their own per-screen state (targets.txt / observer files etc.) key
- * their reload `LaunchedEffect` on it, so the TopBar refresh button
- * rehydrates *everything*, not just the package+icon cache.
+ * instantly on tab switch. The top-bar refresh button calls [refresh]
+ * which reloads the package + icon list; Protection screens re-merge
+ * their per-screen target flags reactively off `apps` + the targets
+ * snapshot, so nothing keys off a manual refresh counter anymore.
  */
-internal object AppListCache {
-    private val _apps = MutableStateFlow<List<AppSummary>?>(null)
-    val apps: StateFlow<List<AppSummary>?> = _apps.asStateFlow()
+internal object AppListCache : StateCache<List<AppSummary>>(
+    traceName = "app_list_cache",
+    logTag = "VpnHide-AppList",
+) {
+    val apps: StateFlow<List<AppSummary>?> get() = value
 
     /** user_id → friendly profile name (e.g. 10 → "Work"). Populated
      * from `pm list users` alongside the package scan. Empty map if
@@ -74,95 +72,77 @@ internal object AppListCache {
     private val _userNames = MutableStateFlow<Map<Int, String>>(emptyMap())
     val userNames: StateFlow<Map<Int, String>> = _userNames.asStateFlow()
 
-    private val _refreshCounter = MutableStateFlow(0)
-    val refreshCounter: StateFlow<Int> = _refreshCounter.asStateFlow()
-
-    private val _loading = MutableStateFlow(false)
-    val loading: StateFlow<Boolean> = _loading.asStateFlow()
-
-    private var inflight: Job? = null
+    @Volatile private var appContext: Context? = null
 
     /** Kick off an initial load if not already loaded or loading. */
     fun ensureLoaded(
         scope: CoroutineScope,
         context: Context,
     ) {
-        if (_apps.value != null || inflight?.isActive == true) return
-        inflight = scope.launch { reload(context.applicationContext) }
+        appContext = context.applicationContext
+        ensure(scope)
     }
 
-    /** Force a reload and bump the refresh counter so screens re-read
-     * their per-screen state (targets.txt / observer files etc.) too.
-     */
+    /** Force a reload of the package + icon list. */
     fun refresh(
         scope: CoroutineScope,
         context: Context,
     ) {
-        inflight?.cancel()
-        inflight = scope.launch { reload(context.applicationContext) }
+        appContext = context.applicationContext
+        forceRefresh(scope)
     }
 
-    private suspend fun reload(appContext: Context) {
-        _loading.value = true
-        try {
-            StartupTrace.mark("app_list_cache_start")
-            val loaded =
-                withContext(Dispatchers.IO) {
-                    val pm = appContext.packageManager
-                    val (packages, users) = loadPackagesAndUsersViaRoot()
-                    _userNames.value = users
-                    if (packages.isNotEmpty()) {
-                        packages.entries
-                            .map { (pkg, meta) ->
-                                val info = runCatching { pm.getApplicationInfo(pkg, 0) }.getOrNull()
-                                val archiveInfo =
-                                    if (info == null) loadArchiveApplicationInfo(pm, meta.apkPath) else null
-                                val effectiveInfo = info ?: archiveInfo
+    override suspend fun load(force: Boolean): List<AppSummary> {
+        val appContext = requireNotNull(appContext) { "AppListCache.load before ensureLoaded/refresh" }
+        return withContext(Dispatchers.IO) {
+            val pm = appContext.packageManager
+            val (packages, users) = loadPackagesAndUsersViaRoot()
+            _userNames.value = users
+            if (packages.isNotEmpty()) {
+                packages.entries
+                    .map { (pkg, meta) ->
+                        val info = runCatching { pm.getApplicationInfo(pkg, 0) }.getOrNull()
+                        val archiveInfo =
+                            if (info == null) loadArchiveApplicationInfo(pm, meta.apkPath) else null
+                        val effectiveInfo = info ?: archiveInfo
 
-                                // Archive-parsed ApplicationInfo doesn't carry
-                                // FLAG_SYSTEM (that bit is attached by PM at
-                                // install time, not stored in the manifest), so
-                                // for secondary-only packages we'd misclassify
-                                // every system app as user-installed. Fall back
-                                // to the APK path: /data/app/... is user-
-                                // installed, everything else is baked into the
-                                // system image.
-                                val isSystem =
-                                    if (info != null) {
-                                        (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-                                    } else {
-                                        !meta.apkPath.startsWith("/data/app/")
-                                    }
+                        // Archive-parsed ApplicationInfo doesn't carry
+                        // FLAG_SYSTEM (that bit is attached by PM at
+                        // install time, not stored in the manifest), so
+                        // for secondary-only packages we'd misclassify
+                        // every system app as user-installed. Fall back
+                        // to the APK path: /data/app/... is user-
+                        // installed, everything else is baked into the
+                        // system image.
+                        val isSystem =
+                            if (info != null) {
+                                (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+                            } else {
+                                !meta.apkPath.startsWith("/data/app/")
+                            }
 
-                                AppSummary(
-                                    packageName = pkg,
-                                    label = effectiveInfo?.loadLabel(pm)?.toString() ?: pkg,
-                                    icon = effectiveInfo?.let { runCatching { pm.getApplicationIcon(it) }.getOrNull() },
-                                    isSystem = isSystem,
-                                    userIds = meta.userIds,
-                                )
-                            }.sortedBy { it.label.lowercase() }
-                    } else {
-                        // Fallback: current-profile only (legacy behavior)
-                        pm
-                            .getInstalledApplications(0)
-                            .map { info ->
-                                AppSummary(
-                                    packageName = info.packageName,
-                                    label = info.loadLabel(pm).toString(),
-                                    icon = runCatching { pm.getApplicationIcon(info) }.getOrNull(),
-                                    isSystem = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
-                                    userIds = listOf(Process.myUid() / 100000),
-                                )
-                            }.sortedBy { it.label.lowercase() }
-                    }
-                }
-
-            _apps.value = loaded
-            _refreshCounter.value = _refreshCounter.value + 1
-            StartupTrace.mark("app_list_cache_done")
-        } finally {
-            _loading.value = false
+                        AppSummary(
+                            packageName = pkg,
+                            label = effectiveInfo?.loadLabel(pm)?.toString() ?: pkg,
+                            icon = effectiveInfo?.let { runCatching { pm.getApplicationIcon(it) }.getOrNull() },
+                            isSystem = isSystem,
+                            userIds = meta.userIds,
+                        )
+                    }.sortedBy { it.label.lowercase() }
+            } else {
+                // Fallback: current-profile only (legacy behavior)
+                pm
+                    .getInstalledApplications(0)
+                    .map { info ->
+                        AppSummary(
+                            packageName = info.packageName,
+                            label = info.loadLabel(pm).toString(),
+                            icon = runCatching { pm.getApplicationIcon(info) }.getOrNull(),
+                            isSystem = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
+                            userIds = listOf(Process.myUid() / 100000),
+                        )
+                    }.sortedBy { it.label.lowercase() }
+            }
         }
     }
 

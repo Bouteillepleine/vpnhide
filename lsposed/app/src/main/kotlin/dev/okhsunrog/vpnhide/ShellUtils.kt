@@ -97,6 +97,18 @@ internal suspend fun suExecAsync(
     timeoutSec: Long = SU_DEFAULT_TIMEOUT_SEC,
 ): Pair<Int, String> = withContext(Dispatchers.IO) { suExec(cmd, timeoutSec) }
 
+/**
+ * Lines of a vpnhide config file: trimmed, with blank lines and `#`-comments
+ * dropped. This is the on-disk format shared by every targets / observer /
+ * hidden-packages file, so the parsing rule lives in one place.
+ */
+internal fun parseConfigLines(raw: String): List<String> =
+    raw
+        .lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && !it.startsWith("#") }
+        .toList()
+
 internal fun parseVpnIfaceStates(raw: String): List<Pair<String, String>> =
     raw
         .lineSequence()

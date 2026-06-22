@@ -3,29 +3,10 @@ package dev.okhsunrog.vpnhide
 import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
 import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
-import dev.okhsunrog.vpnhide.checks.CheckOutput
 import dev.okhsunrog.vpnhide.checks.CheckStatus
-import dev.okhsunrog.vpnhide.checks.checkGetifaddrs
-import dev.okhsunrog.vpnhide.checks.checkIoctlSiocgifconf
-import dev.okhsunrog.vpnhide.checks.checkIoctlSiocgifflags
-import dev.okhsunrog.vpnhide.checks.checkIoctlSiocgifmtu
-import dev.okhsunrog.vpnhide.checks.checkNetlinkGetlink
-import dev.okhsunrog.vpnhide.checks.checkNetlinkGetroute
-import dev.okhsunrog.vpnhide.checks.checkProcNetDev
-import dev.okhsunrog.vpnhide.checks.checkProcNetFibTrie
-import dev.okhsunrog.vpnhide.checks.checkProcNetIfInet6
-import dev.okhsunrog.vpnhide.checks.checkProcNetIpv6Route
-import dev.okhsunrog.vpnhide.checks.checkProcNetRoute
-import dev.okhsunrog.vpnhide.checks.checkProcNetTcp
-import dev.okhsunrog.vpnhide.checks.checkProcNetTcp6
-import dev.okhsunrog.vpnhide.checks.checkProcNetUdp
-import dev.okhsunrog.vpnhide.checks.checkProcNetUdp6
-import dev.okhsunrog.vpnhide.checks.checkSysClassNet
-import dev.okhsunrog.vpnhide.generated.IfaceLists
 import java.io.File
 
 // ── Domain types — invalid states are unrepresentable ────────────────────
@@ -54,6 +35,19 @@ enum class KmodBrokenReason {
     UnknownVariantInactive,
     AmbiguousLoadFailed,
 }
+
+/**
+ * The single kmod problem to surface. [reason] drives the red module-card
+ * color; [text] drives the dashboard error banner. Computed once (see
+ * `loadDashboardState`) so the card and the banner can never disagree —
+ * previously the priority order was hand-mirrored in two separate `when`
+ * blocks. [reason] is null for a generic insmod failure where we only have
+ * raw stderr to show, not a named diagnosis.
+ */
+internal data class KmodProblem(
+    val reason: KmodBrokenReason?,
+    val text: String,
+)
 
 sealed interface LsposedState {
     data object NotInstalled : LsposedState
@@ -409,11 +403,7 @@ internal fun loadDashboardState(
         return ModulePropInfo(true, version, gkiVariant ?: updateJsonKmi)
     }
 
-    fun countTargets(raw: String): Int =
-        raw.lines().count { line ->
-            val trimmed = line.trim()
-            trimmed.isNotEmpty() && !trimmed.startsWith("#") && trimmed != selfPkg
-        }
+    fun countTargets(raw: String): Int = parseConfigLines(raw).count { it != selfPkg }
 
     fun parseProps(raw: String): Map<String, String> =
         raw
@@ -773,22 +763,100 @@ internal fun loadDashboardState(
             )
     val kprobesMissing =
         kmodLoadStatus?.freshForCurrentBoot == true && kmodLoadStatus.kretprobes == "n"
-    // Priority matches the Error emission below so the card color agrees
-    // with the banner: kprobes-missing first, then unsupported-kernel,
-    // then wrong-variant, then unknown-variant-inactive, then
-    // ambiguous-load-failed (falls to this only when the installed kmod is
-    // one of the ambiguous candidates — the mismatch branches above already
-    // excluded both candidates from "wrong variant").
-    val kmodBrokenReason: KmodBrokenReason? =
-        when {
-            kmodRaw !is ModuleState.Installed -> null
-            kprobesMissing -> KmodBrokenReason.MissingKprobes
-            kmodOnUnsupportedKernel -> KmodBrokenReason.UnsupportedKernel
-            kmodVariantMismatch -> KmodBrokenReason.WrongVariant
-            kmodUnknownVariantBroken -> KmodBrokenReason.UnknownVariantInactive
-            kmodAmbiguousLoadFailed -> KmodBrokenReason.AmbiguousLoadFailed
-            else -> null
+    val recommendedArtifact = kernelRecommendation?.recommendedArtifact
+    // Single source of truth for "what's wrong with the installed kmod".
+    // Priority order: kprobes-missing first (no variant will ever work),
+    // then unsupported-kernel (wrong tool), wrong-variant (concrete
+    // mismatch), unknown-variant (old build that didn't stamp gkiVariant),
+    // ambiguous-load-failed (one of two valid candidates failed this boot),
+    // and finally a generic insmod failure when we have stderr to show.
+    // [reason] colors the card, [text] is the banner — deriving both from
+    // this one `when` keeps them from disagreeing. The `recommendedArtifact
+    // != null` guards are redundant in practice (those booleans already
+    // imply a non-null kernel recommendation) but kept so the res.getString
+    // args are provably non-null.
+    val kmodProblem: KmodProblem? =
+        if (kmodRaw !is ModuleState.Installed) {
+            null
+        } else {
+            when {
+                kprobesMissing -> {
+                    KmodProblem(
+                        KmodBrokenReason.MissingKprobes,
+                        res.getString(R.string.dashboard_issue_kprobes_missing),
+                    )
+                }
+
+                kmodOnUnsupportedKernel && recommendedArtifact != null -> {
+                    KmodProblem(
+                        KmodBrokenReason.UnsupportedKernel,
+                        res.getString(
+                            R.string.dashboard_issue_kmod_not_supported_kernel,
+                            kmodLoadStatus?.unameR ?: "?",
+                            recommendedArtifact,
+                        ),
+                    )
+                }
+
+                kmodVariantMismatch -> {
+                    KmodProblem(
+                        KmodBrokenReason.WrongVariant,
+                        res.getString(
+                            R.string.dashboard_issue_kmod_wrong_variant,
+                            kmodRaw.gkiVariant ?: "?",
+                            recommendedKmi ?: "?",
+                            recommendedArtifact ?: "?",
+                        ),
+                    )
+                }
+
+                kmodUnknownVariantBroken && recommendedArtifact != null -> {
+                    KmodProblem(
+                        KmodBrokenReason.UnknownVariantInactive,
+                        res.getString(
+                            R.string.dashboard_issue_kmod_unknown_variant,
+                            recommendedArtifact,
+                        ),
+                    )
+                }
+
+                kmodAmbiguousLoadFailed -> {
+                    val installed = kmodRaw.gkiVariant
+                    val tryArtifact =
+                        if (installed == kernelRecommendation?.recommendedGkiVariant) {
+                            kernelRecommendation.alternativeArtifact
+                        } else {
+                            kernelRecommendation?.recommendedArtifact
+                        }
+                    KmodProblem(
+                        KmodBrokenReason.AmbiguousLoadFailed,
+                        res.getString(
+                            R.string.dashboard_issue_kmod_ambiguous_try_alternative,
+                            installed ?: "?",
+                            tryArtifact ?: "?",
+                        ),
+                    )
+                }
+
+                !kmodRaw.active &&
+                    kmodLoadStatus?.freshForCurrentBoot == true &&
+                    kmodLoadStatus.insmodStderr != null -> {
+                    KmodProblem(
+                        reason = null,
+                        text =
+                            res.getString(
+                                R.string.dashboard_issue_kmod_load_failed,
+                                kmodLoadStatus.insmodStderr,
+                            ),
+                    )
+                }
+
+                else -> {
+                    null
+                }
+            }
         }
+    val kmodBrokenReason = kmodProblem?.reason
     val kmod: ModuleState =
         if (kmodRaw is ModuleState.Installed && kmodBrokenReason != null) {
             kmodRaw.copy(brokenReason = kmodBrokenReason)
@@ -1044,80 +1112,11 @@ internal fun loadDashboardState(
     StartupTrace.mark("dashboard_issues_done")
 
     // ── Errors: kmod variant / load problems ──
-    // Priority ordered: kprobes-missing first (no variant will ever work),
-    // then "kernel has no kmod variant" (user picked the wrong tool),
-    // then wrong-variant (concrete mismatch we can name), then unknown-variant
-    // (old build that didn't stamp gkiVariant), then generic load failure
-    // when we have insmod stderr to show. Only one kmod-failure issue fires
-    // to avoid piling up related banners. All Errors — these mean kmod is
-    // actively broken, not just suboptimal.
-    val recommendedArtifact = kernelRecommendation?.recommendedArtifact
-    if (kmod is ModuleState.Installed) {
-        when {
-            kmodLoadStatus?.freshForCurrentBoot == true &&
-                kmodLoadStatus.kretprobes == "n" -> {
-                err(res.getString(R.string.dashboard_issue_kprobes_missing))
-            }
-
-            kmodOnUnsupportedKernel && recommendedArtifact != null -> {
-                err(
-                    res.getString(
-                        R.string.dashboard_issue_kmod_not_supported_kernel,
-                        kmodLoadStatus?.unameR ?: "?",
-                        recommendedArtifact,
-                    ),
-                )
-            }
-
-            kmodVariantMismatch -> {
-                err(
-                    res.getString(
-                        R.string.dashboard_issue_kmod_wrong_variant,
-                        (kmod as ModuleState.Installed).gkiVariant ?: "?",
-                        recommendedKmi ?: "?",
-                        recommendedArtifact ?: "?",
-                    ),
-                )
-            }
-
-            kmodUnknownVariantBroken && recommendedArtifact != null -> {
-                err(
-                    res.getString(
-                        R.string.dashboard_issue_kmod_unknown_variant,
-                        recommendedArtifact,
-                    ),
-                )
-            }
-
-            kmodAmbiguousLoadFailed -> {
-                val installed = (kmod as ModuleState.Installed).gkiVariant
-                val tryArtifact =
-                    if (installed == kernelRecommendation?.recommendedGkiVariant) {
-                        kernelRecommendation.alternativeArtifact
-                    } else {
-                        kernelRecommendation?.recommendedArtifact
-                    }
-                err(
-                    res.getString(
-                        R.string.dashboard_issue_kmod_ambiguous_try_alternative,
-                        installed ?: "?",
-                        tryArtifact ?: "?",
-                    ),
-                )
-            }
-
-            !kmod.active &&
-                kmodLoadStatus?.freshForCurrentBoot == true &&
-                kmodLoadStatus.insmodStderr != null -> {
-                err(
-                    res.getString(
-                        R.string.dashboard_issue_kmod_load_failed,
-                        kmodLoadStatus.insmodStderr,
-                    ),
-                )
-            }
-        }
-    }
+    // The diagnosis (reason + banner text) was computed once above as
+    // `kmodProblem`; emit its text here. Only one kmod-failure banner fires,
+    // and its priority can't drift from the card color because both come
+    // from the same value.
+    kmodProblem?.let { err(it.text) }
 
     // ── Protection checks ──
     StartupTrace.mark("dashboard_protection_start")
@@ -1172,32 +1171,13 @@ internal fun loadDashboardState(
 }
 
 private fun runNativeProtectionCheck(): NativeResult {
-    val checks: List<Pair<String, () -> CheckOutput>> =
-        listOf(
-            "ioctl_flags" to { checkIoctlSiocgifflags() },
-            "ioctl_mtu" to { checkIoctlSiocgifmtu() },
-            "ioctl_conf" to { checkIoctlSiocgifconf() },
-            "getifaddrs" to { checkGetifaddrs() },
-            "netlink_getlink" to { checkNetlinkGetlink() },
-            "netlink_getroute" to { checkNetlinkGetroute() },
-            "proc_route" to { checkProcNetRoute() },
-            "proc_ipv6_route" to { checkProcNetIpv6Route() },
-            "proc_if_inet6" to { checkProcNetIfInet6() },
-            "proc_tcp" to { checkProcNetTcp() },
-            "proc_tcp6" to { checkProcNetTcp6() },
-            "proc_udp" to { checkProcNetUdp() },
-            "proc_udp6" to { checkProcNetUdp6() },
-            "proc_dev" to { checkProcNetDev() },
-            "proc_fib_trie" to { checkProcNetFibTrie() },
-            "sys_class_net" to { checkSysClassNet() },
-        )
-
     var passed = 0
     var failed = 0
     var skipped = 0
-    for ((name, check) in checks) {
+    for (spec in NATIVE_CHECKS) {
+        val name = spec.id
         try {
-            val out = check()
+            val out = spec.run()
             when (out.status) {
                 CheckStatus.NETWORK_BLOCKED -> {
                     skipped++
@@ -1235,46 +1215,32 @@ private fun runNativeProtectionCheck(): NativeResult {
     }
 }
 
-@Suppress("DEPRECATION")
 private fun runJavaProtectionCheck(cm: ConnectivityManager): JavaResult {
-    val net = cm.activeNetwork
-    if (net == null) {
+    // Same gates the Diagnostics screen uses: with no active network (or no
+    // caps for it) there's nothing for an app to leak, so report OK without
+    // probing. Then reuse the exact CheckResult-producing probes the
+    // Diagnostics screen runs — Dashboard cares only about the five
+    // VPN-presence vectors below (not proxy / route checks), so it runs
+    // precisely that subset and counts the ones that detected a leak. The
+    // probe names are irrelevant here (Dashboard discards the detail text),
+    // hence the empty labels.
+    if (cm.activeNetwork == null) {
         VpnHideLog.d(TAG, "java: no active network")
         return JavaResult.Ok
     }
-    val caps = cm.getNetworkCapabilities(net)
-    if (caps == null) {
+    if (cm.getNetworkCapabilities(cm.activeNetwork) == null) {
         VpnHideLog.d(TAG, "java: no capabilities")
         return JavaResult.Ok
     }
 
-    var failed = 0
-
-    val hasVpn = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
-    if (hasVpn) failed++
-    VpnHideLog.d(TAG, "java: hasTransport(VPN)=$hasVpn")
-
-    val notVpn = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-    if (!notVpn) failed++
-    VpnHideLog.d(TAG, "java: hasCapability(NOT_VPN)=$notVpn")
-
-    val info = caps.transportInfo
-    val isVpnTi = info?.javaClass?.name?.contains("VpnTransportInfo") == true
-    if (isVpnTi) failed++
-    VpnHideLog.d(TAG, "java: transportInfo=${info?.javaClass?.name} isVpn=$isVpnTi")
-
-    val vpnNets =
-        cm.allNetworks.count {
-            cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
-        }
-    if (vpnNets > 0) failed++
-    VpnHideLog.d(TAG, "java: allNetworks vpnCount=$vpnNets")
-
-    val lp = cm.getLinkProperties(net)
-    val ifname = lp?.interfaceName
-    val vpnIfname = ifname != null && IfaceLists.isVpnIface(ifname)
-    if (vpnIfname) failed++
-    VpnHideLog.d(TAG, "java: linkProperties ifname=$ifname isVpn=$vpnIfname")
+    val failed =
+        listOf(
+            checkHasTransportVpn(cm, ""),
+            checkHasCapabilityNotVpn(cm, ""),
+            checkTransportInfo(cm, ""),
+            checkAllNetworksVpn(cm, ""),
+            checkLinkPropertiesIfname(cm, ""),
+        ).count { it.passed == false }
 
     VpnHideLog.i(TAG, "java protection: failed=$failed")
     return if (failed == 0) JavaResult.Ok else JavaResult.Fail(failed)

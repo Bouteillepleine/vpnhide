@@ -1,13 +1,8 @@
 package dev.okhsunrog.vpnhide
 
 import android.content.Context
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 
 /**
  * Per-screen protection state from root-owned files and package
@@ -46,34 +41,26 @@ internal data class TargetsSnapshot(
         get() = observerUids.mapNotNull { uidToPkg[it] }.toSet()
 }
 
-internal object TargetsCache {
-    private val _snapshot = MutableStateFlow<TargetsSnapshot?>(null)
-    val snapshot: StateFlow<TargetsSnapshot?> = _snapshot.asStateFlow()
+internal object TargetsCache : StateCache<TargetsSnapshot>(
+    traceName = "targets_cache",
+    logTag = "VpnHide-Targets",
+) {
+    val snapshot: StateFlow<TargetsSnapshot?> get() = value
 
-    private val _loading = MutableStateFlow(false)
-    val loading: StateFlow<Boolean> = _loading.asStateFlow()
-
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
-
-    private var inflight: Job? = null
-
+    // The snapshot is parsed entirely from the shared RootSnapshotCache, so
+    // `load` needs no context — the parameter is kept only for call-site
+    // symmetry with the other caches.
     fun ensureLoaded(
         scope: CoroutineScope,
-        context: Context,
-    ) {
-        if (_snapshot.value != null || _error.value != null || inflight?.isActive == true) return
-        inflight = scope.launch { reload(context.applicationContext) }
-    }
+        @Suppress("UNUSED_PARAMETER") context: Context,
+    ) = ensure(scope)
 
     fun refresh(
         scope: CoroutineScope,
-        context: Context,
+        @Suppress("UNUSED_PARAMETER") context: Context,
     ) {
-        inflight?.cancel()
         RootSnapshotCache.invalidate()
-        _error.value = null
-        inflight = scope.launch { reload(context.applicationContext, forceRootRefresh = true) }
+        forceRefresh(scope)
     }
 
     fun refreshAfterSave(
@@ -84,53 +71,27 @@ internal object TargetsCache {
         refresh(scope, context)
     }
 
-    /** Drop the cached snapshot so the next subscriber triggers a
-     * fresh load. Use [refreshAfterSave] when a Protection save should
-     * also invalidate Dashboard counts.
+    /** Drop the cached snapshot (and the shared root snapshot it derives
+     * from) so the next subscriber triggers a fresh load. Use
+     * [refreshAfterSave] when a Protection save should also invalidate
+     * Dashboard counts.
      */
-    fun invalidate() {
-        _snapshot.value = null
-        _error.value = null
+    override fun invalidate() {
+        super.invalidate()
         RootSnapshotCache.invalidate()
     }
 
-    private suspend fun reload(
-        @Suppress("UNUSED_PARAMETER") appContext: Context,
-        forceRootRefresh: Boolean = false,
-    ) {
-        _loading.value = true
-        try {
-            StartupTrace.mark("targets_cache_start")
-            val rootSnapshot =
-                if (forceRootRefresh) {
-                    RootSnapshotCache.refresh()
-                } else {
-                    RootSnapshotCache.getOrLoad()
-                }
-            _snapshot.value = parseTargetsSnapshot(rootSnapshot)
-            _error.value = null
-            StartupTrace.mark("targets_cache_done")
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            StartupTrace.mark("targets_cache_failed")
-            _error.value = e.message ?: e.javaClass.simpleName
-            VpnHideLog.w("VpnHide-Targets", "targets cache reload failed: ${e.message}", e)
-        } finally {
-            _loading.value = false
-        }
+    override suspend fun load(force: Boolean): TargetsSnapshot {
+        val rootSnapshot =
+            if (force) RootSnapshotCache.refresh() else RootSnapshotCache.getOrLoad()
+        return parseTargetsSnapshot(rootSnapshot)
     }
 }
 
 internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
     val sections = rootSnapshot.sections
 
-    fun nonEmptyLines(raw: String?): Set<String> =
-        raw
-            ?.lines()
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() && !it.startsWith("#") }
-            ?.toSet() ?: emptySet()
+    fun nonEmptyLines(raw: String?): Set<String> = raw?.let { parseConfigLines(it).toSet() } ?: emptySet()
 
     val portsInstalled = sections["ports_prop"]?.isNotBlank() == true
     val observerUids = nonEmptyLines(sections["observer_uids"]).mapNotNull { it.toIntOrNull() }.toSet()

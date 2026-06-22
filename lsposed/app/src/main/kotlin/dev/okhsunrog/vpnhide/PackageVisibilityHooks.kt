@@ -133,14 +133,7 @@ internal object PackageVisibilityHooks {
     private fun readUidFile(path: String): Set<Int> =
         try {
             val f = File(path)
-            if (!f.exists()) {
-                emptySet()
-            } else {
-                f
-                    .readLines()
-                    .mapNotNull { it.trim().takeIf { s -> s.isNotEmpty() && !s.startsWith("#") }?.toIntOrNull() }
-                    .toSet()
-            }
+            if (!f.exists()) emptySet() else parseConfigLines(f.readText()).mapNotNull { it.toIntOrNull() }.toSet()
         } catch (t: Throwable) {
             HookLog.e("VpnHide/PV: failed to read $path: ${t.message}")
             emptySet()
@@ -149,15 +142,7 @@ internal object PackageVisibilityHooks {
     private fun readLineFile(path: String): Set<String> =
         try {
             val f = File(path)
-            if (!f.exists()) {
-                emptySet()
-            } else {
-                f
-                    .readLines()
-                    .map { it.trim() }
-                    .filter { it.isNotEmpty() && !it.startsWith("#") }
-                    .toSet()
-            }
+            if (!f.exists()) emptySet() else parseConfigLines(f.readText()).toSet()
         } catch (t: Throwable) {
             HookLog.e("VpnHide/PV: failed to read $path: ${t.message}")
             emptySet()

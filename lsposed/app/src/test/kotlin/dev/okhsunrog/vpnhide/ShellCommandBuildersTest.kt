@@ -75,6 +75,20 @@ class ShellCommandBuildersTest {
     }
 
     @Test
+    fun `system data file perms set mode group context and tolerate chcon failure`() {
+        val parts = systemDataFilePermsParts("/data/system/vpnhide_uids.txt", "640")
+
+        assertEquals(
+            listOf(
+                "chmod 640 /data/system/vpnhide_uids.txt 2>/dev/null",
+                "chown root:system /data/system/vpnhide_uids.txt 2>/dev/null",
+                "chcon $SYSTEM_DATA_FILE_CONTEXT /data/system/vpnhide_uids.txt 2>/dev/null || true",
+            ),
+            parts,
+        )
+    }
+
+    @Test
     fun `self target output extracts seeded package list`() {
         val output =
             """
