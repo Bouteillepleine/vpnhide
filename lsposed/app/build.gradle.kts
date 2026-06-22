@@ -9,6 +9,36 @@ plugins {
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.gobley.cargo)
     alias(libs.plugins.gobley.uniffi)
+    alias(libs.plugins.detekt)
+}
+
+// Static analysis that ktlint (style only) can't do: function/file length,
+// cyclomatic/cognitive complexity, dead private members, common bug patterns.
+// The baseline (config/detekt/baseline.xml) freezes pre-existing findings so
+// the gate only fails on NEW smell — regenerate with `./gradlew :app:detektBaseline`.
+detekt {
+    config.setFrom(rootProject.files("config/detekt/detekt.yml"))
+    baseline = rootProject.file("config/detekt/baseline.xml")
+    buildUponDefaultConfig = true
+    parallel = true
+    source.setFrom(files("src/main/kotlin", "src/test/kotlin"))
+}
+
+tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
+    // Codegen output (IfaceLists) and UniFFI bindings aren't hand-written.
+    exclude("**/generated/**")
+    jvmTarget = "17"
+    reports {
+        html.required.set(true)
+        sarif.required.set(false)
+        md.required.set(false)
+        txt.required.set(false)
+    }
+}
+
+tasks.withType<io.gitlab.arturbosch.detekt.DetektCreateBaselineTask>().configureEach {
+    exclude("**/generated/**")
+    jvmTarget = "17"
 }
 
 cargo {

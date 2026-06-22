@@ -1,0 +1,29 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ComplexCondition:DashboardData.kt$freshLoad &amp;&amp; rec?.variantAmbiguous == true &amp;&amp; installedVariant != null &amp;&amp; (installedVariant == rec.recommendedGkiVariant || installedVariant == rec.alternativeGkiVariant)</ID>
+    <ID>ComplexCondition:DashboardData.kt$kmod is ModuleState.Installed &amp;&amp; kmod.active &amp;&amp; zygisk is ModuleState.Installed &amp;&amp; zygisk.active</ID>
+    <ID>ComplexCondition:DashboardData.kt$rec?.preferKmod == true &amp;&amp; recommendedKmi != null &amp;&amp; installedVariant != null &amp;&amp; installedVariant != recommendedKmi &amp;&amp; installedVariant != rec.alternativeGkiVariant</ID>
+    <ID>ComplexCondition:DiagnosticsScreen.kt$magiskVer.isBlank() &amp;&amp; ksuVer.isBlank() &amp;&amp; (exitKsuNext != 0 || ksuNextVer.isBlank())</ID>
+    <ID>ComplexCondition:TargetPickerScaffold.kt$(targetsError != null &amp;&amp; targets == null) || (appListError != null &amp;&amp; cachedApps == null)</ID>
+    <ID>CyclomaticComplexMethod:DashboardData.kt$internal fun classifyKmodProblem( kmod: ModuleState, recommendation: NativeInstallRecommendation?, loadStatus: KmodLoadStatus?, ): KmodProblemKind?</ID>
+    <ID>CyclomaticComplexMethod:DashboardData.kt$internal fun loadDashboardState( cm: ConnectivityManager, context: android.content.Context, selfNeedsRestart: Boolean, rootSnapshot: RootSnapshot, ): DashboardState</ID>
+    <ID>CyclomaticComplexMethod:DiagnosticsScreen.kt$private suspend fun exportDebugZip( cm: ConnectivityManager, context: android.content.Context, selfNeedsRestart: Boolean, ): File?</ID>
+    <ID>LongMethod:DashboardData.kt$fun readLsposedConfig(): LsposedConfig?</ID>
+    <ID>LongMethod:DashboardData.kt$internal fun buildNativeInstallRecommendation( kernelRaw: String, deviceAndroidLabel: String, ): NativeInstallRecommendation?</ID>
+    <ID>LongMethod:DashboardData.kt$internal fun loadDashboardState( cm: ConnectivityManager, context: android.content.Context, selfNeedsRestart: Boolean, rootSnapshot: RootSnapshot, ): DashboardState</ID>
+    <ID>LongMethod:DiagnosticsScreen.kt$private suspend fun exportDebugZip( cm: ConnectivityManager, context: android.content.Context, selfNeedsRestart: Boolean, ): File?</ID>
+    <ID>LongMethod:HookEntry.kt$HookEntry$private fun sanitizeLinkProperties(copy: LinkProperties): Boolean</ID>
+    <ID>LongMethod:RootSnapshotCache.kt$internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): String</ID>
+    <ID>LongMethod:ShellCommandBuilders.kt$internal fun buildEnsureSelfInTargetsCommand(selfPkg: String): String</ID>
+    <ID>LoopWithTooManyJumpStatements:HookEntry.kt$HookEntry$for</ID>
+    <ID>MatchingDeclarationName:NativeChecks.kt$NativeCheckSpec</ID>
+    <ID>MatchingDeclarationName:PortsHidingScreen.kt$PortsEntry : TargetEntry</ID>
+    <ID>MatchingDeclarationName:ProtectionScreen.kt$ProtectionMode</ID>
+    <ID>MatchingDeclarationName:StatusUi.kt$StatusColors</ID>
+    <ID>NestedBlockDepth:DashboardData.kt$internal fun loadDashboardState( cm: ConnectivityManager, context: android.content.Context, selfNeedsRestart: Boolean, rootSnapshot: RootSnapshot, ): DashboardState</ID>
+    <ID>NestedBlockDepth:HookEntry.kt$HookEntry$private fun sanitizeLinkProperties(copy: LinkProperties): Boolean</ID>
+    <ID>SpreadOperator:HookEntry.kt$HookEntry$(*probe.params)</ID>
+  </CurrentIssues>
+</SmellBaseline>
