@@ -6,6 +6,7 @@ activity-compose = "1.13.0"
 core-ktx = "1.18.0"
 gobley = "0.3.7"
 detekt = "1.23.8"
+cpd = "3.5"
 
 [libraries]
 core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx" }
@@ -24,3 +25,4 @@ compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "
 gobley-cargo = { id = "dev.gobley.cargo", version.ref = "gobley" }
 gobley-uniffi = { id = "dev.gobley.uniffi", version.ref = "gobley" }
 detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
+cpd = { id = "de.aaschmid.cpd", version.ref = "cpd" }
