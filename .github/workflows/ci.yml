@@ -11,6 +11,9 @@ permissions:
   contents: read
   packages: read
 
+env:
+  RUFF_VERSION: "0.15.18"
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -47,10 +50,12 @@ jobs:
       - name: ruff format
         uses: astral-sh/ruff-action@v4.0.0
         with:
+          version: ${{ env.RUFF_VERSION }}
           args: format --check
       - name: ruff check
         uses: astral-sh/ruff-action@v4.0.0
         with:
+          version: ${{ env.RUFF_VERSION }}
           args: check
 
       # Cache cargo deps + target dirs for clippy/test. Same key shape as
