@@ -54,6 +54,13 @@
 
     <!-- Dashboard -->
     <string name="dashboard_modules">Модули</string>
+    <string name="dashboard_load_failed_title">Данные обзора недоступны</string>
+    <string name="dashboard_load_failed_message">VPN Hide не смог собрать root-состояние для этого экрана. Проверьте менеджер root, если разрешение было прервано, затем нажмите «Повторить».</string>
+    <string name="dashboard_refresh_failed_message">Обновление не удалось. Показываются предыдущие данные обзора.</string>
+    <string name="self_targets_error_title">Подготовка запуска не удалась</string>
+    <string name="self_targets_error_message">VPN Hide не смог обновить root-файлы целей. Проверьте менеджер root, если разрешение было прервано, затем нажмите «Повторить».</string>
+    <string name="targets_load_failed_title">Данные защиты недоступны</string>
+    <string name="targets_load_failed_message">VPN Hide не смог собрать root-состояние для этой вкладки. Проверьте менеджер root, если разрешение было прервано, затем нажмите «Повторить».</string>
     <string name="dashboard_kmod">Модуль ядра</string>
     <string name="dashboard_zygisk">VPN Hide Zygisk модуль</string>
     <string name="dashboard_lsposed_module">VPN Hide LSPosed-хук</string>

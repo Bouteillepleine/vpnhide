@@ -77,7 +77,10 @@ internal data class CheckResults(
     val all get() = native + java
 }
 
-internal suspend fun isVpnActive(): Boolean = withContext(Dispatchers.IO) { isVpnActiveBlocking() }
+internal suspend fun isVpnActive(): Boolean {
+    val snapshot = RootSnapshotCache.getOrLoad()
+    return isVpnActiveFromSnapshot(snapshot.sections["vpn_ifaces"].orEmpty())
+}
 
 @Composable
 fun DiagnosticsScreen(

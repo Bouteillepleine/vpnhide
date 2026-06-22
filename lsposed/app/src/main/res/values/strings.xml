@@ -85,6 +85,13 @@
 
     <!-- Dashboard -->
     <string name="dashboard_modules">Modules</string>
+    <string name="dashboard_load_failed_title">Dashboard data unavailable</string>
+    <string name="dashboard_load_failed_message">VPN Hide could not collect the root state needed for this screen. Check your root manager if permission was interrupted, then tap Retry.</string>
+    <string name="dashboard_refresh_failed_message">Refresh failed. Showing the previous dashboard data.</string>
+    <string name="self_targets_error_title">Startup preparation failed</string>
+    <string name="self_targets_error_message">VPN Hide could not update its root target files. Check your root manager if permission was interrupted, then tap Retry.</string>
+    <string name="targets_load_failed_title">Protection data unavailable</string>
+    <string name="targets_load_failed_message">VPN Hide could not collect the root state needed for this tab. Check your root manager if permission was interrupted, then tap Retry.</string>
     <string name="dashboard_kmod">Kernel module</string>
     <string name="dashboard_zygisk">VPN Hide Zygisk module</string>
     <string name="dashboard_lsposed_module">VPN Hide LSPosed hook</string>

@@ -1,5 +1,8 @@
 package dev.okhsunrog.vpnhide
 
+internal const val SELF_PM_PACKAGES_BEGIN = "__VPNHIDE_SELF_PM_PACKAGES_BEGIN__"
+internal const val SELF_PM_PACKAGES_END = "__VPNHIDE_SELF_PM_PACKAGES_END__"
+
 internal fun buildPackageUidsExpression(
     packageName: String,
     outputVariable: String,
@@ -24,4 +27,69 @@ internal fun buildUidResolverCommand(
         }
         append("; if [ -n \"\$UIDS\" ]; then echo \"\$UIDS\" > $outputFile 2>/dev/null")
         append("; else echo > $outputFile 2>/dev/null; fi")
+    }
+
+internal fun buildEnsureSelfInTargetsCommand(selfPkg: String): String =
+    buildString {
+        append("SELF_PKG=\"")
+        append(selfPkg)
+        append("\"")
+        append("; ADDED=0")
+        append(
+            """
+            ; ensure_line() {
+              PATH_TO_UPDATE="${'$'}1"
+              REQUIRED_DIR="${'$'}2"
+              MODE="${'$'}3"
+              SYSTEM_FILE="${'$'}4"
+              COUNTS_RESTART="${'$'}5"
+              if [ -n "${'$'}REQUIRED_DIR" ] && [ ! -d "${'$'}REQUIRED_DIR" ]; then
+                return
+              fi
+              EXISTING="${'$'}(cat "${'$'}PATH_TO_UPDATE" 2>/dev/null | sed 's/\r${'$'}//' | awk 'NF && ${'$'}1 !~ /^#/ { print }')"
+              if printf '%s\n' "${'$'}EXISTING" | awk -v p="${'$'}SELF_PKG" '${'$'}0 == p { found=1 } END { exit found ? 0 : 1 }'; then
+                return
+              fi
+              BODY="${'$'}(printf '%s\n%s\n' "${'$'}EXISTING" "${'$'}SELF_PKG" | awk 'NF { print }' | sort -u)"
+              { printf '# Managed by VPN Hide app\n'; printf '%s\n' "${'$'}BODY"; } > "${'$'}PATH_TO_UPDATE"
+              chmod "${'$'}MODE" "${'$'}PATH_TO_UPDATE"
+              if [ "${'$'}SYSTEM_FILE" = 1 ]; then
+                chown root:system "${'$'}PATH_TO_UPDATE"
+                chcon u:object_r:system_data_file:s0 "${'$'}PATH_TO_UPDATE" 2>/dev/null || true
+              fi
+              if [ "${'$'}COUNTS_RESTART" = 1 ]; then
+                ADDED=1
+              fi
+              echo "added:${'$'}PATH_TO_UPDATE"
+            }
+            """.trimIndent().replace("\n", " "),
+        )
+        append("; ensure_line $KMOD_TARGETS /data/adb/vpnhide_kmod 644 0 1")
+        append("; ensure_line $ZYGISK_TARGETS /data/adb/vpnhide_zygisk 644 0 1")
+        append("; if [ -d $ZYGISK_MODULE_DIR ]; then cp $ZYGISK_TARGETS $ZYGISK_MODULE_TARGETS 2>&1 || echo zygisk_cp_failed; fi")
+        append("; mkdir -p /data/adb/vpnhide_lsposed")
+        append("; ensure_line $LSPOSED_TARGETS '' 644 0 1")
+        append("; ensure_line $SS_HIDDEN_PKGS_FILE '' 640 1 0")
+        append("; ALL_PKGS=\"\$(pm list packages -U --user all 2>/dev/null)\"")
+        append("; echo $SELF_PM_PACKAGES_BEGIN")
+        append("; printf '%s\\n' \"\$ALL_PKGS\"")
+        append("; echo $SELF_PM_PACKAGES_END")
+        append("; ")
+        append(buildPackageUidsExpression(selfPkg, "SELF_UIDS"))
+        append("; if [ -n \"\$SELF_UIDS\" ]; then")
+        append(" for U in \$SELF_UIDS; do")
+        append("   case \"\$U\" in ''|*[!0-9]*) continue;; esac")
+        append(" ; if [ -f $PROC_TARGETS ]; then")
+        append("     grep -qx \"\$U\" $PROC_TARGETS 2>/dev/null || echo \"\$U\" >> $PROC_TARGETS")
+        append("   ; fi")
+        append(" ; grep -qx \"\$U\" $SS_UIDS_FILE 2>/dev/null || {")
+        append("     echo \"\$U\" >> $SS_UIDS_FILE")
+        append("   ; chmod 640 $SS_UIDS_FILE")
+        append("   ; chown root:system $SS_UIDS_FILE")
+        append("   ; chcon u:object_r:system_data_file:s0 $SS_UIDS_FILE 2>/dev/null || true")
+        append("   ; }")
+        append(" ; done")
+        append("; fi")
+        append("; echo BOOT_ID=\$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)")
+        append("; echo ADDED=\$ADDED")
     }

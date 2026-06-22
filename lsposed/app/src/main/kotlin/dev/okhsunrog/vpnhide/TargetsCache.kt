@@ -1,14 +1,13 @@
 package dev.okhsunrog.vpnhide
 
 import android.content.Context
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * Per-screen protection state from root-owned files and package
@@ -54,13 +53,16 @@ internal object TargetsCache {
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+
     private var inflight: Job? = null
 
     fun ensureLoaded(
         scope: CoroutineScope,
         context: Context,
     ) {
-        if (_snapshot.value != null || inflight?.isActive == true) return
+        if (_snapshot.value != null || _error.value != null || inflight?.isActive == true) return
         inflight = scope.launch { reload(context.applicationContext) }
     }
 
@@ -69,7 +71,9 @@ internal object TargetsCache {
         context: Context,
     ) {
         inflight?.cancel()
-        inflight = scope.launch { reload(context.applicationContext) }
+        RootSnapshotCache.invalidate()
+        _error.value = null
+        inflight = scope.launch { reload(context.applicationContext, forceRootRefresh = true) }
     }
 
     /** Drop the cached snapshot so the next subscriber triggers a
@@ -78,110 +82,75 @@ internal object TargetsCache {
      */
     fun invalidate() {
         _snapshot.value = null
+        _error.value = null
+        RootSnapshotCache.invalidate()
     }
-
-    // Bundle every read into a single `suExec` call separated by
-    // distinctive banner lines. One root roundtrip beats 8 serial
-    // ones — PM + 7 cats typically take <100ms this way.
-    private const val SENTINEL = "===VPNHIDE-TARGETS-BOUNDARY==="
-    private const val END = "===VPNHIDE-TARGETS-END==="
-
-    private val BATCH_SCRIPT =
-        """
-        echo "$SENTINEL KMOD_MODULE_DIR"
-        [ -d $KMOD_MODULE_DIR ] && echo 1 || echo 0
-        echo "$SENTINEL ZYGISK_MODULE_DIR"
-        [ -d $ZYGISK_MODULE_DIR ] && echo 1 || echo 0
-        echo "$SENTINEL PORTS_MODULE_PROP"
-        cat $PORTS_MODULE_DIR/module.prop 2>/dev/null || true
-        echo "$SENTINEL KMOD_TARGETS"
-        cat $KMOD_TARGETS 2>/dev/null || true
-        echo "$SENTINEL ZYGISK_TARGETS"
-        cat $ZYGISK_TARGETS 2>/dev/null || true
-        echo "$SENTINEL LSPOSED_TARGETS"
-        cat $LSPOSED_TARGETS 2>/dev/null || true
-        echo "$SENTINEL HIDDEN_PKGS"
-        cat $SS_HIDDEN_PKGS_FILE 2>/dev/null || true
-        echo "$SENTINEL OBSERVER_UIDS"
-        cat $SS_OBSERVER_UIDS_FILE 2>/dev/null || true
-        echo "$SENTINEL PORTS_OBSERVERS"
-        cat $PORTS_OBSERVERS_FILE 2>/dev/null || true
-        echo "$SENTINEL PM_LIST"
-        pm list packages -U --user all 2>/dev/null || true
-        echo "$END"
-        """.trimIndent()
 
     private suspend fun reload(
         @Suppress("UNUSED_PARAMETER") appContext: Context,
+        forceRootRefresh: Boolean = false,
     ) {
         _loading.value = true
         try {
-            val (_, out) =
-                withContext(Dispatchers.IO) { suExec(BATCH_SCRIPT) }
-            _snapshot.value = parse(out)
+            StartupTrace.mark("targets_cache_start")
+            val rootSnapshot =
+                if (forceRootRefresh) {
+                    RootSnapshotCache.refresh()
+                } else {
+                    RootSnapshotCache.getOrLoad()
+                }
+            _snapshot.value = parseTargetsSnapshot(rootSnapshot)
+            _error.value = null
+            StartupTrace.mark("targets_cache_done")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            StartupTrace.mark("targets_cache_failed")
+            _error.value = e.message ?: e.javaClass.simpleName
+            VpnHideLog.w("VpnHide-Targets", "targets cache reload failed: ${e.message}", e)
         } finally {
             _loading.value = false
         }
     }
+}
 
-    private fun parse(out: String): TargetsSnapshot {
-        val sections = mutableMapOf<String, String>()
-        var currentKey: String? = null
-        val buf = StringBuilder()
-        for (line in out.lines()) {
-            when {
-                line.startsWith(SENTINEL) -> {
-                    currentKey?.let { sections[it] = buf.toString() }
-                    buf.clear()
-                    currentKey = line.removePrefix("$SENTINEL ").trim()
-                }
+internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
+    val sections = rootSnapshot.sections
 
-                line.startsWith(END) -> {
-                    currentKey?.let { sections[it] = buf.toString() }
-                    currentKey = null
-                }
+    fun nonEmptyLines(raw: String?): Set<String> =
+        raw
+            ?.lines()
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() && !it.startsWith("#") }
+            ?.toSet() ?: emptySet()
 
-                currentKey != null -> {
-                    buf.appendLine(line)
-                }
-            }
+    val portsInstalled = sections["ports_prop"]?.isNotBlank() == true
+    val observerUids = nonEmptyLines(sections["observer_uids"]).mapNotNull { it.toIntOrNull() }.toSet()
+
+    // With `--user all`, multi-profile packages report comma-separated
+    // UIDs: `package:com.android.chrome uid:10187,1010187`. Each UID
+    // becomes its own entry in the reverse map so observer lookups
+    // from any profile resolve back to the same package name.
+    val pmLine = Regex("^package:(\\S+) uid:(\\S+)")
+    val uidToPkg = mutableMapOf<Int, String>()
+    sections["pm_packages"]?.lines()?.forEach { line ->
+        val m = pmLine.find(line) ?: return@forEach
+        val pkg = m.groupValues[1]
+        for (id in m.groupValues[2].split(',')) {
+            id.toIntOrNull()?.let { uidToPkg[it] = pkg }
         }
-
-        fun nonEmptyLines(raw: String?): Set<String> =
-            raw
-                ?.lines()
-                ?.map { it.trim() }
-                ?.filter { it.isNotEmpty() && !it.startsWith("#") }
-                ?.toSet() ?: emptySet()
-
-        val portsInstalled = sections["PORTS_MODULE_PROP"]?.isNotBlank() == true
-        val observerUids = nonEmptyLines(sections["OBSERVER_UIDS"]).mapNotNull { it.toIntOrNull() }.toSet()
-
-        // With `--user all`, multi-profile packages report comma-separated
-        // UIDs: `package:com.android.chrome uid:10187,1010187`. Each UID
-        // becomes its own entry in the reverse map so observer lookups
-        // from any profile resolve back to the same package name.
-        val pmLine = Regex("^package:(\\S+) uid:(\\S+)")
-        val uidToPkg = mutableMapOf<Int, String>()
-        sections["PM_LIST"]?.lines()?.forEach { line ->
-            val m = pmLine.find(line) ?: return@forEach
-            val pkg = m.groupValues[1]
-            for (id in m.groupValues[2].split(',')) {
-                id.toIntOrNull()?.let { uidToPkg[it] = pkg }
-            }
-        }
-
-        return TargetsSnapshot(
-            kmodModuleInstalled = sections["KMOD_MODULE_DIR"]?.trim() == "1",
-            zygiskModuleInstalled = sections["ZYGISK_MODULE_DIR"]?.trim() == "1",
-            portsModuleInstalled = portsInstalled,
-            kmodTargets = nonEmptyLines(sections["KMOD_TARGETS"]),
-            zygiskTargets = nonEmptyLines(sections["ZYGISK_TARGETS"]),
-            lsposedTargets = nonEmptyLines(sections["LSPOSED_TARGETS"]),
-            hiddenPkgs = nonEmptyLines(sections["HIDDEN_PKGS"]),
-            observerUids = observerUids,
-            portsObservers = nonEmptyLines(sections["PORTS_OBSERVERS"]),
-            uidToPkg = uidToPkg,
-        )
     }
+
+    return TargetsSnapshot(
+        kmodModuleInstalled = sections["kmod_module_dir"]?.trim() == "1",
+        zygiskModuleInstalled = sections["zygisk_module_dir"]?.trim() == "1",
+        portsModuleInstalled = portsInstalled,
+        kmodTargets = nonEmptyLines(sections["kmod_targets"]),
+        zygiskTargets = nonEmptyLines(sections["zygisk_targets"]),
+        lsposedTargets = nonEmptyLines(sections["lsposed_targets"]),
+        hiddenPkgs = nonEmptyLines(sections["hidden_pkgs"]),
+        observerUids = observerUids,
+        portsObservers = nonEmptyLines(sections["ports_observers"]),
+        uidToPkg = uidToPkg,
+    )
 }

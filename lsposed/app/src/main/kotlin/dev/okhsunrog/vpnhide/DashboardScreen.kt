@@ -33,6 +33,7 @@ fun DashboardScreen(
     val scope = rememberCoroutineScope()
 
     val state by DashboardCache.state.collectAsState()
+    val loadError by DashboardCache.error.collectAsState()
     val updateInfo by UpdateCheckCache.info.collectAsState()
     var showChangelog by remember { mutableStateOf(false) }
     var changelogData by remember { mutableStateOf<ChangelogData?>(null) }
@@ -71,14 +72,6 @@ fun DashboardScreen(
     ) {
         Spacer(Modifier.height(12.dp))
 
-        val s = state
-        if (s == null) {
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-            return@Column
-        }
-
         // Pinned status palette — shared by the Protection status banners
         // (NeedsRestart) and the Errors / Warnings issue banners below.
         // Theme.colorScheme.{errorContainer,tertiaryContainer} get remixed
@@ -92,6 +85,35 @@ fun DashboardScreen(
         val warningBg = if (darkTheme) Color(0xFFE65100).copy(alpha = 0.2f) else Color(0xFFFFF3E0)
         val warningHeader = if (darkTheme) Color(0xFFFFB74D) else Color(0xFFE65100)
         val onBannerColor = MaterialTheme.colorScheme.onSurface
+
+        val s = state
+        val error = loadError
+        if (error != null) {
+            DashboardLoadErrorCard(
+                title = stringResource(R.string.dashboard_load_failed_title),
+                message =
+                    stringResource(
+                        if (s == null) {
+                            R.string.dashboard_load_failed_message
+                        } else {
+                            R.string.dashboard_refresh_failed_message
+                        },
+                    ),
+                containerColor = errorBg,
+                titleColor = errorHeader,
+                contentColor = onBannerColor,
+                onRetry = { DashboardCache.refresh(scope, context, selfNeedsRestart) },
+            )
+            Spacer(Modifier.height(12.dp))
+            if (s == null) return@Column
+        }
+
+        if (s == null) {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            return@Column
+        }
 
         // Module status cards
         Text(
@@ -600,6 +622,41 @@ private fun StatusBanner(
             color = contentColor,
             modifier = Modifier.padding(12.dp),
         )
+    }
+}
+
+@Composable
+private fun DashboardLoadErrorCard(
+    title: String,
+    message: String,
+    containerColor: Color,
+    titleColor: Color,
+    contentColor: Color,
+    onRetry: () -> Unit,
+) {
+    Card(
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = titleColor,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = contentColor,
+            )
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = onRetry) {
+                Text(stringResource(R.string.vpn_off_retry))
+            }
+        }
     }
 }
 

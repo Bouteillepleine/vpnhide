@@ -87,6 +87,7 @@ fun PortsHidingScreen(
     val cachedApps by AppListCache.apps.collectAsState()
     val userNames by AppListCache.userNames.collectAsState()
     val targets by TargetsCache.snapshot.collectAsState()
+    val targetsError by TargetsCache.error.collectAsState()
 
     var allApps by remember { mutableStateOf<List<PortsEntry>>(emptyList()) }
     var saving by remember { mutableStateOf(false) }
@@ -106,6 +107,14 @@ fun PortsHidingScreen(
 
     LaunchedEffect(Unit) {
         TargetsCache.ensureLoaded(scope, context)
+    }
+
+    if (targetsError != null && targets == null) {
+        TargetsLoadErrorCard(
+            onRetry = { TargetsCache.refresh(scope, context) },
+            modifier = modifier,
+        )
+        return
     }
 
     // While `dirty` is true the user has unsaved checkbox edits — don't

@@ -2,6 +2,7 @@ package dev.okhsunrog.vpnhide
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -38,28 +39,32 @@ class MainActivity : ComponentActivity() {
     private val splashReady = AtomicBoolean(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        StartupTrace.mark("activity_on_create")
         installSplashScreen().setKeepOnScreenCondition { !splashReady.get() }
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         // Load the user's debug-logging preference before anything else
         // runs so the first suExec + Dashboard reload honor it.
         VpnHideLog.init(applicationContext)
-        // Re-propagate the persisted flag to the on-disk sinks as a
-        // safety-net. Most reinstall scenarios are now covered by:
-        //   - the canonical /data/adb/vpnhide_zygisk/debug_logging file
-        //     surviving module reinstall (lives outside /data/adb/modules/),
-        //   - kmod's service.sh re-seeding /proc/vpnhide_debug at boot,
-        //   - zygisk's service.sh copying the canonical debug_logging
-        //     into the module dir at boot.
-        // The remaining gap is "user reinstalled a native module mid-
-        // session and didn't reboot before opening the app" — service.sh
-        // hasn't re-seeded the module-dir copy yet, so the next fork of
-        // a target app would default to OFF without this re-write.
-        // Cheap — one `su` roundtrip on a background dispatcher.
-        lifecycleScope.launch(Dispatchers.IO) {
-            applyDebugLoggingRuntime(VpnHideLog.enabled)
+        setContent {
+            VpnHideApp(
+                onDashboardReady = {
+                    if (splashReady.compareAndSet(false, true)) {
+                        StartupTrace.dashboardReady()
+                        // Re-propagate the persisted flag to the on-disk sinks as a
+                        // safety-net, but keep it off the cold-start critical path.
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            applyDebugLoggingRuntime(VpnHideLog.enabled)
+                        }
+                    }
+                },
+                onRootDeniedReady = {
+                    if (splashReady.compareAndSet(false, true)) {
+                        StartupTrace.rootDeniedReady()
+                    }
+                },
+            )
         }
-        setContent { VpnHideApp(onReady = { splashReady.set(true) }) }
     }
 }
 
@@ -76,11 +81,14 @@ private fun checkRootAccess(): Boolean {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VpnHideApp(onReady: () -> Unit = {}) {
+fun VpnHideApp(
+    onDashboardReady: () -> Unit = {},
+    onRootDeniedReady: () -> Unit = {},
+) {
     val darkTheme = isSystemInDarkTheme()
+    val context = LocalContext.current
     val colorScheme =
         if (android.os.Build.VERSION.SDK_INT >= 31) {
-            val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         } else {
             if (darkTheme) darkColorScheme() else lightColorScheme()
@@ -94,22 +102,22 @@ fun VpnHideApp(onReady: () -> Unit = {}) {
                 withContext(Dispatchers.IO) {
                     if (checkRootAccess()) RootState.Granted else RootState.Denied
                 }
+            StartupTrace.mark("root_check_done")
         }
 
         when (rootState) {
             // splash holds until root check completes
             null -> {
-                Unit
             }
 
             RootState.Denied -> {
                 // Drop splash — RootDeniedScreen has no async prerequisites.
-                LaunchedEffect(Unit) { onReady() }
+                LaunchedEffect(Unit) { onRootDeniedReady() }
                 RootDeniedScreen()
             }
 
             RootState.Granted -> {
-                MainScreen(onReady = onReady)
+                MainScreen(onReady = onDashboardReady)
             }
         }
     }
@@ -129,6 +137,8 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var currentTab by remember { mutableStateOf(Tab.Dashboard) }
     var selfNeedsRestart by remember { mutableStateOf<Boolean?>(null) }
+    var selfTargetError by remember { mutableStateOf<String?>(null) }
+    var selfTargetAttempt by remember { mutableIntStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
     var searchActive by remember { mutableStateOf(false) }
     var showSystem by remember { mutableStateOf(false) }
@@ -138,42 +148,71 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     val targetsLoading by TargetsCache.loading.collectAsState()
     val dashboardLoading by DashboardCache.loading.collectAsState()
     val dashboardState by DashboardCache.state.collectAsState()
+    val dashboardError by DashboardCache.error.collectAsState()
+    val rootSnapshot by RootSnapshotCache.snapshot.collectAsState()
     val refreshRestart = selfNeedsRestart ?: false
 
-    LaunchedEffect(Unit) {
-        selfNeedsRestart =
+    LaunchedEffect(selfTargetAttempt) {
+        selfNeedsRestart = null
+        selfTargetError = null
+        StartupTrace.mark("self_targets_start")
+        val preparation =
             withContext(Dispatchers.IO) {
-                cleanupStaleZygiskStatus(context)
-                ensureSelfInTargets(context.packageName)
+                val preparation = ensureSelfInTargets(context.packageName)
+                if (preparation.rootAvailable) {
+                    RootSnapshotCache.seedPmPackages(preparation.pmPackages)
+                    cleanupStaleZygiskStatus(context, preparation.currentBootId)
+                }
+                preparation
             }
+        StartupTrace.mark("self_targets_done")
+        if (preparation.rootAvailable) {
+            selfNeedsRestart = preparation.selfNeedsRestart
+        } else {
+            StartupTrace.mark("self_targets_failed")
+            selfTargetError = preparation.error ?: "root preparation failed"
+        }
     }
 
-    // Kick off both Protection caches as early as possible so tab
-    // switches into Protection render instantly instead of paying the
-    // per-screen pm + icon + root-shell cost each time.
-    LaunchedEffect(Unit) {
-        AppListCache.ensureLoaded(scope, context)
-        TargetsCache.ensureLoaded(scope, context)
-    }
-
-    // Pre-warm Dashboard (needed for first frame) and Diagnostics (needed
-    // when user switches to Diagnostics tab) as soon as selfNeedsRestart
-    // is resolved. Dashboard prewarm here — not in DashboardScreen's own
-    // LaunchedEffect — so it runs while the splash is still held, not
-    // only after MainScreen has rendered.
+    // Start the app-scoped caches as soon as the self-target preparation
+    // is resolved. Keep that preparation first: it mutates the target files
+    // and determines whether this app process needs a restart, so Dashboard
+    // must not derive protection state from a stale answer. Protection still
+    // prewarms during splash, but without racing the self-target root shell.
     LaunchedEffect(selfNeedsRestart) {
         val r = selfNeedsRestart ?: return@LaunchedEffect
+        if (selfTargetError != null) return@LaunchedEffect
+        AppListCache.ensureLoaded(scope, context)
         DashboardCache.ensureLoaded(scope, context, r)
         if (!r) DiagnosticsCache.run(scope, context)
+    }
+
+    // Protection depends on the same root snapshot as Dashboard. Let
+    // Dashboard own the initial root snapshot so a transient shell timeout
+    // cannot make startup immediately do a second expensive retry. As soon
+    // as that shared snapshot exists, TargetsCache parses it from memory and
+    // Protection is still prewarmed before a normal tab switch.
+    LaunchedEffect(selfNeedsRestart, rootSnapshot) {
+        if (selfNeedsRestart != null && rootSnapshot != null) {
+            TargetsCache.ensureLoaded(scope, context)
+        }
     }
 
     // Hold the splash screen until the first Dashboard frame can render
     // with real content. Without this, the user sees splash → brief
     // selfNeedsRestart-null spinner → brief Dashboard state-null spinner
     // → content, with each spinner swap being visible flicker.
-    val uiReady = selfNeedsRestart != null && dashboardState != null
+    val uiReady =
+        selfTargetError != null ||
+            (selfNeedsRestart != null && (dashboardState != null || dashboardError != null))
+    var fullyDrawnReady by remember { mutableStateOf(false) }
+    ReportDrawnWhen { fullyDrawnReady }
     LaunchedEffect(uiReady) {
-        if (uiReady) onReady()
+        if (uiReady) {
+            withFrameNanos { }
+            fullyDrawnReady = true
+            onReady()
+        }
     }
 
     // Kick the update check once (silently) on first launch, and again
@@ -372,7 +411,13 @@ private fun MainScreen(onReady: () -> Unit = {}) {
         },
     ) { innerPadding ->
         val restart = selfNeedsRestart
-        if (restart == null) {
+        val preparationError = selfTargetError
+        if (preparationError != null) {
+            RootPreparationErrorScreen(
+                modifier = Modifier.padding(innerPadding),
+                onRetry = { selfTargetAttempt += 1 },
+            )
+        } else if (restart == null) {
             Box(
                 modifier = Modifier.fillMaxSize().padding(innerPadding),
                 contentAlignment = Alignment.Center,
@@ -402,6 +447,50 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                         selfNeedsRestart = restart,
                         modifier = Modifier.padding(innerPadding),
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RootPreparationErrorScreen(
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier =
+            modifier
+                .fillMaxSize()
+                .padding(24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Card(
+            colors =
+                CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                ),
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = stringResource(R.string.self_targets_error_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = stringResource(R.string.self_targets_error_message),
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = onRetry) {
+                    Text(stringResource(R.string.vpn_off_retry))
                 }
             }
         }

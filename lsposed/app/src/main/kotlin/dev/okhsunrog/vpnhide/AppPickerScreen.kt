@@ -70,6 +70,7 @@ fun AppPickerScreen(
     val cachedApps by AppListCache.apps.collectAsState()
     val userNames by AppListCache.userNames.collectAsState()
     val targets by TargetsCache.snapshot.collectAsState()
+    val targetsError by TargetsCache.error.collectAsState()
 
     var allApps by remember { mutableStateOf<List<AppEntry>>(emptyList()) }
     var saving by remember { mutableStateOf(false) }
@@ -89,6 +90,14 @@ fun AppPickerScreen(
 
     LaunchedEffect(Unit) {
         TargetsCache.ensureLoaded(scope, context)
+    }
+
+    if (targetsError != null && targets == null) {
+        TargetsLoadErrorCard(
+            onRetry = { TargetsCache.refresh(scope, context) },
+            modifier = modifier,
+        )
+        return
     }
 
     val installed =

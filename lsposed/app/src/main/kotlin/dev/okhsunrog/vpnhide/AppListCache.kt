@@ -105,6 +105,7 @@ internal object AppListCache {
     private suspend fun reload(appContext: Context) {
         _loading.value = true
         try {
+            StartupTrace.mark("app_list_cache_start")
             val loaded =
                 withContext(Dispatchers.IO) {
                     val pm = appContext.packageManager
@@ -159,6 +160,7 @@ internal object AppListCache {
 
             _apps.value = loaded
             _refreshCounter.value = _refreshCounter.value + 1
+            StartupTrace.mark("app_list_cache_done")
         } finally {
             _loading.value = false
         }

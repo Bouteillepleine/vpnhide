@@ -54,6 +54,8 @@ internal fun setDebugLoggingEnabled(
         .putBoolean(KEY_DEBUG_LOGGING, enabled)
         .apply()
     applyDebugLoggingRuntime(enabled)
+    RootSnapshotCache.invalidate()
+    DashboardCache.invalidate()
 }
 
 /**
