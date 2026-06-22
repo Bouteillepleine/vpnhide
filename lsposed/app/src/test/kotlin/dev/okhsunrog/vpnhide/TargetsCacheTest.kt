@@ -10,7 +10,6 @@ class TargetsCacheTest {
     fun `targets snapshot parses module flags target files and observer names`() {
         val rootSnapshot =
             RootSnapshot(
-                generation = 1,
                 sections =
                     mapOf(
                         "kmod_module_dir" to "1",

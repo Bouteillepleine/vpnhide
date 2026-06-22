@@ -39,6 +39,7 @@ class Sample:
         return any(
             event in self.events
             for event in (
+                "self_targets_failed",
                 "root_snapshot_failed",
                 "targets_cache_failed",
                 "dashboard_state_failed",
@@ -146,6 +147,7 @@ def main() -> int:
         "activity_on_create",
         "self_targets_start",
         "self_targets_done",
+        "self_targets_failed",
         "root_snapshot_start",
         "root_snapshot_done",
         "root_snapshot_failed",

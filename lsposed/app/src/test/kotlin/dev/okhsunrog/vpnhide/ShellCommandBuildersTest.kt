@@ -69,7 +69,28 @@ class ShellCommandBuildersTest {
         assertTrue(cmd.contains("ensure_line $LSPOSED_TARGETS"))
         assertTrue(cmd.contains("ensure_line $SS_HIDDEN_PKGS_FILE"))
         assertTrue(cmd.contains("pm list packages -U --user all"))
+        assertTrue(cmd.contains(SELF_PM_PACKAGES_BEGIN))
+        assertTrue(cmd.contains(SELF_PM_PACKAGES_END))
         assertTrue(cmd.contains("echo ADDED=\$ADDED"))
+    }
+
+    @Test
+    fun `self target output extracts seeded package list`() {
+        val output =
+            """
+            added:/data/adb/vpnhide_kmod/targets.txt
+            $SELF_PM_PACKAGES_BEGIN
+            package:dev.okhsunrog.vpnhide uid:10123,1010123
+            package:com.example.app uid:10234
+            $SELF_PM_PACKAGES_END
+            BOOT_ID=boot
+            ADDED=1
+            """.trimIndent()
+
+        assertEquals(
+            "package:dev.okhsunrog.vpnhide uid:10123,1010123\npackage:com.example.app uid:10234",
+            extractSelfTargetPmPackages(output),
+        )
     }
 
     private fun runPackageUidExpression(

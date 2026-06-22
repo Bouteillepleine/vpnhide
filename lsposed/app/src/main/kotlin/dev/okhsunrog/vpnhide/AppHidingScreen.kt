@@ -90,6 +90,7 @@ fun AppHidingScreen(
     val cachedApps by AppListCache.apps.collectAsState()
     val userNames by AppListCache.userNames.collectAsState()
     val targets by TargetsCache.snapshot.collectAsState()
+    val targetsError by TargetsCache.error.collectAsState()
 
     var allApps by remember { mutableStateOf<List<HidingEntry>>(emptyList()) }
     var saving by remember { mutableStateOf(false) }
@@ -109,6 +110,14 @@ fun AppHidingScreen(
 
     LaunchedEffect(Unit) {
         TargetsCache.ensureLoaded(scope, context)
+    }
+
+    if (targetsError != null && targets == null) {
+        TargetsLoadErrorCard(
+            onRetry = { TargetsCache.refresh(scope, context) },
+            modifier = modifier,
+        )
+        return
     }
 
     // Packages with both roles crash on startup: the app queries its own

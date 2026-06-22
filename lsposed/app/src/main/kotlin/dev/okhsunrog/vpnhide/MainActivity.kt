@@ -137,6 +137,8 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var currentTab by remember { mutableStateOf(Tab.Dashboard) }
     var selfNeedsRestart by remember { mutableStateOf<Boolean?>(null) }
+    var selfTargetError by remember { mutableStateOf<String?>(null) }
+    var selfTargetAttempt by remember { mutableIntStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
     var searchActive by remember { mutableStateOf(false) }
     var showSystem by remember { mutableStateOf(false) }
@@ -150,15 +152,26 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     val rootSnapshot by RootSnapshotCache.snapshot.collectAsState()
     val refreshRestart = selfNeedsRestart ?: false
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(selfTargetAttempt) {
+        selfNeedsRestart = null
+        selfTargetError = null
         StartupTrace.mark("self_targets_start")
-        selfNeedsRestart =
+        val preparation =
             withContext(Dispatchers.IO) {
                 val preparation = ensureSelfInTargets(context.packageName)
-                cleanupStaleZygiskStatus(context, preparation.currentBootId)
-                preparation.selfNeedsRestart
+                if (preparation.rootAvailable) {
+                    RootSnapshotCache.seedPmPackages(preparation.pmPackages)
+                    cleanupStaleZygiskStatus(context, preparation.currentBootId)
+                }
+                preparation
             }
         StartupTrace.mark("self_targets_done")
+        if (preparation.rootAvailable) {
+            selfNeedsRestart = preparation.selfNeedsRestart
+        } else {
+            StartupTrace.mark("self_targets_failed")
+            selfTargetError = preparation.error ?: "root preparation failed"
+        }
     }
 
     // Start the app-scoped caches as soon as the self-target preparation
@@ -168,6 +181,7 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     // prewarms during splash, but without racing the self-target root shell.
     LaunchedEffect(selfNeedsRestart) {
         val r = selfNeedsRestart ?: return@LaunchedEffect
+        if (selfTargetError != null) return@LaunchedEffect
         AppListCache.ensureLoaded(scope, context)
         DashboardCache.ensureLoaded(scope, context, r)
         if (!r) DiagnosticsCache.run(scope, context)
@@ -188,7 +202,9 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     // with real content. Without this, the user sees splash → brief
     // selfNeedsRestart-null spinner → brief Dashboard state-null spinner
     // → content, with each spinner swap being visible flicker.
-    val uiReady = selfNeedsRestart != null && (dashboardState != null || dashboardError != null)
+    val uiReady =
+        selfTargetError != null ||
+            (selfNeedsRestart != null && (dashboardState != null || dashboardError != null))
     var fullyDrawnReady by remember { mutableStateOf(false) }
     ReportDrawnWhen { fullyDrawnReady }
     LaunchedEffect(uiReady) {
@@ -395,7 +411,13 @@ private fun MainScreen(onReady: () -> Unit = {}) {
         },
     ) { innerPadding ->
         val restart = selfNeedsRestart
-        if (restart == null) {
+        val preparationError = selfTargetError
+        if (preparationError != null) {
+            RootPreparationErrorScreen(
+                modifier = Modifier.padding(innerPadding),
+                onRetry = { selfTargetAttempt += 1 },
+            )
+        } else if (restart == null) {
             Box(
                 modifier = Modifier.fillMaxSize().padding(innerPadding),
                 contentAlignment = Alignment.Center,
@@ -425,6 +447,50 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                         selfNeedsRestart = restart,
                         modifier = Modifier.padding(innerPadding),
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RootPreparationErrorScreen(
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier =
+            modifier
+                .fillMaxSize()
+                .padding(24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Card(
+            colors =
+                CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                ),
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = stringResource(R.string.self_targets_error_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = stringResource(R.string.self_targets_error_message),
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = onRetry) {
+                    Text(stringResource(R.string.vpn_off_retry))
                 }
             }
         }

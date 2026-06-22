@@ -1,5 +1,8 @@
 package dev.okhsunrog.vpnhide
 
+internal const val SELF_PM_PACKAGES_BEGIN = "__VPNHIDE_SELF_PM_PACKAGES_BEGIN__"
+internal const val SELF_PM_PACKAGES_END = "__VPNHIDE_SELF_PM_PACKAGES_END__"
+
 internal fun buildPackageUidsExpression(
     packageName: String,
     outputVariable: String,
@@ -68,6 +71,9 @@ internal fun buildEnsureSelfInTargetsCommand(selfPkg: String): String =
         append("; ensure_line $LSPOSED_TARGETS '' 644 0 1")
         append("; ensure_line $SS_HIDDEN_PKGS_FILE '' 640 1 0")
         append("; ALL_PKGS=\"\$(pm list packages -U --user all 2>/dev/null)\"")
+        append("; echo $SELF_PM_PACKAGES_BEGIN")
+        append("; printf '%s\\n' \"\$ALL_PKGS\"")
+        append("; echo $SELF_PM_PACKAGES_END")
         append("; ")
         append(buildPackageUidsExpression(selfPkg, "SELF_UIDS"))
         append("; if [ -n \"\$SELF_UIDS\" ]; then")

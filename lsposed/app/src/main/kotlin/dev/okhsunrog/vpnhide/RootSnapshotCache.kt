@@ -9,7 +9,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 internal data class RootSnapshot(
-    val generation: Long,
     val sections: Map<String, String>,
 )
 
@@ -51,8 +50,9 @@ internal val REQUIRED_ROOT_SNAPSHOT_SECTIONS =
 
 /**
  * Single in-process source for root-owned/system state. Dashboard and
- * Protection derive different UI models from the same generation so their
- * counts/statuses cannot drift because two independent shell snapshots raced.
+ * Protection derive different UI models from the same cached snapshot, so
+ * their counts/statuses cannot drift because two independent shell snapshots
+ * raced.
  */
 internal object RootSnapshotCache {
     private val _snapshot = MutableStateFlow<RootSnapshot?>(null)
@@ -62,7 +62,7 @@ internal object RootSnapshotCache {
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
     private val mutex = Mutex()
-    private var nextGeneration = 1L
+    private var preloadedPmPackages: String? = null
 
     suspend fun getOrLoad(): RootSnapshot =
         withContext(Dispatchers.IO) {
@@ -75,21 +75,28 @@ internal object RootSnapshotCache {
     suspend fun refresh(): RootSnapshot =
         withContext(Dispatchers.IO) {
             mutex.withLock {
-                _snapshot.value = null
+                preloadedPmPackages = null
                 loadLocked()
             }
         }
 
     fun invalidate() {
         _snapshot.value = null
+        preloadedPmPackages = null
+    }
+
+    fun seedPmPackages(pmPackages: String?) {
+        preloadedPmPackages = pmPackages?.trimEnd()?.takeIf { it.isNotBlank() }
     }
 
     private fun loadLocked(): RootSnapshot {
         _loading.value = true
         return try {
             StartupTrace.mark("root_snapshot_start")
-            val sections = loadRootShellSnapshot()
-            val snapshot = RootSnapshot(nextGeneration++, sections)
+            val pmPackages = preloadedPmPackages
+            preloadedPmPackages = null
+            val sections = loadRootShellSnapshot(pmPackagesOverride = pmPackages)
+            val snapshot = RootSnapshot(sections)
             _snapshot.value = snapshot
             StartupTrace.mark("root_snapshot_done")
             snapshot
@@ -102,12 +109,19 @@ internal object RootSnapshotCache {
     }
 }
 
-private fun loadRootShellSnapshot(): Map<String, String> {
-    val (exitCode, raw) = suExec(buildRootShellSnapshotCommand(), timeoutSec = ROOT_SNAPSHOT_TIMEOUT_SEC)
+private fun loadRootShellSnapshot(pmPackagesOverride: String?): Map<String, String> {
+    val (exitCode, raw) =
+        suExec(
+            buildRootShellSnapshotCommand(includePmPackages = pmPackagesOverride == null),
+            timeoutSec = ROOT_SNAPSHOT_TIMEOUT_SEC,
+        )
     if (exitCode != 0) {
         throw RootSnapshotException("root snapshot command failed with exit=$exitCode")
     }
-    val sections = parseRootShellSnapshot(raw)
+    val sections = parseRootShellSnapshot(raw).toMutableMap()
+    if (pmPackagesOverride != null) {
+        sections["pm_packages"] = pmPackagesOverride
+    }
     validateRootSnapshotSections(sections)
     return sections
 }
@@ -119,7 +133,7 @@ internal fun validateRootSnapshotSections(sections: Map<String, String>) {
     }
 }
 
-internal fun buildRootShellSnapshotCommand(): String =
+internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): String =
     """
     emit_cmd() {
       NAME="${'$'}1"
@@ -204,11 +218,7 @@ internal fun buildRootShellSnapshotCommand(): String =
       emit_cmd getenforce getenforce
       phase_end
     }
-    phase_pm_packages() {
-      phase_start pm_packages
-      emit_cmd pm_packages pm list packages -U --user all
-      phase_end
-    }
+    __VPNHIDE_PM_PACKAGES_FUNCTION__
     phase_proc_exists() {
       phase_start shell_probe_proc_exists
       emit_eval proc_exists '[ -f $PROC_TARGETS ] && echo 1 || echo 0'
@@ -221,7 +231,7 @@ internal fun buildRootShellSnapshotCommand(): String =
     }
     phase_lsposed_framework() {
       phase_start shell_probe_lsposed_framework
-      emit_eval lsposed_framework 'FOUND=0; for id in zygisk_vector zygisk_lsposed lsposed; do for base in /data/adb/modules /data/adb/modules_update; do dir="${'$'}base/${'$'}id"; if [ -f "${'$'}dir/module.prop" ]; then echo installed=1; if [ -f "${'$'}dir/disable" ]; then echo disabled=1; else echo disabled=0; fi; FOUND=1; break 2; fi; done; done; [ "${'$'}FOUND" = 1 ] || echo installed=0'
+      emit_eval lsposed_framework 'FOUND=0; for id in zygisk_vector zygisk_lsposed lsposed; do for base in /data/adb/modules /data/adb/modules_update; do dir="${'$'}base/${'$'}id"; if [ -f "${'$'}dir/module.prop" ]; then echo installed=1; if [ -f "${'$'}dir/disable" ]; then echo disabled=1; else echo disabled=0; fi; FOUND=1; break 2; fi; done; done; [ "${'$'}FOUND" = 1 ] || echo installed=0; echo probe_ok=1'
       phase_end
     }
     phase_vpn_ifaces() {
@@ -234,7 +244,7 @@ internal fun buildRootShellSnapshotCommand(): String =
       phase_target_files
       phase_kmod_status_files
       phase_runtime_status_files
-      phase_pm_packages
+      __VPNHIDE_PM_PACKAGES_PHASE__
       phase_proc_exists
       phase_ports_chain
       phase_lsposed_framework
@@ -242,6 +252,23 @@ internal fun buildRootShellSnapshotCommand(): String =
     }
     run_all_phases_sequential
     """.trimIndent()
+        .replace(
+            "__VPNHIDE_PM_PACKAGES_FUNCTION__",
+            if (includePmPackages) {
+                """
+                phase_pm_packages() {
+                  phase_start pm_packages
+                  emit_cmd pm_packages pm list packages -U --user all
+                  phase_end
+                }
+                """.trimIndent()
+            } else {
+                ""
+            },
+        ).replace(
+            "__VPNHIDE_PM_PACKAGES_PHASE__",
+            if (includePmPackages) "phase_pm_packages" else ":",
+        )
 
 internal fun parseRootShellSnapshot(
     raw: String,

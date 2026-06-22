@@ -53,13 +53,16 @@ internal object TargetsCache {
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+
     private var inflight: Job? = null
 
     fun ensureLoaded(
         scope: CoroutineScope,
         context: Context,
     ) {
-        if (_snapshot.value != null || inflight?.isActive == true) return
+        if (_snapshot.value != null || _error.value != null || inflight?.isActive == true) return
         inflight = scope.launch { reload(context.applicationContext) }
     }
 
@@ -69,6 +72,7 @@ internal object TargetsCache {
     ) {
         inflight?.cancel()
         RootSnapshotCache.invalidate()
+        _error.value = null
         inflight = scope.launch { reload(context.applicationContext, forceRootRefresh = true) }
     }
 
@@ -78,6 +82,7 @@ internal object TargetsCache {
      */
     fun invalidate() {
         _snapshot.value = null
+        _error.value = null
         RootSnapshotCache.invalidate()
     }
 
@@ -95,11 +100,13 @@ internal object TargetsCache {
                     RootSnapshotCache.getOrLoad()
                 }
             _snapshot.value = parseTargetsSnapshot(rootSnapshot)
+            _error.value = null
             StartupTrace.mark("targets_cache_done")
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             StartupTrace.mark("targets_cache_failed")
+            _error.value = e.message ?: e.javaClass.simpleName
             VpnHideLog.w("VpnHide-Targets", "targets cache reload failed: ${e.message}", e)
         } finally {
             _loading.value = false

@@ -32,7 +32,7 @@ internal const val ZYGISK_STATUS_FILE_NAME = "vpnhide_zygisk_active"
  *  in milliseconds; this only fires if the su binary is genuinely stuck
  *  (e.g. waiting on a GUI prompt that the user dismissed). */
 internal const val SU_DEFAULT_TIMEOUT_SEC: Long = 10
-private const val SELF_TARGETS_TIMEOUT_SEC: Long = 4
+private const val SELF_TARGETS_TIMEOUT_SEC: Long = SU_DEFAULT_TIMEOUT_SEC
 
 /**
  * Returns exit code and stdout. Exit code -1 means the su binary
@@ -119,21 +119,7 @@ internal fun parseVpnIfaceStates(raw: String): List<Pair<String, String>> =
         }.filter { (name, _) -> IfaceLists.isVpnIface(name) }
         .toList()
 
-/**
- * Single source of truth for "is a VPN currently up?". Both the dashboard
- * (sync, off the main thread already) and the diagnostics screen (suspend,
- * via `withContext(Dispatchers.IO)`) call this so the answer doesn't drift
- * — a previous version of the dashboard hard-coded a prefix list and missed
- * names the codegen-driven `IfaceLists.isVpnIface` catches (e.g. `if<N>`
- * from issue #86, `MyVPN`, `wg-client`).
- */
-internal fun isVpnActiveBlocking(): Boolean {
-    val (exitCode, output) =
-        suExec(
-            "grep -H . /sys/class/net/*/operstate 2>/dev/null",
-        )
-    if (exitCode != 0) return false
-    val vpnIfaces = parseVpnIfaceStates(output)
+internal fun isVpnActiveFromStates(vpnIfaces: List<Pair<String, String>>): Boolean {
     if (vpnIfaces.isEmpty()) {
         VpnHideLog.d(TAG, "isVpnActive: no VPN interfaces found")
         return false
@@ -145,10 +131,28 @@ internal fun isVpnActiveBlocking(): Boolean {
     }
 }
 
+internal fun isVpnActiveFromSnapshot(raw: String): Boolean = isVpnActiveFromStates(parseVpnIfaceStates(raw))
+
+/**
+ * Single source of truth for the live shell probe. Startup paths should prefer
+ * [isVpnActiveFromSnapshot] over this function when a root snapshot already
+ * exists, so Dashboard and Diagnostics don't drift during one launch.
+ */
+internal fun isVpnActiveBlocking(): Boolean {
+    val (exitCode, output) =
+        suExec(
+            "grep -H . /sys/class/net/*/operstate 2>/dev/null",
+        )
+    if (exitCode != 0) return false
+    return isVpnActiveFromSnapshot(output)
+}
+
 internal data class SelfTargetPreparation(
     val rootAvailable: Boolean,
     val selfNeedsRestart: Boolean,
     val currentBootId: String?,
+    val pmPackages: String? = null,
+    val error: String? = null,
 )
 
 internal fun cleanupStaleZygiskStatus(
@@ -207,9 +211,15 @@ internal fun ensureSelfInTargets(
     val (exitCode, out) = suExec(buildEnsureSelfInTargetsCommand(selfPkg), timeoutSec = timeoutSec)
     if (exitCode != 0) {
         VpnHideLog.w(TAG, "ensureSelfInTargets: batch failed (exit=$exitCode): ${out.trim()}")
-        return SelfTargetPreparation(rootAvailable = false, selfNeedsRestart = false, currentBootId = null)
+        return SelfTargetPreparation(
+            rootAvailable = false,
+            selfNeedsRestart = false,
+            currentBootId = null,
+            error = "exit=$exitCode",
+        )
     }
     val added = out.lineSequence().any { it.trim() == "ADDED=1" }
+    val pmPackages = extractSelfTargetPmPackages(out)
     val currentBootId =
         out
             .lineSequence()
@@ -222,5 +232,23 @@ internal fun ensureSelfInTargets(
         .filter { it.startsWith("added:") || it == "zygisk_cp_failed" }
         .forEach { VpnHideLog.i(TAG, "ensureSelfInTargets: $it") }
     VpnHideLog.d(TAG, "ensureSelfInTargets: done, added=$added")
-    return SelfTargetPreparation(rootAvailable = true, selfNeedsRestart = added, currentBootId = currentBootId)
+    return SelfTargetPreparation(
+        rootAvailable = true,
+        selfNeedsRestart = added,
+        currentBootId = currentBootId,
+        pmPackages = pmPackages,
+    )
+}
+
+internal fun extractSelfTargetPmPackages(output: String): String? {
+    val lines = mutableListOf<String>()
+    var inSection = false
+    output.lineSequence().forEach { line ->
+        when (line.trim()) {
+            SELF_PM_PACKAGES_BEGIN -> inSection = true
+            SELF_PM_PACKAGES_END -> inSection = false
+            else -> if (inSection) lines += line
+        }
+    }
+    return lines.joinToString("\n").trimEnd().takeIf { it.isNotBlank() }
 }

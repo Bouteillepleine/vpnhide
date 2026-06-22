@@ -619,7 +619,18 @@ internal fun loadDashboardState(
     fun detectLsposedFramework(): LsposedFramework {
         val out = shellSnapshot["lsposed_framework"].orEmpty()
         val props = parseProps(out)
-        val installed = props["installed"] == "1"
+        val probeOk = props["probe_ok"] == "1"
+        val installedValue = props["installed"]
+        val disabledValue = props["disabled"]
+        val malformed =
+            !probeOk ||
+                installedValue == null ||
+                (installedValue == "1" && disabledValue == null)
+        if (malformed) {
+            VpnHideLog.w(TAG, "lsposed framework probe returned malformed output: $out")
+            return LsposedFramework.NotInstalled
+        }
+        val installed = installedValue == "1"
         val disabled = props["disabled"] == "1"
         val framework =
             if (installed) {
@@ -629,19 +640,6 @@ internal fun loadDashboardState(
             }
         VpnHideLog.i(TAG, "lsposed framework: $framework (raw=$out)")
         return framework
-    }
-
-    fun isVpnActiveFromSnapshot(raw: String): Boolean {
-        val vpnIfaces = parseVpnIfaceStates(raw)
-        if (vpnIfaces.isEmpty()) {
-            VpnHideLog.d(TAG, "isVpnActive: no VPN interfaces found")
-            return false
-        }
-        return vpnIfaces.any { (iface, state) ->
-            val up = state == "unknown" || state == "up"
-            VpnHideLog.d(TAG, "isVpnActive: $iface operstate=$state up=$up")
-            up
-        }
     }
 
     // kmod

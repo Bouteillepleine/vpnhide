@@ -71,12 +71,23 @@ class RootSnapshotCacheTest {
         assertTrue(command.contains("EPOCHREALTIME"))
         assertTrue(command.contains("/proc/uptime"))
         assertTrue(command.contains("cat \"${'$'}PATH_TO_READ\""))
+        assertTrue(command.contains("pm list packages -U --user all"))
         assertTrue(command.contains("grep -H . /sys/class/net/*/operstate"))
+        assertTrue(command.contains("probe_ok=1"))
         assertFalse(command.contains("while IFS= read"))
         assertFalse(command.contains("base64"))
         assertFalse(command.contains("date +%s%3N"))
         assertFalse(command.contains("exit 0"))
         assertFalse(command.contains("run_phase"))
         assertFalse(command.contains("TMP_DIR"))
+    }
+
+    @Test
+    fun `snapshot command can skip package enumeration when startup seeded it`() {
+        val command = buildRootShellSnapshotCommand(includePmPackages = false)
+
+        assertFalse(command.contains("pm list packages -U --user all"))
+        assertTrue(command.contains("phase_target_files"))
+        assertTrue(command.contains("phase_vpn_ifaces"))
     }
 }
