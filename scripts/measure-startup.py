@@ -47,7 +47,9 @@ class Sample:
         )
 
 
-def adb(serial: str | None, *args: str, check: bool = True, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+def adb(
+    serial: str | None, *args: str, check: bool = True, timeout: float | None = None
+) -> subprocess.CompletedProcess[str]:
     cmd = ["adb"]
     if serial:
         cmd += ["-s", serial]
@@ -95,7 +97,9 @@ def measure_one(serial: str | None, timeout_sec: float, cold_delay_sec: float) -
         time.sleep(0.1)
 
     if "dashboard_ready" not in events:
-        raise TimeoutError(f"did not see {STARTUP_TAG} dashboard_ready marker within {timeout_sec:.1f}s")
+        raise TimeoutError(
+            f"did not see {STARTUP_TAG} dashboard_ready marker within {timeout_sec:.1f}s"
+        )
 
     return Sample(
         total_time_ms=parse_am_time(am.stdout, "TotalTime"),
@@ -126,8 +130,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-s", "--serial", help="adb device serial")
     parser.add_argument("-n", "--runs", type=int, default=10, help="number of cold starts")
-    parser.add_argument("--timeout", type=float, default=20.0, help="seconds to wait for each launch")
-    parser.add_argument("--cold-delay", type=float, default=1.0, help="seconds after force-stop before launching")
+    parser.add_argument(
+        "--timeout", type=float, default=20.0, help="seconds to wait for each launch"
+    )
+    parser.add_argument(
+        "--cold-delay", type=float, default=1.0, help="seconds after force-stop before launching"
+    )
     args = parser.parse_args()
 
     if args.runs <= 0:
@@ -175,9 +183,21 @@ def main() -> int:
             f"amTotal={sample.total_time_ms if sample.total_time_ms is not None else '?'}ms "
             f"amWait={sample.wait_time_ms if sample.wait_time_ms is not None else '?'}ms"
         )
-        print("  " + " ".join(format_event(sample, event) for event in run_events if event in sample.events))
+        print(
+            "  "
+            + " ".join(
+                format_event(sample, event) for event in run_events if event in sample.events
+            )
+        )
         if sample.metrics:
-            print("  " + " ".join(format_metric(sample, metric) for metric in run_metrics if metric in sample.metrics))
+            print(
+                "  "
+                + " ".join(
+                    format_metric(sample, metric)
+                    for metric in run_metrics
+                    if metric in sample.metrics
+                )
+            )
         sys.stdout.flush()
 
     dashboard = [sample.dashboard_ready_ms for sample in samples]
