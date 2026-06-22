@@ -60,6 +60,18 @@ class ShellCommandBuildersTest {
         assertEquals("", runPackageUidExpression(allPkgs, "com.example.app"))
     }
 
+    @Test
+    fun `startup self target command batches root work and reports restart flag`() {
+        val cmd = buildEnsureSelfInTargetsCommand("dev.okhsunrog.vpnhide")
+
+        assertTrue(cmd.contains("ensure_line $KMOD_TARGETS"))
+        assertTrue(cmd.contains("ensure_line $ZYGISK_TARGETS"))
+        assertTrue(cmd.contains("ensure_line $LSPOSED_TARGETS"))
+        assertTrue(cmd.contains("ensure_line $SS_HIDDEN_PKGS_FILE"))
+        assertTrue(cmd.contains("pm list packages -U --user all"))
+        assertTrue(cmd.contains("echo ADDED=\$ADDED"))
+    }
+
     private fun runPackageUidExpression(
         allPkgs: String,
         packageName: String,

@@ -1,6 +1,5 @@
 package dev.okhsunrog.vpnhide
 
-import android.util.Base64
 import android.util.Log
 import dev.okhsunrog.vpnhide.generated.IfaceLists
 import kotlinx.coroutines.Dispatchers
@@ -111,7 +110,16 @@ internal fun isVpnActiveBlocking(): Boolean {
     }
 }
 
-internal fun cleanupStaleZygiskStatus(context: android.content.Context) {
+internal data class SelfTargetPreparation(
+    val rootAvailable: Boolean,
+    val selfNeedsRestart: Boolean,
+    val currentBootId: String?,
+)
+
+internal fun cleanupStaleZygiskStatus(
+    context: android.content.Context,
+    knownCurrentBootId: String? = null,
+) {
     val statusFile = File(context.filesDir, ZYGISK_STATUS_FILE_NAME)
     if (!statusFile.isFile) return
 
@@ -129,8 +137,11 @@ internal fun cleanupStaleZygiskStatus(context: android.content.Context) {
         }
 
     val heartbeatBootId = props["boot_id"]
-    val (_, currentBootIdRaw) = suExec("cat /proc/sys/kernel/random/boot_id 2>/dev/null")
-    val currentBootId = currentBootIdRaw.trim()
+    val currentBootId =
+        knownCurrentBootId
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: suExec("cat /proc/sys/kernel/random/boot_id 2>/dev/null").second.trim()
     val stale =
         heartbeatBootId.isNullOrBlank() ||
             heartbeatBootId != currentBootId
@@ -154,100 +165,24 @@ internal fun cleanupStaleZygiskStatus(context: android.content.Context) {
  * applied to the current process, restart needed for zygisk).
  * Called once at app startup; result is shared with all screens.
  */
-internal fun ensureSelfInTargets(selfPkg: String): Boolean {
-    var added = false
-
-    fun addIfMissing(
-        path: String,
-        dirCheck: String?,
-    ) {
-        if (dirCheck != null) {
-            val (_, exists) = suExec("[ -d $dirCheck ] && echo 1 || echo 0")
-            if (exists.trim() != "1") {
-                VpnHideLog.d(TAG, "ensureSelfInTargets: $dirCheck not found, skipping $path")
-                return
+internal fun ensureSelfInTargets(selfPkg: String): SelfTargetPreparation {
+    val (exitCode, out) = suExec(buildEnsureSelfInTargetsCommand(selfPkg))
+    if (exitCode != 0) {
+        VpnHideLog.w(TAG, "ensureSelfInTargets: batch failed (exit=$exitCode): ${out.trim()}")
+        return SelfTargetPreparation(rootAvailable = false, selfNeedsRestart = false, currentBootId = null)
+    }
+    val added = out.lineSequence().any { it.trim() == "ADDED=1" }
+    val currentBootId =
+        out
+            .lineSequence()
+            .firstNotNullOfOrNull { line ->
+                line.trim().removePrefix("BOOT_ID=").takeIf { it != line.trim() && it.isNotBlank() }
             }
-        }
-        val (_, raw) = suExec("cat $path 2>/dev/null || true")
-        val existing = raw.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
-        if (selfPkg in existing) {
-            VpnHideLog.d(TAG, "ensureSelfInTargets: $selfPkg already in $path")
-            return
-        }
-        val newBody =
-            "# Managed by VPN Hide app\n" +
-                (existing + selfPkg).sorted().joinToString("\n") + "\n"
-        val b64 = Base64.encodeToString(newBody.toByteArray(), Base64.NO_WRAP)
-        suExec("echo '$b64' | base64 -d > $path && chmod 644 $path")
-        VpnHideLog.i(TAG, "ensureSelfInTargets: added $selfPkg to $path")
-        added = true
-    }
-
-    addIfMissing(KMOD_TARGETS, "/data/adb/vpnhide_kmod")
-    addIfMissing(ZYGISK_TARGETS, "/data/adb/vpnhide_zygisk")
-    // Zygisk reads targets from module dir (via get_module_dir() fd), not
-    // from persistent dir. Must sync after adding self, otherwise zygisk
-    // won't hook us on next launch. Surface real `cp` failures (read-only
-    // mount, SELinux denial) — silent failure here used to manifest as
-    // "I edited targets in the app but zygisk didn't pick it up".
-    val (cpExit, cpOut) =
-        suExec("if [ -d $ZYGISK_MODULE_DIR ]; then cp $ZYGISK_TARGETS $ZYGISK_MODULE_TARGETS 2>&1; fi")
-    if (cpExit != 0 && cpOut.isNotBlank()) {
-        VpnHideLog.w(TAG, "ensureSelfInTargets: zygisk module dir copy failed (exit=$cpExit): ${cpOut.trim()}")
-    }
-    suExec("mkdir -p /data/adb/vpnhide_lsposed")
-    addIfMissing(LSPOSED_TARGETS, null)
-
-    // Always hide self via package visibility hooks — prevents observer apps from seeing us.
-    // File lives in /data/system/ (system_data_file), readable by system_server.
-    val (_, hiddenRaw) = suExec("cat $SS_HIDDEN_PKGS_FILE 2>/dev/null || true")
-    val hiddenExisting = hiddenRaw.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
-    if (selfPkg !in hiddenExisting) {
-        val body =
-            "# Managed by VPN Hide app\n" +
-                (hiddenExisting + selfPkg).sorted().joinToString("\n") + "\n"
-        val b64 = Base64.encodeToString(body.toByteArray(), Base64.NO_WRAP)
-        suExec(
-            // Mode 0640 + group=system: system_server reads via the group
-            // bit; untrusted apps fall to "other" and get EACCES.
-            // /data/system/ itself is mode 0775 traversable by untrusted —
-            // a plain 0644 here used to be enumerable + readable.
-            "echo '$b64' | base64 -d > $SS_HIDDEN_PKGS_FILE" +
-                " && chmod 640 $SS_HIDDEN_PKGS_FILE" +
-                " && chown root:system $SS_HIDDEN_PKGS_FILE" +
-                " && chcon u:object_r:system_data_file:s0 $SS_HIDDEN_PKGS_FILE 2>/dev/null; true",
-        )
-        VpnHideLog.i(TAG, "ensureSelfInTargets: added $selfPkg to $SS_HIDDEN_PKGS_FILE")
-        // Don't flip `added`: PM hooks live in system_server and pick up the file change
-        // immediately via inotify — no app restart is needed, unlike native (zygisk) hooks.
-    }
-
-    // Resolve UIDs so hooks pick us up immediately (kmod + lsposed support live reload).
-    // `--user all` catches the case where vpnhide is installed in a work profile too —
-    // each UID gets added to targets so both instances are covered. `tr ',' '\n'`
-    // expands comma-separated UIDs, then we iterate one per line and dedup against
-    // the existing file content.
-    val uidCmd =
-        buildString {
-            // Literal field match via awk — grep would treat dots in
-            // `selfPkg` as regex wildcards.
-            append("ALL_PKGS=\"\$(pm list packages -U --user all 2>/dev/null)\"")
-            append("; ")
-            append(buildPackageUidsExpression(selfPkg, "SELF_UIDS"))
-            append("; if [ -n \"\$SELF_UIDS\" ]; then")
-            append("   for U in \$SELF_UIDS; do")
-            append("     if [ -f $PROC_TARGETS ]; then")
-            append("       EXISTING=\$(cat $PROC_TARGETS 2>/dev/null)")
-            append(";      echo \"\$EXISTING\" | grep -q \"^\$U\$\" || echo \"\$U\" >> $PROC_TARGETS")
-            append("     ; fi")
-            append("   ; EXISTING2=\$(cat $SS_UIDS_FILE 2>/dev/null)")
-            append(
-                "   ; echo \"\$EXISTING2\" | grep -q \"^\$U\$\" || { echo \"\$U\" >> $SS_UIDS_FILE; chmod 640 $SS_UIDS_FILE; chown root:system $SS_UIDS_FILE; chcon u:object_r:system_data_file:s0 $SS_UIDS_FILE 2>/dev/null; }",
-            )
-            append("   ; done")
-            append("; fi")
-        }
-    suExec(uidCmd)
+    out
+        .lineSequence()
+        .map { it.trim() }
+        .filter { it.startsWith("added:") || it == "zygisk_cp_failed" }
+        .forEach { VpnHideLog.i(TAG, "ensureSelfInTargets: $it") }
     VpnHideLog.d(TAG, "ensureSelfInTargets: done, added=$added")
-    return added
+    return SelfTargetPreparation(rootAvailable = true, selfNeedsRestart = added, currentBootId = currentBootId)
 }

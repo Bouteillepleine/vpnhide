@@ -70,6 +70,7 @@ internal object DashboardCache {
                 withContext(Dispatchers.IO) {
                     loadDashboardState(cm, context.applicationContext, selfNeedsRestart)
                 }
+            StartupTrace.mark("dashboard_state_loaded")
             _state.value = next
         } finally {
             _loading.value = false

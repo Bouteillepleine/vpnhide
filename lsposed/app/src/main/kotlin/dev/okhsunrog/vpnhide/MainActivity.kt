@@ -2,6 +2,7 @@ package dev.okhsunrog.vpnhide
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -38,28 +39,32 @@ class MainActivity : ComponentActivity() {
     private val splashReady = AtomicBoolean(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        StartupTrace.mark("activity_on_create")
         installSplashScreen().setKeepOnScreenCondition { !splashReady.get() }
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         // Load the user's debug-logging preference before anything else
         // runs so the first suExec + Dashboard reload honor it.
         VpnHideLog.init(applicationContext)
-        // Re-propagate the persisted flag to the on-disk sinks as a
-        // safety-net. Most reinstall scenarios are now covered by:
-        //   - the canonical /data/adb/vpnhide_zygisk/debug_logging file
-        //     surviving module reinstall (lives outside /data/adb/modules/),
-        //   - kmod's service.sh re-seeding /proc/vpnhide_debug at boot,
-        //   - zygisk's service.sh copying the canonical debug_logging
-        //     into the module dir at boot.
-        // The remaining gap is "user reinstalled a native module mid-
-        // session and didn't reboot before opening the app" — service.sh
-        // hasn't re-seeded the module-dir copy yet, so the next fork of
-        // a target app would default to OFF without this re-write.
-        // Cheap — one `su` roundtrip on a background dispatcher.
-        lifecycleScope.launch(Dispatchers.IO) {
-            applyDebugLoggingRuntime(VpnHideLog.enabled)
+        setContent {
+            VpnHideApp(
+                onDashboardReady = {
+                    if (splashReady.compareAndSet(false, true)) {
+                        StartupTrace.dashboardReady()
+                        // Re-propagate the persisted flag to the on-disk sinks as a
+                        // safety-net, but keep it off the cold-start critical path.
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            applyDebugLoggingRuntime(VpnHideLog.enabled)
+                        }
+                    }
+                },
+                onRootDeniedReady = {
+                    if (splashReady.compareAndSet(false, true)) {
+                        StartupTrace.rootDeniedReady()
+                    }
+                },
+            )
         }
-        setContent { VpnHideApp(onReady = { splashReady.set(true) }) }
     }
 }
 
@@ -76,11 +81,14 @@ private fun checkRootAccess(): Boolean {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VpnHideApp(onReady: () -> Unit = {}) {
+fun VpnHideApp(
+    onDashboardReady: () -> Unit = {},
+    onRootDeniedReady: () -> Unit = {},
+) {
     val darkTheme = isSystemInDarkTheme()
+    val context = LocalContext.current
     val colorScheme =
         if (android.os.Build.VERSION.SDK_INT >= 31) {
-            val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         } else {
             if (darkTheme) darkColorScheme() else lightColorScheme()
@@ -94,22 +102,22 @@ fun VpnHideApp(onReady: () -> Unit = {}) {
                 withContext(Dispatchers.IO) {
                     if (checkRootAccess()) RootState.Granted else RootState.Denied
                 }
+            StartupTrace.mark("root_check_done")
         }
 
         when (rootState) {
             // splash holds until root check completes
             null -> {
-                Unit
             }
 
             RootState.Denied -> {
                 // Drop splash — RootDeniedScreen has no async prerequisites.
-                LaunchedEffect(Unit) { onReady() }
+                LaunchedEffect(Unit) { onRootDeniedReady() }
                 RootDeniedScreen()
             }
 
             RootState.Granted -> {
-                MainScreen(onReady = onReady)
+                MainScreen(onReady = onDashboardReady)
             }
         }
     }
@@ -143,9 +151,11 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     LaunchedEffect(Unit) {
         selfNeedsRestart =
             withContext(Dispatchers.IO) {
-                cleanupStaleZygiskStatus(context)
-                ensureSelfInTargets(context.packageName)
+                val preparation = ensureSelfInTargets(context.packageName)
+                cleanupStaleZygiskStatus(context, preparation.currentBootId)
+                preparation.selfNeedsRestart
             }
+        StartupTrace.mark("self_targets_done")
     }
 
     // Kick off both Protection caches as early as possible so tab
@@ -172,8 +182,14 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     // selfNeedsRestart-null spinner → brief Dashboard state-null spinner
     // → content, with each spinner swap being visible flicker.
     val uiReady = selfNeedsRestart != null && dashboardState != null
+    var fullyDrawnReady by remember { mutableStateOf(false) }
+    ReportDrawnWhen { fullyDrawnReady }
     LaunchedEffect(uiReady) {
-        if (uiReady) onReady()
+        if (uiReady) {
+            withFrameNanos { }
+            fullyDrawnReady = true
+            onReady()
+        }
     }
 
     // Kick the update check once (silently) on first launch, and again

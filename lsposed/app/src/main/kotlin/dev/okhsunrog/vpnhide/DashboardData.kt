@@ -5,6 +5,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
+import android.util.Base64
 import android.util.Log
 import dev.okhsunrog.vpnhide.checks.CheckOutput
 import dev.okhsunrog.vpnhide.checks.CheckStatus
@@ -215,6 +216,76 @@ internal data class KmodLoadStatus(
 
 private const val TAG = "VpnHide-Dashboard"
 
+private const val DASHBOARD_SNAPSHOT_PREFIX = "__VPNHIDE_DASHBOARD_SECTION__:"
+
+private fun loadDashboardShellSnapshot(): Map<String, String> {
+    val script =
+        """
+        emit() {
+          NAME="${'$'}1"
+          shift
+          echo "$DASHBOARD_SNAPSHOT_PREFIX${'$'}NAME"
+          "$@" 2>/dev/null | base64 | tr -d '\n'
+          echo
+        }
+        emit_sh() {
+          NAME="${'$'}1"
+          shift
+          echo "$DASHBOARD_SNAPSHOT_PREFIX${'$'}NAME"
+          sh -c "${'$'}*" 2>/dev/null | base64 | tr -d '\n'
+          echo
+        }
+        emit kmod_prop cat $KMOD_MODULE_DIR/module.prop
+        emit zygisk_prop cat $ZYGISK_MODULE_DIR/module.prop
+        emit ports_prop cat $PORTS_MODULE_DIR/module.prop
+        emit kmod_targets cat $KMOD_TARGETS
+        emit zygisk_targets cat $ZYGISK_TARGETS
+        emit ports_observers cat $PORTS_OBSERVERS_FILE
+        emit lsposed_targets cat $LSPOSED_TARGETS
+        emit current_boot_id cat /proc/sys/kernel/random/boot_id
+        emit kmod_load_status cat $KMOD_LOAD_STATUS_FILE
+        emit kmod_load_dmesg cat $KMOD_LOAD_DMESG_FILE
+        emit kernel_release uname -r
+        emit hook_status cat ${HookEntry.HOOK_STATUS_FILE}
+        emit debug_logging cat /data/system/vpnhide_debug_logging
+        emit getenforce getenforce
+        emit pm_packages pm list packages -U --user all
+        emit_sh proc_exists '[ -f $PROC_TARGETS ] && echo 1 || echo 0'
+        emit_sh ports_chain 'iptables -L vpnhide_out -n >/dev/null 2>/dev/null && echo 1 || echo 0'
+        emit_sh lsposed_framework 'for id in zygisk_vector zygisk_lsposed lsposed; do for base in /data/adb/modules /data/adb/modules_update; do dir="${'$'}base/${'$'}id"; if [ -f "${'$'}dir/module.prop" ]; then echo installed=1; if [ -f "${'$'}dir/disable" ]; then echo disabled=1; else echo disabled=0; fi; exit 0; fi; done; done; echo installed=0'
+        emit_sh vpn_ifaces 'for iface in ${'$'}(ls /sys/class/net/ 2>/dev/null); do state="${'$'}(cat /sys/class/net/${'$'}iface/operstate 2>/dev/null)"; printf "%s=%s\n" "${'$'}iface" "${'$'}state"; done'
+        """.trimIndent()
+
+    val (exitCode, raw) = suExec(script)
+    if (exitCode != 0) {
+        VpnHideLog.w(TAG, "dashboard shell snapshot failed: exit=$exitCode out=${raw.trim()}")
+    }
+
+    val sections = linkedMapOf<String, String>()
+    var currentName: String? = null
+    raw.lineSequence().forEach { line ->
+        if (line.startsWith(DASHBOARD_SNAPSHOT_PREFIX)) {
+            currentName = line.removePrefix(DASHBOARD_SNAPSHOT_PREFIX)
+            return@forEach
+        }
+        val name = currentName ?: return@forEach
+        val decoded =
+            if (line.isBlank()) {
+                ""
+            } else {
+                runCatching {
+                    String(Base64.decode(line, Base64.DEFAULT))
+                }.getOrElse {
+                    VpnHideLog.w(TAG, "failed to decode dashboard snapshot section $name: ${it.message}")
+                    ""
+                }
+            }
+        sections[name] = decoded
+        currentName = null
+    }
+    return sections
+}
+
 internal fun parseKernelSeries(raw: String): String? = Regex("""\b(\d+\.\d+)""").find(raw)?.groupValues?.get(1)
 
 internal fun parseKernelAndroidBranch(raw: String): String? =
@@ -357,6 +428,7 @@ internal fun loadDashboardState(
     }
 
     VpnHideLog.i(TAG, "=== Loading dashboard state ===")
+    val shellSnapshot = loadDashboardShellSnapshot()
 
     // ── Module detection ──
     // Strip the `v` prefix from module.prop versions at parse time so
@@ -378,13 +450,12 @@ internal fun loadDashboardState(
     // without requiring a reinstall.
     val updateJsonKmiRegex = Regex("""update-kmod-([^/]+)\.json""")
 
-    fun parseModuleProp(dir: String): ModulePropInfo {
-        val (exitCode, out) = suExec("cat $dir/module.prop 2>/dev/null")
-        if (exitCode != 0 || out.isBlank()) return ModulePropInfo(false, null, null)
+    fun parseModuleProp(raw: String): ModulePropInfo {
+        if (raw.isBlank()) return ModulePropInfo(false, null, null)
         var version: String? = null
         var gkiVariant: String? = null
         var updateJsonKmi: String? = null
-        for (line in out.lines()) {
+        for (line in raw.lines()) {
             when {
                 line.startsWith("version=") -> {
                     version = normalizeVersion(line.removePrefix("version="))
@@ -406,13 +477,11 @@ internal fun loadDashboardState(
         return ModulePropInfo(true, version, gkiVariant ?: updateJsonKmi)
     }
 
-    fun countTargets(path: String): Int {
-        val (_, out) = suExec("cat $path 2>/dev/null || true")
-        return out.lines().count { line ->
+    fun countTargets(raw: String): Int =
+        raw.lines().count { line ->
             val trimmed = line.trim()
             trimmed.isNotEmpty() && !trimmed.startsWith("#") && trimmed != selfPkg
         }
-    }
 
     fun parseProps(raw: String): Map<String, String> =
         raw
@@ -479,13 +548,13 @@ internal fun loadDashboardState(
         return "Android $release"
     }
 
-    fun readKmodLoadStatus(currentBootId: String): KmodLoadStatus? {
-        val (exit, raw) = suExec("cat $KMOD_LOAD_STATUS_FILE 2>/dev/null")
-        if (exit != 0 || raw.isBlank()) return null
+    fun readKmodLoadStatus(
+        currentBootId: String,
+        raw: String,
+        dmesgRaw: String,
+    ): KmodLoadStatus? {
+        if (raw.isBlank()) return null
         val props = parseProps(raw)
-        // load_dmesg is a separate file because its content spans many
-        // lines and the key=value format can't carry them.
-        val (_, dmesgRaw) = suExec("cat $KMOD_LOAD_DMESG_FILE 2>/dev/null")
         val bootId = props["boot_id"]?.trim()
         return KmodLoadStatus(
             timestamp = props["timestamp"]?.trim()?.toLongOrNull(),
@@ -612,21 +681,9 @@ internal fun loadDashboardState(
     }
 
     fun detectLsposedFramework(): LsposedFramework {
-        // Known module directory names for LSPosed / LSPosed-Next / Vector
-        val knownIds = listOf("zygisk_vector", "zygisk_lsposed", "lsposed")
-        val checkScript =
-            knownIds
-                .flatMap { id ->
-                    listOf("/data/adb/modules/$id", "/data/adb/modules_update/$id")
-                }.joinToString("; ") { dir ->
-                    "if [ -f $dir/module.prop ]; then " +
-                        "echo installed=1; " +
-                        "echo disabled=\$([ -f $dir/disable ] && echo 1 || echo 0); " +
-                        "exit 0; fi"
-                } + "; echo installed=0"
-        val (exitCode, out) = suExec(checkScript)
+        val out = shellSnapshot["lsposed_framework"].orEmpty()
         val props = parseProps(out)
-        val installed = exitCode == 0 && props["installed"] == "1"
+        val installed = props["installed"] == "1"
         val disabled = props["disabled"] == "1"
         val framework =
             if (installed) {
@@ -638,11 +695,31 @@ internal fun loadDashboardState(
         return framework
     }
 
+    fun isVpnActiveFromSnapshot(raw: String): Boolean {
+        val vpnIfaces =
+            raw
+                .lineSequence()
+                .mapNotNull { line ->
+                    val parts = line.split("=", limit = 2)
+                    if (parts.size == 2) parts[0].trim() to parts[1].trim() else null
+                }.filter { (name, _) -> IfaceLists.isVpnIface(name) }
+                .toList()
+        if (vpnIfaces.isEmpty()) {
+            VpnHideLog.d(TAG, "isVpnActive: no VPN interfaces found")
+            return false
+        }
+        return vpnIfaces.any { (iface, state) ->
+            val up = state == "unknown" || state == "up"
+            VpnHideLog.d(TAG, "isVpnActive: $iface operstate=$state up=$up")
+            up
+        }
+    }
+
     // kmod
-    val kmodProp = parseModuleProp(KMOD_MODULE_DIR)
-    val (_, procExists) = suExec("[ -f $PROC_TARGETS ] && echo 1 || echo 0")
+    val kmodProp = parseModuleProp(shellSnapshot["kmod_prop"].orEmpty())
+    val procExists = shellSnapshot["proc_exists"].orEmpty()
     val kmodActive = kmodProp.installed && procExists.trim() == "1"
-    val kmodTargetCount = if (kmodProp.installed) countTargets(KMOD_TARGETS) else 0
+    val kmodTargetCount = if (kmodProp.installed) countTargets(shellSnapshot["kmod_targets"].orEmpty()) else 0
     // Built without brokenReason — populated below after kernelRecommendation
     // and kmodLoadStatus are ready.
     val kmodRaw: ModuleState =
@@ -659,7 +736,7 @@ internal fun loadDashboardState(
     VpnHideLog.i(TAG, "kmodRaw: $kmodRaw")
 
     // zygisk
-    val zygiskProp = parseModuleProp(ZYGISK_MODULE_DIR)
+    val zygiskProp = parseModuleProp(shellSnapshot["zygisk_prop"].orEmpty())
     val zygiskInstalled = zygiskProp.installed
     val zygiskVersion = zygiskProp.version
     val zygiskStatusFile = File(context.filesDir, ZYGISK_STATUS_FILE_NAME)
@@ -671,10 +748,10 @@ internal fun loadDashboardState(
             ""
         }
     val zygiskProps = parseProps(zygiskStatusRaw)
-    val (_, currentBootId) = suExec("cat /proc/sys/kernel/random/boot_id 2>/dev/null")
+    val currentBootId = shellSnapshot["current_boot_id"].orEmpty()
     val zygiskBootId = zygiskProps["boot_id"]
     val zygiskActive = zygiskInstalled && zygiskBootId != null && zygiskBootId == currentBootId.trim()
-    val zygiskTargetCount = if (zygiskInstalled) countTargets(ZYGISK_TARGETS) else 0
+    val zygiskTargetCount = if (zygiskInstalled) countTargets(shellSnapshot["zygisk_targets"].orEmpty()) else 0
     val zygisk: ModuleState =
         if (zygiskInstalled) {
             ModuleState.Installed(zygiskVersion, zygiskActive, zygiskTargetCount)
@@ -684,10 +761,10 @@ internal fun loadDashboardState(
     VpnHideLog.i(TAG, "zygisk: $zygisk (heartbeatBootId=$zygiskBootId currentBootId=${currentBootId.trim()})")
 
     // ports (iptables-based loopback blocker)
-    val portsProp = parseModuleProp(PORTS_MODULE_DIR)
+    val portsProp = parseModuleProp(shellSnapshot["ports_prop"].orEmpty())
     val portsObserverCount =
-        if (portsProp.installed) countTargets(PORTS_OBSERVERS_FILE) else 0
-    val (_, portsChainExists) = suExec("iptables -L vpnhide_out -n 2>/dev/null >/dev/null && echo 1 || echo 0")
+        if (portsProp.installed) countTargets(shellSnapshot["ports_observers"].orEmpty()) else 0
+    val portsChainExists = shellSnapshot["ports_chain"].orEmpty()
     val portsActive = portsProp.installed && portsChainExists.trim() == "1"
     val ports: ModuleState =
         if (portsProp.installed) {
@@ -700,9 +777,14 @@ internal fun loadDashboardState(
     // Recommendation based purely on the kernel — used by the install card,
     // the "kmod-capable kernel, only zygisk installed" warning (W1), and the
     // wrong-variant detection below.
-    val (_, kernelRaw) = suExec("uname -r 2>/dev/null")
+    val kernelRaw = shellSnapshot["kernel_release"].orEmpty()
     val kernelRecommendation = buildNativeInstallRecommendation(kernelRaw, androidMajorVersionLabel())
-    val kmodLoadStatus = readKmodLoadStatus(currentBootId.trim())
+    val kmodLoadStatus =
+        readKmodLoadStatus(
+            currentBootId.trim(),
+            shellSnapshot["kmod_load_status"].orEmpty(),
+            shellSnapshot["kmod_load_dmesg"].orEmpty(),
+        )
     VpnHideLog.i(TAG, "kmodLoadStatus=$kmodLoadStatus")
 
     // Decide whether to surface the install-recommendation card.
@@ -802,12 +884,12 @@ internal fun loadDashboardState(
     )
 
     // lsposed hook status
-    val (_, hookStatusRaw) = suExec("cat ${HookEntry.HOOK_STATUS_FILE} 2>/dev/null || true")
+    val hookStatusRaw = shellSnapshot["hook_status"].orEmpty()
     val hookProps = parseProps(hookStatusRaw)
     val hookVersion = hookProps["version"]
     val hookBootId = hookProps["boot_id"]
     val hooksActiveThisBoot = hookBootId != null && hookBootId == currentBootId.trim()
-    val lsposedTargetCount = countTargets(LSPOSED_TARGETS)
+    val lsposedTargetCount = countTargets(shellSnapshot["lsposed_targets"].orEmpty())
     val lsposedFramework = detectLsposedFramework()
     val lsposedConfig =
         when (lsposedFramework) {
@@ -988,15 +1070,15 @@ internal fun loadDashboardState(
     // to logcat that a forensic reader with root can see. The flag file is
     // written by the Diagnostics → Debug logging toggle; absent file ⇒
     // default off ⇒ no warning.
-    val (debugEnabledExit, debugEnabledRaw) = suExec("cat /data/system/vpnhide_debug_logging 2>/dev/null")
-    if (debugEnabledExit == 0 && debugEnabledRaw.trim() == "1") {
+    val debugEnabledRaw = shellSnapshot["debug_logging"].orEmpty()
+    if (debugEnabledRaw.trim() == "1") {
         warn(res.getString(R.string.dashboard_issue_debug_logging_on))
     }
 
     // W4: SELinux Permissive exposes six detection vectors we rely on SELinux
     // to block (RTM_GETROUTE, /proc/net/{tcp,tcp6,udp,udp6,dev,fib_trie},
     // /sys/class/net). See the coverage table in the top-level README.
-    val (_, getenforce) = suExec("getenforce 2>/dev/null")
+    val getenforce = shellSnapshot["getenforce"].orEmpty()
     if (getenforce.trim().equals("Permissive", ignoreCase = true)) {
         warn(res.getString(R.string.dashboard_issue_selinux_permissive))
     }
@@ -1009,11 +1091,7 @@ internal fun loadDashboardState(
     // drop them. Recommend uninstalling everywhere except the main profile.
     // Literal field match via awk — grep would treat dots in `selfPkg`
     // as regex wildcards.
-    val (_, selfPmRaw) =
-        suExec(
-            "pm list packages -U --user all 2>/dev/null | " +
-                "awk -v p=\"package:$selfPkg\" '\$1 == p'",
-        )
+    val selfPmRaw = shellSnapshot["pm_packages"].orEmpty()
     val selfUidCount =
         selfPmRaw
             .lines()
@@ -1103,7 +1181,7 @@ internal fun loadDashboardState(
     }
 
     // ── Protection checks ──
-    val vpnActive = isVpnActiveBlocking()
+    val vpnActive = isVpnActiveFromSnapshot(shellSnapshot["vpn_ifaces"].orEmpty())
     VpnHideLog.i(TAG, "vpnActive=$vpnActive selfNeedsRestart=$selfNeedsRestart")
 
     val protection: ProtectionCheck =
