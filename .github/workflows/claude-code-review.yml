@@ -10,6 +10,10 @@ on:
     #   - "src/**/*.js"
     #   - "src/**/*.jsx"
 
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   claude-review:
     # Optional: Filter by PR author
@@ -32,7 +36,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -56,4 +60,3 @@ jobs:
           display_report: 'true'
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
-

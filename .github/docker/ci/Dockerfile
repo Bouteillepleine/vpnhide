@@ -41,7 +41,7 @@ RUN mkdir -p "${ANDROID_HOME}/cmdline-tools" && \
     mv /tmp/cmdline-tools/cmdline-tools "${ANDROID_HOME}/cmdline-tools/latest" && \
     rm -rf /tmp/cmdline-tools.zip /tmp/cmdline-tools && \
     yes | sdkmanager --licenses > /dev/null 2>&1 && \
-    sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" && \
+    sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" && \
     chmod -R a+rx "${ANDROID_HOME}"
 
 # ── Rust toolchain (for zygisk) ──────────────────────────────────────
