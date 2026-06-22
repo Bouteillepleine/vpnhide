@@ -68,10 +68,10 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private sealed class RootState {
-    data object Granted : RootState()
+private sealed interface RootState {
+    data object Granted : RootState
 
-    data object Denied : RootState()
+    data object Denied : RootState
 }
 
 private fun checkRootAccess(): Boolean {

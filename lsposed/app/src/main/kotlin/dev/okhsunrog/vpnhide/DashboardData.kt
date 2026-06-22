@@ -124,15 +124,7 @@ internal fun detectModuleMismatches(
         }
     }
 
-private sealed interface LsposedRuntime {
-    data object Inactive : LsposedRuntime
-
-    data class Active(
-        val version: String?,
-    ) : LsposedRuntime
-}
-
-private sealed interface LsposedFramework {
+internal sealed interface LsposedFramework {
     data object NotInstalled : LsposedFramework
 
     data class Installed(
@@ -140,7 +132,7 @@ private sealed interface LsposedFramework {
     ) : LsposedFramework
 }
 
-private sealed interface LsposedConfig {
+internal sealed interface LsposedConfig {
     data object ModuleNotConfigured : LsposedConfig
 
     data object Disabled : LsposedConfig
@@ -334,6 +326,284 @@ internal fun buildNativeInstallRecommendation(
     )
 }
 
+// ── Module-prop / status-file parsing (pure, unit-tested) ────────────────
+
+// Strip the `v` prefix from module.prop versions at parse time so everything
+// downstream sees a plain semver string (APK versionName has no `v`).
+internal data class ModulePropInfo(
+    val installed: Boolean,
+    val version: String?,
+    val gkiVariant: String?,
+)
+
+// Older CI-built zips didn't stamp `gkiVariant=` but their injected updateJson
+// URL already encodes the KMI: `.../update-kmod-<kmi>.json`. Recover the variant
+// from there so wrong-variant detection works for existing installs.
+private val UPDATE_JSON_KMI_REGEX = Regex("""update-kmod-([^/]+)\.json""")
+
+internal fun parseModuleProp(raw: String): ModulePropInfo {
+    if (raw.isBlank()) return ModulePropInfo(false, null, null)
+    var version: String? = null
+    var gkiVariant: String? = null
+    var updateJsonKmi: String? = null
+    for (line in raw.lines()) {
+        when {
+            line.startsWith("version=") -> {
+                version = normalizeVersion(line.removePrefix("version="))
+            }
+
+            line.startsWith("gkiVariant=") -> {
+                gkiVariant = line.removePrefix("gkiVariant=").trim().ifBlank { null }
+            }
+
+            line.startsWith("updateJson=") -> {
+                updateJsonKmi = UPDATE_JSON_KMI_REGEX.find(line.removePrefix("updateJson="))?.groupValues?.get(1)
+            }
+        }
+    }
+    return ModulePropInfo(true, version, gkiVariant ?: updateJsonKmi)
+}
+
+/** Count configured target packages, excluding the app's own package (it is
+ * always present invisibly and must not inflate the user-facing count). */
+internal fun countTargets(
+    raw: String,
+    selfPkg: String,
+): Int = parseConfigLines(raw).count { it != selfPkg }
+
+internal fun readKmodLoadStatus(
+    currentBootId: String,
+    raw: String,
+    dmesgRaw: String,
+): KmodLoadStatus? {
+    if (raw.isBlank()) return null
+    val props = parseKeyValueLines(raw)
+    val bootId = props["boot_id"]?.trim()
+    return KmodLoadStatus(
+        timestamp = props["timestamp"]?.trim()?.toLongOrNull(),
+        bootId = bootId,
+        unameR = props["uname_r"]?.trim(),
+        gkiVariant = props["gki_variant"]?.trim()?.ifBlank { null },
+        kmodVersion = props["kmod_version"]?.trim()?.ifBlank { null },
+        rootManager = props["root_manager"]?.trim()?.ifBlank { null },
+        kprobes = props["kprobes"]?.trim()?.ifBlank { null },
+        kretprobes = props["kretprobes"]?.trim()?.ifBlank { null },
+        insmodExit = props["insmod_exit"]?.trim()?.toIntOrNull(),
+        loaded = props["loaded"]?.trim() == "1",
+        insmodStderr = props["insmod_stderr"]?.trim()?.ifBlank { null },
+        dmesgTail = dmesgRaw.trim().ifBlank { null },
+        freshForCurrentBoot = bootId != null && bootId == currentBootId,
+    )
+}
+
+// ── kmod problem classification (pure, unit-tested) ──────────────────────
+
+/**
+ * The single diagnosed problem for an installed-but-not-working kmod, as a
+ * data-only value with the exact arguments its banner text needs. [reason]
+ * drives the red module-card color; the [renderKmodProblem] mapping turns the
+ * kind into the localized banner string. Computing the kind in one pure place
+ * keeps the card color and the banner text from ever disagreeing — they used
+ * to be hand-mirrored across two `when` blocks.
+ */
+internal sealed interface KmodProblemKind {
+    val reason: KmodBrokenReason?
+
+    data object KprobesMissing : KmodProblemKind {
+        override val reason get() = KmodBrokenReason.MissingKprobes
+    }
+
+    data class UnsupportedKernel(
+        val unameR: String,
+        val recommendedArtifact: String,
+    ) : KmodProblemKind {
+        override val reason get() = KmodBrokenReason.UnsupportedKernel
+    }
+
+    data class WrongVariant(
+        val installedVariant: String,
+        val recommendedKmi: String,
+        val recommendedArtifact: String,
+    ) : KmodProblemKind {
+        override val reason get() = KmodBrokenReason.WrongVariant
+    }
+
+    data class UnknownVariant(
+        val recommendedArtifact: String,
+    ) : KmodProblemKind {
+        override val reason get() = KmodBrokenReason.UnknownVariantInactive
+    }
+
+    data class AmbiguousLoadFailed(
+        val installedVariant: String,
+        val tryArtifact: String,
+    ) : KmodProblemKind {
+        override val reason get() = KmodBrokenReason.AmbiguousLoadFailed
+    }
+
+    // Generic insmod failure where we only have raw stderr, no named diagnosis.
+    data class LoadFailed(
+        val insmodStderr: String,
+    ) : KmodProblemKind {
+        override val reason: KmodBrokenReason? get() = null
+    }
+}
+
+/**
+ * Diagnose what's wrong with an installed kmod, or null if it's fine / not a
+ * diagnosable failure. Priority order: kprobes-missing first (no variant will
+ * ever work), then unsupported-kernel (wrong tool), wrong-variant (concrete
+ * mismatch), unknown-variant (old build that didn't stamp gkiVariant),
+ * ambiguous-load-failed (one of two valid candidates failed this boot), and
+ * finally a generic insmod failure when we have stderr to show.
+ *
+ * An active kmod (`/proc/vpnhide_targets` present) is empirical proof the
+ * install works, so every check except the activity-independent kprobes probe
+ * is gated on `!active`.
+ */
+internal fun classifyKmodProblem(
+    kmod: ModuleState,
+    recommendation: NativeInstallRecommendation?,
+    loadStatus: KmodLoadStatus?,
+): KmodProblemKind? {
+    if (kmod !is ModuleState.Installed) return null
+    val freshLoad = loadStatus != null && loadStatus.freshForCurrentBoot
+
+    if (freshLoad && loadStatus.kretprobes == "n") {
+        return KmodProblemKind.KprobesMissing
+    }
+    // Past this point every diagnosis means "installed but not loaded".
+    if (kmod.active) return null
+
+    val rec = recommendation
+    // rec.recommendedArtifact is a non-null field, so a non-null rec always
+    // yields a non-null artifact — the `!!` uses below are safe under the
+    // `rec != null` / `rec?.preferKmod == true` guards that precede them.
+    val recommendedArtifact = rec?.recommendedArtifact
+    val installedVariant = kmod.gkiVariant
+
+    if (rec != null && !rec.preferKmod) {
+        return KmodProblemKind.UnsupportedKernel(loadStatus?.unameR ?: "?", recommendedArtifact!!)
+    }
+
+    val recommendedKmi = rec?.recommendedGkiVariant
+    if (rec?.preferKmod == true &&
+        recommendedKmi != null &&
+        installedVariant != null &&
+        installedVariant != recommendedKmi &&
+        installedVariant != rec.alternativeGkiVariant
+    ) {
+        return KmodProblemKind.WrongVariant(installedVariant, recommendedKmi, recommendedArtifact!!)
+    }
+
+    if (installedVariant == null && rec?.preferKmod == true) {
+        return KmodProblemKind.UnknownVariant(recommendedArtifact!!)
+    }
+
+    if (freshLoad &&
+        rec?.variantAmbiguous == true &&
+        installedVariant != null &&
+        (installedVariant == rec.recommendedGkiVariant || installedVariant == rec.alternativeGkiVariant)
+    ) {
+        val tryArtifact =
+            if (installedVariant == rec.recommendedGkiVariant) rec.alternativeArtifact else rec.recommendedArtifact
+        return KmodProblemKind.AmbiguousLoadFailed(installedVariant, tryArtifact ?: "?")
+    }
+
+    if (freshLoad && loadStatus.insmodStderr != null) {
+        return KmodProblemKind.LoadFailed(loadStatus.insmodStderr)
+    }
+
+    return null
+}
+
+private fun renderKmodProblem(
+    kind: KmodProblemKind,
+    res: android.content.res.Resources,
+): KmodProblem =
+    KmodProblem(
+        reason = kind.reason,
+        text =
+            when (kind) {
+                KmodProblemKind.KprobesMissing -> {
+                    res.getString(R.string.dashboard_issue_kprobes_missing)
+                }
+
+                is KmodProblemKind.UnsupportedKernel -> {
+                    res.getString(R.string.dashboard_issue_kmod_not_supported_kernel, kind.unameR, kind.recommendedArtifact)
+                }
+
+                is KmodProblemKind.WrongVariant -> {
+                    res.getString(
+                        R.string.dashboard_issue_kmod_wrong_variant,
+                        kind.installedVariant,
+                        kind.recommendedKmi,
+                        kind.recommendedArtifact,
+                    )
+                }
+
+                is KmodProblemKind.UnknownVariant -> {
+                    res.getString(R.string.dashboard_issue_kmod_unknown_variant, kind.recommendedArtifact)
+                }
+
+                is KmodProblemKind.AmbiguousLoadFailed -> {
+                    res.getString(
+                        R.string.dashboard_issue_kmod_ambiguous_try_alternative,
+                        kind.installedVariant,
+                        kind.tryArtifact,
+                    )
+                }
+
+                is KmodProblemKind.LoadFailed -> {
+                    res.getString(R.string.dashboard_issue_kmod_load_failed, kind.insmodStderr)
+                }
+            },
+    )
+
+// ── LSPosed state resolution (pure, unit-tested) ─────────────────────────
+
+/**
+ * Resolve the user-facing [LsposedState] from the framework presence, the
+ * on-disk module config, and whether the hook heartbeat is fresh for this
+ * boot. A current-boot heartbeat is the strongest signal (module is active);
+ * otherwise the config/framework decide inactive/needs-reboot/not-configured.
+ */
+internal fun resolveLsposedState(
+    hooksActiveThisBoot: Boolean,
+    hookVersion: String?,
+    lsposedTargetCount: Int,
+    framework: LsposedFramework,
+    config: LsposedConfig?,
+): LsposedState {
+    if (hooksActiveThisBoot) {
+        return LsposedState.Active(hookVersion, lsposedTargetCount)
+    }
+    return when (config) {
+        null -> {
+            LsposedState.InstalledInactive(null)
+        }
+
+        LsposedConfig.ModuleNotConfigured -> {
+            when (framework) {
+                LsposedFramework.NotInstalled -> LsposedState.NotInstalled
+                is LsposedFramework.Installed -> LsposedState.InstalledInactive(null)
+            }
+        }
+
+        LsposedConfig.Disabled -> {
+            LsposedState.InstalledInactive(null)
+        }
+
+        is LsposedConfig.Enabled -> {
+            if (config.hasSystemFramework) {
+                LsposedState.NeedsReboot(hookVersion)
+            } else {
+                LsposedState.InstalledInactive(null)
+            }
+        }
+    }
+}
+
 internal fun loadDashboardState(
     cm: ConnectivityManager,
     context: android.content.Context,
@@ -357,61 +627,10 @@ internal fun loadDashboardState(
     val shellSnapshot = rootSnapshot.sections
 
     // ── Module detection ──
-    // Strip the `v` prefix from module.prop versions at parse time so
-    // everything downstream — dashboard rendering, issue text, update
-    // checks — sees a plain semver string. APK versionName has no `v`
-    // (Android convention); stamping `v` into module.prop follows the
-    // Magisk convention but mixes badly when both show side by side.
-    data class ModulePropInfo(
-        val installed: Boolean,
-        val version: String?,
-        val gkiVariant: String?,
-    )
-
-    // Older CI-built zips (between commit 3fc7355 "don't dirty committed
-    // module.prop when injecting updateJson" and the gkiVariant stamping)
-    // didn't stamp `gkiVariant=` but their injected updateJson URL already
-    // encodes the KMI: `.../update-kmod-<kmi>.json`. Recover the variant
-    // from there so wrong-variant detection works for existing installs
-    // without requiring a reinstall.
-    val updateJsonKmiRegex = Regex("""update-kmod-([^/]+)\.json""")
-
-    fun parseModuleProp(raw: String): ModulePropInfo {
-        if (raw.isBlank()) return ModulePropInfo(false, null, null)
-        var version: String? = null
-        var gkiVariant: String? = null
-        var updateJsonKmi: String? = null
-        for (line in raw.lines()) {
-            when {
-                line.startsWith("version=") -> {
-                    version = normalizeVersion(line.removePrefix("version="))
-                }
-
-                line.startsWith("gkiVariant=") -> {
-                    gkiVariant = line.removePrefix("gkiVariant=").trim().ifBlank { null }
-                }
-
-                line.startsWith("updateJson=") -> {
-                    updateJsonKmi =
-                        updateJsonKmiRegex
-                            .find(line.removePrefix("updateJson="))
-                            ?.groupValues
-                            ?.get(1)
-                }
-            }
-        }
-        return ModulePropInfo(true, version, gkiVariant ?: updateJsonKmi)
-    }
-
-    fun countTargets(raw: String): Int = parseConfigLines(raw).count { it != selfPkg }
-
-    fun parseProps(raw: String): Map<String, String> =
-        raw
-            .lines()
-            .mapNotNull {
-                val parts = it.split("=", limit = 2)
-                if (parts.size == 2) parts[0] to parts[1] else null
-            }.toMap()
+    // Module-prop / status parsing lives in pure top-level functions
+    // (parseModuleProp, parseKeyValueLines, countTargets) so they're
+    // unit-testable; only the issue-text rendering below needs `res`.
+    fun countTargets(raw: String): Int = countTargets(raw, selfPkg)
 
     fun buildModuleVersionIssue(
         kind: NativeModuleKind,
@@ -468,31 +687,6 @@ internal fun loadDashboardState(
                 Build.VERSION.RELEASE
             }.substringBefore('.')
         return "Android $release"
-    }
-
-    fun readKmodLoadStatus(
-        currentBootId: String,
-        raw: String,
-        dmesgRaw: String,
-    ): KmodLoadStatus? {
-        if (raw.isBlank()) return null
-        val props = parseProps(raw)
-        val bootId = props["boot_id"]?.trim()
-        return KmodLoadStatus(
-            timestamp = props["timestamp"]?.trim()?.toLongOrNull(),
-            bootId = bootId,
-            unameR = props["uname_r"]?.trim(),
-            gkiVariant = props["gki_variant"]?.trim()?.ifBlank { null },
-            kmodVersion = props["kmod_version"]?.trim()?.ifBlank { null },
-            rootManager = props["root_manager"]?.trim()?.ifBlank { null },
-            kprobes = props["kprobes"]?.trim()?.ifBlank { null },
-            kretprobes = props["kretprobes"]?.trim()?.ifBlank { null },
-            insmodExit = props["insmod_exit"]?.trim()?.toIntOrNull(),
-            loaded = props["loaded"]?.trim() == "1",
-            insmodStderr = props["insmod_stderr"]?.trim()?.ifBlank { null },
-            dmesgTail = dmesgRaw.trim().ifBlank { null },
-            freshForCurrentBoot = bootId != null && bootId == currentBootId,
-        )
     }
 
     fun resolveScopeEntryLabel(entry: String): String {
@@ -608,7 +802,7 @@ internal fun loadDashboardState(
 
     fun detectLsposedFramework(): LsposedFramework {
         val out = shellSnapshot["lsposed_framework"].orEmpty()
-        val props = parseProps(out)
+        val props = parseKeyValueLines(out)
         val probeOk = props["probe_ok"] == "1"
         val installedValue = props["installed"]
         val disabledValue = props["disabled"]
@@ -664,7 +858,7 @@ internal fun loadDashboardState(
             VpnHideLog.w(TAG, "failed to read zygisk status heartbeat: ${e.message}")
             ""
         }
-    val zygiskProps = parseProps(zygiskStatusRaw)
+    val zygiskProps = parseKeyValueLines(zygiskStatusRaw)
     val currentBootId = shellSnapshot["current_boot_id"].orEmpty()
     val zygiskBootId = zygiskProps["boot_id"]
     val zygiskActive = zygiskInstalled && zygiskBootId != null && zygiskBootId == currentBootId.trim()
@@ -705,157 +899,14 @@ internal fun loadDashboardState(
         )
     VpnHideLog.i(TAG, "kmodLoadStatus=$kmodLoadStatus")
 
-    // Decide whether to surface the install-recommendation card.
-    // Show when:
-    //  - neither native module installed (classic first-install flow), or
-    //  - kmod installed but its stamped gkiVariant doesn't match what the
-    //    device needs (wrong zip — user needs to reinstall the correct one), or
-    //  - kmod installed without gkiVariant (old build) AND not loaded —
-    //    variant unknown + broken is almost always a variant mismatch, or
-    //  - kmod installed on a kernel with no matching vpnhide-kmod variant at
-    //    all (non-GKI / unsupported combo) — we recommend zygisk instead so
-    //    the user doesn't wait for the kmod to "just work".
-    val recommendedKmi = kernelRecommendation?.recommendedGkiVariant
-    // Two cross-cutting gates on kmod warnings:
-    //   !kmodRaw.active — an active kmod (/proc/vpnhide_targets present)
-    //     is empirical proof the installation works, so a heuristic
-    //     saying otherwise is wrong. Applied to every warning below.
-    //   kmodLoadStatus?.freshForCurrentBoot == true (AmbiguousLoadFailed
-    //     only) — that warning is specifically about "the module we
-    //     installed tried to insmod this boot and failed, pick the
-    //     other candidate", so it only makes sense once post-fs-data
-    //     has actually attempted a load. The other warnings are
-    //     deterministic from the variant stamp / kernel-series tables
-    //     and are valid even before the first post-install boot.
-    // For an ambiguous recommendation (variantAmbiguous=true), either
-    // candidate is a valid install, so kmodVariantMismatch must check
-    // both recommendedGkiVariant AND alternativeGkiVariant before
-    // deciding it's a real mismatch.
-    val kmodVariantMismatch =
-        kmodRaw is ModuleState.Installed &&
-            !kmodRaw.active &&
-            kernelRecommendation?.preferKmod == true &&
-            recommendedKmi != null &&
-            kmodRaw.gkiVariant != null &&
-            kmodRaw.gkiVariant != recommendedKmi &&
-            kmodRaw.gkiVariant != kernelRecommendation.alternativeGkiVariant
-    val kmodUnknownVariantBroken =
-        kmodRaw is ModuleState.Installed &&
-            !kmodRaw.active &&
-            kmodRaw.gkiVariant == null &&
-            kernelRecommendation?.preferKmod == true
-    val kmodOnUnsupportedKernel =
-        kmodRaw is ModuleState.Installed &&
-            !kmodRaw.active &&
-            kernelRecommendation != null &&
-            !kernelRecommendation.preferKmod
-    // User installed one of the two candidates for an ambiguous GKI series
-    // (5.10 / 5.15) and it failed to load this boot — suggest the other.
-    val kmodAmbiguousLoadFailed =
-        kmodRaw is ModuleState.Installed &&
-            !kmodRaw.active &&
-            kmodLoadStatus?.freshForCurrentBoot == true &&
-            kernelRecommendation?.variantAmbiguous == true &&
-            kmodRaw.gkiVariant != null &&
-            (
-                kmodRaw.gkiVariant == kernelRecommendation.recommendedGkiVariant ||
-                    kmodRaw.gkiVariant == kernelRecommendation.alternativeGkiVariant
-            )
-    val kprobesMissing =
-        kmodLoadStatus?.freshForCurrentBoot == true && kmodLoadStatus.kretprobes == "n"
-    val recommendedArtifact = kernelRecommendation?.recommendedArtifact
-    // Single source of truth for "what's wrong with the installed kmod".
-    // Priority order: kprobes-missing first (no variant will ever work),
-    // then unsupported-kernel (wrong tool), wrong-variant (concrete
-    // mismatch), unknown-variant (old build that didn't stamp gkiVariant),
-    // ambiguous-load-failed (one of two valid candidates failed this boot),
-    // and finally a generic insmod failure when we have stderr to show.
-    // [reason] colors the card, [text] is the banner — deriving both from
-    // this one `when` keeps them from disagreeing. The `recommendedArtifact
-    // != null` guards are redundant in practice (those booleans already
-    // imply a non-null kernel recommendation) but kept so the res.getString
-    // args are provably non-null.
+    // Single source of truth for "what's wrong with the installed kmod" —
+    // classifyKmodProblem (pure, unit-tested) decides the priority-ordered
+    // diagnosis; renderKmodProblem maps it to the localized banner text.
+    // [reason] colors the card, [text] is the banner — both derive from the
+    // one classification so they can't disagree.
     val kmodProblem: KmodProblem? =
-        if (kmodRaw !is ModuleState.Installed) {
-            null
-        } else {
-            when {
-                kprobesMissing -> {
-                    KmodProblem(
-                        KmodBrokenReason.MissingKprobes,
-                        res.getString(R.string.dashboard_issue_kprobes_missing),
-                    )
-                }
-
-                kmodOnUnsupportedKernel && recommendedArtifact != null -> {
-                    KmodProblem(
-                        KmodBrokenReason.UnsupportedKernel,
-                        res.getString(
-                            R.string.dashboard_issue_kmod_not_supported_kernel,
-                            kmodLoadStatus?.unameR ?: "?",
-                            recommendedArtifact,
-                        ),
-                    )
-                }
-
-                kmodVariantMismatch -> {
-                    KmodProblem(
-                        KmodBrokenReason.WrongVariant,
-                        res.getString(
-                            R.string.dashboard_issue_kmod_wrong_variant,
-                            kmodRaw.gkiVariant ?: "?",
-                            recommendedKmi ?: "?",
-                            recommendedArtifact ?: "?",
-                        ),
-                    )
-                }
-
-                kmodUnknownVariantBroken && recommendedArtifact != null -> {
-                    KmodProblem(
-                        KmodBrokenReason.UnknownVariantInactive,
-                        res.getString(
-                            R.string.dashboard_issue_kmod_unknown_variant,
-                            recommendedArtifact,
-                        ),
-                    )
-                }
-
-                kmodAmbiguousLoadFailed -> {
-                    val installed = kmodRaw.gkiVariant
-                    val tryArtifact =
-                        if (installed == kernelRecommendation?.recommendedGkiVariant) {
-                            kernelRecommendation.alternativeArtifact
-                        } else {
-                            kernelRecommendation?.recommendedArtifact
-                        }
-                    KmodProblem(
-                        KmodBrokenReason.AmbiguousLoadFailed,
-                        res.getString(
-                            R.string.dashboard_issue_kmod_ambiguous_try_alternative,
-                            installed ?: "?",
-                            tryArtifact ?: "?",
-                        ),
-                    )
-                }
-
-                !kmodRaw.active &&
-                    kmodLoadStatus?.freshForCurrentBoot == true &&
-                    kmodLoadStatus.insmodStderr != null -> {
-                    KmodProblem(
-                        reason = null,
-                        text =
-                            res.getString(
-                                R.string.dashboard_issue_kmod_load_failed,
-                                kmodLoadStatus.insmodStderr,
-                            ),
-                    )
-                }
-
-                else -> {
-                    null
-                }
-            }
-        }
+        classifyKmodProblem(kmodRaw, kernelRecommendation, kmodLoadStatus)
+            ?.let { renderKmodProblem(it, res) }
     val kmodBrokenReason = kmodProblem?.reason
     val kmod: ModuleState =
         if (kmodRaw is ModuleState.Installed && kmodBrokenReason != null) {
@@ -875,14 +926,13 @@ internal fun loadDashboardState(
     VpnHideLog.i(
         TAG,
         "nativeInstallRecommendation=$nativeInstallRecommendation " +
-            "(raw=$kernelRecommendation variantMismatch=$kmodVariantMismatch " +
-            "unknownVariantBroken=$kmodUnknownVariantBroken)",
+            "(raw=$kernelRecommendation kmodProblem=$kmodProblem)",
     )
     StartupTrace.mark("dashboard_kernel_done")
 
     // lsposed hook status
     val hookStatusRaw = shellSnapshot["hook_status"].orEmpty()
-    val hookProps = parseProps(hookStatusRaw)
+    val hookProps = parseKeyValueLines(hookStatusRaw)
     val hookVersion = hookProps["version"]
     val hookBootId = hookProps["boot_id"]
     val hooksActiveThisBoot = hookBootId != null && hookBootId == currentBootId.trim()
@@ -910,49 +960,18 @@ internal fun loadDashboardState(
             }
         }
     StartupTrace.mark("dashboard_lsposed_config_done")
-    val lsposedRuntime: LsposedRuntime =
-        if (hooksActiveThisBoot) {
-            LsposedRuntime.Active(hookVersion)
-        } else {
-            LsposedRuntime.Inactive
-        }
-
     val lsposed: LsposedState =
-        when (lsposedRuntime) {
-            is LsposedRuntime.Active -> {
-                LsposedState.Active(lsposedRuntime.version, lsposedTargetCount)
-            }
-
-            LsposedRuntime.Inactive -> {
-                when (lsposedConfig) {
-                    null -> {
-                        LsposedState.InstalledInactive(null)
-                    }
-
-                    LsposedConfig.ModuleNotConfigured -> {
-                        when (lsposedFramework) {
-                            LsposedFramework.NotInstalled -> LsposedState.NotInstalled
-                            is LsposedFramework.Installed -> LsposedState.InstalledInactive(null)
-                        }
-                    }
-
-                    LsposedConfig.Disabled -> {
-                        LsposedState.InstalledInactive(null)
-                    }
-
-                    is LsposedConfig.Enabled -> {
-                        if (lsposedConfig.hasSystemFramework) {
-                            LsposedState.NeedsReboot(hookVersion)
-                        } else {
-                            LsposedState.InstalledInactive(null)
-                        }
-                    }
-                }
-            }
-        }
+        resolveLsposedState(
+            hooksActiveThisBoot = hooksActiveThisBoot,
+            hookVersion = hookVersion,
+            lsposedTargetCount = lsposedTargetCount,
+            framework = lsposedFramework,
+            config = lsposedConfig,
+        )
     VpnHideLog.i(
         TAG,
-        "lsposed: $lsposed (hookBootId=$hookBootId currentBootId=${currentBootId.trim()} framework=$lsposedFramework runtime=$lsposedRuntime config=$lsposedConfig)",
+        "lsposed: $lsposed (hookBootId=$hookBootId currentBootId=${currentBootId.trim()} " +
+            "framework=$lsposedFramework hooksActive=$hooksActiveThisBoot config=$lsposedConfig)",
     )
     StartupTrace.mark("dashboard_lsposed_done")
 
@@ -1095,16 +1114,10 @@ internal fun loadDashboardState(
     // profile (PackageManager.getInstalledApplications is per-user). A
     // Save from a profile that doesn't see all the targets would silently
     // drop them. Recommend uninstalling everywhere except the main profile.
-    // Literal field match via awk — grep would treat dots in `selfPkg`
-    // as regex wildcards.
-    val selfPmRaw = shellSnapshot["pm_packages"].orEmpty()
     val selfUidCount =
-        selfPmRaw
-            .lines()
-            .firstOrNull { it.startsWith("package:$selfPkg ") }
-            ?.substringAfter("uid:", "")
-            ?.split(',')
-            ?.count { it.trim().toIntOrNull() != null }
+        parsePackageUidMap(shellSnapshot["pm_packages"].orEmpty())[selfPkg]
+            ?.distinct()
+            ?.size
             ?: 0
     if (selfUidCount > 1) {
         warn(res.getString(R.string.dashboard_issue_self_multi_profile, selfUidCount))

@@ -26,20 +26,13 @@ internal object HookLog {
     fun install() {
         reload()
         if (watcher != null) return
-        val observer =
-            object : FileObserver(
-                File("/data/system"),
-                CREATE or CLOSE_WRITE or MOVED_TO or MODIFY,
-            ) {
-                override fun onEvent(
-                    event: Int,
-                    path: String?,
-                ) {
-                    if (path == "vpnhide_debug_logging") reload()
-                }
+        // MODIFY is enabled here (unlike the UID / hidden-pkg watchers): this
+        // flag is a single byte, so a transient mid-write read is harmless and
+        // we'd rather react to an in-place `echo > file` immediately.
+        watcher =
+            watchSystemDataDir(extraEvents = FileObserver.MODIFY) { path ->
+                if (path == "vpnhide_debug_logging") reload()
             }
-        watcher = observer
-        observer.startWatching()
     }
 
     private fun reload() {

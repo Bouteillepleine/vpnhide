@@ -106,6 +106,19 @@ class ShellCommandBuildersTest {
     }
 
     @Test
+    fun `managed config body is header plus newline-terminated lines`() {
+        assertEquals(
+            "# Managed by VPN Hide app\ncom.a\ncom.b\n",
+            managedConfigBody("# Managed by VPN Hide app", listOf("com.a", "com.b")),
+        )
+    }
+
+    @Test
+    fun `managed config body for an empty list is just the header line`() {
+        assertEquals("# Managed by VPN Hide app\n", managedConfigBody("# Managed by VPN Hide app", emptyList()))
+    }
+
+    @Test
     fun `self target output extracts seeded package list`() {
         val output =
             """

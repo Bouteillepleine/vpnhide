@@ -1,6 +1,7 @@
 package dev.okhsunrog.vpnhide
 
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
@@ -19,7 +20,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -27,7 +27,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.okhsunrog.vpnhide.checks.CheckOutput
-import dev.okhsunrog.vpnhide.checks.CheckStatus
 import dev.okhsunrog.vpnhide.generated.IfaceLists
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -166,7 +165,7 @@ fun DiagnosticsScreen(
             diagState is DiagnosticsCache.State.Ready -> {
                 StatusBanner(
                     text = stringResource(R.string.banner_ready),
-                    containerColor = Color(0xFF1B5E20).copy(alpha = 0.15f),
+                    containerColor = StatusColors.successContainer(),
                     contentColor = MaterialTheme.colorScheme.onSurface,
                 )
 
@@ -174,8 +173,8 @@ fun DiagnosticsScreen(
                     Spacer(Modifier.height(6.dp))
                     StatusBanner(
                         text = stringResource(R.string.banner_network_blocked),
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                        containerColor = StatusColors.errorContainer(),
+                        contentColor = MaterialTheme.colorScheme.onSurface,
                     )
                 }
 
@@ -558,14 +557,8 @@ private fun nativeCheck(
 ): CheckResult =
     try {
         val out = block()
-        val passed =
-            when (out.status) {
-                CheckStatus.PASS -> true
-                CheckStatus.NETWORK_BLOCKED -> null
-                CheckStatus.FAIL -> false
-            }
         VpnHideLog.i(TAG, "[$name] ${out.status}: ${out.detail}")
-        CheckResult(name, passed, out.detail)
+        CheckResult(name, out.status.toPassed(), out.detail)
     } catch (e: Exception) {
         val detail = e.message ?: e.javaClass.simpleName
         Log.e(TAG, "[$name] $detail", e)
@@ -576,47 +569,68 @@ private fun nativeCheck(
 //  Java API checks
 // ==========================================================================
 
-internal fun checkHasTransportVpn(
+/** Shared preamble for the capability-based checks: resolve the active
+ * network's [NetworkCapabilities], reporting "no active network" / "no
+ * capabilities" (both PASS — nothing for an app to leak) when absent. */
+private inline fun withActiveCaps(
     cm: ConnectivityManager,
     name: String,
+    body: (NetworkCapabilities) -> CheckResult,
 ): CheckResult {
     val net = cm.activeNetwork ?: return CheckResult(name, true, "no active network")
     val caps = cm.getNetworkCapabilities(net) ?: return CheckResult(name, true, "no capabilities")
-    val hasVpn = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
-    val hasWifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
-    val hasCellular = caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
-    val detail =
-        if (!hasVpn) {
-            "hasTransport(VPN)=false, WIFI=$hasWifi, CELLULAR=$hasCellular"
-        } else {
-            "hasTransport(VPN)=true, WIFI=$hasWifi, CELLULAR=$hasCellular"
-        }
-    return CheckResult(name, !hasVpn, detail)
+    return body(caps)
 }
+
+/** Shared preamble for the LinkProperties-based checks. */
+private inline fun withActiveLinkProperties(
+    cm: ConnectivityManager,
+    name: String,
+    body: (LinkProperties) -> CheckResult,
+): CheckResult {
+    val net = cm.activeNetwork ?: return CheckResult(name, true, "no active network")
+    val lp = cm.getLinkProperties(net) ?: return CheckResult(name, true, "no link properties")
+    return body(lp)
+}
+
+internal fun checkHasTransportVpn(
+    cm: ConnectivityManager,
+    name: String,
+): CheckResult =
+    withActiveCaps(cm, name) { caps ->
+        val hasVpn = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        val hasWifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+        val hasCellular = caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+        val detail =
+            if (!hasVpn) {
+                "hasTransport(VPN)=false, WIFI=$hasWifi, CELLULAR=$hasCellular"
+            } else {
+                "hasTransport(VPN)=true, WIFI=$hasWifi, CELLULAR=$hasCellular"
+            }
+        CheckResult(name, !hasVpn, detail)
+    }
 
 internal fun checkHasCapabilityNotVpn(
     cm: ConnectivityManager,
     name: String,
-): CheckResult {
-    val net = cm.activeNetwork ?: return CheckResult(name, true, "no active network")
-    val caps = cm.getNetworkCapabilities(net) ?: return CheckResult(name, true, "no capabilities")
-    val notVpn = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-    val detail = if (notVpn) "NOT_VPN capability present" else "NOT_VPN capability MISSING"
-    return CheckResult(name, notVpn, detail)
-}
+): CheckResult =
+    withActiveCaps(cm, name) { caps ->
+        val notVpn = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+        val detail = if (notVpn) "NOT_VPN capability present" else "NOT_VPN capability MISSING"
+        CheckResult(name, notVpn, detail)
+    }
 
 internal fun checkTransportInfo(
     cm: ConnectivityManager,
     name: String,
-): CheckResult {
-    val net = cm.activeNetwork ?: return CheckResult(name, true, "no active network")
-    val caps = cm.getNetworkCapabilities(net) ?: return CheckResult(name, true, "no capabilities")
-    val info = caps.transportInfo
-    val className = info?.javaClass?.name ?: "null"
-    val isVpn = className.contains("VpnTransportInfo")
-    val detail = if (!isVpn) "transportInfo=$className" else "VpnTransportInfo: $info"
-    return CheckResult(name, !isVpn, detail)
-}
+): CheckResult =
+    withActiveCaps(cm, name) { caps ->
+        val info = caps.transportInfo
+        val className = info?.javaClass?.name ?: "null"
+        val isVpn = className.contains("VpnTransportInfo")
+        val detail = if (!isVpn) "transportInfo=$className" else "VpnTransportInfo: $info"
+        CheckResult(name, !isVpn, detail)
+    }
 
 private fun checkNetworkInterfaceEnum(name: String): CheckResult =
     try {
@@ -663,67 +677,64 @@ internal fun checkAllNetworksVpn(
 private fun checkActiveNetworkVpn(
     cm: ConnectivityManager,
     name: String,
-): CheckResult {
-    val net = cm.activeNetwork ?: return CheckResult(name, true, "no active network")
-    val caps = cm.getNetworkCapabilities(net) ?: return CheckResult(name, true, "no capabilities")
-    val transports = mutableListOf<String>()
-    mapOf(
-        NetworkCapabilities.TRANSPORT_CELLULAR to "CELLULAR",
-        NetworkCapabilities.TRANSPORT_WIFI to "WIFI",
-        NetworkCapabilities.TRANSPORT_BLUETOOTH to "BLUETOOTH",
-        NetworkCapabilities.TRANSPORT_ETHERNET to "ETHERNET",
-        NetworkCapabilities.TRANSPORT_VPN to "VPN",
-        NetworkCapabilities.TRANSPORT_WIFI_AWARE to "WIFI_AWARE",
-    ).forEach { (id, label) -> if (caps.hasTransport(id)) transports.add(label) }
-    val hasVpn = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
-    val detail =
-        if (!hasVpn) {
-            "transports=[${transports.joinToString()}], no VPN"
-        } else {
-            "transports include VPN: [${transports.joinToString()}]"
-        }
-    return CheckResult(name, !hasVpn, detail)
-}
+): CheckResult =
+    withActiveCaps(cm, name) { caps ->
+        val transports = mutableListOf<String>()
+        mapOf(
+            NetworkCapabilities.TRANSPORT_CELLULAR to "CELLULAR",
+            NetworkCapabilities.TRANSPORT_WIFI to "WIFI",
+            NetworkCapabilities.TRANSPORT_BLUETOOTH to "BLUETOOTH",
+            NetworkCapabilities.TRANSPORT_ETHERNET to "ETHERNET",
+            NetworkCapabilities.TRANSPORT_VPN to "VPN",
+            NetworkCapabilities.TRANSPORT_WIFI_AWARE to "WIFI_AWARE",
+        ).forEach { (id, label) -> if (caps.hasTransport(id)) transports.add(label) }
+        val hasVpn = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        val detail =
+            if (!hasVpn) {
+                "transports=[${transports.joinToString()}], no VPN"
+            } else {
+                "transports include VPN: [${transports.joinToString()}]"
+            }
+        CheckResult(name, !hasVpn, detail)
+    }
 
 internal fun checkLinkPropertiesIfname(
     cm: ConnectivityManager,
     name: String,
-): CheckResult {
-    val net = cm.activeNetwork ?: return CheckResult(name, true, "no active network")
-    val lp = cm.getLinkProperties(net) ?: return CheckResult(name, true, "no link properties")
-    val ifname = lp.interfaceName ?: "(null)"
-    val routes = lp.routes.map { "${it.destination} via ${it.gateway} dev ${it.`interface`}" }
-    val dns = lp.dnsServers.map { it.hostAddress ?: "?" }
-    val isVpn = IfaceLists.isVpnIface(ifname)
-    val detail =
-        if (!isVpn) {
-            "ifname=$ifname, ${routes.size} routes, dns=[${dns.joinToString()}]"
-        } else {
-            "ifname=$ifname is a VPN interface"
-        }
-    return CheckResult(name, !isVpn, detail)
-}
+): CheckResult =
+    withActiveLinkProperties(cm, name) { lp ->
+        val ifname = lp.interfaceName ?: "(null)"
+        val routes = lp.routes.map { "${it.destination} via ${it.gateway} dev ${it.`interface`}" }
+        val dns = lp.dnsServers.map { it.hostAddress ?: "?" }
+        val isVpn = IfaceLists.isVpnIface(ifname)
+        val detail =
+            if (!isVpn) {
+                "ifname=$ifname, ${routes.size} routes, dns=[${dns.joinToString()}]"
+            } else {
+                "ifname=$ifname is a VPN interface"
+            }
+        CheckResult(name, !isVpn, detail)
+    }
 
 private fun checkLinkPropertiesRoutes(
     cm: ConnectivityManager,
     name: String,
-): CheckResult {
-    val net = cm.activeNetwork ?: return CheckResult(name, true, "no active network")
-    val lp = cm.getLinkProperties(net) ?: return CheckResult(name, true, "no link properties")
-    val routes = lp.routes
-    val vpnRoutes =
-        routes.filter { route ->
-            val iface = route.`interface` ?: return@filter false
-            IfaceLists.isVpnIface(iface)
-        }
-    val detail =
-        if (vpnRoutes.isEmpty()) {
-            "${routes.size} routes, none via VPN interfaces"
-        } else {
-            "${vpnRoutes.size} route(s) via VPN"
-        }
-    return CheckResult(name, vpnRoutes.isEmpty(), detail)
-}
+): CheckResult =
+    withActiveLinkProperties(cm, name) { lp ->
+        val routes = lp.routes
+        val vpnRoutes =
+            routes.filter { route ->
+                val iface = route.`interface` ?: return@filter false
+                IfaceLists.isVpnIface(iface)
+            }
+        val detail =
+            if (vpnRoutes.isEmpty()) {
+                "${routes.size} routes, none via VPN interfaces"
+            } else {
+                "${vpnRoutes.size} route(s) via VPN"
+            }
+        CheckResult(name, vpnRoutes.isEmpty(), detail)
+    }
 
 private fun checkProxyHost(name: String): CheckResult {
     val httpHost = System.getProperty("http.proxyHost")

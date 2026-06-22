@@ -127,26 +127,24 @@ private fun buildSaveCommand(
     zygiskPkgs: List<String>,
     lsposedPkgs: List<String>,
 ): String {
-    fun encodeBody(pkgs: List<String>): String {
-        val body = "$header\n" + pkgs.joinToString("\n") + if (pkgs.isNotEmpty()) "\n" else ""
-        return android.util.Base64.encodeToString(body.toByteArray(), android.util.Base64.NO_WRAP)
-    }
-
     val parts = mutableListOf<String>()
 
     // Write kmod targets
-    val kmodB64 = encodeBody(kmodPkgs)
-    parts += "if [ -d /data/adb/vpnhide_kmod ]; then echo '$kmodB64' | base64 -d > $KMOD_TARGETS && chmod 644 $KMOD_TARGETS; fi"
+    parts +=
+        "if [ -d /data/adb/vpnhide_kmod ]; then ${buildConfigWriteCommand(KMOD_TARGETS, header, kmodPkgs)} && chmod 644 $KMOD_TARGETS; fi"
 
     // Write zygisk targets
-    val zygiskB64 = encodeBody(zygiskPkgs)
-    parts += "if [ -d /data/adb/vpnhide_zygisk ]; then echo '$zygiskB64' | base64 -d > $ZYGISK_TARGETS && chmod 644 $ZYGISK_TARGETS; fi"
+    parts +=
+        "if [ -d /data/adb/vpnhide_zygisk ]; then ${buildConfigWriteCommand(
+            ZYGISK_TARGETS,
+            header,
+            zygiskPkgs,
+        )} && chmod 644 $ZYGISK_TARGETS; fi"
     parts += "cp $ZYGISK_TARGETS $ZYGISK_MODULE_TARGETS 2>/dev/null; true"
 
     // Write lsposed targets (always — the dir is created by service.sh or us)
-    val lsposedB64 = encodeBody(lsposedPkgs)
     parts += "mkdir -p /data/adb/vpnhide_lsposed"
-    parts += "echo '$lsposedB64' | base64 -d > $LSPOSED_TARGETS && chmod 644 $LSPOSED_TARGETS"
+    parts += "${buildConfigWriteCommand(LSPOSED_TARGETS, header, lsposedPkgs)} && chmod 644 $LSPOSED_TARGETS"
 
     // Resolve kmod UIDs -> /proc/vpnhide_targets
     if (kmodPkgs.isNotEmpty()) {

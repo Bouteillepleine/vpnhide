@@ -1,6 +1,7 @@
 package dev.okhsunrog.vpnhide
 
 import dev.okhsunrog.vpnhide.checks.CheckOutput
+import dev.okhsunrog.vpnhide.checks.CheckStatus
 import dev.okhsunrog.vpnhide.checks.checkGetifaddrs
 import dev.okhsunrog.vpnhide.checks.checkIoctlSiocgifconf
 import dev.okhsunrog.vpnhide.checks.checkIoctlSiocgifflags
@@ -29,6 +30,20 @@ internal data class NativeCheckSpec(
     val labelRes: Int,
     val run: () -> CheckOutput,
 )
+
+/**
+ * Map a native probe status to the tri-state the UI uses: PASS → true (leak
+ * blocked), FAIL → false (leak detected), NETWORK_BLOCKED → null (probe
+ * couldn't run, e.g. ECONNREFUSED from `socket()` when the app has no network
+ * permission). Single source so the Diagnostics list and the Dashboard summary
+ * read the status the same way.
+ */
+internal fun CheckStatus.toPassed(): Boolean? =
+    when (this) {
+        CheckStatus.PASS -> true
+        CheckStatus.FAIL -> false
+        CheckStatus.NETWORK_BLOCKED -> null
+    }
 
 /**
  * The native probe suite, in display order. Single source of truth for both

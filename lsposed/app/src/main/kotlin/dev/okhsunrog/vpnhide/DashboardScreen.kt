@@ -47,7 +47,10 @@ fun DashboardScreen(
     LaunchedEffect(Unit) {
         if (shouldShowChangelog(context)) {
             val data = withContext(Dispatchers.IO) { loadChangelog(context) }
-            if (data != null) {
+            // Only raise the dialog when there's something to show — the
+            // emptiness guard lives here (a side-effect scope) rather than
+            // inside ChangelogDialog's composition body.
+            if (data != null && data.history.isNotEmpty()) {
                 changelogData = data
                 showChangelog = true
             }
@@ -669,11 +672,9 @@ private fun ChangelogDialog(
     data: ChangelogData,
     onDismiss: () -> Unit,
 ) {
+    // Non-empty by construction — the caller only shows this dialog when
+    // changelog history has entries (see the load effect above).
     val entries = remember(data) { data.history }
-    if (entries.isEmpty()) {
-        onDismiss()
-        return
-    }
     var index by remember { mutableIntStateOf(0) }
     val entry = entries[index]
     val locale =
