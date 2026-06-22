@@ -62,7 +62,12 @@ resolve_uids() {
         case "$pkg" in \#*) continue ;; esac
         # Literal match on $1 — grep would treat dots in `pkg` as regex
         # wildcards. awk's `$1 == p` compares fields literally.
-        uid_csv="$(echo "$ALL_PACKAGES" | awk -v p="package:${pkg}" '$1 == p { sub(/uid:/, "", $2); print $2; exit }')"
+        uid_csv="$(echo "$ALL_PACKAGES" | awk -v p="package:${pkg}" '
+            $1 == p {
+                sub(/uid:/, "", $2)
+                n = split($2, ids, ",")
+                for (i = 1; i <= n; i++) print ids[i]
+            }')"
         if [ -n "$uid_csv" ]; then
             expanded="$(echo "$uid_csv" | tr ',' '\n')"
             if [ -z "$uids" ]; then uids="$expanded"; else uids="${uids}

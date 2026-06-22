@@ -1,0 +1,83 @@
+package dev.okhsunrog.vpnhide
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class ShellCommandBuildersTest {
+    @Test
+    fun `package UID expression uses literal awk field comparison`() {
+        val expr = buildPackageUidsExpression("com.example.app", "U")
+
+        assertTrue(expr.contains("awk -v p=\"package:com.example.app\""))
+        assertTrue(expr.contains("\$1 == p"))
+        assertFalse(expr.contains("grep"))
+    }
+
+    @Test
+    fun `UID resolver preserves multi-profile UID splitting`() {
+        val cmd = buildUidResolverCommand(listOf("com.example.app"), "/tmp/out")
+
+        assertTrue(cmd.contains("n = split(\$2, ids, \",\")"))
+        assertTrue(cmd.contains("for (i = 1; i <= n; i++) print ids[i]"))
+        assertTrue(cmd.contains("echo \"\$UIDS\" > /tmp/out"))
+    }
+
+    @Test
+    fun `package UID expression does not treat dots as regex wildcards`() {
+        val allPkgs =
+            """
+            package:comXexampleXapp uid:99999
+            package:com.example.app uid:10123
+            """.trimIndent()
+
+        assertEquals("10123", runPackageUidExpression(allPkgs, "com.example.app"))
+    }
+
+    @Test
+    fun `package UID expression expands comma-separated profile UIDs`() {
+        val allPkgs = "package:com.example.app uid:10123,1010123"
+
+        assertEquals("10123\n1010123", runPackageUidExpression(allPkgs, "com.example.app"))
+    }
+
+    @Test
+    fun `package UID expression keeps repeated package lines`() {
+        val allPkgs =
+            """
+            package:com.example.app uid:10123
+            package:com.example.app uid:1010123
+            """.trimIndent()
+
+        assertEquals("10123\n1010123", runPackageUidExpression(allPkgs, "com.example.app"))
+    }
+
+    @Test
+    fun `package UID expression returns empty output for unknown packages`() {
+        val allPkgs = "package:com.other.app uid:10123"
+
+        assertEquals("", runPackageUidExpression(allPkgs, "com.example.app"))
+    }
+
+    private fun runPackageUidExpression(
+        allPkgs: String,
+        packageName: String,
+    ): String {
+        val script =
+            "ALL_PKGS=\$(cat <<'EOF'\n" +
+                allPkgs +
+                "\nEOF\n" +
+                "); " +
+                buildPackageUidsExpression(packageName, "U") +
+                "; printf '%s' \"\$U\""
+        val proc =
+            ProcessBuilder("sh", "-c", script)
+                .redirectErrorStream(true)
+                .start()
+        val out = proc.inputStream.bufferedReader().readText()
+        val exitCode = proc.waitFor()
+        assertEquals("shell exited with output: $out", 0, exitCode)
+        return out
+    }
+}

@@ -119,7 +119,7 @@ clang-format --dry-run --Werror kmod/vpnhide_kmod.c
 gcc -O2 -Wall -Werror -o /tmp/test_iface_lists kmod/test_iface_lists.c && /tmp/test_iface_lists
 
 # Kotlin
-ktlint "lsposed/**/*.kt"
+ktlint "lsposed/app/src/**/*.kt"
 cd lsposed && ./gradlew :app:lintDebug :app:testDebugUnitTest
 ```
 

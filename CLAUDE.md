@@ -36,6 +36,8 @@ These short files cover everything specific to this repo. Skipping them leads to
   This writes a Markdown fragment to `changelog.d/<type>-<slug>-<hex4>.md` — nothing else. `CHANGELOG.md` is regenerated only at release time (that's what keeps PRs from conflicting on it). Commit just the new fragment alongside the code change. To preview pending entries: `./scripts/preview-changelog.py`. Skip the entry for internal refactors / docs-only / CI-only / test-only changes.
 - **Do not bump `VERSION` or run `./scripts/release.py` unless the maintainer explicitly asks for a release.** Fragments under `changelog.d/` don't need a version number. `release.py` rotates every fragment into `history[0]` of `changelog.json`, deletes the fragment files, and is maintainer-only.
 - **Don't put `#NN` in commit messages or PR titles to refer to local review notes.** GitHub auto-links `#NN` to PR/issue numbers in this repo, and the cross-reference will almost certainly point at the wrong PR. Real GitHub references (`fixes #38` where #38 is an actual issue) are fine — verify the number first.
+- **Open regular PRs by default.** Use draft PRs only when the maintainer explicitly asks for a draft.
+- **Do not mention Codex in PR titles, PR descriptions, commit messages, or changelog entries.**
 
 ## Build entry points
 

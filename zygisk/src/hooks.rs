@@ -46,6 +46,7 @@ struct ifconf {
 // causing errors like `ioctl(SIOCGIFFLAGS) for "tun0" failed in ifaddrs`
 // and corrupting NFC/HCE payment flows).
 thread_local! {
+    #[allow(clippy::missing_const_for_thread_local)]
     static IN_GETIFADDRS: Cell<bool> = const { Cell::new(false) };
 }
 
