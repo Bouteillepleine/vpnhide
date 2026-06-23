@@ -1015,7 +1015,7 @@ private suspend fun exportDebugZip(
                     "targets.txt" to buildTargetsText(),
                     "interfaces.txt" to buildInterfacesText(),
                     "proc_net.txt" to buildProcNetText(),
-                    "logcat.txt" to captureAppLogcat().ifEmpty { "(no logcat entries)" },
+                    "logcat.txt" to captureDebugLogcat().ifEmpty { "(no logcat entries)" },
                 )
 
             // Create zip
@@ -1205,27 +1205,17 @@ private fun buildProcNetText(): String =
         }
     }
 
-// App-level logs only — the app can read its own logcat without root.
-private fun captureAppLogcat(): String =
-    try {
-        val proc =
-            Runtime.getRuntime().exec(
-                arrayOf(
-                    "logcat",
-                    "-d",
-                    "-s",
-                    "VPNHideTest:*",
-                    "VpnHide:*",
-                    "VpnHide-Dashboard:*",
-                    // zygisk's android_logger uses this tag (see zygisk/src/lib.rs:LOG_TAG);
-                    // without it the export is missing all native-side hook logs.
-                    "vpnhide-zygisk:*",
-                ),
-            )
-        val output = proc.inputStream.bufferedReader().readText()
-        proc.waitFor()
-        proc.destroy()
-        output
-    } catch (e: Exception) {
-        "(logcat failed: ${e.message})"
-    }
+private fun captureDebugLogcat(): String {
+    val tags =
+        listOf(
+            "VPNHideTest:*",
+            "VpnHide:*",
+            "VpnHide-Dashboard:*",
+            "VpnHide-LSPosed:*",
+            // zygisk's android_logger uses this tag (see zygisk/src/lib.rs:LOG_TAG);
+            // without it the export is missing all native-side hook logs.
+            "vpnhide-zygisk:*",
+        ).joinToString(" ")
+    val (exit, output) = suExec("logcat -d -b all -v threadtime -s $tags 2>/dev/null")
+    return if (exit == 0) output else "(logcat failed: exit=$exit)\n$output"
+}
