@@ -301,6 +301,12 @@ class HookEntry : IXposedHookLoadPackage {
         return score
     }
 
+    // Physical replacement follows the recommended split-tunnel model: target
+    // apps see a non-VPN Network and may bind sockets to it. That is right for
+    // apps kept outside the VPN, but it can bypass the VPN for apps that must
+    // keep traffic inside the tunnel while hiding VPN state.
+    // TODO: add a VPN-preserving concealment mode for that use case
+    // (tracked by GitHub issue 130).
     private fun findPhysicalNetwork(cs: Any): Network? {
         val scored =
             rawAllNetworks(cs).mapNotNull { network ->
