@@ -390,7 +390,7 @@ class HookEntry : IXposedHookLoadPackage {
                     val isTarget = targets.contains(callerUid)
                     val nc = param.thisObject as NetworkCapabilities
                     val transportTypes = XposedHelpers.getLongField(nc, "mTransportTypes")
-                    val hasVpn = (transportTypes and (1L shl TRANSPORT_VPN)) != 0L
+                    val hasVpn = (transportTypes and (1L shl NetworkCapabilities.TRANSPORT_VPN)) != 0L
                     // Per-request diagnostic line. Gated by the debug-logging
                     // toggle: these fire on every NC.writeToParcel inside
                     // system_server and directly name the target UIDs we hook,
@@ -403,13 +403,17 @@ class HookEntry : IXposedHookLoadPackage {
                     if (!isTarget) return
 
                     try {
-                        val vpnBit = 1L shl TRANSPORT_VPN
+                        val vpnBit = 1L shl NetworkCapabilities.TRANSPORT_VPN
                         if (transportTypes and vpnBit == 0L) return
 
                         val copy = NetworkCapabilities(nc)
                         XposedHelpers.setLongField(copy, "mTransportTypes", transportTypes and vpnBit.inv())
                         val caps = XposedHelpers.getLongField(copy, "mNetworkCapabilities")
-                        XposedHelpers.setLongField(copy, "mNetworkCapabilities", caps or (1L shl NET_CAPABILITY_NOT_VPN))
+                        XposedHelpers.setLongField(
+                            copy,
+                            "mNetworkCapabilities",
+                            caps or (1L shl NetworkCapabilities.NET_CAPABILITY_NOT_VPN),
+                        )
                         try {
                             val ti = XposedHelpers.getObjectField(copy, "mTransportInfo")
                             if (ti != null && ti.javaClass.name == "android.net.VpnTransportInfo") {
@@ -615,7 +619,7 @@ class HookEntry : IXposedHookLoadPackage {
                         if (uid < 0 || !loadTargetUids().contains(uid)) return
 
                         val request = extractNetworkRequest(nri)
-                        if (request != null && request.hasTransport(TRANSPORT_VPN)) {
+                        if (request != null && request.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
                             // App is specifically listening for a VPN network —
                             // suppress so it never learns one exists.
                             param.result = null
@@ -676,8 +680,6 @@ class HookEntry : IXposedHookLoadPackage {
     companion object {
         private const val SYSTEM_UID = 1000
         private val RECIPIENT_UID_FIELDS = listOf("mAsUid", "mUid", "uid")
-        private const val TRANSPORT_VPN = 4
-        private const val NET_CAPABILITY_NOT_VPN = 15
         private const val TYPE_VPN = 17
         private const val TYPE_WIFI = 1
         const val HOOK_STATUS_FILE = "/data/system/vpnhide_hook_active"
