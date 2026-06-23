@@ -2,6 +2,7 @@ package dev.okhsunrog.vpnhide
 
 import android.net.ConnectivityManager
 import android.net.LinkProperties
+import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
@@ -38,6 +39,9 @@ import java.net.NetworkInterface
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -540,6 +544,7 @@ internal fun runAllChecks(
             checkTransportInfo(cm, res.getString(R.string.check_transport_info)),
             checkAllNetworksVpn(cm, res.getString(R.string.check_all_networks_vpn)),
             checkActiveNetworkVpn(cm, res.getString(R.string.check_active_network_vpn)),
+            checkNetworkCallbackVpn(cm, res.getString(R.string.check_network_callback)),
             checkLinkPropertiesIfname(cm, res.getString(R.string.check_link_properties)),
             checkLinkPropertiesRoutes(cm, res.getString(R.string.check_link_properties_routes)),
             checkProxyHost(res.getString(R.string.check_proxy_host)),
@@ -697,6 +702,54 @@ private fun checkActiveNetworkVpn(
             }
         CheckResult(name, !hasVpn, detail)
     }
+
+// Push-callback leak (issue #70, e.g. VTB): apps using
+// registerDefaultNetworkCallback receive NetworkCapabilities *pushed* from
+// system_server. The writeToParcel hook keys off Binder.getCallingUid(), which
+// on the callback path is system_server (1000), not the app — so it doesn't
+// sanitize, and the app sees the real VPN through the callback even though the
+// synchronous getNetworkCapabilities() is clean. We read caps via the callback
+// and fail if VPN is still visible.
+internal fun checkNetworkCallbackVpn(
+    cm: ConnectivityManager,
+    name: String,
+): CheckResult {
+    val latch = CountDownLatch(1)
+    val seen = AtomicReference<NetworkCapabilities?>(null)
+    val callback =
+        object : ConnectivityManager.NetworkCallback() {
+            override fun onCapabilitiesChanged(
+                network: Network,
+                caps: NetworkCapabilities,
+            ) {
+                seen.set(caps)
+                latch.countDown()
+            }
+        }
+    return try {
+        cm.registerDefaultNetworkCallback(callback)
+        val fired = latch.await(3, TimeUnit.SECONDS)
+        val caps = seen.get()
+        if (!fired || caps == null) {
+            CheckResult(name, true, "no callback delivered")
+        } else {
+            val hasVpn = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+            val notVpn = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            val leaked = hasVpn || !notVpn
+            val detail =
+                if (!leaked) {
+                    "callback caps clean (no VPN transport, NOT_VPN present)"
+                } else {
+                    "callback leaks VPN: hasTransport(VPN)=$hasVpn, NOT_VPN=$notVpn"
+                }
+            CheckResult(name, !leaked, detail)
+        }
+    } catch (e: Exception) {
+        CheckResult(name, false, e.message ?: e.javaClass.simpleName)
+    } finally {
+        runCatching { cm.unregisterNetworkCallback(callback) }
+    }
+}
 
 internal fun checkLinkPropertiesIfname(
     cm: ConnectivityManager,
