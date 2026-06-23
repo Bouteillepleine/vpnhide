@@ -72,20 +72,28 @@ internal object PackageVisibilityHooks {
                 return
             }
 
-        hook(ipmClass, "getInstalledPackages", listFilter<PackageInfo> { it.packageName })
-        hook(ipmClass, "getInstalledApplications", listFilter<ApplicationInfo> { it.packageName })
-        hook(ipmClass, "queryIntentActivities", resolveInfoListFilter())
-        hook(ipmClass, "queryIntentServices", resolveInfoListFilter())
-        hook(ipmClass, "queryIntentReceivers", resolveInfoListFilter())
-        hook(ipmClass, "queryIntentContentProviders", resolveInfoListFilter())
+        hook(
+            ipmClass,
+            "getInstalledPackages",
+            listFilter<PackageInfo>("getInstalledPackages") { it.packageName },
+        )
+        hook(
+            ipmClass,
+            "getInstalledApplications",
+            listFilter<ApplicationInfo>("getInstalledApplications") { it.packageName },
+        )
+        hook(ipmClass, "queryIntentActivities", resolveInfoListFilter("queryIntentActivities"))
+        hook(ipmClass, "queryIntentServices", resolveInfoListFilter("queryIntentServices"))
+        hook(ipmClass, "queryIntentReceivers", resolveInfoListFilter("queryIntentReceivers"))
+        hook(ipmClass, "queryIntentContentProviders", resolveInfoListFilter("queryIntentContentProviders"))
 
-        hook(ipmClass, "getPackageInfo", singleHideByFirstStringArg())
-        hook(ipmClass, "getApplicationInfo", singleHideByFirstStringArg())
-        hook(ipmClass, "getInstallerPackageName", singleHideByFirstStringArg())
-        hook(ipmClass, "getInstallSourceInfo", singleHideByFirstStringArg())
+        hook(ipmClass, "getPackageInfo", singleHideByFirstStringArg("getPackageInfo"))
+        hook(ipmClass, "getApplicationInfo", singleHideByFirstStringArg("getApplicationInfo"))
+        hook(ipmClass, "getInstallerPackageName", singleHideByFirstStringArg("getInstallerPackageName"))
+        hook(ipmClass, "getInstallSourceInfo", singleHideByFirstStringArg("getInstallSourceInfo"))
         hook(ipmClass, "getPackageUid", packageUidHide())
-        hook(ipmClass, "resolveIntent", resolveInfoSingleHide())
-        hook(ipmClass, "resolveService", resolveInfoSingleHide())
+        hook(ipmClass, "resolveIntent", resolveInfoSingleHide("resolveIntent"))
+        hook(ipmClass, "resolveService", resolveInfoSingleHide("resolveService"))
         hook(ipmClass, "getPackagesForUid", packagesForUidHide())
 
         watchConfigFiles()
@@ -95,13 +103,13 @@ internal object PackageVisibilityHooks {
     //  Caller classification
     // ------------------------------------------------------------------
 
-    private fun isObserverCaller(): Boolean {
+    private fun observerCallerUid(): Int? {
         val uid = Binder.getCallingUid()
         // Exempt system callers: installd, shell, system_server itself,
         // LauncherApps, StatusBar, etc. all run under UID < 10000.
-        if (uid < Process.FIRST_APPLICATION_UID) return false
-        if (uid == Process.myUid()) return false
-        return loadObserverUids().contains(uid)
+        if (uid < Process.FIRST_APPLICATION_UID) return null
+        if (uid == Process.myUid()) return null
+        return if (loadObserverUids().contains(uid)) uid else null
     }
 
     private fun loadObserverUids(): Set<Int> {
@@ -195,11 +203,14 @@ internal object PackageVisibilityHooks {
      * Generic list filter for ParceledListSlice<T>.
      * Removes items whose packageName (extracted by [pkgOf]) is in hiddenPackages.
      */
-    private inline fun <reified T> listFilter(crossinline pkgOf: (T) -> String?): XC_MethodHook =
+    private inline fun <reified T> listFilter(
+        methodName: String,
+        crossinline pkgOf: (T) -> String?,
+    ): XC_MethodHook =
         object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
                 if (param.hasThrowable()) return
-                if (!isObserverCaller()) return
+                val callerUid = observerCallerUid() ?: return
                 val hidden = loadHiddenPackages()
                 if (hidden.isEmpty()) return
 
@@ -214,14 +225,42 @@ internal object PackageVisibilityHooks {
                         val p = pkgOf(it)
                         p == null || p !in hidden
                     }
-                if (filtered.size != original.size) {
-                    param.result = XposedHelpers.newInstance(pls, filtered)
-                }
+                val removed = original.mapNotNull { pkgOf(it)?.takeIf(hidden::contains) }
+                if (removed.isEmpty()) return
+
+                param.result = newListResultLike(result, filtered) ?: return
+                HookLog.i(
+                    "VpnHide/PV: $methodName uid=$callerUid filtered ${removed.size}/${original.size} " +
+                        "hidden=${removed.sorted()} wrapper=${result.javaClass.simpleName}",
+                )
             }
         }
 
-    /** ResolveInfo list: packageName is on the inner ComponentInfo (activityInfo / serviceInfo / providerInfo). */
-    private fun resolveInfoListFilter(): XC_MethodHook = listFilter<ResolveInfo> { resolveInfoPackageName(it) }
+    /**
+     * ResolveInfo list: packageName is on the inner ComponentInfo
+     * (activityInfo / serviceInfo / providerInfo).
+     */
+    private fun resolveInfoListFilter(methodName: String): XC_MethodHook =
+        listFilter<ResolveInfo>(methodName) { resolveInfoPackageName(it) }
+
+    /**
+     * Keep the exact runtime wrapper class returned by PackageManager. Android
+     * 17 wraps getInstalledPackages in PackageInfoList, a ParceledListSlice
+     * subclass with a custom ParcelDedupHelper. Replacing it with the base
+     * ParceledListSlice corrupts the client-side parcel stream.
+     */
+    private fun newListResultLike(
+        originalResult: Any,
+        filtered: List<*>,
+    ): Any? =
+        try {
+            XposedHelpers.newInstance(originalResult.javaClass, filtered)
+        } catch (t: Throwable) {
+            HookLog.e(
+                "VpnHide/PV: failed to create filtered ${originalResult.javaClass.name}: ${t.message}",
+            )
+            null
+        }
 
     private fun resolveInfoPackageName(ri: ResolveInfo): String? =
         ri.activityInfo?.packageName
@@ -233,15 +272,16 @@ internal object PackageVisibilityHooks {
      * Signature starts with `String packageName`. If that package is hidden and caller is an
      * observer, set result=null. Caller-side API converts null to NameNotFoundException.
      */
-    private fun singleHideByFirstStringArg(): XC_MethodHook =
+    private fun singleHideByFirstStringArg(methodName: String): XC_MethodHook =
         object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
                 if (param.hasThrowable()) return
                 if (param.result == null) return
                 val pkg = param.args.firstOrNull() as? String ?: return
-                if (!isObserverCaller()) return
+                val callerUid = observerCallerUid() ?: return
                 if (pkg in loadHiddenPackages()) {
                     param.result = null
+                    HookLog.i("VpnHide/PV: $methodName uid=$callerUid hid $pkg")
                 }
             }
         }
@@ -252,23 +292,25 @@ internal object PackageVisibilityHooks {
             override fun afterHookedMethod(param: MethodHookParam) {
                 if (param.hasThrowable()) return
                 val pkg = param.args.firstOrNull() as? String ?: return
-                if (!isObserverCaller()) return
+                val callerUid = observerCallerUid() ?: return
                 if (pkg in loadHiddenPackages()) {
                     param.result = -1
+                    HookLog.i("VpnHide/PV: getPackageUid uid=$callerUid hid $pkg")
                 }
             }
         }
 
     /** resolveIntent / resolveService: ResolveInfo result. Null it out if it points to a hidden pkg. */
-    private fun resolveInfoSingleHide(): XC_MethodHook =
+    private fun resolveInfoSingleHide(methodName: String): XC_MethodHook =
         object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
                 if (param.hasThrowable()) return
                 val ri = param.result as? ResolveInfo ?: return
-                if (!isObserverCaller()) return
+                val callerUid = observerCallerUid() ?: return
                 val pkg = resolveInfoPackageName(ri) ?: return
                 if (pkg in loadHiddenPackages()) {
                     param.result = null
+                    HookLog.i("VpnHide/PV: $methodName uid=$callerUid hid $pkg")
                 }
             }
         }
@@ -279,12 +321,18 @@ internal object PackageVisibilityHooks {
             override fun afterHookedMethod(param: MethodHookParam) {
                 if (param.hasThrowable()) return
                 val arr = param.result as? Array<*> ?: return
-                if (!isObserverCaller()) return
+                val callerUid = observerCallerUid() ?: return
                 val hidden = loadHiddenPackages()
                 if (hidden.isEmpty()) return
                 val filtered = arr.filterIsInstance<String>().filter { it !in hidden }
                 if (filtered.size == arr.size) return
                 param.result = if (filtered.isEmpty()) null else filtered.toTypedArray()
+                val requestedUid = param.args.firstOrNull()
+                val removed = arr.filterIsInstance<String>().filter { it in hidden }
+                HookLog.i(
+                    "VpnHide/PV: getPackagesForUid uid=$callerUid requestedUid=$requestedUid " +
+                        "hidden=${removed.sorted()}",
+                )
             }
         }
 }
