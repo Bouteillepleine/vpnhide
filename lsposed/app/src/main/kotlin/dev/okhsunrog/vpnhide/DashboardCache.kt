@@ -1,7 +1,6 @@
 package dev.okhsunrog.vpnhide
 
 import android.content.Context
-import android.net.ConnectivityManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
@@ -52,11 +51,10 @@ internal object DashboardCache : StateCache<DashboardState>(
 
     override suspend fun load(force: Boolean): DashboardState {
         val context = requireNotNull(appContext) { "DashboardCache.load before ensureLoaded/refresh" }
-        val cm = context.getSystemService(ConnectivityManager::class.java)
         val rootSnapshot =
             if (force) RootSnapshotCache.refresh() else RootSnapshotCache.getOrLoad()
         return withContext(Dispatchers.IO) {
-            loadDashboardState(cm, context, selfNeedsRestart, rootSnapshot)
+            loadDashboardState(context, selfNeedsRestart, rootSnapshot)
         }
     }
 }

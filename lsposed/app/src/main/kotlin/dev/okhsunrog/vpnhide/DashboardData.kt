@@ -2,11 +2,8 @@ package dev.okhsunrog.vpnhide
 
 import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
-import android.net.ConnectivityManager
 import android.os.Build
 import android.os.SystemClock
-import android.util.Log
-import dev.okhsunrog.vpnhide.checks.CheckStatus
 import java.io.File
 
 // ── Domain types — invalid states are unrepresentable ────────────────────
@@ -857,8 +854,7 @@ private fun readLsposedConfig(
 // Kept as one top-to-bottom narrative — splitting the flat guard list behind a
 // parameter bundle would add indirection without improving clarity.
 @Suppress("LongMethod", "CyclomaticComplexMethod")
-internal fun loadDashboardState(
-    cm: ConnectivityManager,
+internal suspend fun loadDashboardState(
     context: android.content.Context,
     selfNeedsRestart: Boolean,
     rootSnapshot: RootSnapshot,
@@ -1160,23 +1156,26 @@ internal fun loadDashboardState(
             }
 
             else -> {
-                val native =
-                    if (hasNative) {
-                        runNativeProtectionCheck()
-                    } else {
-                        NativeResult.NoModule
-                    }
-                VpnHideLog.i(TAG, "nativeResult=$native")
-
-                val java =
-                    if (lsposed is LsposedState.Active) {
-                        runJavaProtectionCheck(cm)
-                    } else {
-                        JavaResult.HooksInactive
-                    }
-                VpnHideLog.i(TAG, "javaResult=$java")
-
-                ProtectionCheck.Checked(native, java)
+                // Single source of truth: reuse the cached check run instead of
+                // probing again here. Wait only for the fast core phase — the
+                // slow Diagnostics-only probes don't feed this summary.
+                val core = DiagnosticsCache.awaitCoreResults(context)
+                if (core == null) {
+                    // No active VPN per the check run (or it failed) — nothing to
+                    // summarize; fall back to the same retry path as no-VPN.
+                    ProtectionCheck.NoVpn
+                } else {
+                    val native =
+                        if (hasNative) core.native.toNativeResult() else NativeResult.NoModule
+                    val java =
+                        if (lsposed is LsposedState.Active) {
+                            core.coreJava.toJavaResult()
+                        } else {
+                            JavaResult.HooksInactive
+                        }
+                    VpnHideLog.i(TAG, "nativeResult=$native javaResult=$java")
+                    ProtectionCheck.Checked(native, java)
+                }
             }
         }
 
@@ -1196,78 +1195,29 @@ internal fun loadDashboardState(
     )
 }
 
-private fun runNativeProtectionCheck(): NativeResult {
-    var passed = 0
-    var failed = 0
-    var skipped = 0
-    for (spec in NATIVE_CHECKS) {
-        val name = spec.id
-        try {
-            val out = spec.run()
-            when (out.status) {
-                CheckStatus.NETWORK_BLOCKED -> {
-                    skipped++
-                    VpnHideLog.d(TAG, "native[$name]: NETWORK_BLOCKED")
-                }
-
-                CheckStatus.PASS -> {
-                    passed++
-                    VpnHideLog.d(TAG, "native[$name]: PASS")
-                }
-
-                CheckStatus.FAIL -> {
-                    failed++
-                    VpnHideLog.w(TAG, "native[$name]: FAIL — ${out.detail}")
-                }
-            }
-        } catch (e: Exception) {
-            failed++
-            Log.e(TAG, "native[$name]: exception — ${e.message}")
-        }
-    }
-
-    VpnHideLog.i(TAG, "native protection: passed=$passed failed=$failed skipped=$skipped")
+/**
+ * Roll up the UniFFI native probe results into the Dashboard "Native level"
+ * summary. NETWORK_BLOCKED probes report `passed == null` and don't count
+ * either way; if nothing actually ran, that's OK (a dedicated banner covers the
+ * no-network-permission case).
+ */
+internal fun List<CheckResult>.toNativeResult(): NativeResult {
+    val passed = count { it.passed == true }
+    val failed = count { it.passed == false }
     return when {
-        // Nothing ran (all NETWORK_BLOCKED) — treat as OK so the UI doesn't
-        // paint a scary red when the real issue is the app having no network
-        // permission; a dedicated banner covers that case separately.
         passed == 0 && failed == 0 -> NativeResult.Ok
-
         failed == 0 -> NativeResult.Ok
-
         passed > 0 -> NativeResult.Fail(passed, failed)
-
         else -> NativeResult.Fail(0, failed)
     }
 }
 
-private fun runJavaProtectionCheck(cm: ConnectivityManager): JavaResult {
-    // Same gates the Diagnostics screen uses: with no active network (or no
-    // caps for it) there's nothing for an app to leak, so report OK without
-    // probing. Then reuse the exact CheckResult-producing probes the
-    // Diagnostics screen runs — Dashboard cares only about the five
-    // VPN-presence vectors below (not proxy / route checks), so it runs
-    // precisely that subset and counts the ones that detected a leak. The
-    // probe names are irrelevant here (Dashboard discards the detail text),
-    // hence the empty labels.
-    if (cm.activeNetwork == null) {
-        VpnHideLog.d(TAG, "java: no active network")
-        return JavaResult.Ok
-    }
-    if (cm.getNetworkCapabilities(cm.activeNetwork) == null) {
-        VpnHideLog.d(TAG, "java: no capabilities")
-        return JavaResult.Ok
-    }
-
-    val failed =
-        listOf(
-            checkHasTransportVpn(cm, ""),
-            checkHasCapabilityNotVpn(cm, ""),
-            checkTransportInfo(cm, ""),
-            checkAllNetworksVpn(cm, ""),
-            checkLinkPropertiesIfname(cm, ""),
-        ).count { it.passed == false }
-
-    VpnHideLog.i(TAG, "java protection: failed=$failed")
+/**
+ * Roll up the VPN-presence Java probe results into the Dashboard "Java API
+ * level" summary — the count that detected a leak. Probes with no active
+ * network report `passed == true` ("nothing to leak"), so they don't trip it.
+ */
+internal fun List<CheckResult>.toJavaResult(): JavaResult {
+    val failed = count { it.passed == false }
     return if (failed == 0) JavaResult.Ok else JavaResult.Fail(failed)
 }
