@@ -7,6 +7,7 @@ import android.net.NetworkInfo
 import android.net.RouteInfo
 import android.os.Binder
 import android.os.Build
+import android.os.Bundle
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
@@ -15,6 +16,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage
 import dev.okhsunrog.vpnhide.generated.IfaceLists
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
+import java.lang.reflect.Array as JavaArray
 
 /**
  * VpnHide — hide VPN presence from apps via system_server Binder hooks.
@@ -57,6 +59,11 @@ class HookEntry : IXposedHookLoadPackage {
         return if (uid == SYSTEM_UID) currentCallbackUid.get() ?: uid else uid
     }
 
+    private fun isTargetCallerOrUid(uid: Int? = null): Boolean {
+        val targets = loadTargetUids()
+        return targets.contains(effectiveCallerUid()) || (uid != null && targets.contains(uid))
+    }
+
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
         // Only hook system_server. handleLoadPackage fires multiple times
         // in system_server (once per hosted package / APEX), so we use
@@ -97,6 +104,12 @@ class HookEntry : IXposedHookLoadPackage {
 
     // Recursively sanitizes mIfaceName + mRoutes + nested mStackedLinks; the
     // length and nesting are inherent to walking that object graph by reflection.
+    // Still private-field-based (unlike sanitizeNetworkCapabilities, which moved
+    // to public mutators after Android 17 renamed NC's private fields). LP's
+    // fields are stable so far; if a future Android renames mIfaceName/mRoutes/
+    // mStackedLinks, migrate this to the public LinkProperties API
+    // (setInterfaceName(null) / setLinkAddresses / setRoutes / setDnsServers)
+    // the same way NC was done, and drop LP from the install-time smoke-check.
     @Suppress("LongMethod", "NestedBlockDepth")
     private fun sanitizeLinkProperties(copy: LinkProperties): Boolean {
         var modified = false
@@ -169,6 +182,119 @@ class HookEntry : IXposedHookLoadPackage {
         }
 
         return modified
+    }
+
+    private fun sanitizeNetworkCapabilities(copy: NetworkCapabilities): Boolean {
+        val hasVpnTransport = copy.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        val hasVpnInfo = copy.transportInfo?.javaClass?.name == "android.net.VpnTransportInfo"
+
+        if (!hasVpnTransport && !hasVpnInfo) return false
+
+        if (hasVpnTransport) {
+            XposedHelpers.callMethod(copy, "removeTransportType", NetworkCapabilities.TRANSPORT_VPN)
+        }
+        XposedHelpers.callMethod(copy, "addCapability", NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+        if (hasVpnInfo) clearTransportInfo(copy)
+
+        return true
+    }
+
+    private fun clearTransportInfo(copy: NetworkCapabilities) {
+        val transportInfoClass = Class.forName("android.net.TransportInfo")
+        XposedHelpers.callMethod(
+            copy,
+            "setTransportInfo",
+            arrayOf(transportInfoClass),
+            *arrayOfNulls<Any>(1),
+        )
+    }
+
+    private fun sanitizedNetworkCapabilities(nc: NetworkCapabilities): NetworkCapabilities {
+        val copy = NetworkCapabilities(nc)
+        return if (sanitizeNetworkCapabilities(copy)) copy else nc
+    }
+
+    private fun sanitizedLinkProperties(lp: LinkProperties): LinkProperties {
+        val ctor = LinkProperties::class.java.getDeclaredConstructor(LinkProperties::class.java)
+        ctor.isAccessible = true
+        val copy = ctor.newInstance(lp) as LinkProperties
+        return if (sanitizeLinkProperties(copy)) copy else lp
+    }
+
+    // NetworkInfo is legacy/deprecated and its fields have been stable, so this
+    // still copies mNetworkType/mState/mDetailedState/mIsAvailable by reflection
+    // (guarded by the install-time smoke-check). If a future Android renames
+    // them — as Android 17 did for NetworkCapabilities — migrate to the public
+    // NetworkInfo API (setDetailedState(...) sets state+detailedState; there's
+    // no public type setter, so reconstruct via the public ctor like here) the
+    // same way NC was moved to public mutators, and drop NI from the smoke-check.
+    @Suppress("DEPRECATION")
+    private fun sanitizedNetworkInfo(ni: NetworkInfo): NetworkInfo {
+        val type = XposedHelpers.getIntField(ni, "mNetworkType")
+        if (type != ConnectivityManager.TYPE_VPN) return ni
+
+        val ctor =
+            NetworkInfo::class.java.getDeclaredConstructor(
+                Integer.TYPE,
+                Integer.TYPE,
+                String::class.java,
+                String::class.java,
+            )
+        ctor.isAccessible = true
+        val copy = ctor.newInstance(ConnectivityManager.TYPE_WIFI, 0, "WIFI", "") as NetworkInfo
+        XposedHelpers.setObjectField(copy, "mState", XposedHelpers.getObjectField(ni, "mState"))
+        XposedHelpers.setObjectField(copy, "mDetailedState", XposedHelpers.getObjectField(ni, "mDetailedState"))
+        XposedHelpers.setBooleanField(copy, "mIsAvailable", XposedHelpers.getBooleanField(ni, "mIsAvailable"))
+        return copy
+    }
+
+    private fun sanitizedValue(value: Any?): Any? =
+        when (value) {
+            is NetworkCapabilities -> sanitizedNetworkCapabilities(value)
+            is LinkProperties -> sanitizedLinkProperties(value)
+            is NetworkInfo -> sanitizedNetworkInfo(value)
+            is Array<*> -> sanitizedArray(value)
+            else -> value
+        }
+
+    private fun sanitizedArray(values: Array<*>): Any {
+        val componentType = values.javaClass.componentType ?: return values
+        if (
+            componentType != NetworkCapabilities::class.java &&
+            componentType != NetworkInfo::class.java
+        ) {
+            return values
+        }
+
+        val copy = JavaArray.newInstance(componentType, values.size)
+        for (i in values.indices) {
+            JavaArray.set(copy, i, sanitizedValue(values[i]))
+        }
+        return copy
+    }
+
+    private fun sanitizeMethodResult(
+        param: XC_MethodHook.MethodHookParam,
+        explicitUid: Int? = null,
+    ) {
+        if (!isTargetCallerOrUid(explicitUid)) return
+        try {
+            param.result = sanitizedValue(param.result)
+        } catch (t: Throwable) {
+            HookLog.e("VpnHide: ConnectivityService result sanitize error: ${t.message}")
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun sanitizeCallbackBundle(bundle: Bundle) {
+        try {
+            val nc = bundle.getParcelable(NetworkCapabilities::class.java.simpleName) as? NetworkCapabilities
+            if (nc != null) bundle.putParcelable(NetworkCapabilities::class.java.simpleName, sanitizedNetworkCapabilities(nc))
+            val lp = bundle.getParcelable(LinkProperties::class.java.simpleName) as? LinkProperties
+            if (lp != null) bundle.putParcelable(LinkProperties::class.java.simpleName, sanitizedLinkProperties(lp))
+        } catch (t: Throwable) {
+            HookLog.e("VpnHide: callback bundle sanitize error: ${t.message}")
+        }
     }
 
     // ==================================================================
@@ -244,15 +370,9 @@ class HookEntry : IXposedHookLoadPackage {
             tryHook("LP.writeToParcel") { hookLPWriteToParcel() }
         }
 
-        // NC: the two long bitmasks are critical. mTransportInfo is
-        // non-critical because it doesn't exist on API 28 (Android 9)
-        // and the existing inner try/catch in hookNCWriteToParcel already
-        // tolerates its absence on API 29+ if AOSP renames it later.
-        if (anyBroken(NC_CRITICAL_KEYS)) {
-            HookLog.e("VpnHide: NC.writeToParcel hook SKIPPED — critical reflection broken")
-        } else {
-            tryHook("NC.writeToParcel") { hookNCWriteToParcel() }
-        }
+        // NC uses public NetworkCapabilities mutators now, so private AOSP
+        // field drift must not disable this hook.
+        tryHook("NC.writeToParcel") { hookNCWriteToParcel() }
 
         // NI: every field + ctor is critical — the hook body has no
         // inner try/catch around the per-field setIntField/setBooleanField
@@ -390,38 +510,20 @@ class HookEntry : IXposedHookLoadPackage {
                     val targets = loadTargetUids()
                     val isTarget = targets.contains(callerUid)
                     val nc = param.thisObject as NetworkCapabilities
-                    val transportTypes = XposedHelpers.getLongField(nc, "mTransportTypes")
-                    val hasVpn = (transportTypes and (1L shl NetworkCapabilities.TRANSPORT_VPN)) != 0L
+                    val hasVpn = nc.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
                     // Per-request diagnostic line. Gated by the debug-logging
                     // toggle: these fire on every NC.writeToParcel inside
                     // system_server and directly name the target UIDs we hook,
                     // which is exactly what users hiding their setup want
                     // kept out of logcat.
                     HookLog.i(
-                        "VpnHide-NC: uid=$callerUid target=$isTarget hasVpn=$hasVpn " +
-                            "transports=0x${transportTypes.toString(16)}",
+                        "VpnHide-NC: uid=$callerUid target=$isTarget hasVpn=$hasVpn",
                     )
                     if (!isTarget) return
 
                     try {
-                        val vpnBit = 1L shl NetworkCapabilities.TRANSPORT_VPN
-                        if (transportTypes and vpnBit == 0L) return
-
                         val copy = NetworkCapabilities(nc)
-                        XposedHelpers.setLongField(copy, "mTransportTypes", transportTypes and vpnBit.inv())
-                        val caps = XposedHelpers.getLongField(copy, "mNetworkCapabilities")
-                        XposedHelpers.setLongField(
-                            copy,
-                            "mNetworkCapabilities",
-                            caps or (1L shl NetworkCapabilities.NET_CAPABILITY_NOT_VPN),
-                        )
-                        try {
-                            val ti = XposedHelpers.getObjectField(copy, "mTransportInfo")
-                            if (ti != null && ti.javaClass.name == "android.net.VpnTransportInfo") {
-                                XposedHelpers.setObjectField(copy, "mTransportInfo", null)
-                            }
-                        } catch (_: Throwable) {
-                        }
+                        if (!sanitizeNetworkCapabilities(copy)) return
 
                         val parcel = param.args[0] as android.os.Parcel
                         val flags = param.args[1] as Int
@@ -468,23 +570,7 @@ class HookEntry : IXposedHookLoadPackage {
                     if (!isTarget) return
                     try {
                         if (!isVpn) return
-
-                        val ctor =
-                            NetworkInfo::class.java.getDeclaredConstructor(
-                                Integer.TYPE,
-                                Integer.TYPE,
-                                String::class.java,
-                                String::class.java,
-                            )
-                        ctor.isAccessible = true
-                        val copy = ctor.newInstance(ConnectivityManager.TYPE_WIFI, 0, "WIFI", "") as NetworkInfo
-                        // mState / mDetailedState are NetworkInfo.State /
-                        // NetworkInfo.DetailedState enums, not ints — copy them as
-                        // objects (getIntField throws "Not a primitive field",
-                        // which aborted the whole disguise on every push).
-                        XposedHelpers.setObjectField(copy, "mState", XposedHelpers.getObjectField(ni, "mState"))
-                        XposedHelpers.setObjectField(copy, "mDetailedState", XposedHelpers.getObjectField(ni, "mDetailedState"))
-                        XposedHelpers.setBooleanField(copy, "mIsAvailable", XposedHelpers.getBooleanField(ni, "mIsAvailable"))
+                        val copy = sanitizedNetworkInfo(ni)
 
                         val parcel = param.args[0] as android.os.Parcel
                         val flags = param.args[1] as Int
@@ -565,6 +651,8 @@ class HookEntry : IXposedHookLoadPackage {
      * APEX (A13+) and in-boot-classpath (A12-) layouts.
      */
     private fun installConnectivityServiceHook(bootClassLoader: ClassLoader) {
+        hookConnectivityServiceIfPossible(bootClassLoader)
+
         val serviceManager = XposedHelpers.findClass("android.os.ServiceManager", bootClassLoader)
         (XposedHelpers.callStaticMethod(serviceManager, "getService", "connectivity") as? android.os.IBinder)
             ?.let { hookConnectivityFromBinder(it) }
@@ -581,14 +669,35 @@ class HookEntry : IXposedHookLoadPackage {
     }
 
     private fun hookConnectivityFromBinder(binder: android.os.IBinder) {
-        if (!connectivityHooked.compareAndSet(false, true)) return
         val classLoader =
             binder.javaClass.classLoader ?: run {
-                connectivityHooked.set(false)
+                HookLog.i("VpnHide: connectivity binder has no classloader; waiting for direct classloader")
                 return
             }
-        tryHook("ConnectivityService") { hookConnectivityService(classLoader) }
+        hookConnectivityServiceIfPossible(classLoader)
     }
+
+    private fun hookConnectivityServiceIfPossible(classLoader: ClassLoader) {
+        if (!connectivityHooked.compareAndSet(false, true)) return
+        try {
+            hookConnectivityService(classLoader)
+        } catch (t: Throwable) {
+            connectivityHooked.set(false)
+            HookLog.i("VpnHide: ConnectivityService class not ready on ${classLoader.javaClass.name}: ${t.message}")
+        }
+    }
+
+    private fun findConnectivityServiceClass(classLoader: ClassLoader): Class<*> =
+        try {
+            // Android 14+ ships ConnectivityService in the repackaged
+            // Connectivity APEX namespace; older releases use the original.
+            XposedHelpers.findClass(
+                "android.net.connectivity.com.android.server.ConnectivityService",
+                classLoader,
+            )
+        } catch (_: Throwable) {
+            XposedHelpers.findClass("com.android.server.ConnectivityService", classLoader)
+        }
 
     /**
      * Hook the two ConnectivityService dispatch points that *push* network state
@@ -602,17 +711,8 @@ class HookEntry : IXposedHookLoadPackage {
      * detect VPN only via callbacks.
      */
     private fun hookConnectivityService(classLoader: ClassLoader) {
-        val csClass =
-            try {
-                // Android 14+ ships ConnectivityService in the repackaged
-                // Connectivity APEX namespace; older releases use the original.
-                XposedHelpers.findClass(
-                    "android.net.connectivity.com.android.server.ConnectivityService",
-                    classLoader,
-                )
-            } catch (_: Throwable) {
-                XposedHelpers.findClass("com.android.server.ConnectivityService", classLoader)
-            }
+        val csClass = findConnectivityServiceClass(classLoader)
+        installConnectivityServiceResultHooks(csClass)
 
         // Both methods take the NetworkRequestInfo as their first arg, so the
         // same handler covers the callback-object and PendingIntent paths.
@@ -631,6 +731,7 @@ class HookEntry : IXposedHookLoadPackage {
                         HookLog.i("VpnHide-CB: uid=$uid suppressed VPN-request dispatch")
                         return
                     }
+                    (param.args.getOrNull(CALLBACK_BUNDLE_ARG_INDEX) as? Bundle)?.let { sanitizeCallbackBundle(it) }
                     currentCallbackUid.set(uid)
                 }
 
@@ -645,6 +746,27 @@ class HookEntry : IXposedHookLoadPackage {
                 HookLog.e("VpnHide: no $method on ${csClass.name}")
             } else {
                 HookLog.i("VpnHide: hooked ConnectivityService.$method (${hooked.size})")
+            }
+        }
+    }
+
+    private fun installConnectivityServiceResultHooks(csClass: Class<*>) {
+        for ((method, uidArgIndex) in CONNECTIVITY_RESULT_METHODS) {
+            val hooked =
+                XposedBridge.hookAllMethods(
+                    csClass,
+                    method,
+                    object : XC_MethodHook() {
+                        override fun afterHookedMethod(param: MethodHookParam) {
+                            val explicitUid = uidArgIndex?.let { param.args.getOrNull(it) as? Int }
+                            sanitizeMethodResult(param, explicitUid)
+                        }
+                    },
+                )
+            if (hooked.isEmpty()) {
+                HookLog.e("VpnHide: no ConnectivityService.$method result hook target on ${csClass.name}")
+            } else {
+                HookLog.i("VpnHide: hooked ConnectivityService.$method result (${hooked.size})")
             }
         }
     }
@@ -687,8 +809,24 @@ class HookEntry : IXposedHookLoadPackage {
 
     companion object {
         private const val SYSTEM_UID = 1000
+        private const val CALLBACK_BUNDLE_ARG_INDEX = 2
         private val RECIPIENT_UID_FIELDS = listOf("mAsUid", "mUid", "uid")
         private val CALLBACK_DISPATCH_METHODS = listOf("callCallbackForRequest", "sendPendingIntentForRequest")
+        private val CONNECTIVITY_RESULT_METHODS =
+            listOf(
+                "getActiveLinkProperties" to null,
+                "getLinkProperties" to null,
+                "getLinkPropertiesForType" to null,
+                "getRedactedLinkPropertiesForPackage" to 1,
+                "getNetworkCapabilities" to null,
+                "getDefaultNetworkCapabilitiesForUser" to null,
+                "getRedactedNetworkCapabilitiesForPackage" to 1,
+                "getActiveNetworkInfo" to null,
+                "getActiveNetworkInfoForUid" to 0,
+                "getNetworkInfo" to null,
+                "getNetworkInfoForUid" to 1,
+                "getAllNetworkInfo" to null,
+            )
         const val HOOK_STATUS_FILE = "/data/system/vpnhide_hook_active"
 
         private val FIELD_PROBES =
@@ -708,28 +846,6 @@ class HookEntry : IXposedHookLoadPackage {
                     LinkProperties::class.java,
                     "mStackedLinks",
                 ) { MutableMap::class.java.isAssignableFrom(it) },
-                FieldProbe(
-                    "NetworkCapabilities.mTransportTypes",
-                    NetworkCapabilities::class.java,
-                    "mTransportTypes",
-                ) { it == java.lang.Long.TYPE },
-                FieldProbe(
-                    "NetworkCapabilities.mNetworkCapabilities",
-                    NetworkCapabilities::class.java,
-                    "mNetworkCapabilities",
-                ) { it == java.lang.Long.TYPE },
-                FieldProbe(
-                    "NetworkCapabilities.mTransportInfo",
-                    NetworkCapabilities::class.java,
-                    "mTransportInfo",
-                    minSdk = Build.VERSION_CODES.Q,
-                ) { fieldType ->
-                    // android.net.TransportInfo arrived in API 29; on
-                    // API 28 the probe is skipped via minSdk above.
-                    runCatching { Class.forName("android.net.TransportInfo") }
-                        .map { it.isAssignableFrom(fieldType) }
-                        .getOrDefault(false)
-                },
                 FieldProbe(
                     "NetworkInfo.mNetworkType",
                     NetworkInfo::class.java,
@@ -767,18 +883,13 @@ class HookEntry : IXposedHookLoadPackage {
             )
 
         // Per-hook critical-probe sets. A hook is skipped if any key in
-        // its set is in the broken list. mRoutes / mStackedLinks /
-        // mTransportInfo are intentionally NOT critical — graceful
+        // its set is in the broken list. mRoutes / mStackedLinks are
+        // intentionally NOT critical — graceful
         // degradation lives in the existing inner try/catch blocks.
         private val LP_CRITICAL_KEYS =
             setOf(
                 "LinkProperties.mIfaceName",
                 "LinkProperties.<init>(LinkProperties)",
-            )
-        private val NC_CRITICAL_KEYS =
-            setOf(
-                "NetworkCapabilities.mTransportTypes",
-                "NetworkCapabilities.mNetworkCapabilities",
             )
         private val NI_CRITICAL_KEYS =
             setOf(
