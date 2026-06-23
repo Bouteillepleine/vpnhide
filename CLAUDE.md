@@ -50,6 +50,12 @@ Single-command builds for both CI and local — the same scripts run in both pla
 
 Both Rust cdylibs (`zygisk/build.rs`, `lsposed/native/build.rs`) pass `-Wl,-z,max-page-size=16384` so the resulting `.so` files load cleanly on 16 KiB-page Android devices (Pixel 8 Pro on Android 16, future hardware). Don't strip that flag.
 
+## Reading device diagnostics from logcat
+
+The picker app runs its full check suite (native probes + the Java VPN-presence checks, each PASS/FAIL with detail) at every cold start and logs every result to logcat under tag `VPNHideTest` — you do **not** need to open the Diagnostics screen to read them. But the app logger (`VpnHideLog`) is gated by the **Debug logging** toggle, which is off by default (stealth-first) and stored in the app's SharedPreferences — it can't be flipped reliably from `adb`/`su`.
+
+So when you need diagnostics in the logs and Debug logging is off: **stop and ask the user to turn it on** (Diagnostics → Debug logging). Do not drive the GUI to read check results, and do not try to enable the flag by editing prefs via su. Once it's on (it persists across launches), capture is: `adb logcat -c` → cold-start the app (`am force-stop` + relaunch — checks run once per process and need an active VPN) → read the `VPNHideTest` / `VpnHide-Startup` lines.
+
 ## Design notes
 
 - **KPatch-Next KPM:** `kmod/` currently uses kretprobes and requires per-GKI-generation builds (kernel headers + `Module.symvers`). Porting to a [KPatch-Next](https://github.com/KernelSU-Next/KPatch-Next) KPM would produce a single binary for kernels 3.18–6.12, eliminating the multi-GKI build problem. Tradeoff: adds KPatch-Next as a hard dependency (already bundled in KernelSU-Next).
