@@ -65,18 +65,15 @@ reinvent them.** `grep` for an existing helper before writing a new one.
 - **ktlint** — formatting/style. Pre-commit hook (`.githooks/pre-commit`) + CI.
   Fix with `ktlint --format "lsposed/**/*.kt"`.
 - **detekt** — complexity, function/file length, dead private members, bug
-  patterns (the smell ktlint can't see). Config + baseline in
-  `config/detekt/`. The baseline freezes pre-existing findings so the gate
-  only fails on **new** smell. Run with `./gradlew :app:detekt`.
-  **Don't regenerate the baseline to silence a new finding** — fix the code,
-  or, if it's a genuine false positive, tune a rule in `config/detekt/detekt.yml`
-  with a comment saying why. Regenerate (`./gradlew :app:detektBaseline`) only
-  when intentionally accepting legacy debt.
-  *Not in CI yet* — the plan is to pay down the baseline to zero first, then
-  wire `:app:detekt` into the CI lint job (and drop the baseline).
+  patterns (the smell ktlint can't see). Config in `config/detekt/detekt.yml`.
+  CI-enforced (`./gradlew :app:detekt`), runs clean with **no baseline**.
+  When a new finding is genuinely inherent (a lookup table, an embedded shell
+  script, priority-dispatch), opt out **at the call site** with
+  `@Suppress("RuleName")` + a one-line reason — visible in the code, not hidden
+  in a baseline. Only disable a rule in `detekt.yml` (with a comment) when it
+  doesn't fit the codebase at all.
 - **CPD** (copy-paste detector) — finds cross-file duplicated blocks that
   detekt can't (re-implemented parsers / save-builders are the classic
-  AI-duplication smell). Run with `./gradlew cpdCheck`; report at
-  `build/reports/cpd/`. Advisory for now (doesn't fail the build); tune
-  `minimumTokenCount` in the root `build.gradle.kts`. Also slated for CI once
-  the current duplicates are cleaned up.
+  AI-duplication smell). CI-enforced (`./gradlew cpdCheck`); report at
+  `build/reports/cpd/`. Tune `minimumTokenCount` in the root `build.gradle.kts`
+  if it ever false-positives.

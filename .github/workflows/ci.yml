@@ -143,17 +143,22 @@ jobs:
           /tmp/test_iface_lists
 
       # Kotlin
+      # ktlint = formatting/style; detekt = complexity/length/dead-code/bug
+      # patterns; cpdCheck = cross-file copy-paste. detekt runs clean with no
+      # baseline (inherent spots are @Suppress-ed at the call site); cpdCheck
+      # is clean at its 100-token threshold. See lsposed/config/detekt/ and
+      # the cpd block in lsposed/build.gradle.kts.
       - name: ktlint
         run: ktlint "lsposed/app/src/**/*.kt"
-      # Single Gradle invocation: lint + tests share one configuration
-      # phase + warm daemon. Configures Gobley's cargo plugin once instead
-      # of twice. ANDROID_NDK_ROOT is baked into the CI image
-      # (Dockerfile ENV), no manual export needed.
-      - name: Android lint + Kotlin unit tests
+      # Single Gradle invocation: detekt + cpd + lint + tests share one
+      # configuration phase + warm daemon. Configures Gobley's cargo plugin
+      # once instead of four times. ANDROID_NDK_ROOT is baked into the CI
+      # image (Dockerfile ENV), no manual export needed.
+      - name: detekt + CPD + Android lint + Kotlin unit tests
         # `:app:lintDebug` (not `:app:lint`) runs Lint on the debug
         # variant only — release-variant Lint covers R8/ProGuard issues
         # and is reserved for ad-hoc local runs / future tag CI.
-        run: cd lsposed && ./gradlew :app:lintDebug :app:testDebugUnitTest
+        run: cd lsposed && ./gradlew :app:detekt cpdCheck :app:lintDebug :app:testDebugUnitTest
 
   kmod:
     runs-on: ubuntu-latest
