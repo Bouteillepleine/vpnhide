@@ -8,6 +8,7 @@ import android.os.Binder
 import android.os.Build
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.XC_MethodHook
+import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 import dev.okhsunrog.vpnhide.generated.IfaceLists
@@ -38,6 +39,23 @@ import java.util.concurrent.atomic.AtomicBoolean
 class HookEntry : IXposedHookLoadPackage {
     private val hookInstalled = AtomicBoolean(false)
 
+    // Guards installing the ConnectivityService callback hook exactly once —
+    // it can be triggered from either the direct lookup or the addService catch.
+    private val connectivityHooked = AtomicBoolean(false)
+
+    // During a push callback (registerNetworkCallback dispatch), the
+    // writeToParcel hooks run under system_server's identity, so
+    // Binder.getCallingUid() is 1000 — not the recipient app. hookConnectivity-
+    // Service stashes the real recipient UID here so those hooks sanitize the
+    // pushed data exactly like a synchronous call. See issue #70 (VTB and other
+    // apps that detect VPN only via registerDefaultNetworkCallback).
+    private val currentCallbackUid = ThreadLocal<Int>()
+
+    private fun effectiveCallerUid(): Int {
+        val uid = Binder.getCallingUid()
+        return if (uid == SYSTEM_UID) currentCallbackUid.get() ?: uid else uid
+    }
+
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
         // Only hook system_server. handleLoadPackage fires multiple times
         // in system_server (once per hosted package / APEX), so we use
@@ -54,6 +72,7 @@ class HookEntry : IXposedHookLoadPackage {
             HookLog.i("VpnHide: system_server detected, installing Binder hooks")
             val brokenFields = installSystemServerHooks()
             tryHook("PackageVisibility") { PackageVisibilityHooks.install(lpparam.classLoader) }
+            tryHook("ConnectivityService") { installConnectivityServiceHook(lpparam.classLoader) }
             writeHookStatusFile(brokenFields)
         }
     }
@@ -366,12 +385,12 @@ class HookEntry : IXposedHookLoadPackage {
             object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     if (writingCopy.get() == true) return
-                    val callerUid = Binder.getCallingUid()
+                    val callerUid = effectiveCallerUid()
                     val targets = loadTargetUids()
                     val isTarget = targets.contains(callerUid)
                     val nc = param.thisObject as NetworkCapabilities
                     val transportTypes = XposedHelpers.getLongField(nc, "mTransportTypes")
-                    val hasVpn = (transportTypes and (1L shl TRANSPORT_VPN)) != 0L
+                    val hasVpn = (transportTypes and (1L shl NetworkCapabilities.TRANSPORT_VPN)) != 0L
                     // Per-request diagnostic line. Gated by the debug-logging
                     // toggle: these fire on every NC.writeToParcel inside
                     // system_server and directly name the target UIDs we hook,
@@ -384,13 +403,17 @@ class HookEntry : IXposedHookLoadPackage {
                     if (!isTarget) return
 
                     try {
-                        val vpnBit = 1L shl TRANSPORT_VPN
+                        val vpnBit = 1L shl NetworkCapabilities.TRANSPORT_VPN
                         if (transportTypes and vpnBit == 0L) return
 
                         val copy = NetworkCapabilities(nc)
                         XposedHelpers.setLongField(copy, "mTransportTypes", transportTypes and vpnBit.inv())
                         val caps = XposedHelpers.getLongField(copy, "mNetworkCapabilities")
-                        XposedHelpers.setLongField(copy, "mNetworkCapabilities", caps or (1L shl NET_CAPABILITY_NOT_VPN))
+                        XposedHelpers.setLongField(
+                            copy,
+                            "mNetworkCapabilities",
+                            caps or (1L shl NetworkCapabilities.NET_CAPABILITY_NOT_VPN),
+                        )
                         try {
                             val ti = XposedHelpers.getObjectField(copy, "mTransportInfo")
                             if (ti != null && ti.javaClass.name == "android.net.VpnTransportInfo") {
@@ -433,7 +456,7 @@ class HookEntry : IXposedHookLoadPackage {
             object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     if (writingCopy.get() == true) return
-                    val callerUid = Binder.getCallingUid()
+                    val callerUid = effectiveCallerUid()
                     val isTarget = loadTargetUids().contains(callerUid)
                     val ni = param.thisObject as NetworkInfo
                     val type = XposedHelpers.getIntField(ni, "mNetworkType")
@@ -492,7 +515,7 @@ class HookEntry : IXposedHookLoadPackage {
             object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     if (writingCopy.get() == true) return
-                    val callerUid = Binder.getCallingUid()
+                    val callerUid = effectiveCallerUid()
                     val isTarget = loadTargetUids().contains(callerUid)
                     val lp = param.thisObject as LinkProperties
                     val ifname = XposedHelpers.getObjectField(lp, "mIfaceName") as? String
@@ -523,9 +546,144 @@ class HookEntry : IXposedHookLoadPackage {
         HookLog.i("VpnHide: hooked LinkProperties.writeToParcel")
     }
 
+    /**
+     * Install the ConnectivityService callback hook once the service is up.
+     *
+     * On Android 13+ ConnectivityService ships in the Connectivity APEX and is
+     * loaded by a classloader the system_server boot classloader can't resolve —
+     * findClass(...) on [bootClassLoader] throws ClassNotFound, so the hook never
+     * installs and push callbacks leak (issue #70). The reliable classloader is
+     * the one that loaded the registered "connectivity" binder, so we take it
+     * from there. The binder isn't registered yet when hooks install at early
+     * boot, so we catch ServiceManager.addService("connectivity", ...) — and also
+     * try a direct lookup first to cover a late module load. Works on both the
+     * APEX (A13+) and in-boot-classpath (A12-) layouts.
+     */
+    private fun installConnectivityServiceHook(bootClassLoader: ClassLoader) {
+        val serviceManager = XposedHelpers.findClass("android.os.ServiceManager", bootClassLoader)
+        (XposedHelpers.callStaticMethod(serviceManager, "getService", "connectivity") as? android.os.IBinder)
+            ?.let { hookConnectivityFromBinder(it) }
+        XposedBridge.hookAllMethods(
+            serviceManager,
+            "addService",
+            object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    if (param.args.getOrNull(0) != "connectivity") return
+                    (param.args.getOrNull(1) as? android.os.IBinder)?.let { hookConnectivityFromBinder(it) }
+                }
+            },
+        )
+    }
+
+    private fun hookConnectivityFromBinder(binder: android.os.IBinder) {
+        if (!connectivityHooked.compareAndSet(false, true)) return
+        val classLoader =
+            binder.javaClass.classLoader ?: run {
+                connectivityHooked.set(false)
+                return
+            }
+        tryHook("ConnectivityService") { hookConnectivityService(classLoader) }
+    }
+
+    /**
+     * Hook the two ConnectivityService dispatch points that *push* network state
+     * to apps: callCallbackForRequest (registerNetworkCallback with a callback
+     * object) and sendPendingIntentForRequest (registerNetworkCallback with a
+     * PendingIntent). On both, the writeToParcel hooks would see
+     * getCallingUid()==1000 instead of the recipient app and skip sanitizing, so
+     * we stash the recipient UID in currentCallbackUid for the dispatch's
+     * duration. If the app explicitly requested a VPN network, drop the dispatch
+     * entirely — don't reveal a VPN exists. Fixes apps (e.g. VTB, issue #70) that
+     * detect VPN only via callbacks.
+     */
+    private fun hookConnectivityService(classLoader: ClassLoader) {
+        val csClass =
+            try {
+                // Android 14+ ships ConnectivityService in the repackaged
+                // Connectivity APEX namespace; older releases use the original.
+                XposedHelpers.findClass(
+                    "android.net.connectivity.com.android.server.ConnectivityService",
+                    classLoader,
+                )
+            } catch (_: Throwable) {
+                XposedHelpers.findClass("com.android.server.ConnectivityService", classLoader)
+            }
+
+        // Both methods take the NetworkRequestInfo as their first arg, so the
+        // same handler covers the callback-object and PendingIntent paths.
+        val dispatchHook =
+            object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    val nri = param.args.firstOrNull() ?: return
+                    val uid = extractRecipientUid(nri)
+                    if (uid < 0 || !loadTargetUids().contains(uid)) return
+
+                    val request = extractNetworkRequest(nri)
+                    if (request != null && request.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                        // App is specifically listening for a VPN network —
+                        // suppress so it never learns one exists.
+                        param.result = null
+                        HookLog.i("VpnHide-CB: uid=$uid suppressed VPN-request dispatch")
+                        return
+                    }
+                    currentCallbackUid.set(uid)
+                }
+
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    currentCallbackUid.remove()
+                }
+            }
+
+        for (method in CALLBACK_DISPATCH_METHODS) {
+            val hooked = XposedBridge.hookAllMethods(csClass, method, dispatchHook)
+            if (hooked.isEmpty()) {
+                HookLog.e("VpnHide: no $method on ${csClass.name}")
+            } else {
+                HookLog.i("VpnHide: hooked ConnectivityService.$method (${hooked.size})")
+            }
+        }
+    }
+
+    // The callback recipient UID lives on the NetworkRequestInfo arg under
+    // different field names across AOSP versions (mAsUid is the UID the callback
+    // is delivered as). Returns -1 if none found.
+    private fun extractRecipientUid(nri: Any): Int {
+        for (field in RECIPIENT_UID_FIELDS) {
+            try {
+                return XposedHelpers.getIntField(nri, field)
+            } catch (_: Throwable) {
+            }
+        }
+        return -1
+    }
+
+    // Find the NetworkRequest on the NRI by type — field name varies, and some
+    // versions hold a list of requests (take the first). Flattened to a field
+    // sequence over the class hierarchy to keep nesting shallow.
+    private fun extractNetworkRequest(nri: Any): android.net.NetworkRequest? =
+        generateSequence(nri.javaClass as Class<*>?) { it.superclass }
+            .takeWhile { it != Any::class.java }
+            .flatMap { it.declaredFields.asSequence() }
+            .firstNotNullOfOrNull { field ->
+                asNetworkRequest(
+                    runCatching {
+                        field.isAccessible = true
+                        field.get(nri)
+                    }.getOrNull(),
+                )
+            }
+
+    private fun asNetworkRequest(value: Any?): android.net.NetworkRequest? =
+        when (value) {
+            is android.net.NetworkRequest -> value
+            is List<*> -> value.firstOrNull { it is android.net.NetworkRequest } as? android.net.NetworkRequest
+            else -> null
+        }
+
     companion object {
-        private const val TRANSPORT_VPN = 4
-        private const val NET_CAPABILITY_NOT_VPN = 15
+        private const val SYSTEM_UID = 1000
+        private val RECIPIENT_UID_FIELDS = listOf("mAsUid", "mUid", "uid")
+        private val CALLBACK_DISPATCH_METHODS = listOf("callCallbackForRequest", "sendPendingIntentForRequest")
         private const val TYPE_VPN = 17
         private const val TYPE_WIFI = 1
         const val HOOK_STATUS_FILE = "/data/system/vpnhide_hook_active"
