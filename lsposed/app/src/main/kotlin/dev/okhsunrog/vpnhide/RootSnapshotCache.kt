@@ -133,6 +133,9 @@ internal fun validateRootSnapshotSections(sections: Map<String, String>) {
     }
 }
 
+// Long because it's a single embedded shell script (the batched root probe),
+// not Kotlin control flow.
+@Suppress("LongMethod")
 internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): String =
     """
     emit_cmd() {

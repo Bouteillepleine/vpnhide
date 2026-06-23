@@ -75,6 +75,9 @@ class HookEntry : IXposedHookLoadPackage {
 
     private fun isVpnInterfaceName(name: String): Boolean = IfaceLists.isVpnIface(name)
 
+    // Recursively sanitizes mIfaceName + mRoutes + nested mStackedLinks; the
+    // length and nesting are inherent to walking that object graph by reflection.
+    @Suppress("LongMethod", "NestedBlockDepth")
     private fun sanitizeLinkProperties(copy: LinkProperties): Boolean {
         var modified = false
 

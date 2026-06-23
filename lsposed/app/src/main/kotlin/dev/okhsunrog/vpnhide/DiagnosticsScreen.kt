@@ -814,235 +814,20 @@ private suspend fun exportDebugZip(
             // 3. Capture dmesg right after checks
             val (_, dmesg) = suExec("dmesg 2>/dev/null")
 
-            // 4. Collect additional info
-            val files = mutableMapOf<String, String>()
-
-            // dmesg (vpnhide lines only + full for context)
-            val vpnhideLines = dmesg.lines().filter { it.contains("vpnhide") }
-            files["dmesg_vpnhide.txt"] = vpnhideLines.joinToString("\n")
-            files["dmesg_full.txt"] = dmesg
-
-            // Diagnostics results
-            val diagText =
-                buildString {
-                    val score = checkResults.all.score()
-                    appendLine("=== Diagnostics: ${score.passed}/${score.total} passed ===")
-                    appendLine()
-                    appendLine("--- Native level ---")
-                    for (c in checkResults.native) {
-                        val badge =
-                            when (c.passed) {
-                                true -> "PASS"
-                                false -> "FAIL"
-                                null -> "INFO"
-                            }
-                        appendLine("[$badge] ${c.name}")
-                        appendLine("  ${c.detail}")
-                    }
-                    appendLine()
-                    appendLine("--- Java API level ---")
-                    for (c in checkResults.java) {
-                        val badge =
-                            when (c.passed) {
-                                true -> "PASS"
-                                false -> "FAIL"
-                                null -> "INFO"
-                            }
-                        appendLine("[$badge] ${c.name}")
-                        appendLine("  ${c.detail}")
-                    }
-                }
-            files["diagnostics.txt"] = diagText
-
-            // Device info
-            val (_, kernelVersion) = suExec("uname -r 2>/dev/null")
-            val (_, procVersion) = suExec("cat /proc/version 2>/dev/null")
-            val (_, selinuxMode) = suExec("getenforce 2>/dev/null")
-            val deviceInfo =
-                buildString {
-                    appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
-                    appendLine("Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
-                    appendLine("Kernel: ${kernelVersion.trim()}")
-                    appendLine("Kernel full: ${procVersion.trim()}")
-                    appendLine("ABI: ${Build.SUPPORTED_ABIS.joinToString()}")
-                    appendLine("SELinux: ${selinuxMode.trim()}")
-                    appendLine("App package: ${context.packageName}")
-                    try {
-                        val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-                        appendLine("App version: ${pInfo.versionName}")
-                    } catch (_: Exception) {
-                    }
-                    appendLine("selfNeedsRestart: $selfNeedsRestart")
-                    appendLine()
-                    appendLine("=== Root manager ===")
-                    val (_, magiskVer) = suExec("magisk -V 2>/dev/null")
-                    val (_, magiskVerName) = suExec("magisk -v 2>/dev/null")
-                    if (magiskVer.isNotBlank()) {
-                        appendLine("Magisk: ${magiskVerName.trim()} (${magiskVer.trim()})")
-                    }
-                    val (_, ksuVer) = suExec("cat /data/adb/ksu/version 2>/dev/null")
-                    if (ksuVer.isNotBlank()) {
-                        appendLine("KernelSU: ${ksuVer.trim()}")
-                    }
-                    val (exitKsuNext, ksuNextVer) = suExec("ksud --version 2>/dev/null")
-                    if (exitKsuNext == 0 && ksuNextVer.isNotBlank()) {
-                        appendLine("KernelSU-Next: ${ksuNextVer.trim()}")
-                    }
-                    if (magiskVer.isBlank() && ksuVer.isBlank() && (exitKsuNext != 0 || ksuNextVer.isBlank())) {
-                        appendLine("(unknown root manager)")
-                    }
-                }
-            files["device_info.txt"] = deviceInfo
-
-            // Module info
-            val moduleInfo =
-                buildString {
-                    appendLine("=== Kernel module (kmod) ===")
-                    val (_, kmodProp) = suExec("cat /data/adb/modules/vpnhide_kmod/module.prop 2>/dev/null")
-                    appendLine(kmodProp.ifEmpty { "Not installed" })
-                    appendLine()
-                    appendLine("=== kmod load_status (boot-time diagnostics) ===")
-                    val (_, loadStatus) = suExec("cat $KMOD_LOAD_STATUS_FILE 2>/dev/null")
-                    appendLine(loadStatus.ifEmpty { "(not available — module never ran post-fs-data.sh this boot)" })
-                    appendLine()
-                    appendLine("=== Current boot_id ===")
-                    val (_, curBootId) = suExec("cat /proc/sys/kernel/random/boot_id 2>/dev/null")
-                    appendLine(curBootId.trim().ifEmpty { "(not available)" })
-                    appendLine()
-                    appendLine("=== kmod load_dmesg ===")
-                    val (_, loadDmesg) = suExec("cat $KMOD_LOAD_DMESG_FILE 2>/dev/null")
-                    appendLine(loadDmesg.ifEmpty { "(not captured)" })
-                    appendLine()
-                    appendLine("=== Zygisk module ===")
-                    val (_, zygiskProp) = suExec("cat /data/adb/modules/vpnhide_zygisk/module.prop 2>/dev/null")
-                    appendLine(zygiskProp.ifEmpty { "Not installed" })
-                    appendLine()
-                    appendLine("=== Registered kretprobes ===")
-                    val (_, kprobes) = suExec("cat /sys/kernel/debug/kprobes/list 2>/dev/null | grep vpnhide")
-                    appendLine(kprobes.ifEmpty { "(not available or no vpnhide probes)" })
-                    appendLine()
-                    appendLine("=== Kernel symbols (hooked functions) ===")
-                    val symbols =
-                        listOf(
-                            "dev_ioctl",
-                            "dev_ifconf",
-                            "rtnl_fill_ifinfo",
-                            "inet6_fill_ifaddr",
-                            "inet_fill_ifaddr",
-                            "fib_route_seq_show",
-                        )
-                    for (sym in symbols) {
-                        val (_, line) = suExec("cat /proc/kallsyms 2>/dev/null | grep -w $sym | head -3")
-                        appendLine("$sym: ${line.trim().ifEmpty { "(not found)" }}")
-                    }
-                    appendLine()
-                    appendLine("=== LSPosed configuration ===")
-                    val (_, lsposedDb) =
-                        suExec(
-                            "sqlite3 /data/adb/lspd/config/modules_config.db " +
-                                "\"SELECT mid, module_pkg_name, enabled FROM modules WHERE module_pkg_name LIKE '%vpnhide%';\" 2>/dev/null",
-                        )
-                    appendLine(lsposedDb.ifEmpty { "(not available or module not in LSPosed)" })
-                    val (_, lsposedScope) =
-                        suExec(
-                            "sqlite3 /data/adb/lspd/config/modules_config.db " +
-                                "\"SELECT s.app_pkg_name FROM scope s JOIN modules m ON s.mid=m.mid WHERE m.module_pkg_name LIKE '%vpnhide%';\" 2>/dev/null",
-                        )
-                    if (lsposedScope.isNotBlank()) {
-                        appendLine("Scope: ${lsposedScope.trim()}")
-                    }
-                }
-            files["modules.txt"] = moduleInfo
-
-            // Target UIDs
-            val (_, procTargets) = suExec("cat /proc/vpnhide_targets 2>/dev/null")
-            val (_, kmodTargets) = suExec("cat $KMOD_TARGETS 2>/dev/null")
-            val (_, zygiskTargets) = suExec("cat $ZYGISK_TARGETS 2>/dev/null")
-            val (_, lsposedTargets) = suExec("cat $LSPOSED_TARGETS 2>/dev/null")
-            val targetsText =
-                buildString {
-                    appendLine("=== /proc/vpnhide_targets (live UIDs) ===")
-                    appendLine(procTargets.ifEmpty { "(empty)" })
-                    appendLine()
-                    appendLine("=== kmod targets ===")
-                    appendLine(kmodTargets.ifEmpty { "(empty)" })
-                    appendLine()
-                    appendLine("=== zygisk targets ===")
-                    appendLine(zygiskTargets.ifEmpty { "(empty)" })
-                    appendLine()
-                    appendLine("=== lsposed targets ===")
-                    appendLine(lsposedTargets.ifEmpty { "(empty)" })
-                }
-            files["targets.txt"] = targetsText
-
-            // Network interfaces (via su, unfiltered)
-            val ifacesText =
-                buildString {
-                    appendLine("=== ip -d addr ===")
-                    val (_, ipAddr) = suExec("ip -d addr 2>/dev/null")
-                    appendLine(ipAddr.ifEmpty { "(not available)" })
-                    appendLine()
-                    appendLine("=== Interface operstate ===")
-                    val (_, operstate) =
-                        suExec(
-                            "for iface in /sys/class/net/*; do " +
-                                "echo \"\$(basename \$iface): \$(cat \$iface/operstate 2>/dev/null)\"; " +
-                                "done",
-                        )
-                    appendLine(operstate.ifEmpty { "(not available)" })
-                    appendLine()
-                    appendLine("=== ip route show table all ===")
-                    val (_, routes) = suExec("ip route show table all 2>/dev/null")
-                    appendLine(routes.ifEmpty { "(not available)" })
-                    appendLine()
-                    appendLine("=== ip rule ===")
-                    val (_, rules) = suExec("ip rule 2>/dev/null")
-                    appendLine(rules.ifEmpty { "(not available)" })
-                }
-            files["interfaces.txt"] = ifacesText
-
-            // /proc/net files
-            val procFiles = listOf("route", "ipv6_route", "if_inet6", "tcp", "tcp6", "udp", "udp6", "dev")
-            val procNet =
-                buildString {
-                    for (pf in procFiles) {
-                        appendLine("=== /proc/net/$pf ===")
-                        val (_, content) = suExec("cat /proc/net/$pf 2>/dev/null")
-                        appendLine(content.ifEmpty { "(not available)" })
-                        appendLine()
-                    }
-                }
-            files["proc_net.txt"] = procNet
-
-            // Logcat (app-level logs)
-            // Read logcat directly (no su) — app can read its own logs
-            val logcat =
-                try {
-                    val proc =
-                        Runtime.getRuntime().exec(
-                            arrayOf(
-                                "logcat",
-                                "-d",
-                                "-s",
-                                "VPNHideTest:*",
-                                "VpnHide:*",
-                                "VpnHide-Dashboard:*",
-                                // zygisk's android_logger uses this tag (see
-                                // zygisk/src/lib.rs:LOG_TAG); without it the
-                                // exported zip is missing all native-side
-                                // hook logs, which is the half users most
-                                // need to debug.
-                                "vpnhide-zygisk:*",
-                            ),
-                        )
-                    val output = proc.inputStream.bufferedReader().readText()
-                    proc.waitFor()
-                    proc.destroy()
-                    output
-                } catch (e: Exception) {
-                    "(logcat failed: ${e.message})"
-                }
-            files["logcat.txt"] = logcat.ifEmpty { "(no logcat entries)" }
+            // 4. Collect everything into named files — each section is its own
+            //    builder below.
+            val files =
+                mapOf(
+                    "dmesg_vpnhide.txt" to dmesg.lines().filter { it.contains("vpnhide") }.joinToString("\n"),
+                    "dmesg_full.txt" to dmesg,
+                    "diagnostics.txt" to buildDiagnosticsText(checkResults),
+                    "device_info.txt" to buildDeviceInfoText(context, selfNeedsRestart),
+                    "modules.txt" to buildModuleInfoText(),
+                    "targets.txt" to buildTargetsText(),
+                    "interfaces.txt" to buildInterfacesText(),
+                    "proc_net.txt" to buildProcNetText(),
+                    "logcat.txt" to captureAppLogcat().ifEmpty { "(no logcat entries)" },
+                )
 
             // Create zip
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
@@ -1064,4 +849,194 @@ private suspend fun exportDebugZip(
                 if (VpnHideLog.enabled != target) applyDebugLoggingRuntime(target)
             }
         }
+    }
+
+// ── Debug-zip section builders (each produces one file in the export) ─────
+
+private fun badge(passed: Boolean?): String =
+    when (passed) {
+        true -> "PASS"
+        false -> "FAIL"
+        null -> "INFO"
+    }
+
+private fun buildDiagnosticsText(results: CheckResults): String =
+    buildString {
+        val score = results.all.score()
+        appendLine("=== Diagnostics: ${score.passed}/${score.total} passed ===")
+        appendLine()
+        appendLine("--- Native level ---")
+        for (c in results.native) {
+            appendLine("[${badge(c.passed)}] ${c.name}")
+            appendLine("  ${c.detail}")
+        }
+        appendLine()
+        appendLine("--- Java API level ---")
+        for (c in results.java) {
+            appendLine("[${badge(c.passed)}] ${c.name}")
+            appendLine("  ${c.detail}")
+        }
+    }
+
+private fun buildDeviceInfoText(
+    context: android.content.Context,
+    selfNeedsRestart: Boolean,
+): String {
+    val (_, kernelVersion) = suExec("uname -r 2>/dev/null")
+    val (_, procVersion) = suExec("cat /proc/version 2>/dev/null")
+    val (_, selinuxMode) = suExec("getenforce 2>/dev/null")
+    return buildString {
+        appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
+        appendLine("Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
+        appendLine("Kernel: ${kernelVersion.trim()}")
+        appendLine("Kernel full: ${procVersion.trim()}")
+        appendLine("ABI: ${Build.SUPPORTED_ABIS.joinToString()}")
+        appendLine("SELinux: ${selinuxMode.trim()}")
+        appendLine("App package: ${context.packageName}")
+        try {
+            val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            appendLine("App version: ${pInfo.versionName}")
+        } catch (_: Exception) {
+        }
+        appendLine("selfNeedsRestart: $selfNeedsRestart")
+        appendLine()
+        appendLine("=== Root manager ===")
+        val (_, magiskVer) = suExec("magisk -V 2>/dev/null")
+        val (_, magiskVerName) = suExec("magisk -v 2>/dev/null")
+        if (magiskVer.isNotBlank()) {
+            appendLine("Magisk: ${magiskVerName.trim()} (${magiskVer.trim()})")
+        }
+        val (_, ksuVer) = suExec("cat /data/adb/ksu/version 2>/dev/null")
+        if (ksuVer.isNotBlank()) {
+            appendLine("KernelSU: ${ksuVer.trim()}")
+        }
+        val (exitKsuNext, ksuNextVer) = suExec("ksud --version 2>/dev/null")
+        if (exitKsuNext == 0 && ksuNextVer.isNotBlank()) {
+            appendLine("KernelSU-Next: ${ksuNextVer.trim()}")
+        }
+        if (magiskVer.isBlank() && ksuVer.isBlank() && (exitKsuNext != 0 || ksuNextVer.isBlank())) {
+            appendLine("(unknown root manager)")
+        }
+    }
+}
+
+private fun buildModuleInfoText(): String =
+    buildString {
+        appendLine("=== Kernel module (kmod) ===")
+        val (_, kmodProp) = suExec("cat /data/adb/modules/vpnhide_kmod/module.prop 2>/dev/null")
+        appendLine(kmodProp.ifEmpty { "Not installed" })
+        appendLine()
+        appendLine("=== kmod load_status (boot-time diagnostics) ===")
+        val (_, loadStatus) = suExec("cat $KMOD_LOAD_STATUS_FILE 2>/dev/null")
+        appendLine(loadStatus.ifEmpty { "(not available — module never ran post-fs-data.sh this boot)" })
+        appendLine()
+        appendLine("=== Current boot_id ===")
+        val (_, curBootId) = suExec("cat /proc/sys/kernel/random/boot_id 2>/dev/null")
+        appendLine(curBootId.trim().ifEmpty { "(not available)" })
+        appendLine()
+        appendLine("=== kmod load_dmesg ===")
+        val (_, loadDmesg) = suExec("cat $KMOD_LOAD_DMESG_FILE 2>/dev/null")
+        appendLine(loadDmesg.ifEmpty { "(not captured)" })
+        appendLine()
+        appendLine("=== Zygisk module ===")
+        val (_, zygiskProp) = suExec("cat /data/adb/modules/vpnhide_zygisk/module.prop 2>/dev/null")
+        appendLine(zygiskProp.ifEmpty { "Not installed" })
+        appendLine()
+        appendLine("=== Registered kretprobes ===")
+        val (_, kprobes) = suExec("cat /sys/kernel/debug/kprobes/list 2>/dev/null | grep vpnhide")
+        appendLine(kprobes.ifEmpty { "(not available or no vpnhide probes)" })
+        appendLine()
+        appendLine("=== Kernel symbols (hooked functions) ===")
+        val symbols =
+            listOf("dev_ioctl", "dev_ifconf", "rtnl_fill_ifinfo", "inet6_fill_ifaddr", "inet_fill_ifaddr", "fib_route_seq_show")
+        for (sym in symbols) {
+            val (_, line) = suExec("cat /proc/kallsyms 2>/dev/null | grep -w $sym | head -3")
+            appendLine("$sym: ${line.trim().ifEmpty { "(not found)" }}")
+        }
+        appendLine()
+        appendLine("=== LSPosed configuration ===")
+        val (_, lsposedDb) =
+            suExec(
+                "sqlite3 /data/adb/lspd/config/modules_config.db " +
+                    "\"SELECT mid, module_pkg_name, enabled FROM modules WHERE module_pkg_name LIKE '%vpnhide%';\" 2>/dev/null",
+            )
+        appendLine(lsposedDb.ifEmpty { "(not available or module not in LSPosed)" })
+        val (_, lsposedScope) =
+            suExec(
+                "sqlite3 /data/adb/lspd/config/modules_config.db " +
+                    "\"SELECT s.app_pkg_name FROM scope s JOIN modules m ON s.mid=m.mid WHERE m.module_pkg_name LIKE '%vpnhide%';\" 2>/dev/null",
+            )
+        if (lsposedScope.isNotBlank()) {
+            appendLine("Scope: ${lsposedScope.trim()}")
+        }
+    }
+
+private fun buildTargetsText(): String =
+    buildString {
+        appendLine("=== /proc/vpnhide_targets (live UIDs) ===")
+        appendLine(suExec("cat /proc/vpnhide_targets 2>/dev/null").second.ifEmpty { "(empty)" })
+        appendLine()
+        appendLine("=== kmod targets ===")
+        appendLine(suExec("cat $KMOD_TARGETS 2>/dev/null").second.ifEmpty { "(empty)" })
+        appendLine()
+        appendLine("=== zygisk targets ===")
+        appendLine(suExec("cat $ZYGISK_TARGETS 2>/dev/null").second.ifEmpty { "(empty)" })
+        appendLine()
+        appendLine("=== lsposed targets ===")
+        appendLine(suExec("cat $LSPOSED_TARGETS 2>/dev/null").second.ifEmpty { "(empty)" })
+    }
+
+private fun buildInterfacesText(): String =
+    buildString {
+        appendLine("=== ip -d addr ===")
+        appendLine(suExec("ip -d addr 2>/dev/null").second.ifEmpty { "(not available)" })
+        appendLine()
+        appendLine("=== Interface operstate ===")
+        val (_, operstate) =
+            suExec(
+                "for iface in /sys/class/net/*; do " +
+                    "echo \"\$(basename \$iface): \$(cat \$iface/operstate 2>/dev/null)\"; " +
+                    "done",
+            )
+        appendLine(operstate.ifEmpty { "(not available)" })
+        appendLine()
+        appendLine("=== ip route show table all ===")
+        appendLine(suExec("ip route show table all 2>/dev/null").second.ifEmpty { "(not available)" })
+        appendLine()
+        appendLine("=== ip rule ===")
+        appendLine(suExec("ip rule 2>/dev/null").second.ifEmpty { "(not available)" })
+    }
+
+private fun buildProcNetText(): String =
+    buildString {
+        for (pf in listOf("route", "ipv6_route", "if_inet6", "tcp", "tcp6", "udp", "udp6", "dev")) {
+            appendLine("=== /proc/net/$pf ===")
+            appendLine(suExec("cat /proc/net/$pf 2>/dev/null").second.ifEmpty { "(not available)" })
+            appendLine()
+        }
+    }
+
+// App-level logs only — the app can read its own logcat without root.
+private fun captureAppLogcat(): String =
+    try {
+        val proc =
+            Runtime.getRuntime().exec(
+                arrayOf(
+                    "logcat",
+                    "-d",
+                    "-s",
+                    "VPNHideTest:*",
+                    "VpnHide:*",
+                    "VpnHide-Dashboard:*",
+                    // zygisk's android_logger uses this tag (see zygisk/src/lib.rs:LOG_TAG);
+                    // without it the export is missing all native-side hook logs.
+                    "vpnhide-zygisk:*",
+                ),
+            )
+        val output = proc.inputStream.bufferedReader().readText()
+        proc.waitFor()
+        proc.destroy()
+        output
+    } catch (e: Exception) {
+        "(logcat failed: ${e.message})"
     }

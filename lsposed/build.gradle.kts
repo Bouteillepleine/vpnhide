@@ -9,9 +9,9 @@ plugins {
 
 // Copy-paste detector (PMD CPD): finds cross-file duplicated blocks that
 // detekt can't — the re-implemented-parser / re-implemented-save-builder
-// smell that AI-assisted edits produce. Advisory for now (ignoreFailures);
-// run with `./gradlew cpdCheck`, report at build/reports/cpd/. Will go into
-// CI once the current duplicates are cleaned up.
+// smell that AI-assisted edits produce. Enforced in CI (fails on a clone);
+// run locally with `./gradlew cpdCheck`, report at build/reports/cpd/. For a
+// genuinely-unavoidable clone, refactor it or raise minimumTokenCount.
 cpd {
     toolVersion = "7.8.0"
     language = "kotlin"
@@ -21,7 +21,7 @@ cpd {
 }
 
 tasks.named<Cpd>("cpdCheck") {
-    ignoreFailures = true
+    ignoreFailures = false
     reports {
         text.required.set(true)
         xml.required.set(false)
