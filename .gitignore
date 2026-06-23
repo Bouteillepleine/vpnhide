@@ -5,6 +5,7 @@ zygisk/.idea/
 
 # LSPosed (Kotlin/Gradle)
 lsposed/.gradle/
+lsposed/.kotlin/
 lsposed/build/
 lsposed/app/build/
 lsposed/.idea/

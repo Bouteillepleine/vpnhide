@@ -578,6 +578,9 @@ internal fun runExtraJavaChecks(
 ): List<CheckResult> {
     val res = context.resources
     return listOf(
+        checkNetworkForTypeVpn(cm, res.getString(R.string.check_network_for_type_vpn)),
+        checkActiveNetworkHandle(cm, res.getString(R.string.check_active_network_handle)),
+        checkAllNetworksHandles(cm, res.getString(R.string.check_all_networks_handles)),
         checkActiveNetworkVpn(cm, res.getString(R.string.check_active_network_vpn)),
         checkNetworkCallbackVpn(cm, res.getString(R.string.check_network_callback)),
         checkLinkPropertiesRoutes(cm, res.getString(R.string.check_link_properties_routes)),
@@ -751,6 +754,90 @@ private fun checkActiveNetworkVpn(
             }
         CheckResult(name, !hasVpn, detail)
     }
+
+private data class NetworkForTypeResult(
+    val network: Network? = null,
+    val unavailable: Boolean = false,
+    val error: String? = null,
+)
+
+@Suppress("DEPRECATION")
+private fun queryNetworkForType(
+    cm: ConnectivityManager,
+    type: Int,
+): NetworkForTypeResult =
+    try {
+        val method = ConnectivityManager::class.java.getMethod("getNetworkForType", Integer.TYPE)
+        method.isAccessible = true
+        NetworkForTypeResult(network = method.invoke(cm, type) as? Network)
+    } catch (_: NoSuchMethodException) {
+        NetworkForTypeResult(unavailable = true)
+    } catch (t: Throwable) {
+        NetworkForTypeResult(error = t.cause?.message ?: t.message ?: t.javaClass.simpleName)
+    }
+
+@Suppress("DEPRECATION")
+private fun checkNetworkForTypeVpn(
+    cm: ConnectivityManager,
+    name: String,
+): CheckResult {
+    val result = queryNetworkForType(cm, ConnectivityManager.TYPE_VPN)
+    result.error?.let { return CheckResult(name, false, it) }
+    if (result.unavailable) return CheckResult(name, true, "getNetworkForType unavailable")
+    val vpnNetwork = result.network ?: return CheckResult(name, true, "TYPE_VPN returned null")
+
+    val caps = cm.getNetworkCapabilities(vpnNetwork)
+    val hasVpn = caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+    val detail =
+        if (hasVpn) {
+            "TYPE_VPN returned $vpnNetwork with VPN capabilities"
+        } else {
+            "TYPE_VPN returned $vpnNetwork"
+        }
+    return CheckResult(name, false, detail)
+}
+
+@Suppress("DEPRECATION")
+private fun checkActiveNetworkHandle(
+    cm: ConnectivityManager,
+    name: String,
+): CheckResult {
+    val active = cm.activeNetwork ?: return CheckResult(name, true, "no active network")
+    val vpnResult = queryNetworkForType(cm, ConnectivityManager.TYPE_VPN)
+    vpnResult.error?.let { return CheckResult(name, false, it) }
+    if (vpnResult.unavailable) return CheckResult(name, true, "active=$active, getNetworkForType unavailable")
+    val vpnNetwork = vpnResult.network ?: return CheckResult(name, true, "active=$active, TYPE_VPN not exposed")
+
+    val leaksVpnHandle = active == vpnNetwork
+    val detail =
+        if (leaksVpnHandle) {
+            "activeNetwork equals TYPE_VPN network $active"
+        } else {
+            "active=$active, TYPE_VPN=$vpnNetwork"
+        }
+    return CheckResult(name, !leaksVpnHandle, detail)
+}
+
+@Suppress("DEPRECATION")
+private fun checkAllNetworksHandles(
+    cm: ConnectivityManager,
+    name: String,
+): CheckResult {
+    val networks = cm.allNetworks
+    val vpnResult = queryNetworkForType(cm, ConnectivityManager.TYPE_VPN)
+    vpnResult.error?.let { return CheckResult(name, false, it) }
+    if (vpnResult.unavailable) return CheckResult(name, true, "${networks.size} networks, getNetworkForType unavailable")
+    val vpnNetwork = vpnResult.network ?: return CheckResult(name, true, "${networks.size} networks, TYPE_VPN not exposed")
+
+    val containsVpnHandle = networks.any { it == vpnNetwork }
+    val detail =
+        if (containsVpnHandle) {
+            "allNetworks includes TYPE_VPN network $vpnNetwork"
+        } else {
+            "${networks.size} networks, TYPE_VPN=$vpnNetwork not listed"
+        }
+    return CheckResult(name, !containsVpnHandle, detail)
+}
 
 // Push-callback leak (issue #70, e.g. VTB): apps using
 // registerDefaultNetworkCallback receive NetworkCapabilities *pushed* from
