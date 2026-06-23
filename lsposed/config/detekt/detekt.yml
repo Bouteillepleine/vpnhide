@@ -37,6 +37,11 @@ complexity:
   TooManyFunctions:
     # Noisy on Compose files (one @Composable per UI piece) and DAOs.
     active: false
+  # ComplexCondition (4+ &&/|| terms) is idiomatic for the multi-gate guards
+  # in the kmod/protection logic; CognitiveComplexMethod still catches
+  # genuinely tangled control flow.
+  ComplexCondition:
+    active: false
 
 exceptions:
   # This codebase deliberately catches Throwable/Exception around reflection,
@@ -63,6 +68,9 @@ style:
     active: false
   ForbiddenComment:
     active: false
+  # A loop with two break/continue/return is normal & readable; flag 3+.
+  LoopWithTooManyJumpStatements:
+    maxJumpCount: 2
   # Keep UnusedPrivateMember / UnusedPrivateProperty ON — they catch dead code
   # like the fork's never-called parsePmList.
 
@@ -70,7 +78,17 @@ comments:
   # KDoc-presence opinions are noise for an internal module.
   active: false
 
+performance:
+  # Reflection ctor calls (getDeclaredConstructor(*params)) need the spread;
+  # the perf concern doesn't apply on these cold install-time paths.
+  SpreadOperator:
+    active: false
+
 naming:
   FunctionNaming:
     # @Composable functions are PascalCase by Compose convention.
     ignoreAnnotated: ['Composable']
+  # This codebase deliberately uses multi-declaration files (DashboardData.kt,
+  # ShellUtils.kt, StatusUi.kt …) — filename != single top-level decl is fine.
+  MatchingDeclarationName:
+    active: false

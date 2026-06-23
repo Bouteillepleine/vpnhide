@@ -14,11 +14,11 @@ plugins {
 
 // Static analysis that ktlint (style only) can't do: function/file length,
 // cyclomatic/cognitive complexity, dead private members, common bug patterns.
-// The baseline (config/detekt/baseline.xml) freezes pre-existing findings so
-// the gate only fails on NEW smell — regenerate with `./gradlew :app:detektBaseline`.
+// Runs clean with no baseline — genuinely-inherent length/complexity (shell
+// templates, lookup tables, the priority-dispatch classifier) is opted out
+// per-site with `@Suppress` + a reason, not hidden in a baseline file.
 detekt {
     config.setFrom(rootProject.files("config/detekt/detekt.yml"))
-    baseline = rootProject.file("config/detekt/baseline.xml")
     buildUponDefaultConfig = true
     parallel = true
     source.setFrom(files("src/main/kotlin", "src/test/kotlin"))

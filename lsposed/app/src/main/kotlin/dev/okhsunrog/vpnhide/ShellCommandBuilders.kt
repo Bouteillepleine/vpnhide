@@ -85,6 +85,9 @@ internal fun buildUidResolverCommand(
         append("; else echo > $outputFile 2>/dev/null; fi")
     }
 
+// Long because it's a single embedded shell script (the startup self-target
+// batch), not Kotlin control flow.
+@Suppress("LongMethod")
 internal fun buildEnsureSelfInTargetsCommand(selfPkg: String): String =
     buildString {
         append("SELF_PKG=\"")

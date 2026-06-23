@@ -237,7 +237,11 @@ internal fun parseKernelAndroidBranch(raw: String): String? =
  * `androidVersion` for display — it's never used for KMI matching
  * (those spaces are independent: an Android 15 ROM routinely runs
  * an android12 KMI kernel).
+ *
+ * detekt LongMethod is suppressed: this is a GKI KMI × kernel-series lookup
+ * table, not tangled control flow.
  */
+@Suppress("LongMethod")
 internal fun buildNativeInstallRecommendation(
     kernelRaw: String,
     deviceAndroidLabel: String,
@@ -460,7 +464,12 @@ internal sealed interface KmodProblemKind {
  * An active kmod (`/proc/vpnhide_targets` present) is empirical proof the
  * install works, so every check except the activity-independent kprobes probe
  * is gated on `!active`.
+ *
+ * detekt CyclomaticComplexMethod is suppressed: this is priority-ordered
+ * dispatch where each branch is a distinct, tested diagnosis — the branch count
+ * is the point (see ClassifyKmodProblemTest).
  */
+@Suppress("CyclomaticComplexMethod")
 internal fun classifyKmodProblem(
     kmod: ModuleState,
     recommendation: NativeInstallRecommendation?,
@@ -604,6 +613,250 @@ internal fun resolveLsposedState(
     }
 }
 
+// ── Module detection (pure, from the root snapshot) ──────────────────────
+
+internal fun detectKmodModule(
+    sections: Map<String, String>,
+    selfPkg: String,
+): ModuleState {
+    val prop = parseModuleProp(sections["kmod_prop"].orEmpty())
+    if (!prop.installed) return ModuleState.NotInstalled
+    val active = sections["proc_exists"].orEmpty().trim() == "1"
+    // brokenReason is applied by the caller once the kernel recommendation +
+    // load status are known (see classifyKmodProblem).
+    return ModuleState.Installed(
+        version = prop.version,
+        active = active,
+        targetCount = countTargets(sections["kmod_targets"].orEmpty(), selfPkg),
+        gkiVariant = prop.gkiVariant,
+    )
+}
+
+internal fun detectZygiskModule(
+    sections: Map<String, String>,
+    zygiskStatusRaw: String,
+    selfPkg: String,
+    currentBootId: String,
+): ModuleState {
+    val prop = parseModuleProp(sections["zygisk_prop"].orEmpty())
+    if (!prop.installed) return ModuleState.NotInstalled
+    // Active = the in-process heartbeat the module writes on fork matches the
+    // current boot. A stale heartbeat (previous boot) means not loaded yet.
+    val heartbeatBootId = parseKeyValueLines(zygiskStatusRaw)["boot_id"]
+    val active = heartbeatBootId != null && heartbeatBootId == currentBootId.trim()
+    return ModuleState.Installed(
+        version = prop.version,
+        active = active,
+        targetCount = countTargets(sections["zygisk_targets"].orEmpty(), selfPkg),
+    )
+}
+
+internal fun detectPortsModule(
+    sections: Map<String, String>,
+    selfPkg: String,
+): ModuleState {
+    val prop = parseModuleProp(sections["ports_prop"].orEmpty())
+    if (!prop.installed) return ModuleState.NotInstalled
+    val active = sections["ports_chain"].orEmpty().trim() == "1"
+    return ModuleState.Installed(
+        version = prop.version,
+        active = active,
+        targetCount = countTargets(sections["ports_observers"].orEmpty(), selfPkg),
+    )
+}
+
+// ── lsposed framework / config probes (need Android: PM, SQLite, root) ────
+
+private fun androidMajorVersionLabel(): String {
+    @Suppress("DEPRECATION")
+    val release =
+        if (Build.VERSION.SDK_INT >= 30) {
+            Build.VERSION.RELEASE_OR_CODENAME
+        } else {
+            Build.VERSION.RELEASE
+        }.substringBefore('.')
+    return "Android $release"
+}
+
+private fun buildModuleVersionIssue(
+    res: android.content.res.Resources,
+    kind: NativeModuleKind,
+    moduleVersion: String,
+    appVersion: String,
+): String =
+    when (compareSemver(normalizeVersion(moduleVersion), normalizeVersion(appVersion))) {
+        null, 0 -> {
+            res.getString(
+                when (kind) {
+                    NativeModuleKind.Kmod -> R.string.dashboard_issue_kmod_version_mismatch
+                    NativeModuleKind.Zygisk -> R.string.dashboard_issue_zygisk_version_mismatch
+                    NativeModuleKind.Ports -> R.string.dashboard_issue_ports_version_mismatch
+                },
+                moduleVersion,
+                appVersion,
+            )
+        }
+
+        in Int.MIN_VALUE..-1 -> {
+            res.getString(
+                when (kind) {
+                    NativeModuleKind.Kmod -> R.string.dashboard_issue_update_kmod
+                    NativeModuleKind.Zygisk -> R.string.dashboard_issue_update_zygisk
+                    NativeModuleKind.Ports -> R.string.dashboard_issue_update_ports
+                },
+                moduleVersion,
+                appVersion,
+            )
+        }
+
+        else -> {
+            res.getString(
+                when (kind) {
+                    NativeModuleKind.Kmod -> R.string.dashboard_issue_update_app_for_kmod
+                    NativeModuleKind.Zygisk -> R.string.dashboard_issue_update_app_for_zygisk
+                    NativeModuleKind.Ports -> R.string.dashboard_issue_update_app_for_ports
+                },
+                moduleVersion,
+                appVersion,
+            )
+        }
+    }
+
+private fun resolveScopeEntryLabel(
+    context: android.content.Context,
+    entry: String,
+): String {
+    if (entry == "system" || entry == "system/0") return "System Framework"
+
+    val packageName = entry.substringBefore('/')
+    val userId = entry.substringAfter('/', "")
+    return try {
+        val appInfo = context.packageManager.getApplicationInfo(packageName, 0)
+        val appLabel =
+            context.packageManager
+                .getApplicationLabel(appInfo)
+                .toString()
+                .trim()
+        when {
+            appLabel.isEmpty() -> packageName
+            userId.isNotEmpty() && userId != "0" -> "$appLabel ($userId)"
+            else -> appLabel
+        }
+    } catch (_: PackageManager.NameNotFoundException) {
+        packageName
+    }
+}
+
+private fun detectLsposedFramework(sections: Map<String, String>): LsposedFramework {
+    val out = sections["lsposed_framework"].orEmpty()
+    val props = parseKeyValueLines(out)
+    val installedValue = props["installed"]
+    val malformed =
+        props["probe_ok"] != "1" ||
+            installedValue == null ||
+            (installedValue == "1" && props["disabled"] == null)
+    if (malformed) {
+        VpnHideLog.w(TAG, "lsposed framework probe returned malformed output: $out")
+        return LsposedFramework.NotInstalled
+    }
+    val framework =
+        if (installedValue == "1") {
+            LsposedFramework.Installed(disabled = props["disabled"] == "1")
+        } else {
+            LsposedFramework.NotInstalled
+        }
+    VpnHideLog.i(TAG, "lsposed framework: $framework (raw=$out)")
+    return framework
+}
+
+// Copy the LSPosed config DB (+ WAL/SHM) out of root-only storage into our
+// cache dir so SQLiteDatabase can open it read-only. Returns the copied main
+// db file, or null if the root copy failed.
+private fun copyLsposedConfigDb(context: android.content.Context): File? {
+    val dbCopy = File(context.cacheDir, "vpnhide_lspd_modules_config.db")
+    val walCopy = File(context.cacheDir, "vpnhide_lspd_modules_config.db-wal")
+    val shmCopy = File(context.cacheDir, "vpnhide_lspd_modules_config.db-shm")
+    dbCopy.delete()
+    walCopy.delete()
+    shmCopy.delete()
+
+    val src = "/data/adb/lspd/config/modules_config.db"
+    val copyStart = SystemClock.elapsedRealtime()
+    val (copyExit, copyOut) =
+        suExec(
+            "cat $src > ${dbCopy.absolutePath} && chmod 644 ${dbCopy.absolutePath} && " +
+                "(cat $src-wal > ${walCopy.absolutePath} 2>/dev/null && chmod 644 ${walCopy.absolutePath} || true) && " +
+                "(cat $src-shm > ${shmCopy.absolutePath} 2>/dev/null && chmod 644 ${shmCopy.absolutePath} || true) && " +
+                "ls -l ${dbCopy.absolutePath} ${walCopy.absolutePath} ${shmCopy.absolutePath} 2>/dev/null || true",
+        )
+    StartupTrace.metric("dashboard_lsposed_db_copy", SystemClock.elapsedRealtime() - copyStart)
+    if (copyExit != 0 || !dbCopy.isFile) {
+        VpnHideLog.w(TAG, "failed to copy LSPosed config db for inspection: exit=$copyExit out=$copyOut")
+        return null
+    }
+    VpnHideLog.i(TAG, "lsposed db copy: ${copyOut.trim()}")
+    return dbCopy
+}
+
+// Nesting depth comes from the chained SQLite `.use {}` resource scopes
+// (db → modules cursor → scope cursor), not from branching logic.
+@Suppress("NestedBlockDepth")
+private fun readLsposedConfig(
+    context: android.content.Context,
+    selfPkg: String,
+): LsposedConfig? {
+    val dbCopy = copyLsposedConfigDb(context) ?: return null
+    val queryStart = SystemClock.elapsedRealtime()
+    return try {
+        SQLiteDatabase.openDatabase(dbCopy.absolutePath, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+            db
+                .rawQuery("SELECT mid, enabled FROM modules WHERE module_pkg_name = ?", arrayOf(selfPkg))
+                .use { moduleCursor ->
+                    if (!moduleCursor.moveToFirst()) return LsposedConfig.ModuleNotConfigured
+                    val mid = moduleCursor.getLong(0)
+                    if (moduleCursor.getInt(1) == 0) return LsposedConfig.Disabled
+
+                    val scopeEntries = mutableListOf<Pair<String, Int>>()
+                    db
+                        .rawQuery(
+                            "SELECT app_pkg_name, user_id FROM scope WHERE mid = ? ORDER BY user_id, app_pkg_name",
+                            arrayOf(mid.toString()),
+                        ).use { scopeCursor ->
+                            while (scopeCursor.moveToNext()) {
+                                scopeEntries += scopeCursor.getString(0) to scopeCursor.getInt(1)
+                            }
+                        }
+
+                    fun isSystemFramework(
+                        pkg: String,
+                        userId: Int,
+                    ) = pkg == "system" && userId == 0
+                    LsposedConfig.Enabled(
+                        entries = scopeEntries.map { (pkg, userId) -> if (isSystemFramework(pkg, userId)) "system" else "$pkg/$userId" },
+                        hasSystemFramework = scopeEntries.any { (pkg, userId) -> isSystemFramework(pkg, userId) },
+                        extraEntries =
+                            scopeEntries
+                                .filterNot { (pkg, userId) -> isSystemFramework(pkg, userId) || pkg == selfPkg }
+                                .map { (pkg, userId) -> "$pkg/$userId" },
+                    )
+                }
+        }
+    } catch (e: Exception) {
+        VpnHideLog.w(TAG, "failed to inspect LSPosed config db: ${e.message}")
+        null
+    } finally {
+        StartupTrace.metric("dashboard_lsposed_db_query", SystemClock.elapsedRealtime() - queryStart)
+        dbCopy.delete()
+        File(dbCopy.absolutePath + "-wal").delete()
+        File(dbCopy.absolutePath + "-shm").delete()
+    }
+}
+
+// Linear orchestrator: pure detectors above produce the module/lsposed state,
+// then a flat list of independent issue guards builds the warning/error banners.
+// Kept as one top-to-bottom narrative — splitting the flat guard list behind a
+// parameter bundle would add indirection without improving clarity.
+@Suppress("LongMethod", "CyclomaticComplexMethod")
 internal fun loadDashboardState(
     cm: ConnectivityManager,
     context: android.content.Context,
@@ -627,263 +880,23 @@ internal fun loadDashboardState(
     val shellSnapshot = rootSnapshot.sections
 
     // ── Module detection ──
-    // Module-prop / status parsing lives in pure top-level functions
-    // (parseModuleProp, parseKeyValueLines, countTargets) so they're
-    // unit-testable; only the issue-text rendering below needs `res`.
-    fun countTargets(raw: String): Int = countTargets(raw, selfPkg)
-
-    fun buildModuleVersionIssue(
-        kind: NativeModuleKind,
-        moduleVersion: String,
-        appVersion: String,
-    ): String {
-        val normalizedModuleVersion = normalizeVersion(moduleVersion)
-        val normalizedAppVersion = normalizeVersion(appVersion)
-        return when (compareSemver(normalizedModuleVersion, normalizedAppVersion)) {
-            null, 0 -> {
-                res.getString(
-                    when (kind) {
-                        NativeModuleKind.Kmod -> R.string.dashboard_issue_kmod_version_mismatch
-                        NativeModuleKind.Zygisk -> R.string.dashboard_issue_zygisk_version_mismatch
-                        NativeModuleKind.Ports -> R.string.dashboard_issue_ports_version_mismatch
-                    },
-                    moduleVersion,
-                    appVersion,
-                )
-            }
-
-            in Int.MIN_VALUE..-1 -> {
-                res.getString(
-                    when (kind) {
-                        NativeModuleKind.Kmod -> R.string.dashboard_issue_update_kmod
-                        NativeModuleKind.Zygisk -> R.string.dashboard_issue_update_zygisk
-                        NativeModuleKind.Ports -> R.string.dashboard_issue_update_ports
-                    },
-                    moduleVersion,
-                    appVersion,
-                )
-            }
-
-            else -> {
-                res.getString(
-                    when (kind) {
-                        NativeModuleKind.Kmod -> R.string.dashboard_issue_update_app_for_kmod
-                        NativeModuleKind.Zygisk -> R.string.dashboard_issue_update_app_for_zygisk
-                        NativeModuleKind.Ports -> R.string.dashboard_issue_update_app_for_ports
-                    },
-                    moduleVersion,
-                    appVersion,
-                )
-            }
-        }
-    }
-
-    fun androidMajorVersionLabel(): String {
-        @Suppress("DEPRECATION")
-        val release =
-            if (Build.VERSION.SDK_INT >= 30) {
-                Build.VERSION.RELEASE_OR_CODENAME
-            } else {
-                Build.VERSION.RELEASE
-            }.substringBefore('.')
-        return "Android $release"
-    }
-
-    fun resolveScopeEntryLabel(entry: String): String {
-        if (entry == "system" || entry == "system/0") return "System Framework"
-
-        val packageName = entry.substringBefore('/')
-        val userId = entry.substringAfter('/', "")
-        return try {
-            val appInfo = context.packageManager.getApplicationInfo(packageName, 0)
-            val appLabel =
-                context.packageManager
-                    .getApplicationLabel(appInfo)
-                    .toString()
-                    .trim()
-            when {
-                appLabel.isEmpty() -> packageName
-                userId.isNotEmpty() && userId != "0" -> "$appLabel ($userId)"
-                else -> appLabel
-            }
-        } catch (_: PackageManager.NameNotFoundException) {
-            packageName
-        }
-    }
-
-    fun readLsposedConfig(): LsposedConfig? {
-        val dbCopy = File(context.cacheDir, "vpnhide_lspd_modules_config.db")
-        val dbWalCopy = File(context.cacheDir, "vpnhide_lspd_modules_config.db-wal")
-        val dbShmCopy = File(context.cacheDir, "vpnhide_lspd_modules_config.db-shm")
-        dbCopy.delete()
-        dbWalCopy.delete()
-        dbShmCopy.delete()
-
-        val dbPath = dbCopy.absolutePath
-        val walPath = dbWalCopy.absolutePath
-        val shmPath = dbShmCopy.absolutePath
-        val sourceBase = "/data/adb/lspd/config/modules_config.db"
-        val copyStart = SystemClock.elapsedRealtime()
-        val (copyExit, copyOut) =
-            suExec(
-                "cat $sourceBase > $dbPath && " +
-                    "chmod 644 $dbPath && " +
-                    "(cat $sourceBase-wal > $walPath 2>/dev/null && chmod 644 $walPath || true) && " +
-                    "(cat $sourceBase-shm > $shmPath 2>/dev/null && chmod 644 $shmPath || true) && " +
-                    "ls -l $dbPath $walPath $shmPath 2>/dev/null || true",
-            )
-        StartupTrace.metric("dashboard_lsposed_db_copy", SystemClock.elapsedRealtime() - copyStart)
-        if (copyExit != 0 || !dbCopy.isFile) {
-            VpnHideLog.w(TAG, "failed to copy LSPosed config db for inspection: exit=$copyExit out=$copyOut")
-            return null
-        }
-        VpnHideLog.i(TAG, "lsposed db copy: ${copyOut.trim()}")
-
-        val queryStart = SystemClock.elapsedRealtime()
-        return try {
-            SQLiteDatabase.openDatabase(dbPath, null, SQLiteDatabase.OPEN_READONLY).use { db ->
-                db
-                    .rawQuery(
-                        "SELECT mid, enabled FROM modules WHERE module_pkg_name = ?",
-                        arrayOf(selfPkg),
-                    ).use { moduleCursor ->
-                        if (!moduleCursor.moveToFirst()) {
-                            return LsposedConfig.ModuleNotConfigured
-                        }
-
-                        val mid = moduleCursor.getLong(0)
-                        val enabled = moduleCursor.getInt(1) != 0
-                        if (!enabled) {
-                            return LsposedConfig.Disabled
-                        }
-
-                        val scopeEntries = mutableListOf<Pair<String, Int>>()
-                        db
-                            .rawQuery(
-                                "SELECT app_pkg_name, user_id FROM scope WHERE mid = ? ORDER BY user_id, app_pkg_name",
-                                arrayOf(mid.toString()),
-                            ).use { scopeCursor ->
-                                while (scopeCursor.moveToNext()) {
-                                    scopeEntries += scopeCursor.getString(0) to scopeCursor.getInt(1)
-                                }
-                            }
-                        val hasSystemFramework = scopeEntries.any { (pkg, userId) -> pkg == "system" && userId == 0 }
-                        val renderedEntries =
-                            scopeEntries.map { (pkg, userId) ->
-                                if (pkg == "system" && userId == 0) {
-                                    "system"
-                                } else {
-                                    "$pkg/$userId"
-                                }
-                            }
-                        val extraEntries =
-                            scopeEntries
-                                .filterNot { (pkg, userId) ->
-                                    (pkg == "system" && userId == 0) || pkg == selfPkg
-                                }.map { (pkg, userId) -> "$pkg/$userId" }
-
-                        LsposedConfig.Enabled(
-                            entries = renderedEntries,
-                            hasSystemFramework = hasSystemFramework,
-                            extraEntries = extraEntries,
-                        )
-                    }
-            }
-        } catch (e: Exception) {
-            VpnHideLog.w(TAG, "failed to inspect LSPosed config db: ${e.message}")
-            null
-        } finally {
-            StartupTrace.metric("dashboard_lsposed_db_query", SystemClock.elapsedRealtime() - queryStart)
-            dbCopy.delete()
-            dbWalCopy.delete()
-            dbShmCopy.delete()
-        }
-    }
-
-    fun detectLsposedFramework(): LsposedFramework {
-        val out = shellSnapshot["lsposed_framework"].orEmpty()
-        val props = parseKeyValueLines(out)
-        val probeOk = props["probe_ok"] == "1"
-        val installedValue = props["installed"]
-        val disabledValue = props["disabled"]
-        val malformed =
-            !probeOk ||
-                installedValue == null ||
-                (installedValue == "1" && disabledValue == null)
-        if (malformed) {
-            VpnHideLog.w(TAG, "lsposed framework probe returned malformed output: $out")
-            return LsposedFramework.NotInstalled
-        }
-        val installed = installedValue == "1"
-        val disabled = props["disabled"] == "1"
-        val framework =
-            if (installed) {
-                LsposedFramework.Installed(disabled = disabled)
-            } else {
-                LsposedFramework.NotInstalled
-            }
-        VpnHideLog.i(TAG, "lsposed framework: $framework (raw=$out)")
-        return framework
-    }
-
-    // kmod
-    val kmodProp = parseModuleProp(shellSnapshot["kmod_prop"].orEmpty())
-    val procExists = shellSnapshot["proc_exists"].orEmpty()
-    val kmodActive = kmodProp.installed && procExists.trim() == "1"
-    val kmodTargetCount = if (kmodProp.installed) countTargets(shellSnapshot["kmod_targets"].orEmpty()) else 0
-    // Built without brokenReason — populated below after kernelRecommendation
-    // and kmodLoadStatus are ready.
-    val kmodRaw: ModuleState =
-        if (kmodProp.installed) {
-            ModuleState.Installed(
-                version = kmodProp.version,
-                active = kmodActive,
-                targetCount = kmodTargetCount,
-                gkiVariant = kmodProp.gkiVariant,
-            )
-        } else {
-            ModuleState.NotInstalled
-        }
-    VpnHideLog.i(TAG, "kmodRaw: $kmodRaw")
-
-    // zygisk
-    val zygiskProp = parseModuleProp(shellSnapshot["zygisk_prop"].orEmpty())
-    val zygiskInstalled = zygiskProp.installed
-    val zygiskVersion = zygiskProp.version
-    val zygiskStatusFile = File(context.filesDir, ZYGISK_STATUS_FILE_NAME)
+    // Each module's state comes from a pure detector (unit-tested). kmod's
+    // brokenReason is layered on below, once the kernel recommendation and
+    // load status are known (classifyKmodProblem).
+    val currentBootId = shellSnapshot["current_boot_id"].orEmpty()
+    val kmodRaw = detectKmodModule(shellSnapshot, selfPkg)
     val zygiskStatusRaw =
         try {
-            zygiskStatusFile.takeIf { it.isFile }?.readText().orEmpty()
+            File(context.filesDir, ZYGISK_STATUS_FILE_NAME).takeIf { it.isFile }?.readText().orEmpty()
         } catch (e: Exception) {
             VpnHideLog.w(TAG, "failed to read zygisk status heartbeat: ${e.message}")
             ""
         }
-    val zygiskProps = parseKeyValueLines(zygiskStatusRaw)
-    val currentBootId = shellSnapshot["current_boot_id"].orEmpty()
-    val zygiskBootId = zygiskProps["boot_id"]
-    val zygiskActive = zygiskInstalled && zygiskBootId != null && zygiskBootId == currentBootId.trim()
-    val zygiskTargetCount = if (zygiskInstalled) countTargets(shellSnapshot["zygisk_targets"].orEmpty()) else 0
-    val zygisk: ModuleState =
-        if (zygiskInstalled) {
-            ModuleState.Installed(zygiskVersion, zygiskActive, zygiskTargetCount)
-        } else {
-            ModuleState.NotInstalled
-        }
-    VpnHideLog.i(TAG, "zygisk: $zygisk (heartbeatBootId=$zygiskBootId currentBootId=${currentBootId.trim()})")
-
-    // ports (iptables-based loopback blocker)
-    val portsProp = parseModuleProp(shellSnapshot["ports_prop"].orEmpty())
-    val portsObserverCount =
-        if (portsProp.installed) countTargets(shellSnapshot["ports_observers"].orEmpty()) else 0
-    val portsChainExists = shellSnapshot["ports_chain"].orEmpty()
-    val portsActive = portsProp.installed && portsChainExists.trim() == "1"
-    val ports: ModuleState =
-        if (portsProp.installed) {
-            ModuleState.Installed(portsProp.version, portsActive, portsObserverCount)
-        } else {
-            ModuleState.NotInstalled
-        }
-    VpnHideLog.i(TAG, "ports: $ports")
+    val zygisk = detectZygiskModule(shellSnapshot, zygiskStatusRaw, selfPkg, currentBootId)
+    val ports = detectPortsModule(shellSnapshot, selfPkg)
+    val kmodTargetCount = (kmodRaw as? ModuleState.Installed)?.targetCount ?: 0
+    val zygiskTargetCount = (zygisk as? ModuleState.Installed)?.targetCount ?: 0
+    VpnHideLog.i(TAG, "modules: kmodRaw=$kmodRaw zygisk=$zygisk ports=$ports")
     StartupTrace.mark("dashboard_modules_done")
 
     // Recommendation based purely on the kernel — used by the install card,
@@ -936,8 +949,8 @@ internal fun loadDashboardState(
     val hookVersion = hookProps["version"]
     val hookBootId = hookProps["boot_id"]
     val hooksActiveThisBoot = hookBootId != null && hookBootId == currentBootId.trim()
-    val lsposedTargetCount = countTargets(shellSnapshot["lsposed_targets"].orEmpty())
-    val lsposedFramework = detectLsposedFramework()
+    val lsposedTargetCount = countTargets(shellSnapshot["lsposed_targets"].orEmpty(), selfPkg)
+    val lsposedFramework = detectLsposedFramework(shellSnapshot)
     val lsposedConfig =
         if (hooksActiveThisBoot) {
             // A current-boot hook heartbeat is stronger evidence than the
@@ -954,7 +967,7 @@ internal fun loadDashboardState(
                     if (lsposedFramework.disabled) {
                         LsposedConfig.Disabled
                     } else {
-                        readLsposedConfig()
+                        readLsposedConfig(context, selfPkg)
                     }
                 }
             }
@@ -1013,7 +1026,7 @@ internal fun loadDashboardState(
                     warn(
                         res.getString(
                             R.string.dashboard_issue_lsposed_extra_scope,
-                            lsposedConfig.extraEntries.map(::resolveScopeEntryLabel).joinToString(", "),
+                            lsposedConfig.extraEntries.joinToString(", ") { resolveScopeEntryLabel(context, it) },
                         ),
                     )
                 }
@@ -1047,7 +1060,7 @@ internal fun loadDashboardState(
             appVersion,
         )
     moduleMismatches.forEach { mismatch ->
-        warn(buildModuleVersionIssue(mismatch.kind, mismatch.moduleVersion, mismatch.appVersion))
+        warn(buildModuleVersionIssue(res, mismatch.kind, mismatch.moduleVersion, mismatch.appVersion))
     }
     val totalTargets = lsposedTargetCount + kmodTargetCount + zygiskTargetCount
     if (totalTargets == 0) {
