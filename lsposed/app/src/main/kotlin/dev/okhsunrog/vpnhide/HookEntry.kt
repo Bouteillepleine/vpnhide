@@ -586,14 +586,15 @@ class HookEntry : IXposedHookLoadPackage {
     }
 
     /**
-     * Hook ConnectivityService.callCallbackForRequest — the dispatch point for
-     * registerNetworkCallback. system_server *pushes* NetworkCapabilities to the
-     * app here, so the writeToParcel hooks would see getCallingUid()==1000
-     * instead of the app and skip sanitizing. We stash the recipient UID in
-     * currentCallbackUid for the duration of the dispatch so those hooks treat
-     * the pushed data like a synchronous call. If the app explicitly requested a
-     * VPN network, drop the callback entirely — don't reveal a VPN exists.
-     * Fixes apps (e.g. VTB, issue #70) that detect VPN only via callbacks.
+     * Hook the two ConnectivityService dispatch points that *push* network state
+     * to apps: callCallbackForRequest (registerNetworkCallback with a callback
+     * object) and sendPendingIntentForRequest (registerNetworkCallback with a
+     * PendingIntent). On both, the writeToParcel hooks would see
+     * getCallingUid()==1000 instead of the recipient app and skip sanitizing, so
+     * we stash the recipient UID in currentCallbackUid for the dispatch's
+     * duration. If the app explicitly requested a VPN network, drop the dispatch
+     * entirely — don't reveal a VPN exists. Fixes apps (e.g. VTB, issue #70) that
+     * detect VPN only via callbacks.
      */
     private fun hookConnectivityService(classLoader: ClassLoader) {
         val csClass =
@@ -608,36 +609,38 @@ class HookEntry : IXposedHookLoadPackage {
                 XposedHelpers.findClass("com.android.server.ConnectivityService", classLoader)
             }
 
-        val hooked =
-            XposedBridge.hookAllMethods(
-                csClass,
-                "callCallbackForRequest",
-                object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: MethodHookParam) {
-                        val nri = param.args.firstOrNull() ?: return
-                        val uid = extractRecipientUid(nri)
-                        if (uid < 0 || !loadTargetUids().contains(uid)) return
+        // Both methods take the NetworkRequestInfo as their first arg, so the
+        // same handler covers the callback-object and PendingIntent paths.
+        val dispatchHook =
+            object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    val nri = param.args.firstOrNull() ?: return
+                    val uid = extractRecipientUid(nri)
+                    if (uid < 0 || !loadTargetUids().contains(uid)) return
 
-                        val request = extractNetworkRequest(nri)
-                        if (request != null && request.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
-                            // App is specifically listening for a VPN network —
-                            // suppress so it never learns one exists.
-                            param.result = null
-                            HookLog.i("VpnHide-CB: uid=$uid suppressed VPN-request callback")
-                            return
-                        }
-                        currentCallbackUid.set(uid)
+                    val request = extractNetworkRequest(nri)
+                    if (request != null && request.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                        // App is specifically listening for a VPN network —
+                        // suppress so it never learns one exists.
+                        param.result = null
+                        HookLog.i("VpnHide-CB: uid=$uid suppressed VPN-request dispatch")
+                        return
                     }
+                    currentCallbackUid.set(uid)
+                }
 
-                    override fun afterHookedMethod(param: MethodHookParam) {
-                        currentCallbackUid.remove()
-                    }
-                },
-            )
-        if (hooked.isEmpty()) {
-            HookLog.e("VpnHide: no callCallbackForRequest on ${csClass.name}")
-        } else {
-            HookLog.i("VpnHide: hooked ConnectivityService.callCallbackForRequest (${hooked.size})")
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    currentCallbackUid.remove()
+                }
+            }
+
+        for (method in CALLBACK_DISPATCH_METHODS) {
+            val hooked = XposedBridge.hookAllMethods(csClass, method, dispatchHook)
+            if (hooked.isEmpty()) {
+                HookLog.e("VpnHide: no $method on ${csClass.name}")
+            } else {
+                HookLog.i("VpnHide: hooked ConnectivityService.$method (${hooked.size})")
+            }
         }
     }
 
@@ -680,6 +683,7 @@ class HookEntry : IXposedHookLoadPackage {
     companion object {
         private const val SYSTEM_UID = 1000
         private val RECIPIENT_UID_FIELDS = listOf("mAsUid", "mUid", "uid")
+        private val CALLBACK_DISPATCH_METHODS = listOf("callCallbackForRequest", "sendPendingIntentForRequest")
         private const val TYPE_VPN = 17
         private const val TYPE_WIFI = 1
         const val HOOK_STATUS_FILE = "/data/system/vpnhide_hook_active"
