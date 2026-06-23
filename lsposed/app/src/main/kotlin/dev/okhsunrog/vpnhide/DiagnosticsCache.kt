@@ -6,9 +6,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -44,6 +46,10 @@ internal object DiagnosticsCache {
 
         data class Ready(
             val results: CheckResults,
+            // false after the fast core phase (native + VPN-presence Java) —
+            // enough for the Dashboard summary; true once the slow Diagnostics-
+            // only probes (push callback etc.) have filled in too.
+            val complete: Boolean,
         ) : State
     }
 
@@ -51,6 +57,10 @@ internal object DiagnosticsCache {
     val state: StateFlow<State> = _state.asStateFlow()
 
     private var inflight: Job? = null
+
+    // Owns runs kicked off from a non-UI caller (the Dashboard's protection
+    // summary), so they survive even if no screen scope is active.
+    private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /** Start a run if one isn't already in flight and we don't have a
      * completed result yet. Idempotent — safe to call from both
@@ -84,6 +94,19 @@ internal object DiagnosticsCache {
         context: Context,
     ) = run(scope, context)
 
+    /**
+     * Suspend until the fast core phase is available, returning its results
+     * (native + VPN-presence Java) — the Dashboard protection summary's source.
+     * Returns null if there's no active VPN (or the run failed): nothing to
+     * summarize. Ensures a run is in flight, so it's safe to call standalone.
+     * Does not wait for the slow Diagnostics-only phase.
+     */
+    suspend fun awaitCoreResults(context: Context): CheckResults? {
+        run(cacheScope, context)
+        val terminal = state.first { it is State.Ready || it is State.VpnOff }
+        return (terminal as? State.Ready)?.results
+    }
+
     private suspend fun doRun(appContext: Context) {
         _state.value = State.Running
         try {
@@ -94,12 +117,17 @@ internal object DiagnosticsCache {
                 StartupTrace.mark("diagnostics_cache_vpn_off")
                 return
             }
-            val results =
-                withContext(Dispatchers.IO) {
-                    val cm = appContext.getSystemService(ConnectivityManager::class.java)
-                    runAllChecks(cm, appContext)
-                }
-            _state.value = State.Ready(results)
+            val cm = appContext.getSystemService(ConnectivityManager::class.java)
+            // Phase 1 (fast): native + VPN-presence Java probes. Publish
+            // immediately so the Dashboard summary can render without waiting
+            // for the slow phase below.
+            val core = withContext(Dispatchers.IO) { runCoreChecks(cm, appContext) }
+            _state.value = State.Ready(core, complete = false)
+            StartupTrace.mark("diagnostics_cache_core_done")
+            // Phase 2 (slow): Diagnostics-only Java probes, incl. the push
+            // callback that blocks for up to 3s.
+            val extraJava = withContext(Dispatchers.IO) { runExtraJavaChecks(cm, appContext) }
+            _state.value = State.Ready(core.copy(extraJava = extraJava), complete = true)
             StartupTrace.mark("diagnostics_cache_done")
         } catch (e: CancellationException) {
             // A cancelled job (e.g. the screen left) must propagate so

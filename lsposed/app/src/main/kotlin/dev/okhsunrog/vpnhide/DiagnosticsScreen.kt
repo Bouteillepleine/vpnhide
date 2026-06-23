@@ -54,10 +54,22 @@ data class CheckResult(
 )
 
 internal data class CheckResults(
+    // UniFFI native probes — the Dashboard "Native level" summary rolls up
+    // exactly this group.
     val native: List<CheckResult>,
-    val java: List<CheckResult>,
+    // Java-implemented native-level probes (NetworkInterface enum, /proc/net/route)
+    // — shown under "Native level" on Diagnostics, not part of any summary.
+    val nativeExtra: List<CheckResult> = emptyList(),
+    // VPN-presence probes — the Dashboard "Java API level" summary rolls up
+    // exactly this group.
+    val coreJava: List<CheckResult> = emptyList(),
+    // Diagnostics-only Java probes (active-network, push callback, routes, proxy)
+    // — the slow push-callback check lives here, so it runs in a second phase.
+    val extraJava: List<CheckResult> = emptyList(),
 ) {
-    val all get() = native + java
+    val nativeAll get() = native + nativeExtra
+    val java get() = coreJava + extraJava
+    val all get() = nativeAll + java
 }
 
 /** Number of passed checks out of those that actually ran (NETWORK_BLOCKED
@@ -197,7 +209,7 @@ fun DiagnosticsScreen(
                     SectionHeader(stringResource(R.string.section_native))
                     Spacer(Modifier.height(6.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for (check in r.native) {
+                        for (check in r.nativeAll) {
                             CheckCard(check)
                         }
                     }
@@ -522,39 +534,76 @@ private fun CheckCard(r: CheckResult) {
 //  Check runner — runs directly in the main process
 // ==========================================================================
 
-internal fun runAllChecks(
+/**
+ * The checks split into two phases so the Dashboard can show its protection
+ * summary without waiting for the slow probes. [runCoreChecks] runs everything
+ * the Dashboard summary needs (UniFFI native + the VPN-presence Java probes)
+ * plus the cheap native-extra probes; [runExtraJavaChecks] runs the
+ * Diagnostics-only Java probes, including the push-callback probe that blocks
+ * for up to 3s. DiagnosticsCache publishes after each phase.
+ */
+internal fun runCoreChecks(
     cm: ConnectivityManager,
     context: android.content.Context,
 ): CheckResults {
     VpnHideLog.i(TAG, "========================================")
-    VpnHideLog.i(TAG, "=== VPNHide — starting all checks ===")
+    VpnHideLog.i(TAG, "=== VPNHide — starting checks (core phase) ===")
     VpnHideLog.i(TAG, "========================================")
 
     val res = context.resources
 
-    val native =
-        NATIVE_CHECKS.map { spec -> nativeCheck(res.getString(spec.labelRes), spec.run) } +
-            checkNetworkInterfaceEnum(res.getString(R.string.check_net_iface_enum)) +
-            checkProcNetRouteJava(res.getString(R.string.check_proc_route_java))
+    val native = NATIVE_CHECKS.map { spec -> nativeCheck(res.getString(spec.labelRes), spec.run) }
 
-    val java =
+    val nativeExtra =
+        listOf(
+            checkNetworkInterfaceEnum(res.getString(R.string.check_net_iface_enum)),
+            checkProcNetRouteJava(res.getString(R.string.check_proc_route_java)),
+        ).logged()
+
+    val coreJava =
         listOf(
             checkHasTransportVpn(cm, res.getString(R.string.check_has_transport_vpn)),
             checkHasCapabilityNotVpn(cm, res.getString(R.string.check_has_capability_not_vpn)),
             checkTransportInfo(cm, res.getString(R.string.check_transport_info)),
             checkAllNetworksVpn(cm, res.getString(R.string.check_all_networks_vpn)),
-            checkActiveNetworkVpn(cm, res.getString(R.string.check_active_network_vpn)),
-            checkNetworkCallbackVpn(cm, res.getString(R.string.check_network_callback)),
             checkLinkPropertiesIfname(cm, res.getString(R.string.check_link_properties)),
-            checkLinkPropertiesRoutes(cm, res.getString(R.string.check_link_properties_routes)),
-            checkProxyHost(res.getString(R.string.check_proxy_host)),
-        )
+        ).logged()
 
-    val score = (native + java).score()
-    VpnHideLog.i(TAG, "=== SUMMARY: ${score.passed}/${score.total} passed ===")
-
-    return CheckResults(native = native, java = java)
+    return CheckResults(native = native, nativeExtra = nativeExtra, coreJava = coreJava)
 }
+
+internal fun runExtraJavaChecks(
+    cm: ConnectivityManager,
+    context: android.content.Context,
+): List<CheckResult> {
+    val res = context.resources
+    return listOf(
+        checkActiveNetworkVpn(cm, res.getString(R.string.check_active_network_vpn)),
+        checkNetworkCallbackVpn(cm, res.getString(R.string.check_network_callback)),
+        checkLinkPropertiesRoutes(cm, res.getString(R.string.check_link_properties_routes)),
+        checkProxyHost(res.getString(R.string.check_proxy_host)),
+    ).logged()
+}
+
+/** Log each Java check result; native probes already log via [nativeCheck]. */
+private fun List<CheckResult>.logged(): List<CheckResult> =
+    onEach { c ->
+        val status =
+            when (c.passed) {
+                true -> "PASS"
+                false -> "FAIL"
+                null -> "SKIP"
+            }
+        VpnHideLog.i(TAG, "[${c.name}] $status: ${c.detail}")
+    }
+
+/** Run both phases and return the complete results. Used where blocking on the
+ * slow probes is fine (debug export); the live cache runs the phased builders
+ * directly so the Dashboard summary needn't wait for the slow phase. */
+internal fun runAllChecks(
+    cm: ConnectivityManager,
+    context: android.content.Context,
+): CheckResults = runCoreChecks(cm, context).copy(extraJava = runExtraJavaChecks(cm, context))
 
 private fun nativeCheck(
     name: String,
@@ -919,7 +968,7 @@ private fun buildDiagnosticsText(results: CheckResults): String =
         appendLine("=== Diagnostics: ${score.passed}/${score.total} passed ===")
         appendLine()
         appendLine("--- Native level ---")
-        for (c in results.native) {
+        for (c in results.nativeAll) {
             appendLine("[${badge(c.passed)}] ${c.name}")
             appendLine("  ${c.detail}")
         }

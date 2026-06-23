@@ -46,10 +46,9 @@ internal fun CheckStatus.toPassed(): Boolean? =
     }
 
 /**
- * The native probe suite, in display order. Single source of truth for both
- * the Dashboard protection summary ([runNativeProtectionCheck]) and the
- * Diagnostics screen ([runAllChecks]) — they used to carry two hand-kept
- * copies of this list.
+ * The native probe suite, in display order. Run once by [runCoreChecks]; the
+ * Diagnostics screen lists the results and the Dashboard summary rolls them up
+ * via [toNativeResult] — no second copy of this list or second execution.
  */
 internal val NATIVE_CHECKS: List<NativeCheckSpec> =
     listOf(
