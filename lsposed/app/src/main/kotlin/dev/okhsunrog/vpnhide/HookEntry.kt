@@ -1,5 +1,6 @@
 package dev.okhsunrog.vpnhide
 
+import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.NetworkCapabilities
 import android.net.NetworkInfo
@@ -460,7 +461,7 @@ class HookEntry : IXposedHookLoadPackage {
                     val isTarget = loadTargetUids().contains(callerUid)
                     val ni = param.thisObject as NetworkInfo
                     val type = XposedHelpers.getIntField(ni, "mNetworkType")
-                    val isVpn = type == TYPE_VPN
+                    val isVpn = type == ConnectivityManager.TYPE_VPN
                     HookLog.i(
                         "VpnHide-NI: uid=$callerUid target=$isTarget isVpn=$isVpn type=$type",
                     )
@@ -476,7 +477,7 @@ class HookEntry : IXposedHookLoadPackage {
                                 String::class.java,
                             )
                         ctor.isAccessible = true
-                        val copy = ctor.newInstance(TYPE_WIFI, 0, "WIFI", "") as NetworkInfo
+                        val copy = ctor.newInstance(ConnectivityManager.TYPE_WIFI, 0, "WIFI", "") as NetworkInfo
                         // mState / mDetailedState are NetworkInfo.State /
                         // NetworkInfo.DetailedState enums, not ints — copy them as
                         // objects (getIntField throws "Not a primitive field",
@@ -688,8 +689,6 @@ class HookEntry : IXposedHookLoadPackage {
         private const val SYSTEM_UID = 1000
         private val RECIPIENT_UID_FIELDS = listOf("mAsUid", "mUid", "uid")
         private val CALLBACK_DISPATCH_METHODS = listOf("callCallbackForRequest", "sendPendingIntentForRequest")
-        private const val TYPE_VPN = 17
-        private const val TYPE_WIFI = 1
         const val HOOK_STATUS_FILE = "/data/system/vpnhide_hook_active"
 
         private val FIELD_PROBES =
