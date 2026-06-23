@@ -37,12 +37,15 @@ Tracking: [issue 130](https://github.com/okhsunrog/vpnhide/issues/130).
 
 ### Network handle edge cases
 
-Improve the physical replacement path used by LSPosed Java hooks:
+The physical replacement path used by LSPosed Java hooks intentionally prefers
+connectivity over perfect concealment in rare fallback cases: if no non-VPN
+replacement exists for `getActiveNetwork()`, the original active network is left
+unchanged instead of reporting that there is no active network.
 
-- Treat future non-VPN transports as physical candidates when safe, instead of
-  limiting candidates to Wi-Fi, cellular, Ethernet, and Bluetooth.
-- Avoid returning `null` from `getActiveNetwork()` when a non-VPN replacement
-  exists but uses a newer Android transport type.
+Follow-up work:
+
+- Watch real app compatibility reports for APIs that are intentionally
+  suppressed to `null`, especially `getNetworkForType(TYPE_VPN)`.
 - Consider short-lived caching for the selected replacement network if real
   devices show measurable overhead from repeated `ConnectivityService` lookups.
 

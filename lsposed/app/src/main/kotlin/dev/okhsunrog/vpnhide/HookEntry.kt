@@ -284,11 +284,22 @@ class HookEntry : IXposedHookLoadPackage {
         network: Network,
     ): Boolean = rawNetworkCapabilities(cs, network)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
 
-    private fun hasPhysicalTransport(caps: NetworkCapabilities): Boolean =
-        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+    private fun hasPhysicalTransport(caps: NetworkCapabilities): Boolean {
+        val transportTypes =
+            try {
+                XposedHelpers.callMethod(caps, "getTransportTypes") as? IntArray
+            } catch (_: Throwable) {
+                null
+            }
+        if (transportTypes != null) {
+            return transportTypes.any { it != NetworkCapabilities.TRANSPORT_VPN }
+        }
+
+        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
             caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
             caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
             caps.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH)
+    }
 
     private fun physicalNetworkScore(caps: NetworkCapabilities): Int {
         var score = 0
@@ -296,6 +307,7 @@ class HookEntry : IXposedHookLoadPackage {
         if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) score += 30
         if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) score += 20
         if (caps.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH)) score += 10
+        if (hasPhysicalTransport(caps)) score += 1
         if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) score += 4
         if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) score += 8
         return score
@@ -859,6 +871,16 @@ class HookEntry : IXposedHookLoadPackage {
      */
     private fun hookConnectivityService(classLoader: ClassLoader) {
         val csClass = findConnectivityServiceClass(classLoader)
+        tryHook("ConnectivityService constructors") {
+            XposedBridge.hookAllConstructors(
+                csClass,
+                object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        rememberConnectivityService(param.thisObject)
+                    }
+                },
+            )
+        }
         installConnectivityServiceResultHooks(csClass)
         installConnectivityServiceNetworkHooks(csClass)
 
@@ -956,7 +978,15 @@ class HookEntry : IXposedHookLoadPackage {
         val network = param.result as? Network ?: return
         val cs = param.thisObject ?: return
         if (!isVpnNetwork(cs, network)) return
-        param.result = findPhysicalNetwork(cs)
+        val replacement = findPhysicalNetwork(cs)
+        if (replacement == null) {
+            HookLog.i(
+                "VpnHide: kept active VPN Network handle for uid=${effectiveCallerUid()}; " +
+                    "no physical replacement found",
+            )
+            return
+        }
+        param.result = replacement
         HookLog.i("VpnHide: replaced active VPN Network handle for uid=${effectiveCallerUid()}")
     }
 
