@@ -231,7 +231,7 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     val appContext = context.applicationContext
     val startupCoordinator = remember(appContext) { StartupCoordinator(appContext) }
     val settings = LocalSettingsState.current
-    val settingsRepo = remember(appContext) { SettingsRepository(appContext) }
+    val settingsInteractor = LocalSettingsInteractor.current
     var currentTab by remember { mutableStateOf(Tab.Dashboard) }
     var searchQuery by remember { mutableStateOf("") }
     var searchActive by remember { mutableStateOf(false) }
@@ -458,7 +458,7 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                                 onClick = {
                                     showSettings = true
                                     if (!settings.settingsHintSeen) {
-                                        scope.launch { settingsRepo.setSettingsHintSeen(true) }
+                                        scope.launch { settingsInteractor.setSettingsHintSeen(true) }
                                     }
                                 },
                                 modifier =

@@ -141,7 +141,7 @@ fun PreferenceRowSwitch(
         trailing = {
             EnhancedSwitch(
                 checked = checked,
-                onCheckedChange = { onCheckedChange(it) },
+                onCheckedChange = null,
                 enabled = enabled,
             )
         },

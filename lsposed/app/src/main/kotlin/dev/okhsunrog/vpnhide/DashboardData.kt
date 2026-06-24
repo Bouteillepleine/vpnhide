@@ -173,9 +173,6 @@ internal fun computeHeroStatus(
     // 0 = protected, 1 = attention, 2 = unprotected — keep the worst signal.
     var rank = 0
     when (p) {
-        ProtectionCheck.NoVpn -> {}
-
-        // handled above
         ProtectionCheck.NeedsRestart -> {
             rank = maxOf(rank, 1)
         }
