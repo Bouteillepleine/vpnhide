@@ -5,7 +5,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -30,6 +29,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import dev.okhsunrog.vpnhide.settings.AppSettings
+import dev.okhsunrog.vpnhide.settings.LocalSettingsState
+import dev.okhsunrog.vpnhide.settings.SettingsRepository
+import dev.okhsunrog.vpnhide.ui.theme.VpnHideTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -85,39 +88,36 @@ fun VpnHideApp(
     onDashboardReady: () -> Unit = {},
     onRootDeniedReady: () -> Unit = {},
 ) {
-    val darkTheme = isSystemInDarkTheme()
     val context = LocalContext.current
-    val colorScheme =
-        if (android.os.Build.VERSION.SDK_INT >= 31) {
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        } else {
-            if (darkTheme) darkColorScheme() else lightColorScheme()
-        }
+    val settingsRepository = remember(context) { SettingsRepository(context.applicationContext) }
+    val settings by settingsRepository.settings.collectAsState(initial = AppSettings())
 
-    MaterialTheme(colorScheme = colorScheme) {
-        var rootState by remember { mutableStateOf<RootState?>(null) }
+    CompositionLocalProvider(LocalSettingsState provides settings) {
+        VpnHideTheme {
+            var rootState by remember { mutableStateOf<RootState?>(null) }
 
-        LaunchedEffect(Unit) {
-            rootState =
-                withContext(Dispatchers.IO) {
-                    if (checkRootAccess()) RootState.Granted else RootState.Denied
+            LaunchedEffect(Unit) {
+                rootState =
+                    withContext(Dispatchers.IO) {
+                        if (checkRootAccess()) RootState.Granted else RootState.Denied
+                    }
+                StartupTrace.mark("root_check_done")
+            }
+
+            when (rootState) {
+                // splash holds until root check completes
+                null -> {
                 }
-            StartupTrace.mark("root_check_done")
-        }
 
-        when (rootState) {
-            // splash holds until root check completes
-            null -> {
-            }
+                RootState.Denied -> {
+                    // Drop splash — RootDeniedScreen has no async prerequisites.
+                    LaunchedEffect(Unit) { onRootDeniedReady() }
+                    RootDeniedScreen()
+                }
 
-            RootState.Denied -> {
-                // Drop splash — RootDeniedScreen has no async prerequisites.
-                LaunchedEffect(Unit) { onRootDeniedReady() }
-                RootDeniedScreen()
-            }
-
-            RootState.Granted -> {
-                MainScreen(onReady = onDashboardReady)
+                RootState.Granted -> {
+                    MainScreen(onReady = onDashboardReady)
+                }
             }
         }
     }
