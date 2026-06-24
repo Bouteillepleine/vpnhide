@@ -4,7 +4,9 @@ import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -26,6 +28,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
+import dev.okhsunrog.vpnhide.ui.components.EnhancedOutlinedButton
+import dev.okhsunrog.vpnhide.ui.components.container
 import java.io.File
 
 /**
@@ -82,10 +87,16 @@ internal fun StatusBanner(
     contentColor: Color,
     modifier: Modifier = Modifier,
 ) {
-    Card(
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = containerColor),
-        modifier = modifier.fillMaxWidth(),
+    Box(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .container(
+                    shape = MaterialTheme.shapes.medium,
+                    color = containerColor,
+                    drawBorder = false,
+                    shadowElevation = 0.dp,
+                ),
     ) {
         Text(
             text = text,
@@ -134,20 +145,20 @@ internal fun FileSaveShareRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        OutlinedButton(onClick = onSave, modifier = Modifier.weight(1f)) {
+        EnhancedOutlinedButton(onClick = onSave, modifier = Modifier.weight(1f)) {
             Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text(saveLabel)
         }
-        val shareContent: @Composable () -> Unit = {
+        val shareContent: @Composable RowScope.() -> Unit = {
             Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text(shareLabel)
         }
         if (sharePrimary) {
-            Button(onClick = onShare, modifier = Modifier.weight(1f)) { shareContent() }
+            EnhancedButton(onClick = onShare, modifier = Modifier.weight(1f)) { shareContent() }
         } else {
-            OutlinedButton(onClick = onShare, modifier = Modifier.weight(1f)) { shareContent() }
+            EnhancedOutlinedButton(onClick = onShare, modifier = Modifier.weight(1f)) { shareContent() }
         }
     }
 }
