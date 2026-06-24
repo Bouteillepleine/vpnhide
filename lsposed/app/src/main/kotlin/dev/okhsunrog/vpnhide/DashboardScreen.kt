@@ -256,6 +256,7 @@ private fun ModuleCard(
                     KmodBrokenReason.MissingKprobes -> R.string.dashboard_kmod_broken_no_kprobes
                     KmodBrokenReason.UnknownVariantInactive -> R.string.dashboard_kmod_broken_unknown_variant
                     KmodBrokenReason.AmbiguousLoadFailed -> R.string.dashboard_kmod_broken_ambiguous
+                    KmodBrokenReason.SignatureEnforced -> R.string.dashboard_kmod_broken_signature_enforced
                     null -> null
                 }
             ModuleCardShell(

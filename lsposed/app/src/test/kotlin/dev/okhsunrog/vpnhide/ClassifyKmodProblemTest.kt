@@ -15,6 +15,7 @@ class ClassifyKmodProblemTest {
         kretprobes: String? = "y",
         unameR: String? = "5.10.0-android12",
         insmodStderr: String? = null,
+        insmodExit: Int? = null,
     ) = KmodLoadStatus(
         timestamp = null,
         bootId = "boot",
@@ -24,7 +25,7 @@ class ClassifyKmodProblemTest {
         rootManager = null,
         kprobes = "y",
         kretprobes = kretprobes,
-        insmodExit = null,
+        insmodExit = insmodExit,
         loaded = false,
         insmodStderr = insmodStderr,
         dmesgTail = null,
@@ -166,5 +167,53 @@ class ClassifyKmodProblemTest {
     fun `inactive with no diagnosable cause is null`() {
         // No recommendation, no fresh load status: nothing to say.
         assertNull(classifyKmodProblem(installed(active = false, gkiVariant = "android13-5.10"), null, null))
+    }
+
+    @Test
+    fun `EKEYREJECTED exit code is diagnosed as signature enforcement`() {
+        val kind =
+            classifyKmodProblem(
+                installed(active = false, gkiVariant = "android13-5.10"),
+                kmodRecommendation("android13-5.10"),
+                loadStatus(fresh = true, insmodStderr = "Key was rejected by service", insmodExit = 129),
+            )
+        assertEquals(KmodProblemKind.SignatureEnforced, kind)
+        assertEquals(KmodBrokenReason.SignatureEnforced, kind?.reason)
+    }
+
+    @Test
+    fun `signature rejection is matched from stderr when exit code is unavailable`() {
+        val kind =
+            classifyKmodProblem(
+                installed(active = false, gkiVariant = "android13-5.10"),
+                kmodRecommendation("android13-5.10"),
+                loadStatus(fresh = true, insmodStderr = "init_module: Key was rejected by service"),
+            )
+        assertEquals(KmodProblemKind.SignatureEnforced, kind)
+    }
+
+    @Test
+    fun `signature enforcement outranks a wrong-variant diagnosis`() {
+        // An enforcing kernel rejects every unsigned .ko before vermagic is
+        // even checked, so EKEYREJECTED must not be misreported as a fixable
+        // variant mismatch.
+        val kind =
+            classifyKmodProblem(
+                installed(active = false, gkiVariant = "android12-5.10"),
+                kmodRecommendation("android13-5.10"),
+                loadStatus(fresh = true, insmodStderr = "Key was rejected by service", insmodExit = 129),
+            )
+        assertEquals(KmodProblemKind.SignatureEnforced, kind)
+    }
+
+    @Test
+    fun `unrelated insmod failure is not treated as signature enforcement`() {
+        val kind =
+            classifyKmodProblem(
+                installed(active = false, gkiVariant = "android13-5.10"),
+                recommendation = null,
+                loadStatus = loadStatus(fresh = true, insmodStderr = "exec format error", insmodExit = 8),
+            )
+        assertEquals(KmodProblemKind.LoadFailed("exec format error"), kind)
     }
 }
