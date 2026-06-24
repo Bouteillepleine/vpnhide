@@ -179,6 +179,8 @@ dependencies {
     // Material You color-scheme generation + harmonization (seed -> full M3 scheme,
     // AMOLED, contrast, palette styles). Powers VpnHideTheme.
     implementation(libs.material.kolor)
+    // iOS-style continuous ("squircle") corners for CornerStyle.Smooth.
+    implementation(libs.squircle.shape)
     implementation("io.github.oikvpqya.compose.fastscroller:fastscroller-material3:0.3.2")
     implementation("io.github.oikvpqya.compose.fastscroller:fastscroller-indicator:0.3.2")
     implementation(libs.compose.ui.tooling.preview)

@@ -1,28 +1,31 @@
 package dev.okhsunrog.vpnhide.ui.theme
 
+import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Shapes
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.okhsunrog.vpnhide.settings.CornerStyle
+import sv.lib.squircleshape.CornerSmoothing
+import sv.lib.squircleshape.SquircleShape
 
 /**
  * The app's Material 3 shape scale.
  *
- * [CornerStyle.Smooth] currently resolves to the same rounded scale as
- * [CornerStyle.Rounded]; the continuous ("squircle") corner shape lands with
- * the design-system port (it reuses ImageToolbox's `AutoCornersShape`, Apache-2.0,
- * with attribution). The knob is wired now so the switch persists from day one.
+ * [CornerStyle.Smooth] uses iOS-style continuous ("squircle") corners
+ * (squircle-shape lib); [CornerStyle.Rounded] uses plain circular-arc corners.
  */
 fun appShapes(cornerStyle: CornerStyle): Shapes {
-    // cornerStyle is intentionally read here so the parameter is part of the
-    // public contract before Smooth diverges from Rounded in the next milestone.
-    @Suppress("UNUSED_EXPRESSION")
-    cornerStyle
+    fun corner(size: Dp): CornerBasedShape =
+        when (cornerStyle) {
+            CornerStyle.Rounded -> RoundedCornerShape(size)
+            CornerStyle.Smooth -> SquircleShape(size, CornerSmoothing.Medium)
+        }
     return Shapes(
-        extraSmall = RoundedCornerShape(6.dp),
-        small = RoundedCornerShape(10.dp),
-        medium = RoundedCornerShape(16.dp),
-        large = RoundedCornerShape(22.dp),
-        extraLarge = RoundedCornerShape(32.dp),
+        extraSmall = corner(6.dp),
+        small = corner(10.dp),
+        medium = corner(16.dp),
+        large = corner(22.dp),
+        extraLarge = corner(32.dp),
     )
 }
