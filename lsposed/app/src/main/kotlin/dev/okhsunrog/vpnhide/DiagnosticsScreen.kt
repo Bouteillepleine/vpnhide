@@ -29,6 +29,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.okhsunrog.vpnhide.checks.CheckOutput
 import dev.okhsunrog.vpnhide.generated.IfaceLists
+import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
+import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -239,7 +241,7 @@ fun DiagnosticsScreen(
 
         // Collect button
         if (debugZipFile == null) {
-            Button(
+            EnhancedButton(
                 onClick = {
                     exporting = true
                     scope.launch {
@@ -286,10 +288,10 @@ private fun DebugLoggingCard() {
     val scope = rememberCoroutineScope()
     var enabled by remember { mutableStateOf(VpnHideLog.enabled) }
 
-    Card(
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    EnhancedCard(
         modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = MaterialTheme.shapes.medium,
     ) {
         Row(
             modifier = Modifier.padding(16.dp).fillMaxWidth(),
@@ -352,10 +354,10 @@ private fun LogcatRecordCard() {
             }
         }
 
-    Card(
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    EnhancedCard(
         modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = MaterialTheme.shapes.medium,
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
@@ -386,7 +388,7 @@ private fun LogcatRecordCard() {
                         fontWeight = FontWeight.Bold,
                     )
                     Spacer(Modifier.height(12.dp))
-                    Button(
+                    EnhancedButton(
                         onClick = {
                             scope.launch { LogcatRecorder.stop(context) }
                         },
@@ -426,7 +428,7 @@ private fun LogcatRecordCard() {
                         )
                         Spacer(Modifier.height(8.dp))
                     }
-                    Button(
+                    EnhancedButton(
                         onClick = {
                             scope.launch { LogcatRecorder.start(context) }
                         },
@@ -495,10 +497,10 @@ private fun CheckCard(r: CheckResult) {
             null -> MaterialTheme.colorScheme.onSurfaceVariant
         }
 
-    Card(
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = actualColor),
+    EnhancedCard(
         modifier = Modifier.fillMaxWidth(),
+        color = actualColor,
+        shape = MaterialTheme.shapes.medium,
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(

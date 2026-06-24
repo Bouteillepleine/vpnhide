@@ -3,6 +3,8 @@ package dev.okhsunrog.vpnhide.ui.components
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.material3.Button
@@ -12,15 +14,20 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonColors
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
+import androidx.compose.material3.contentColorFor
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.graphics.vector.ImageVector
 import dev.okhsunrog.vpnhide.ui.theme.AppMotion
 
@@ -29,6 +36,31 @@ import dev.okhsunrog.vpnhide.ui.theme.AppMotion
  * press-scale, for a tactile, expressive feel. Adapted from ImageToolbox's
  * EnhancedButton / EnhancedSwitch (Apache-2.0, © T8RIN).
  */
+
+/**
+ * A drop-in replacement for [androidx.compose.material3.Card] built on the
+ * shared [dev.okhsunrog.vpnhide.ui.components.container] look (soft shadow,
+ * theme shape, hairline border). Content keeps its own padding, like Card.
+ */
+@Composable
+fun EnhancedCard(
+    modifier: Modifier = Modifier,
+    shape: Shape = MaterialTheme.shapes.large,
+    color: Color = MaterialTheme.colorScheme.surfaceContainerLow,
+    contentColor: Color = contentColorFor(color).takeOrElse { MaterialTheme.colorScheme.onSurface },
+    onClick: (() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    CompositionLocalProvider(LocalContentColor provides contentColor) {
+        Column(
+            modifier =
+                modifier
+                    .container(shape = shape, color = color)
+                    .then(if (onClick != null) Modifier.hapticsClickable { onClick() } else Modifier),
+            content = content,
+        )
+    }
+}
 
 @Composable
 fun EnhancedButton(

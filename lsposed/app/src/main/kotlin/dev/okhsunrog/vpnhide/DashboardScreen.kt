@@ -20,6 +20,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
+import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -348,10 +350,9 @@ private fun ModuleCardShell(
     dotColor: Color,
     containerColor: Color,
 ) {
-    Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = containerColor),
+    EnhancedCard(
         modifier = Modifier.fillMaxWidth(),
+        color = containerColor,
     ) {
         Row(
             modifier = Modifier.padding(16.dp),
@@ -398,10 +399,9 @@ private fun NativeInstallRecommendationCard(recommendation: NativeInstallRecomme
             StatusColors.zygiskRecommendContainer()
         }
 
-    Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = containerColor),
+    EnhancedCard(
         modifier = Modifier.fillMaxWidth(),
+        color = containerColor,
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
@@ -564,10 +564,9 @@ private fun ProtectionCardShell(
     statusColor: Color,
     containerColor: Color,
 ) {
-    Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = containerColor),
+    EnhancedCard(
         modifier = Modifier.fillMaxWidth(),
+        color = containerColor,
     ) {
         Row(
             modifier = Modifier.padding(16.dp).fillMaxWidth(),
@@ -598,10 +597,10 @@ private fun DashboardLoadErrorCard(
     contentColor: Color,
     onRetry: () -> Unit,
 ) {
-    Card(
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = containerColor),
+    EnhancedCard(
         modifier = Modifier.fillMaxWidth(),
+        color = containerColor,
+        shape = MaterialTheme.shapes.medium,
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
@@ -617,7 +616,7 @@ private fun DashboardLoadErrorCard(
                 color = contentColor,
             )
             Spacer(Modifier.height(12.dp))
-            Button(onClick = onRetry) {
+            EnhancedButton(onClick = onRetry) {
                 Text(stringResource(R.string.vpn_off_retry))
             }
         }
@@ -629,13 +628,9 @@ private fun DashboardLoadErrorCard(
 @Composable
 private fun UpdateAvailableCard(info: UpdateInfo) {
     val context = LocalContext.current
-    Card(
-        shape = RoundedCornerShape(12.dp),
-        colors =
-            CardDefaults.cardColors(
-                containerColor = StatusColors.infoContainer(),
-            ),
+    EnhancedCard(
         modifier = Modifier.fillMaxWidth(),
+        color = StatusColors.infoContainer(),
     ) {
         Row(
             modifier = Modifier.padding(16.dp).fillMaxWidth(),
@@ -655,7 +650,7 @@ private fun UpdateAvailableCard(info: UpdateInfo) {
                 )
             }
             Spacer(Modifier.width(12.dp))
-            Button(
+            EnhancedButton(
                 onClick = {
                     context.startActivity(
                         Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl)),

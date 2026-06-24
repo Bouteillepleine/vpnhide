@@ -33,6 +33,8 @@ import androidx.lifecycle.lifecycleScope
 import dev.okhsunrog.vpnhide.settings.AppSettings
 import dev.okhsunrog.vpnhide.settings.LocalSettingsState
 import dev.okhsunrog.vpnhide.settings.SettingsRepository
+import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
+import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
 import dev.okhsunrog.vpnhide.ui.components.rememberHapticTick
 import dev.okhsunrog.vpnhide.ui.theme.VpnHideTheme
 import kotlinx.coroutines.Dispatchers
@@ -467,12 +469,9 @@ private fun RootPreparationErrorScreen(
                 .padding(24.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Card(
-            colors =
-                CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                ),
+        EnhancedCard(
+            color = MaterialTheme.colorScheme.errorContainer,
+            contentColor = MaterialTheme.colorScheme.onErrorContainer,
         ) {
             Column(
                 modifier = Modifier.padding(24.dp),
@@ -491,7 +490,7 @@ private fun RootPreparationErrorScreen(
                     textAlign = TextAlign.Center,
                 )
                 Spacer(Modifier.height(16.dp))
-                Button(onClick = onRetry) {
+                EnhancedButton(onClick = onRetry) {
                     Text(stringResource(R.string.vpn_off_retry))
                 }
             }
@@ -522,11 +521,8 @@ private fun RootDeniedScreen() {
                     .padding(32.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Card(
-                colors =
-                    CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                    ),
+            EnhancedCard(
+                color = MaterialTheme.colorScheme.errorContainer,
             ) {
                 Column(
                     modifier = Modifier.padding(24.dp),
