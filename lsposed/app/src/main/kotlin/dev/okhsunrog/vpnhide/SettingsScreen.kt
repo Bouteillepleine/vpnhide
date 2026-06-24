@@ -8,8 +8,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Animation
 import androidx.compose.material.icons.filled.BrightnessMedium
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.RoundedCorner
 import androidx.compose.material.icons.filled.Vibration
@@ -22,27 +24,21 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.okhsunrog.vpnhide.settings.CornerStyle
+import dev.okhsunrog.vpnhide.settings.LocalSettingsInteractor
 import dev.okhsunrog.vpnhide.settings.LocalSettingsState
-import dev.okhsunrog.vpnhide.settings.SettingsRepository
 import dev.okhsunrog.vpnhide.settings.ThemeMode
 import dev.okhsunrog.vpnhide.ui.components.PreferenceRow
 import dev.okhsunrog.vpnhide.ui.components.PreferenceRowSwitch
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
-    val context = LocalContext.current
-    val repo = remember(context) { SettingsRepository(context.applicationContext) }
-    val scope = rememberCoroutineScope()
     val settings = LocalSettingsState.current
+    val interactor = LocalSettingsInteractor.current
 
     Scaffold(
         topBar = {
@@ -72,64 +68,96 @@ fun SettingsScreen(onBack: () -> Unit) {
                     .padding(padding)
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            SettingsSectionHeader(stringResource(R.string.settings_appearance))
+            // ── Appearance ── one grouped block of five rows.
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                SettingsSectionHeader(stringResource(R.string.settings_appearance))
 
-            val themeModeLabel =
-                when (settings.themeMode) {
-                    ThemeMode.System -> stringResource(R.string.theme_mode_system)
-                    ThemeMode.Light -> stringResource(R.string.theme_mode_light)
-                    ThemeMode.Dark -> stringResource(R.string.theme_mode_dark)
-                }
-            PreferenceRow(
-                title = stringResource(R.string.settings_theme_mode),
-                subtitle = themeModeLabel,
-                icon = Icons.Default.BrightnessMedium,
-                onClick = {
-                    val next =
-                        when (settings.themeMode) {
-                            ThemeMode.System -> ThemeMode.Light
-                            ThemeMode.Light -> ThemeMode.Dark
-                            ThemeMode.Dark -> ThemeMode.System
-                        }
-                    scope.launch { repo.setThemeMode(next) }
-                },
-            )
-            PreferenceRowSwitch(
-                title = stringResource(R.string.settings_dynamic_color),
-                subtitle = stringResource(R.string.settings_dynamic_color_sub),
-                icon = Icons.Default.Palette,
-                checked = settings.dynamicColor,
-                onCheckedChange = { value -> scope.launch { repo.setDynamicColor(value) } },
-            )
-            PreferenceRowSwitch(
-                title = stringResource(R.string.settings_amoled),
-                subtitle = stringResource(R.string.settings_amoled_sub),
-                icon = Icons.Default.DarkMode,
-                checked = settings.amoled,
-                onCheckedChange = { value -> scope.launch { repo.setAmoled(value) } },
-            )
-            PreferenceRowSwitch(
-                title = stringResource(R.string.settings_squircle),
-                subtitle = stringResource(R.string.settings_squircle_sub),
-                icon = Icons.Default.RoundedCorner,
-                checked = settings.cornerStyle == CornerStyle.Smooth,
-                onCheckedChange = { value ->
-                    scope.launch {
-                        repo.setCornerStyle(if (value) CornerStyle.Smooth else CornerStyle.Rounded)
+                val themeModeLabel =
+                    when (settings.themeMode) {
+                        ThemeMode.System -> stringResource(R.string.theme_mode_system)
+                        ThemeMode.Light -> stringResource(R.string.theme_mode_light)
+                        ThemeMode.Dark -> stringResource(R.string.theme_mode_dark)
                     }
-                },
-            )
+                PreferenceRow(
+                    title = stringResource(R.string.settings_theme_mode),
+                    subtitle = themeModeLabel,
+                    icon = Icons.Default.BrightnessMedium,
+                    index = 0,
+                    count = 5,
+                    onClick = {
+                        val next =
+                            when (settings.themeMode) {
+                                ThemeMode.System -> ThemeMode.Light
+                                ThemeMode.Light -> ThemeMode.Dark
+                                ThemeMode.Dark -> ThemeMode.System
+                            }
+                        interactor.setThemeMode(next)
+                    },
+                )
+                PreferenceRowSwitch(
+                    title = stringResource(R.string.settings_dynamic_color),
+                    subtitle = stringResource(R.string.settings_dynamic_color_sub),
+                    icon = Icons.Default.Palette,
+                    index = 1,
+                    count = 5,
+                    checked = settings.dynamicColor,
+                    onCheckedChange = interactor::setDynamicColor,
+                )
+                PreferenceRowSwitch(
+                    title = stringResource(R.string.settings_amoled),
+                    subtitle = stringResource(R.string.settings_amoled_sub),
+                    icon = Icons.Default.DarkMode,
+                    index = 2,
+                    count = 5,
+                    checked = settings.amoled,
+                    onCheckedChange = interactor::setAmoled,
+                )
+                PreferenceRowSwitch(
+                    title = stringResource(R.string.settings_squircle),
+                    subtitle = stringResource(R.string.settings_squircle_sub),
+                    icon = Icons.Default.RoundedCorner,
+                    index = 3,
+                    count = 5,
+                    checked = settings.cornerStyle == CornerStyle.Smooth,
+                    onCheckedChange = { value ->
+                        interactor.setCornerStyle(if (value) CornerStyle.Smooth else CornerStyle.Rounded)
+                    },
+                )
+                PreferenceRowSwitch(
+                    title = stringResource(R.string.settings_shadows),
+                    subtitle = stringResource(R.string.settings_shadows_sub),
+                    icon = Icons.Default.Layers,
+                    index = 4,
+                    count = 5,
+                    checked = settings.drawContainerShadows,
+                    onCheckedChange = interactor::setDrawContainerShadows,
+                )
+            }
 
-            SettingsSectionHeader(stringResource(R.string.settings_interaction))
-            PreferenceRowSwitch(
-                title = stringResource(R.string.settings_haptics),
-                subtitle = stringResource(R.string.settings_haptics_sub),
-                icon = Icons.Default.Vibration,
-                checked = settings.hapticsEnabled,
-                onCheckedChange = { value -> scope.launch { repo.setHapticsEnabled(value) } },
-            )
+            // ── Interaction ── grouped block of two rows.
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                SettingsSectionHeader(stringResource(R.string.settings_interaction))
+                PreferenceRowSwitch(
+                    title = stringResource(R.string.settings_haptics),
+                    subtitle = stringResource(R.string.settings_haptics_sub),
+                    icon = Icons.Default.Vibration,
+                    index = 0,
+                    count = 2,
+                    checked = settings.hapticsEnabled,
+                    onCheckedChange = interactor::setHapticsEnabled,
+                )
+                PreferenceRowSwitch(
+                    title = stringResource(R.string.settings_animations),
+                    subtitle = stringResource(R.string.settings_animations_sub),
+                    icon = Icons.Default.Animation,
+                    index = 1,
+                    count = 2,
+                    checked = settings.animationsEnabled,
+                    onCheckedChange = interactor::setAnimationsEnabled,
+                )
+            }
         }
     }
 }
@@ -140,6 +168,6 @@ private fun SettingsSectionHeader(text: String) {
         text = text,
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 4.dp),
+        modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 4.dp),
     )
 }

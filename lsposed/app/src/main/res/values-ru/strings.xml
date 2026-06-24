@@ -196,6 +196,10 @@
     <string name="settings_amoled_sub">Чистый чёрный фон в тёмной теме</string>
     <string name="settings_squircle">Squircle-углы</string>
     <string name="settings_squircle_sub">Плавные углы в стиле iOS</string>
+    <string name="settings_shadows">Тени карточек</string>
+    <string name="settings_shadows_sub">Мягкая тень под карточками</string>
     <string name="settings_haptics">Тактильный отклик</string>
     <string name="settings_haptics_sub">Вибрация при нажатиях и переключениях</string>
+    <string name="settings_animations">Анимации</string>
+    <string name="settings_animations_sub">Пружинные переходы и морфинг форм</string>
 </resources>

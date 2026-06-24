@@ -235,6 +235,10 @@
     <string name="settings_amoled_sub">Pure black surfaces in dark theme</string>
     <string name="settings_squircle">Squircle corners</string>
     <string name="settings_squircle_sub">iOS-style continuous corners</string>
+    <string name="settings_shadows">Card shadows</string>
+    <string name="settings_shadows_sub">Soft elevation under cards</string>
     <string name="settings_haptics">Haptic feedback</string>
     <string name="settings_haptics_sub">Vibrate on taps and toggles</string>
+    <string name="settings_animations">Animations</string>
+    <string name="settings_animations_sub">Springy transitions and shape morphing</string>
 </resources>
