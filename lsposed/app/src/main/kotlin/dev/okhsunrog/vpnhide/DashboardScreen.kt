@@ -13,12 +13,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -28,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import dev.okhsunrog.vpnhide.settings.LocalSettingsState
 import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
 import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
+import dev.okhsunrog.vpnhide.ui.components.GroupedCard
 import dev.okhsunrog.vpnhide.ui.components.pulse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -125,21 +130,25 @@ fun DashboardScreen(
             return@Column
         }
 
-        // Module status cards
-        Text(
-            text = stringResource(R.string.dashboard_modules),
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-        )
-        Spacer(Modifier.height(8.dp))
+        // Issues split by severity — computed up front so the hero card can
+        // summarize them. Errors = user attention, warnings = working-but-
+        // suboptimal. Their banner sections render further down.
+        val errors = s.issues.filter { it.severity == IssueSeverity.ERROR }
+        val warnings = s.issues.filter { it.severity == IssueSeverity.WARNING }
 
-        LsposedCard(s.lsposed)
+        // Hero: the whole setup's health at a glance.
+        DashboardHeroCard(state = s, errorCount = errors.size, warningCount = warnings.size)
+        Spacer(Modifier.height(20.dp))
+
+        // Module status cards — one grouped block (byIndex corners).
+        SectionHeader(stringResource(R.string.dashboard_modules))
         Spacer(Modifier.height(8.dp))
-        ModuleCard(stringResource(R.string.dashboard_kmod), s.kmod)
-        Spacer(Modifier.height(8.dp))
-        ModuleCard(stringResource(R.string.dashboard_zygisk), s.zygisk, selfNeedsRestart)
-        Spacer(Modifier.height(8.dp))
-        ModuleCard(stringResource(R.string.dashboard_ports), s.ports)
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            LsposedCard(s.lsposed, index = 0, count = 4)
+            ModuleCard(stringResource(R.string.dashboard_kmod), s.kmod, index = 1, count = 4)
+            ModuleCard(stringResource(R.string.dashboard_zygisk), s.zygisk, selfNeedsRestart, index = 2, count = 4)
+            ModuleCard(stringResource(R.string.dashboard_ports), s.ports, index = 3, count = 4)
+        }
         s.nativeInstallRecommendation?.let { recommendation ->
             Spacer(Modifier.height(8.dp))
             NativeInstallRecommendationCard(recommendation)
@@ -151,11 +160,7 @@ fun DashboardScreen(
 
         // Protection status
         Spacer(Modifier.height(20.dp))
-        Text(
-            text = stringResource(R.string.dashboard_protection),
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-        )
+        SectionHeader(stringResource(R.string.dashboard_protection))
         Spacer(Modifier.height(8.dp))
 
         when (val p = s.protection) {
@@ -181,27 +186,16 @@ fun DashboardScreen(
             }
 
             is ProtectionCheck.Checked -> {
-                NativeProtectionCard(p.native)
-                Spacer(Modifier.height(8.dp))
-                JavaProtectionCard(p.java)
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    NativeProtectionCard(p.native, index = 0, count = 2)
+                    JavaProtectionCard(p.java, index = 1, count = 2)
+                }
             }
         }
 
-        // Issues — split by severity. Errors first (user attention), then
-        // warnings (working-but-suboptimal). Sections hide themselves when
-        // empty so the Dashboard stays short on a healthy setup. Colors
-        // come from the pinned palette declared at the top of this block.
-        val errors = s.issues.filter { it.severity == IssueSeverity.ERROR }
-        val warnings = s.issues.filter { it.severity == IssueSeverity.WARNING }
-
         if (errors.isNotEmpty()) {
             Spacer(Modifier.height(20.dp))
-            Text(
-                text = stringResource(R.string.dashboard_issues, errors.size),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = errorHeader,
-            )
+            SectionHeader(stringResource(R.string.dashboard_issues, errors.size), color = errorHeader)
             Spacer(Modifier.height(8.dp))
             for (issue in errors) {
                 StatusBanner(
@@ -215,12 +209,7 @@ fun DashboardScreen(
 
         if (warnings.isNotEmpty()) {
             Spacer(Modifier.height(20.dp))
-            Text(
-                text = stringResource(R.string.dashboard_warnings, warnings.size),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = warningHeader,
-            )
+            SectionHeader(stringResource(R.string.dashboard_warnings, warnings.size), color = warningHeader)
             Spacer(Modifier.height(8.dp))
             for (issue in warnings) {
                 StatusBanner(
@@ -238,16 +227,187 @@ fun DashboardScreen(
 
 // ── UI Components ────────────────────────────────────────────────────────
 
+/** A bold section title. Pass [color] for the colored issue/warning headers. */
+@Composable
+private fun SectionHeader(
+    text: String,
+    color: Color = MaterialTheme.colorScheme.onSurface,
+) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.Bold,
+        color = color,
+    )
+}
+
+/** Overall health, ranked worst-signal-wins from protection state + issues. */
+private enum class HeroStatus { Protected, Attention, Unprotected, VpnOff }
+
+private fun computeHeroStatus(
+    state: DashboardState,
+    errorCount: Int,
+    warningCount: Int,
+): HeroStatus {
+    val p = state.protection
+    if (p is ProtectionCheck.NoVpn) return HeroStatus.VpnOff
+    // 0 = protected, 1 = attention, 2 = unprotected — keep the worst signal.
+    var rank = 0
+    when (p) {
+        ProtectionCheck.NoVpn -> {}
+
+        // handled above
+        ProtectionCheck.NeedsRestart -> {
+            rank = maxOf(rank, 1)
+        }
+
+        is ProtectionCheck.Checked -> {
+            val native = p.native
+            val java = p.java
+            val hardFail = (native is NativeResult.Fail && native.passed == 0) || java is JavaResult.Fail
+            val partial =
+                native is NativeResult.Fail || native is NativeResult.NoModule || java is JavaResult.HooksInactive
+            when {
+                hardFail -> rank = maxOf(rank, 2)
+                partial -> rank = maxOf(rank, 1)
+            }
+        }
+    }
+    when {
+        errorCount > 0 -> rank = maxOf(rank, 2)
+        warningCount > 0 -> rank = maxOf(rank, 1)
+    }
+    return when (rank) {
+        0 -> HeroStatus.Protected
+        1 -> HeroStatus.Attention
+        else -> HeroStatus.Unprotected
+    }
+}
+
+private data class HeroVisual(
+    val container: Color,
+    val accent: Color,
+    val icon: ImageVector,
+    val titleRes: Int,
+    val subtitleRes: Int,
+)
+
+/**
+ * The big at-a-glance status card at the top of the Dashboard. Summarizes the
+ * whole setup's health into one of four states with a tinted container, accent
+ * icon and headline; the icon breathes when fully protected.
+ */
+@Composable
+private fun DashboardHeroCard(
+    state: DashboardState,
+    errorCount: Int,
+    warningCount: Int,
+) {
+    val animations = LocalSettingsState.current.animationsEnabled
+    val status = computeHeroStatus(state, errorCount, warningCount)
+    val visual =
+        when (status) {
+            HeroStatus.Protected -> {
+                HeroVisual(
+                    container = StatusColors.successContainer(),
+                    accent = StatusColors.successDot,
+                    icon = Icons.Default.CheckCircle,
+                    titleRes = R.string.dashboard_hero_protected_title,
+                    subtitleRes = R.string.dashboard_hero_protected_subtitle,
+                )
+            }
+
+            HeroStatus.Attention -> {
+                HeroVisual(
+                    container = StatusColors.warningContainer(),
+                    accent = StatusColors.warningAccent,
+                    icon = Icons.Default.Warning,
+                    titleRes = R.string.dashboard_hero_attention_title,
+                    subtitleRes = R.string.dashboard_hero_attention_subtitle,
+                )
+            }
+
+            HeroStatus.Unprotected -> {
+                HeroVisual(
+                    container = StatusColors.errorContainer(),
+                    accent = StatusColors.errorAccent,
+                    icon = Icons.Default.Warning,
+                    titleRes = R.string.dashboard_hero_unprotected_title,
+                    subtitleRes = R.string.dashboard_hero_unprotected_subtitle,
+                )
+            }
+
+            HeroStatus.VpnOff -> {
+                HeroVisual(
+                    container = MaterialTheme.colorScheme.surfaceVariant,
+                    accent = MaterialTheme.colorScheme.onSurfaceVariant,
+                    icon = Icons.Default.Info,
+                    titleRes = R.string.dashboard_hero_vpnoff_title,
+                    subtitleRes = R.string.dashboard_hero_vpnoff_subtitle,
+                )
+            }
+        }
+    EnhancedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = visual.container,
+    ) {
+        Row(
+            modifier = Modifier.padding(20.dp).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier =
+                    Modifier
+                        .size(56.dp)
+                        .pulse(
+                            enabled = status == HeroStatus.Protected && animations,
+                            min = 0.92f,
+                            max = 1.06f,
+                            durationMillis = 1300,
+                        ).clip(CircleShape)
+                        .background(visual.accent.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = visual.icon,
+                    contentDescription = null,
+                    tint = visual.accent,
+                    modifier = Modifier.size(30.dp),
+                )
+            }
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(visual.titleRes),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = stringResource(visual.subtitleRes),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun ModuleCard(
     name: String,
     state: ModuleState,
     selfNeedsRestart: Boolean = false,
+    index: Int = -1,
+    count: Int = 1,
 ) {
     when (state) {
         is ModuleState.NotInstalled -> {
             ModuleCardShell(
                 name = name,
+                index = index,
+                count = count,
                 version = null,
                 subtitle = stringResource(R.string.dashboard_not_installed),
                 dotColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
@@ -270,6 +430,8 @@ private fun ModuleCard(
                 }
             ModuleCardShell(
                 name = name,
+                index = index,
+                count = count,
                 version = state.version,
                 subtitle =
                     when {
@@ -296,13 +458,19 @@ private fun ModuleCard(
 }
 
 @Composable
-private fun LsposedCard(state: LsposedState) {
+private fun LsposedCard(
+    state: LsposedState,
+    index: Int = -1,
+    count: Int = 1,
+) {
     val moduleName = stringResource(R.string.dashboard_lsposed_module)
     val installedVersion = BuildConfig.VERSION_NAME
     when (state) {
         is LsposedState.NotInstalled -> {
             ModuleCardShell(
                 name = moduleName,
+                index = index,
+                count = count,
                 version = installedVersion,
                 subtitle = stringResource(R.string.dashboard_not_installed),
                 dotColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
@@ -313,6 +481,8 @@ private fun LsposedCard(state: LsposedState) {
         is LsposedState.InstalledInactive -> {
             ModuleCardShell(
                 name = moduleName,
+                index = index,
+                count = count,
                 version = installedVersion,
                 subtitle = stringResource(R.string.dashboard_installed_inactive),
                 dotColor = StatusColors.warningAccent,
@@ -323,6 +493,8 @@ private fun LsposedCard(state: LsposedState) {
         is LsposedState.NeedsReboot -> {
             ModuleCardShell(
                 name = moduleName,
+                index = index,
+                count = count,
                 version = installedVersion,
                 subtitle = stringResource(R.string.dashboard_reboot_needed),
                 dotColor = StatusColors.warningAccent,
@@ -340,6 +512,8 @@ private fun LsposedCard(state: LsposedState) {
                     }
             ModuleCardShell(
                 name = moduleName,
+                index = index,
+                count = count,
                 version = installedVersion,
                 subtitle = subtitle,
                 dotColor = StatusColors.successDot,
@@ -356,8 +530,12 @@ private fun ModuleCardShell(
     subtitle: String,
     dotColor: Color,
     containerColor: Color,
+    index: Int,
+    count: Int,
 ) {
-    EnhancedCard(
+    GroupedCard(
+        index = index,
+        count = count,
         modifier = Modifier.fillMaxWidth(),
         color = containerColor,
     ) {
@@ -489,7 +667,11 @@ private fun NativeInstallRecommendationCard(recommendation: NativeInstallRecomme
 }
 
 @Composable
-private fun NativeProtectionCard(result: NativeResult) {
+private fun NativeProtectionCard(
+    result: NativeResult,
+    index: Int = -1,
+    count: Int = 1,
+) {
     val (containerColor, statusText, statusColor) =
         when (result) {
             is NativeResult.Ok -> {
@@ -526,11 +708,17 @@ private fun NativeProtectionCard(result: NativeResult) {
         statusColor = statusColor,
         containerColor = containerColor,
         pulsing = result is NativeResult.Ok,
+        index = index,
+        count = count,
     )
 }
 
 @Composable
-private fun JavaProtectionCard(result: JavaResult) {
+private fun JavaProtectionCard(
+    result: JavaResult,
+    index: Int = -1,
+    count: Int = 1,
+) {
     val (containerColor, statusText, statusColor) =
         when (result) {
             is JavaResult.Ok -> {
@@ -563,6 +751,8 @@ private fun JavaProtectionCard(result: JavaResult) {
         statusColor = statusColor,
         containerColor = containerColor,
         pulsing = result is JavaResult.Ok,
+        index = index,
+        count = count,
     )
 }
 
@@ -573,9 +763,13 @@ private fun ProtectionCardShell(
     statusColor: Color,
     containerColor: Color,
     pulsing: Boolean = false,
+    index: Int = -1,
+    count: Int = 1,
 ) {
     val animations = LocalSettingsState.current.animationsEnabled
-    EnhancedCard(
+    GroupedCard(
+        index = index,
+        count = count,
         modifier = Modifier.fillMaxWidth(),
         color = containerColor,
     ) {

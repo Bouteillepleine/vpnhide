@@ -77,6 +77,14 @@
     <string name="dashboard_active_targets">Активен · целей: %d</string>
     <string name="dashboard_reboot_needed">Требуется перезагрузка устройства</string>
     <string name="dashboard_protection">Статус защиты</string>
+    <string name="dashboard_hero_protected_title">Защищено</string>
+    <string name="dashboard_hero_protected_subtitle">Все защиты активны</string>
+    <string name="dashboard_hero_attention_title">Требует внимания</string>
+    <string name="dashboard_hero_attention_subtitle">Часть проверок требует внимания</string>
+    <string name="dashboard_hero_unprotected_title">Не защищено</string>
+    <string name="dashboard_hero_unprotected_subtitle">Защита не активна</string>
+    <string name="dashboard_hero_vpnoff_title">VPN выключен</string>
+    <string name="dashboard_hero_vpnoff_subtitle">Без VPN защита неактивна</string>
     <string name="dashboard_native_protection">Нативный уровень</string>
     <string name="dashboard_java_protection">Java API уровень</string>
     <string name="dashboard_protection_ok">ОК</string>

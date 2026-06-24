@@ -108,6 +108,14 @@
     <string name="dashboard_active_targets">Active · %d target(s)</string>
     <string name="dashboard_reboot_needed">Device reboot needed</string>
     <string name="dashboard_protection">Protection status</string>
+    <string name="dashboard_hero_protected_title">Protected</string>
+    <string name="dashboard_hero_protected_subtitle">All protections are active</string>
+    <string name="dashboard_hero_attention_title">Needs attention</string>
+    <string name="dashboard_hero_attention_subtitle">Some checks need a look</string>
+    <string name="dashboard_hero_unprotected_title">Not protected</string>
+    <string name="dashboard_hero_unprotected_subtitle">Protection is not active</string>
+    <string name="dashboard_hero_vpnoff_title">VPN is off</string>
+    <string name="dashboard_hero_vpnoff_subtitle">Protection is inactive without a VPN</string>
     <string name="dashboard_native_protection">Native level</string>
     <string name="dashboard_java_protection">Java API level</string>
     <string name="dashboard_protection_ok">OK</string>
