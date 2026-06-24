@@ -131,7 +131,8 @@ jobs:
             zygisk/module/customize.sh zygisk/module/service.sh \
             portshide/module/customize.sh portshide/module/service.sh \
             portshide/module/uninstall.sh portshide/module/vpnhide_ports_apply.sh \
-            scripts/clean-device.sh scripts/update-json.sh
+            scripts/clean-device.sh scripts/update-json.sh \
+            kmod/test/run.sh kmod/test/build-kernel.sh kmod/test/init.sh
 
       # C (kernel module)
       - name: clang-format
