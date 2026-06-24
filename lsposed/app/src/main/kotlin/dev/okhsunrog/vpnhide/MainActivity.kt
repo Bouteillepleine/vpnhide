@@ -41,7 +41,9 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import dev.okhsunrog.vpnhide.settings.AppSettings
+import dev.okhsunrog.vpnhide.settings.LocalSettingsInteractor
 import dev.okhsunrog.vpnhide.settings.LocalSettingsState
+import dev.okhsunrog.vpnhide.settings.RepositorySettingsInteractor
 import dev.okhsunrog.vpnhide.settings.SettingsRepository
 import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
 import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
@@ -107,8 +109,16 @@ fun VpnHideApp(
     val context = LocalContext.current
     val settingsRepository = remember(context) { SettingsRepository(context.applicationContext) }
     val settings by settingsRepository.settings.collectAsState(initial = AppSettings())
+    val settingsScope = rememberCoroutineScope()
+    val settingsInteractor =
+        remember(settingsRepository, settingsScope) {
+            RepositorySettingsInteractor(settingsRepository, settingsScope)
+        }
 
-    CompositionLocalProvider(LocalSettingsState provides settings) {
+    CompositionLocalProvider(
+        LocalSettingsState provides settings,
+        LocalSettingsInteractor provides settingsInteractor,
+    ) {
         VpnHideTheme {
             var rootState by remember { mutableStateOf<RootState?>(null) }
 
