@@ -10,7 +10,7 @@ of `pt_regs` by register index, so correctness depends on the *actual* argument
 → register mapping in the built kernel — which a compiler can change (notably
 for `static`, directly-called functions). Only running the module on the real
 kernel proves the registers are right. (This is exactly how the `rt_fill_info`
-register bug was found.)
+register bug was found — see Design decisions.)
 
 ## What it checks (and what it can't)
 
@@ -40,21 +40,12 @@ with `qemu.config` merged, not a byte-identical vendor GKI release, so it does
 not cover vendor patches. A device smoke-test is still the final word — but the
 gate is far tighter than "it compiled".
 
-LTO is left to each KMI's `gki_defconfig` (not pinned in `qemu.config`), which
-is the device-faithful setting and varies by generation: android12/13-5.10 +
-5.15 ship **full LTO + CFI** (5.10's CFI requires LTO), while android14-6.1+
-ship **LTO_NONE + CFI via KCFI** (confirmed against the shipped Pixel 8 Pro
-factory image). Forcing one mode breaks both fidelity and the build — e.g.
-forcing `LTO_NONE` on 5.10 also drops CFI (unmet dependency), yielding a kernel
-no device runs and on which a GKI-built module won't register its kretprobes.
-The full-LTO generations are heavier to build; `qemu-image.yml` frees disk and
-adds swap to fit them.
-
 ## Usage
 
 ```sh
-# 1. Build a bootable kernel + module for a KMI (slow; clones kernel/common,
-#    builds Image with the DDK container's clang, caches under .cache/<kmi>/).
+# 1. Build a bootable kernel + a matching module for a KMI (slow, ~15-40 min;
+#    clones kernel/common, builds Image with the DDK container's clang, builds
+#    the module against that tree, caches under .cache/<kmi>/).
 kmod/test/build-kernel.sh android12-5.10
 
 # 2. Boot it in QEMU and run the vector tests.
@@ -63,59 +54,74 @@ kmod/test/run.sh android12-5.10
 
 `run.sh` exits 0 only if every vector passes and there was no panic. Artifacts
 (kernels, modules, the Alpine rootfs) are cached under `.cache/` (gitignored).
+`run.sh` honors `VPNHIDE_QEMU_IMAGE` / `VPNHIDE_QEMU_ROOTFS` / `VPNHIDE_QEMU_KO`
+to use prebuilt artifacts (CI) instead of the local cache.
 
 Requirements: `docker` (for build-kernel.sh), `qemu-system-aarch64`, `cpio`,
 `curl`.
 
-## CI
+## How CI uses it
 
-Building a virtio GKI kernel takes ~30 min, so it must not run per-PR. Instead
-the bootable kernel + Alpine rootfs are **baked** into per-KMI images
-(`.github/docker/ddk-qemu/Dockerfile` = `FROM ddk-min:<kmi>` + qemu + Image +
-rootfs), built rarely by `.github/workflows/qemu-image.yml` (matrix over the 7
-KMIs; triggers on `qemu.config`/Dockerfile changes, monthly, or manually).
+Building a virtio GKI kernel takes ~15-40 min, so it must not run per-PR:
 
-The module is **not** baked — a `kdir`-built module (what the `kmod` job already
-produces for devices) loads on the baked virtio kernel (same source → same
-vermagic), so CI reuses that artifact and passes it in via `VPNHIDE_QEMU_KO`.
-`run.sh` reads `VPNHIDE_QEMU_IMAGE` / `VPNHIDE_QEMU_ROOTFS` / `VPNHIDE_QEMU_KO`
-to use the baked artifacts instead of the local cache.
+- **`.github/workflows/qemu-image.yml`** bakes per-KMI images
+  `ghcr.io/<owner>/vpnhide/ddk-qemu:<kmi>` = `FROM ddk-min:<kmi>` + qemu + the
+  built kernel `Image` + **its build tree** (`/opt/qemu/linux`, for module
+  builds) + the Alpine rootfs. Matrix over the 7 KMIs; runs only on
+  `qemu.config`/Dockerfile changes, monthly, or manual dispatch. Full-LTO
+  generations are heavy — the workflow frees disk + adds swap.
+- **`ci.yml` `kmod-qemu` job** (per KMI) boots the baked kernel and runs the
+  vectors. It builds the module **against the baked kernel tree**
+  (`VPNHIDE_QEMU_KSRC`), not the GKI kdir — see Design decisions. The image is
+  repo-owned (private), so the job pulls it with `credentials:` and a
+  lowercased name from the `setup` job output, like the other image jobs.
 
-GitHub runners have no KVM, so QEMU runs under TCG — slow but fine (~1-3 min per
-job, matrix runs in parallel). `init.sh` apk-adds iproute2 over QEMU user-mode
-networking (the runner has internet); prebaking iproute2 into the rootfs is a
-possible later optimization if the Alpine CDN proves flaky.
+## Design decisions
 
-### Rollout (two steps — images must exist before the gate)
+Each of these was forced by a concrete failure; they are easy to "simplify"
+back into a regression.
 
-1. Merge this (Dockerfile + workflow + harness), then run **qemu-image.yml**
-   once (it triggers on the Dockerfile/`qemu.config` paths, or dispatch it
-   manually) so `ghcr.io/<owner>/vpnhide/ddk-qemu:<kmi>` exist for all 7 KMIs.
-2. Add the gate job to `ci.yml` (so PRs don't reference images that don't exist
-   yet):
+1. **Build the module against the baked kernel tree, not the GKI kdir.**
+   A module must match the kernel it runs on (CFI tags, vermagic, the
+   `struct kretprobe` layout). The kdir (what ships to devices) and our
+   separately-built QEMU kernel are *different builds*; on `android16-6.12`
+   their configs diverge enough to be fatal: with CFI on, insmod hits a CFI
+   type-id mismatch panic; with CFI off, a `struct kretprobe` mismatch crashes
+   `pre_handler_kretprobe` (NULL deref). 5.10/6.1/6.6 only matched by luck.
+   So the image keeps the kernel tree and the module is built against it.
 
-   ```yaml
-   kmod-qemu:
-     needs: kmod
-     runs-on: ubuntu-latest
-     strategy:
-       fail-fast: false
-       matrix:
-         kmi: [android12-5.10, android13-5.10, android13-5.15,
-               android14-5.15, android14-6.1, android15-6.6, android16-6.12]
-     container:
-       image: ghcr.io/${{ github.repository }}/ddk-qemu:${{ matrix.kmi }}
-     steps:
-       - uses: actions/checkout@v7
-       - uses: actions/download-artifact@v7
-         with:
-           name: vpnhide-kmod-${{ matrix.kmi }}
-       - name: Extract module
-         run: unzip -p vpnhide-kmod-${{ matrix.kmi }}.zip vpnhide_kmod.ko > /tmp/vpnhide_kmod.ko
-       - name: QEMU runtime test
-         env:
-           VPNHIDE_QEMU_KO: /tmp/vpnhide_kmod.ko
-         run: kmod/test/run.sh ${{ matrix.kmi }}
-   ```
+2. **Make the baked tree a complete external-module build environment.**
+   `make Image` alone is not enough. Also run `make modules_prepare` (generates
+   `scripts/module.lds`, else modfinal: "No rule to make target …ko") and
+   `cp vmlinux.symvers Module.symvers` (else modpost reports every kernel symbol
+   undefined — `make Image` emits only `vmlinux.symvers`, and our module
+   references only vmlinux symbols). `.cmd` files are pruned to shrink the image.
 
-   (`VPNHIDE_QEMU_IMAGE`/`VPNHIDE_QEMU_ROOTFS` come from the image's `ENV`.)
+3. **Do not force LTO — inherit it from each KMI's `gki_defconfig`.**
+   That is the device-faithful setting and it varies: android12/13-5.10 + 5.15
+   ship **full LTO + CFI** (5.10's CFI *requires* LTO), android14-6.1+ ship
+   **LTO_NONE + CFI via KCFI** (confirmed against the shipped Pixel 8 Pro
+   factory image: `CONFIG_LTO_NONE=y`, `CONFIG_CFI_CLANG=y`). Forcing one mode
+   breaks both fidelity and the build (e.g. forcing `LTO_NONE` on 5.10 drops CFI
+   as an unmet dependency). LTO barely affects the harness anyway — every hooked
+   function is global, address-taken, or too large to inline.
+
+4. **CFI stays on.** With the module built against the baked tree (decision 1)
+   it gets matching KCFI and loads fine. Disabling CFI was a wrong turn — it
+   only traded the CFI panic for the kretprobe-struct panic.
+
+5. **Disable BTF (`CONFIG_DEBUG_INFO_BTF` off).** The BTFIDS step
+   (`resolve_btfids` over vmlinux) fails `Error 255` on some GKI tips with the
+   DDK container's pahole. BTF isn't needed for these tests, so dropping it
+   removes a flaky build step and lightens the build.
+
+6. **`rt_fill_info` is intentionally not hooked.** It is a `static`,
+   directly-called function with no stable arg→register ABI (verified in QEMU:
+   `regs[3]` held `table_id`, not the `rtable*`). Route *enumeration* (what
+   detection apps use) goes through the global `fib_dump_info`; single lookups
+   respect the caller's routing, which is physical under split-tunnel. See
+   `docs/ROADMAP.md` for the `rtnl_unicast`-based alternative if ever needed.
+
+7. **iproute2 over QEMU user-net.** `init.sh` apk-adds iproute2 at boot (the
+   runner has internet via QEMU's slirp NAT). Prebaking it into the rootfs is a
+   possible optimization if the Alpine CDN proves flaky.
