@@ -60,7 +60,8 @@ uniffi {
 
 android {
     namespace = "dev.okhsunrog.vpnhide"
-    compileSdk = 36
+    // 37 required transitively by material3 1.5.0-alpha22 (compose 1.12.0-alpha).
+    compileSdk = 37
 
     // Effective build version from ../scripts/build-version.py:
     //   release tag    -> "0.6.2"
