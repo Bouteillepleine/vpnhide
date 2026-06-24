@@ -2,7 +2,8 @@ import de.aaschmid.gradle.plugins.cpd.Cpd
 
 plugins {
     alias(libs.plugins.android.application) apply false
-    alias(libs.plugins.kotlin.android) apply false
+    // Kotlin is built into AGP 9+; kotlin-android is no longer applied. KGP stays
+    // at 2.4.0 transitively via the compose-compiler / atomicfu plugins.
     alias(libs.plugins.compose.compiler) apply false
     alias(libs.plugins.cpd)
 }

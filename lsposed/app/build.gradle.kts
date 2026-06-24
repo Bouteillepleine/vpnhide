@@ -4,7 +4,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    // kotlin-android removed: AGP 9+ has built-in Kotlin support.
     alias(libs.plugins.kotlin.atomicfu)
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.gobley.cargo)
@@ -173,6 +173,11 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
     implementation("androidx.compose.material:material-icons-extended")
+    // Reactive theme/settings store (replaces ad-hoc SharedPreferences for UI prefs).
+    implementation(libs.datastore.preferences)
+    // Material You color-scheme generation + harmonization (seed -> full M3 scheme,
+    // AMOLED, contrast, palette styles). Powers VpnHideTheme.
+    implementation(libs.material.kolor)
     implementation("io.github.oikvpqya.compose.fastscroller:fastscroller-material3:0.3.2")
     implementation("io.github.oikvpqya.compose.fastscroller:fastscroller-indicator:0.3.2")
     implementation(libs.compose.ui.tooling.preview)
