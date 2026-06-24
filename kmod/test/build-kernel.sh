@@ -41,10 +41,16 @@ docker run --rm \
 	./scripts/kconfig/merge_config.sh -m .config /qemu.config
 	make ARCH=arm64 LLVM=1 olddefconfig
 	make ARCH=arm64 LLVM=1 -j"$(nproc)" Image
+	make ARCH=arm64 LLVM=1 modules_prepare
 	cp arch/arm64/boot/Image /out/Image
+	# external-module builds need Module.symvers (symbol CRCs); make Image only
+	# emits vmlinux.symvers — our module references only vmlinux symbols, so that
+	# is sufficient. Without it modpost reports every kernel symbol undefined.
+	cp vmlinux.symvers Module.symvers
 
-	# build the module against THIS tree (matching vermagic/config), not the
-	# GKI kdir — otherwise it would not load on this kernel.
+	# build the module against THIS tree (matching CFI / vermagic / struct
+	# layouts), not the GKI kdir — building against the kdir mismatches the
+	# separately-built kernel and panics on some KMIs (CFI / kretprobe on 6.12).
 	cp -r /repo/kmod /tmp/kmod-build
 	make -C /tmp/kmod-build KERNEL_SRC=/tmp/linux CLANG_DIR="$CLANG_BIN" clean || true
 	make -C /tmp/kmod-build KERNEL_SRC=/tmp/linux CLANG_DIR="$CLANG_BIN"
