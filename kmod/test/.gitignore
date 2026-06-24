@@ -1,0 +1,3 @@
+# Built kernels, modules, and downloaded rootfs — large, reproducible via
+# build-kernel.sh / run.sh.
+.cache/
