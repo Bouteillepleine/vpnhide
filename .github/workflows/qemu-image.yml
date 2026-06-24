@@ -43,8 +43,9 @@ jobs:
       # LTO is per-KMI (gki_defconfig): the android12/13-5.10 + 5.15 kernels are
       # full-LTO and disk/RAM-hungry to build; 6.1+ are LTO_NONE and light. Size
       # for the heaviest: reclaim ~30 GB of preinstalled toolchains and add swap
-      # so the full-LTO link doesn't get OOM-killed. No fallback — if a full-LTO
-      # kernel still won't build, the bake fails loudly.
+      # so the full-LTO vmlinux link doesn't get OOM-killed. 16 GB swap (16+16 =
+      # 32 GB total) was marginal — one of four full-LTO builds OOM'd at the
+      # vmlinux link — so use 32 GB (16+32 = 48 GB, /mnt has ~70 GB free).
       - name: Free up disk space
         uses: jlumbroso/free-disk-space@main
         with:
@@ -53,7 +54,7 @@ jobs:
 
       - name: Add swap for the full-LTO link
         run: |
-          sudo fallocate -l 16G /mnt/swapfile
+          sudo fallocate -l 32G /mnt/swapfile
           sudo chmod 600 /mnt/swapfile
           sudo mkswap /mnt/swapfile
           sudo swapon /mnt/swapfile
