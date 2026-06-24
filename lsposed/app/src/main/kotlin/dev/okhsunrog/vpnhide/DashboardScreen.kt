@@ -8,13 +8,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,6 +28,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.okhsunrog.vpnhide.settings.LocalSettingsState
 import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
@@ -145,9 +146,9 @@ fun DashboardScreen(
         Spacer(Modifier.height(8.dp))
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
             LsposedCard(s.lsposed, index = 0, count = 4)
-            ModuleCard(stringResource(R.string.dashboard_kmod), s.kmod, index = 1, count = 4)
-            ModuleCard(stringResource(R.string.dashboard_zygisk), s.zygisk, selfNeedsRestart, index = 2, count = 4)
-            ModuleCard(stringResource(R.string.dashboard_ports), s.ports, index = 3, count = 4)
+            ModuleCard(stringResource(R.string.dashboard_kmod), "K", s.kmod, index = 1, count = 4)
+            ModuleCard(stringResource(R.string.dashboard_zygisk), "Z", s.zygisk, selfNeedsRestart, index = 2, count = 4)
+            ModuleCard(stringResource(R.string.dashboard_ports), "P", s.ports, index = 3, count = 4)
         }
         s.nativeInstallRecommendation?.let { recommendation ->
             Spacer(Modifier.height(8.dp))
@@ -311,7 +312,7 @@ private fun DashboardHeroCard(
                 HeroVisual(
                     container = StatusColors.successContainer(),
                     accent = StatusColors.successDot,
-                    icon = Icons.Default.CheckCircle,
+                    icon = Icons.Default.Shield,
                     titleRes = R.string.dashboard_hero_protected_title,
                     subtitleRes = R.string.dashboard_hero_protected_subtitle,
                 )
@@ -350,53 +351,288 @@ private fun DashboardHeroCard(
     EnhancedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.extraLarge,
-        color = visual.container,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
-        Row(
-            modifier = Modifier.padding(20.dp).fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier =
-                    Modifier
-                        .size(56.dp)
-                        .pulse(
-                            enabled = status == HeroStatus.Protected && animations,
-                            min = 0.92f,
-                            max = 1.06f,
-                            durationMillis = 1300,
-                        ).clip(CircleShape)
-                        .background(visual.accent.copy(alpha = 0.18f)),
-                contentAlignment = Alignment.Center,
+        Column(modifier = Modifier.padding(18.dp).fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    imageVector = visual.icon,
-                    contentDescription = null,
-                    tint = visual.accent,
-                    modifier = Modifier.size(30.dp),
+                StatusIconBubble(
+                    icon = visual.icon,
+                    accent = visual.accent,
+                    container = visual.container,
+                    modifier =
+                        Modifier.pulse(
+                            enabled = status == HeroStatus.Protected && animations,
+                            min = 0.94f,
+                            max = 1.05f,
+                            durationMillis = 1300,
+                        ),
+                )
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(visual.titleRes),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = stringResource(visual.subtitleRes),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                StatusPill(
+                    text = stringResource(visual.titleRes),
+                    contentColor = visual.accent,
+                    containerColor = visual.container,
                 )
             }
-            Spacer(Modifier.width(16.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = stringResource(visual.titleRes),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = stringResource(visual.subtitleRes),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                )
+            Spacer(Modifier.height(16.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    HeroMetric(
+                        label = stringResource(R.string.dashboard_summary_modules),
+                        value = moduleSummaryText(state),
+                        accent = moduleSummaryAccent(state),
+                        modifier = Modifier.weight(1f),
+                    )
+                    HeroMetric(
+                        label = stringResource(R.string.dashboard_native_protection),
+                        value = nativeSummaryText(state.protection),
+                        accent = nativeSummaryAccent(state.protection),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    HeroMetric(
+                        label = stringResource(R.string.dashboard_java_protection),
+                        value = javaSummaryText(state.protection),
+                        accent = javaSummaryAccent(state.protection),
+                        modifier = Modifier.weight(1f),
+                    )
+                    HeroMetric(
+                        label = stringResource(R.string.dashboard_summary_issues),
+                        value = (errorCount + warningCount).toString(),
+                        accent =
+                            when {
+                                errorCount > 0 -> StatusColors.errorAccent
+                                warningCount > 0 -> StatusColors.warningAccent
+                                else -> StatusColors.successDot
+                            },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
+private fun StatusIconBubble(
+    icon: ImageVector,
+    accent: Color,
+    container: Color,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier =
+            modifier
+                .size(58.dp)
+                .clip(CircleShape)
+                .background(container),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = accent,
+            modifier = Modifier.size(31.dp),
+        )
+    }
+}
+
+@Composable
+private fun StatusPill(
+    text: String,
+    contentColor: Color,
+    containerColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier =
+            modifier
+                .widthIn(max = 160.dp)
+                .clip(MaterialTheme.shapes.medium)
+                .background(containerColor)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = contentColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun HeroMetric(
+    label: String,
+    value: String,
+    accent: Color,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier =
+            modifier
+                .clip(MaterialTheme.shapes.medium)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = accent,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+private fun moduleSummaryText(state: DashboardState): String = "${activeModuleCount(state)}/4"
+
+@Composable
+private fun moduleSummaryAccent(state: DashboardState): Color {
+    val nativeActive = moduleActive(state.kmod) || moduleActive(state.zygisk)
+    return when {
+        (state.kmod as? ModuleState.Installed)?.brokenReason != null -> StatusColors.errorAccent
+        state.lsposed is LsposedState.Active && nativeActive -> StatusColors.successDot
+        activeModuleCount(state) > 0 -> StatusColors.warningAccent
+        else -> StatusColors.errorAccent
+    }
+}
+
+private fun activeModuleCount(state: DashboardState): Int =
+    listOf(
+        state.lsposed is LsposedState.Active,
+        moduleActive(state.kmod),
+        moduleActive(state.zygisk),
+        moduleActive(state.ports),
+    ).count { it }
+
+private fun moduleActive(state: ModuleState): Boolean = (state as? ModuleState.Installed)?.active == true
+
+@Composable
+private fun nativeSummaryText(protection: ProtectionCheck): String =
+    when (protection) {
+        ProtectionCheck.NoVpn -> {
+            stringResource(R.string.dashboard_hero_vpnoff_title)
+        }
+
+        ProtectionCheck.NeedsRestart -> {
+            stringResource(R.string.dashboard_protection_unknown)
+        }
+
+        is ProtectionCheck.Checked -> {
+            when (val native = protection.native) {
+                NativeResult.Ok -> {
+                    stringResource(R.string.dashboard_protection_ok)
+                }
+
+                is NativeResult.Fail -> {
+                    if (native.passed > 0) {
+                        stringResource(R.string.dashboard_protection_partial)
+                    } else {
+                        stringResource(R.string.dashboard_protection_fail)
+                    }
+                }
+
+                NativeResult.NoModule -> {
+                    stringResource(R.string.dashboard_protection_no_module)
+                }
+            }
+        }
+    }
+
+@Composable
+private fun nativeSummaryAccent(protection: ProtectionCheck): Color =
+    when (protection) {
+        ProtectionCheck.NoVpn -> {
+            StatusColors.infoAccent
+        }
+
+        ProtectionCheck.NeedsRestart -> {
+            StatusColors.warningAccent
+        }
+
+        is ProtectionCheck.Checked -> {
+            when (val native = protection.native) {
+                NativeResult.Ok -> StatusColors.successDot
+                is NativeResult.Fail -> if (native.passed > 0) StatusColors.warningAccent else StatusColors.errorAccent
+                NativeResult.NoModule -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+        }
+    }
+
+@Composable
+private fun javaSummaryText(protection: ProtectionCheck): String =
+    when (protection) {
+        ProtectionCheck.NoVpn -> {
+            stringResource(R.string.dashboard_hero_vpnoff_title)
+        }
+
+        ProtectionCheck.NeedsRestart -> {
+            stringResource(R.string.dashboard_protection_unknown)
+        }
+
+        is ProtectionCheck.Checked -> {
+            when (protection.java) {
+                JavaResult.Ok -> stringResource(R.string.dashboard_protection_ok)
+                is JavaResult.Fail -> stringResource(R.string.dashboard_protection_fail)
+                JavaResult.HooksInactive -> stringResource(R.string.dashboard_protection_hooks_inactive)
+            }
+        }
+    }
+
+@Composable
+private fun javaSummaryAccent(protection: ProtectionCheck): Color =
+    when (protection) {
+        ProtectionCheck.NoVpn -> {
+            StatusColors.infoAccent
+        }
+
+        ProtectionCheck.NeedsRestart -> {
+            StatusColors.warningAccent
+        }
+
+        is ProtectionCheck.Checked -> {
+            when (protection.java) {
+                JavaResult.Ok -> StatusColors.successDot
+                is JavaResult.Fail -> StatusColors.errorAccent
+                JavaResult.HooksInactive -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+        }
+    }
+
+@Composable
 private fun ModuleCard(
     name: String,
+    badgeText: String,
     state: ModuleState,
     selfNeedsRestart: Boolean = false,
     index: Int = -1,
@@ -406,12 +642,13 @@ private fun ModuleCard(
         is ModuleState.NotInstalled -> {
             ModuleCardShell(
                 name = name,
+                badgeText = badgeText,
                 index = index,
                 count = count,
                 version = null,
                 subtitle = stringResource(R.string.dashboard_not_installed),
-                dotColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                accentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                accentContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
             )
         }
 
@@ -430,6 +667,7 @@ private fun ModuleCard(
                 }
             ModuleCardShell(
                 name = name,
+                badgeText = badgeText,
                 index = index,
                 count = count,
                 version = state.version,
@@ -440,13 +678,13 @@ private fun ModuleCard(
                         selfNeedsRestart -> stringResource(R.string.dashboard_installed_restart_app)
                         else -> stringResource(R.string.dashboard_installed_inactive)
                     },
-                dotColor =
+                accentColor =
                     when {
                         broken != null -> StatusColors.errorDot
                         active -> StatusColors.successDot
                         else -> StatusColors.warningAccent
                     },
-                containerColor =
+                accentContainerColor =
                     when {
                         broken != null -> StatusColors.errorContainer()
                         active -> StatusColors.successContainer()
@@ -469,36 +707,39 @@ private fun LsposedCard(
         is LsposedState.NotInstalled -> {
             ModuleCardShell(
                 name = moduleName,
+                badgeText = "L",
                 index = index,
                 count = count,
                 version = installedVersion,
                 subtitle = stringResource(R.string.dashboard_not_installed),
-                dotColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                accentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                accentContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
             )
         }
 
         is LsposedState.InstalledInactive -> {
             ModuleCardShell(
                 name = moduleName,
+                badgeText = "L",
                 index = index,
                 count = count,
                 version = installedVersion,
                 subtitle = stringResource(R.string.dashboard_installed_inactive),
-                dotColor = StatusColors.warningAccent,
-                containerColor = StatusColors.warningContainer(),
+                accentColor = StatusColors.warningAccent,
+                accentContainerColor = StatusColors.warningContainer(),
             )
         }
 
         is LsposedState.NeedsReboot -> {
             ModuleCardShell(
                 name = moduleName,
+                badgeText = "L",
                 index = index,
                 count = count,
                 version = installedVersion,
                 subtitle = stringResource(R.string.dashboard_reboot_needed),
-                dotColor = StatusColors.warningAccent,
-                containerColor = StatusColors.warningContainer(),
+                accentColor = StatusColors.warningAccent,
+                accentContainerColor = StatusColors.warningContainer(),
             )
         }
 
@@ -512,12 +753,13 @@ private fun LsposedCard(
                     }
             ModuleCardShell(
                 name = moduleName,
+                badgeText = "L",
                 index = index,
                 count = count,
                 version = installedVersion,
                 subtitle = subtitle,
-                dotColor = StatusColors.successDot,
-                containerColor = StatusColors.successContainer(),
+                accentColor = StatusColors.successDot,
+                accentContainerColor = StatusColors.successContainer(),
             )
         }
     }
@@ -526,10 +768,11 @@ private fun LsposedCard(
 @Composable
 private fun ModuleCardShell(
     name: String,
+    badgeText: String,
     version: String?,
     subtitle: String,
-    dotColor: Color,
-    containerColor: Color,
+    accentColor: Color,
+    accentContainerColor: Color,
     index: Int,
     count: Int,
 ) {
@@ -537,24 +780,23 @@ private fun ModuleCardShell(
         index = index,
         count = count,
         modifier = Modifier.fillMaxWidth(),
-        color = containerColor,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         Row(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(16.dp).fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = dotColor,
-                modifier = Modifier.size(12.dp),
-            ) {}
-            Spacer(Modifier.width(12.dp))
+            ModuleBadge(text = badgeText, accentColor = accentColor, containerColor = accentContainerColor)
+            Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = name,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
                     if (version != null) {
                         Spacer(Modifier.width(8.dp))
@@ -562,16 +804,50 @@ private fun ModuleCardShell(
                             text = version,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 118.dp),
                         )
                     }
                 }
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            Spacer(Modifier.width(10.dp))
+            Box(
+                modifier =
+                    Modifier
+                        .size(9.dp)
+                        .clip(CircleShape)
+                        .background(accentColor),
+            )
         }
+    }
+}
+
+@Composable
+private fun ModuleBadge(
+    text: String,
+    accentColor: Color,
+    containerColor: Color,
+) {
+    Box(
+        modifier =
+            Modifier
+                .size(42.dp)
+                .clip(MaterialTheme.shapes.medium)
+                .background(containerColor),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = accentColor,
+        )
     }
 }
 
@@ -672,7 +948,7 @@ private fun NativeProtectionCard(
     index: Int = -1,
     count: Int = 1,
 ) {
-    val (containerColor, statusText, statusColor) =
+    val (statusContainerColor, statusText, statusColor) =
         when (result) {
             is NativeResult.Ok -> {
                 Triple(
@@ -703,10 +979,11 @@ private fun NativeProtectionCard(
             }
         }
     ProtectionCardShell(
+        badgeText = "N",
         label = stringResource(R.string.dashboard_native_protection),
         statusText = statusText,
         statusColor = statusColor,
-        containerColor = containerColor,
+        statusContainerColor = statusContainerColor,
         pulsing = result is NativeResult.Ok,
         index = index,
         count = count,
@@ -719,7 +996,7 @@ private fun JavaProtectionCard(
     index: Int = -1,
     count: Int = 1,
 ) {
-    val (containerColor, statusText, statusColor) =
+    val (statusContainerColor, statusText, statusColor) =
         when (result) {
             is JavaResult.Ok -> {
                 Triple(
@@ -746,10 +1023,11 @@ private fun JavaProtectionCard(
             }
         }
     ProtectionCardShell(
+        badgeText = "J",
         label = stringResource(R.string.dashboard_java_protection),
         statusText = statusText,
         statusColor = statusColor,
-        containerColor = containerColor,
+        statusContainerColor = statusContainerColor,
         pulsing = result is JavaResult.Ok,
         index = index,
         count = count,
@@ -758,10 +1036,11 @@ private fun JavaProtectionCard(
 
 @Composable
 private fun ProtectionCardShell(
+    badgeText: String,
     label: String,
     statusText: String,
     statusColor: Color,
-    containerColor: Color,
+    statusContainerColor: Color,
     pulsing: Boolean = false,
     index: Int = -1,
     count: Int = 1,
@@ -771,18 +1050,24 @@ private fun ProtectionCardShell(
         index = index,
         count = count,
         modifier = Modifier.fillMaxWidth(),
-        color = containerColor,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         Row(
             modifier = Modifier.padding(16.dp).fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            ModuleBadge(text = badgeText, accentColor = statusColor, containerColor = statusContainerColor)
+            Spacer(Modifier.width(14.dp))
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
+            Spacer(Modifier.width(10.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -797,11 +1082,10 @@ private fun ProtectionCardShell(
                                 .background(statusColor),
                     )
                 }
-                Text(
+                StatusPill(
                     text = statusText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = statusColor,
+                    contentColor = statusColor,
+                    containerColor = statusContainerColor,
                 )
             }
         }

@@ -31,6 +31,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -156,6 +157,72 @@ private data class RefreshContext(
     val onRefresh: () -> Unit,
 )
 
+@Composable
+private fun AppTopBarTitle(currentTab: Tab) {
+    val tabLabel =
+        when (currentTab) {
+            Tab.Dashboard -> stringResource(R.string.tab_dashboard)
+            Tab.Protection -> stringResource(R.string.tab_protection)
+            Tab.Diagnostics -> stringResource(R.string.tab_diagnostics)
+        }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            painter = painterResource(R.drawable.topbar_mark),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(46.dp),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Text(
+                text = stringResource(R.string.app_name),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = tabLabel,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TopBarActionButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    active: Boolean = false,
+    content: @Composable () -> Unit,
+) {
+    val containerColor =
+        if (active) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHigh
+        }
+    val contentColor =
+        if (active) {
+            MaterialTheme.colorScheme.onPrimaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        }
+    FilledTonalIconButton(
+        onClick = onClick,
+        modifier = modifier.size(44.dp),
+        enabled = enabled,
+        colors =
+            IconButtonDefaults.filledTonalIconButtonColors(
+                containerColor = containerColor,
+                contentColor = contentColor,
+                disabledContainerColor = containerColor.copy(alpha = 0.48f),
+                disabledContentColor = contentColor.copy(alpha = 0.55f),
+            ),
+        content = content,
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MainScreen(onReady: () -> Unit = {}) {
@@ -279,138 +346,130 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                     modifier = Modifier.fillMaxWidth(),
                 ) {}
             } else {
-                TopAppBar(
-                    title = { Text(stringResource(R.string.app_name)) },
+                LargeTopAppBar(
+                    title = { AppTopBarTitle(currentTab) },
                     colors =
                         TopAppBarDefaults.topAppBarColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                            scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                            titleContentColor = MaterialTheme.colorScheme.onSurface,
+                            actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                         ),
                     actions = {
-                        IconButton(
-                            onClick = {
-                                showSettings = true
-                                if (!settings.settingsHintSeen) {
-                                    scope.launch { settingsRepo.setSettingsHintSeen(true) }
-                                }
-                            },
-                            modifier =
-                                Modifier.pulse(
-                                    enabled = !settings.settingsHintSeen && settings.animationsEnabled,
-                                ),
+                        Row(
+                            modifier = Modifier.padding(end = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(
-                                Icons.Default.Settings,
-                                contentDescription = stringResource(R.string.action_settings),
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            )
-                        }
-                        // Refresh is contextual: Protection refreshes
-                        // the app list, Dashboard refreshes the dashboard
-                        // state + update check. Diagnostics has its own
-                        // run buttons per-check, no top-bar refresh.
-                        val refreshContext =
-                            when (currentTab) {
-                                Tab.Dashboard -> {
-                                    RefreshContext(
-                                        loading = dashboardLoading,
-                                        onRefresh = {
-                                            startupCoordinator.refreshDashboard(scope, refreshRestart)
-                                        },
-                                    )
-                                }
+                            // Refresh is contextual: Protection refreshes
+                            // the app list, Dashboard refreshes the dashboard
+                            // state + update check. Diagnostics has its own
+                            // run buttons per-check, no top-bar refresh. Keep
+                            // it immediately before Settings when present.
+                            val refreshContext =
+                                when (currentTab) {
+                                    Tab.Dashboard -> {
+                                        RefreshContext(
+                                            loading = dashboardLoading,
+                                            onRefresh = {
+                                                startupCoordinator.refreshDashboard(scope, refreshRestart)
+                                            },
+                                        )
+                                    }
 
-                                Tab.Protection -> {
-                                    RefreshContext(
-                                        loading = appListLoading || targetsLoading,
-                                        onRefresh = {
-                                            startupCoordinator.refreshProtection(scope)
-                                        },
-                                    )
-                                }
+                                    Tab.Protection -> {
+                                        RefreshContext(
+                                            loading = appListLoading || targetsLoading,
+                                            onRefresh = {
+                                                startupCoordinator.refreshProtection(scope)
+                                            },
+                                        )
+                                    }
 
-                                Tab.Diagnostics -> {
-                                    null
+                                    Tab.Diagnostics -> {
+                                        null
+                                    }
                                 }
-                            }
-                        refreshContext?.let { rc ->
-                            IconButton(
-                                onClick = rc.onRefresh,
-                                enabled = !rc.loading,
-                            ) {
-                                if (rc.loading) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(20.dp),
-                                        strokeWidth = 2.dp,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    )
-                                } else {
+                            if (currentTab == Tab.Protection) {
+                                TopBarActionButton(onClick = { searchActive = true }) {
                                     Icon(
-                                        Icons.Default.Refresh,
-                                        contentDescription = stringResource(R.string.action_refresh_apps),
-                                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        Icons.Default.Search,
+                                        contentDescription = null,
                                     )
                                 }
-                            }
-                        }
-                        if (currentTab == Tab.Protection) {
-                            IconButton(onClick = { searchActive = true }) {
-                                Icon(
-                                    Icons.Default.Search,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                )
-                            }
-                            Box {
-                                val anyFilterActive = showSystem || showRussianOnly
-                                // Active-filter indicator: the old `tint = primary`
-                                // did not contrast reliably against the topbar's
-                                // `primaryContainer` on Material You palettes where
-                                // primary and primaryContainer end up close in tone.
-                                // FilledIconButton paints itself with `primary` /
-                                // `onPrimary`, a pair M3 guarantees to contrast,
-                                // so the indicator reads on any dynamic theme.
-                                if (anyFilterActive) {
-                                    FilledIconButton(onClick = { showFilterMenu = true }) {
+                                Box {
+                                    val anyFilterActive = showSystem || showRussianOnly
+                                    TopBarActionButton(
+                                        onClick = { showFilterMenu = true },
+                                        active = anyFilterActive,
+                                    ) {
                                         Icon(
                                             Icons.Default.FilterList,
                                             contentDescription = null,
                                         )
                                     }
-                                } else {
-                                    IconButton(onClick = { showFilterMenu = true }) {
-                                        Icon(
-                                            Icons.Default.FilterList,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    DropdownMenu(
+                                        expanded = showFilterMenu,
+                                        onDismissRequest = { showFilterMenu = false },
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.filter_show_system)) },
+                                            onClick = { showSystem = !showSystem },
+                                            leadingIcon = {
+                                                Checkbox(
+                                                    checked = showSystem,
+                                                    onCheckedChange = null,
+                                                )
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.filter_russian_only)) },
+                                            onClick = { showRussianOnly = !showRussianOnly },
+                                            leadingIcon = {
+                                                Checkbox(
+                                                    checked = showRussianOnly,
+                                                    onCheckedChange = null,
+                                                )
+                                            },
                                         )
                                     }
                                 }
-                                DropdownMenu(
-                                    expanded = showFilterMenu,
-                                    onDismissRequest = { showFilterMenu = false },
+                            }
+                            refreshContext?.let { rc ->
+                                TopBarActionButton(
+                                    onClick = rc.onRefresh,
+                                    enabled = !rc.loading,
                                 ) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.filter_show_system)) },
-                                        onClick = { showSystem = !showSystem },
-                                        leadingIcon = {
-                                            Checkbox(
-                                                checked = showSystem,
-                                                onCheckedChange = null,
-                                            )
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.filter_russian_only)) },
-                                        onClick = { showRussianOnly = !showRussianOnly },
-                                        leadingIcon = {
-                                            Checkbox(
-                                                checked = showRussianOnly,
-                                                onCheckedChange = null,
-                                            )
-                                        },
-                                    )
+                                    if (rc.loading) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(20.dp),
+                                            strokeWidth = 2.dp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    } else {
+                                        Icon(
+                                            Icons.Default.Refresh,
+                                            contentDescription = stringResource(R.string.action_refresh_apps),
+                                        )
+                                    }
                                 }
+                            }
+                            TopBarActionButton(
+                                onClick = {
+                                    showSettings = true
+                                    if (!settings.settingsHintSeen) {
+                                        scope.launch { settingsRepo.setSettingsHintSeen(true) }
+                                    }
+                                },
+                                modifier =
+                                    Modifier.pulse(
+                                        enabled = !settings.settingsHintSeen && settings.animationsEnabled,
+                                    ),
+                            ) {
+                                Icon(
+                                    Icons.Default.Settings,
+                                    contentDescription = stringResource(R.string.action_settings),
+                                )
                             }
                         }
                     },
@@ -419,7 +478,10 @@ private fun MainScreen(onReady: () -> Unit = {}) {
         },
         bottomBar = {
             val tabHaptic = rememberHapticTick()
-            NavigationBar {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                tonalElevation = 0.dp,
+            ) {
                 NavigationBarItem(
                     selected = currentTab == Tab.Dashboard,
                     onClick = {

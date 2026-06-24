@@ -116,6 +116,8 @@
     <string name="dashboard_hero_unprotected_subtitle">Protection is not active</string>
     <string name="dashboard_hero_vpnoff_title">VPN is off</string>
     <string name="dashboard_hero_vpnoff_subtitle">Protection is inactive without a VPN</string>
+    <string name="dashboard_summary_modules">Modules</string>
+    <string name="dashboard_summary_issues">Issues</string>
     <string name="dashboard_native_protection">Native level</string>
     <string name="dashboard_java_protection">Java API level</string>
     <string name="dashboard_protection_ok">OK</string>

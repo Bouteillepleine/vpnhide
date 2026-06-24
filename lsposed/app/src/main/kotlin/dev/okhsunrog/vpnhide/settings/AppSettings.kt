@@ -47,7 +47,7 @@ data class AppSettings(
     val settingsHintSeen: Boolean = false,
 ) {
     companion object {
-        /** Brand seed — a calm teal, used as the non-dynamic fallback palette. */
-        const val DEFAULT_SEED: Long = 0xFF00696D
+        /** Brand seed — a crisp blue-teal, used as the non-dynamic fallback palette. */
+        const val DEFAULT_SEED: Long = 0xFF0B6F7B
     }
 }

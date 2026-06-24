@@ -50,29 +50,30 @@ internal object StatusColors {
         lightArgb: Long,
     ): Color = if (isSystemInDarkTheme()) Color(darkArgb).copy(alpha = darkAlpha) else Color(lightArgb)
 
-    @Composable fun successContainer() = container(0xFF1B5E20, 0.3f, 0xFFE8F5E9)
+    @Composable fun successContainer() = container(0xFF0A4A43, 0.34f, 0xFFE4F7F1)
 
-    @Composable fun warningContainer() = container(0xFFE65100, 0.2f, 0xFFFFF3E0)
+    @Composable fun warningContainer() = container(0xFF7A4B00, 0.3f, 0xFFFFF3D8)
 
-    @Composable fun errorContainer() = container(0xFFB71C1C, 0.3f, 0xFFFFEBEE)
+    @Composable fun errorContainer() = container(0xFF8C1D35, 0.34f, 0xFFFFE8ED)
 
-    @Composable fun infoContainer() = container(0xFF0D47A1, 0.28f, 0xFFE3F2FD)
+    @Composable fun infoContainer() = container(0xFF124A73, 0.34f, 0xFFE6F3FF)
 
     // Distinct from warning only in dark mode — the "install zygisk instead"
     // recommendation card uses a brown tint where warnings use orange.
-    @Composable fun zygiskRecommendContainer() = container(0xFF4E342E, 0.32f, 0xFFFFF3E0)
+    @Composable fun zygiskRecommendContainer() = container(0xFF4A3A2A, 0.34f, 0xFFFFF0DC)
 
-    @Composable fun errorHeader() = if (isSystemInDarkTheme()) Color(0xFFEF9A9A) else Color(0xFFC62828)
+    @Composable fun errorHeader() = if (isSystemInDarkTheme()) Color(0xFFFFB3C0) else Color(0xFFC9184A)
 
-    @Composable fun warningHeader() = if (isSystemInDarkTheme()) Color(0xFFFFB74D) else Color(0xFFE65100)
+    @Composable fun warningHeader() = if (isSystemInDarkTheme()) Color(0xFFFFC56D) else Color(0xFFC96A00)
 
     // Accent colors (status dots / status text / pass-fail badges). These are
     // fixed regardless of theme — they sit on the tinted containers above.
-    val successDot = Color(0xFF4CAF50)
-    val successBadge = Color(0xFF2E7D32)
-    val warningAccent = Color(0xFFFF9800)
-    val errorDot = Color(0xFFB71C1C)
-    val errorAccent = Color(0xFFC62828)
+    val successDot = Color(0xFF0BAE7A)
+    val successBadge = Color(0xFF087C61)
+    val warningAccent = Color(0xFFE58A00)
+    val errorDot = Color(0xFFD92D4B)
+    val errorAccent = Color(0xFFC9184A)
+    val infoAccent = Color(0xFF2E7CF6)
 }
 
 /**

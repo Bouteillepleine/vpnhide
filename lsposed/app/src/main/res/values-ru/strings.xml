@@ -85,6 +85,8 @@
     <string name="dashboard_hero_unprotected_subtitle">Защита не активна</string>
     <string name="dashboard_hero_vpnoff_title">VPN выключен</string>
     <string name="dashboard_hero_vpnoff_subtitle">Без VPN защита неактивна</string>
+    <string name="dashboard_summary_modules">Модули</string>
+    <string name="dashboard_summary_issues">Проблемы</string>
     <string name="dashboard_native_protection">Нативный уровень</string>
     <string name="dashboard_java_protection">Java API уровень</string>
     <string name="dashboard_protection_ok">ОК</string>
