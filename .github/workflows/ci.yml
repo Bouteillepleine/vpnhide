@@ -198,6 +198,45 @@ jobs:
           path: vpnhide-kmod-${{ matrix.kmi }}.zip
           if-no-files-found: error
 
+  # Runtime gate: boot a real GKI kernel for each KMI in QEMU and assert the
+  # module actually hides VPN state (per-vector A/B), not just that it compiled.
+  # Catches register/inlining bugs that source + build checks can't (e.g. the
+  # static-function rt_fill_info register issue). Runs in the per-KMI ddk-qemu
+  # image (built by qemu-image.yml) which bakes a bootable kernel + rootfs; the
+  # module is built here against the GKI kdir (loads on the baked kernel). QEMU
+  # runs under TCG (no KVM on hosted runners) — slow but fine. See kmod/test/.
+  kmod-qemu:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        kmi:
+          - android12-5.10
+          - android13-5.10
+          - android13-5.15
+          - android14-5.15
+          - android14-6.1
+          - android15-6.6
+          - android16-6.12
+    container:
+      image: ghcr.io/${{ github.repository }}/ddk-qemu:${{ matrix.kmi }}
+    env:
+      KMI: ${{ matrix.kmi }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Mark workspace safe
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build module + QEMU runtime test
+        # Build against the GKI kdir (same as the kmod job); run.sh boots the
+        # baked kernel (VPNHIDE_QEMU_IMAGE/ROOTFS come from the image ENV).
+        run: |
+          CLANG_BIN="$(ls -d /opt/ddk/clang/*/bin | head -1)"
+          make -C kmod KERNEL_SRC="/opt/ddk/kdir/$KMI" CLANG_DIR="$CLANG_BIN"
+          VPNHIDE_QEMU_KO="$PWD/kmod/vpnhide_kmod.ko" kmod/test/run.sh "$KMI"
+
   zygisk:
     needs: setup
     runs-on: ubuntu-latest
