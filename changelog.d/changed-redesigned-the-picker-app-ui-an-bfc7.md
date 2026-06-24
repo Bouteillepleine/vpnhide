@@ -2,8 +2,8 @@ _2026-06-24_
 
 ## English
 
-Redesigned the picker app UI: an at-a-glance protection status card, grouped cards with continuous corners that morph on press, expressive Material 3 motion, and a Card shadows / Animations toggle in Settings
+Redesigned the LSPosed picker app with a Material 3 Expressive UI: grouped cards across Dashboard, Protection, Diagnostics, and Settings, an at-a-glance protection summary, updated top app bar and app mark, haptic and animated navigation, and live theme controls for card shadows and animations.
 
 ## Русский
 
-Переработан интерфейс приложения: карточка общего статуса защиты, сгруппированные карточки со скруглениями, которые реагируют на нажатие, выразительная анимация Material 3 и переключатели «Тени карточек» / «Анимации» в настройках
+Переработан интерфейс LSPosed picker-а на Material 3 Expressive: сгруппированные карточки на экранах Обзор, Защита, Диагностика и Настройки, общий статус защиты, обновленная верхняя панель и знак приложения, тактильная и анимированная навигация, а также настройки темы для теней карточек и анимаций.
