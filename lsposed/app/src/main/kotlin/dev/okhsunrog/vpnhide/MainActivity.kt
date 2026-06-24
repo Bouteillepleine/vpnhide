@@ -2,6 +2,7 @@ package dev.okhsunrog.vpnhide
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -235,6 +236,7 @@ private fun MainScreen(onReady: () -> Unit = {}) {
 
     var showSettings by remember { mutableStateOf(false) }
     if (showSettings) {
+        BackHandler { showSettings = false }
         SettingsScreen(onBack = { showSettings = false })
         return
     }
