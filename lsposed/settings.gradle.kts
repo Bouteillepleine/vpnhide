@@ -4,8 +4,10 @@ pluginManagement {
         mavenCentral()
         gradlePluginPortal()
         // Gobley fork with AGP 9 support (not yet released upstream — see PR
-        // gobley/gobley#282 plus our onVariants-timing fix). Source:
-        // github.com/okhsunrog/gobley @ agp9-pr282.
+        // gobley/gobley#282 plus our onVariants-timing fix). Published here as
+        // dev.gobley.* 0.3.8-agp9.1.okhsunrog1. Source (public):
+        //   https://github.com/okhsunrog/gobley/tree/agp9-pr282
+        // Drop this repo + revert the gobley version once upstream ships 0.3.8.
         maven { url = uri("https://maven.okhsunrog.dev") }
     }
 }
