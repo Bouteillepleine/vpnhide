@@ -1,5 +1,5 @@
 [versions]
-agp = "9.1.0"
+agp = "9.2.1"
 kotlin = "2.4.0"
 compose-bom = "2026.06.00"
 # Pinned above the BOM (1.4.0): Material 3 Expressive theme APIs
@@ -7,9 +7,9 @@ compose-bom = "2026.06.00"
 # Requires AGP 9.1+ (satisfied via the local Gobley fork), mirrors ImageToolbox.
 material3 = "1.5.0-alpha22"
 activity-compose = "1.13.0"
-core-ktx = "1.18.0"
-datastore = "1.1.7"
-material-kolor = "2.1.1"
+core-ktx = "1.19.0"
+datastore = "1.2.1"
+material-kolor = "4.1.1"
 squircle-shape = "5.3.0"
 gobley = "0.3.8-agp9.1.okhsunrog1"
 detekt = "1.23.8"
