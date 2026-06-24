@@ -73,6 +73,7 @@
     <string name="dashboard_kmod_broken_no_kprobes">Установлен, ядро без kprobes</string>
     <string name="dashboard_kmod_broken_unknown_variant">Установлен, не загрузился</string>
     <string name="dashboard_kmod_broken_ambiguous">Установлен, не загрузился — попробуйте второй GKI-вариант</string>
+    <string name="dashboard_kmod_broken_signature_enforced">Установлен, ядро отклоняет неподписанные модули</string>
     <string name="dashboard_active_targets">Активен · целей: %d</string>
     <string name="dashboard_reboot_needed">Требуется перезагрузка устройства</string>
     <string name="dashboard_protection">Статус защиты</string>
@@ -129,6 +130,7 @@
     <string name="dashboard_issue_kmod_unknown_variant">Модуль ядра установлен, но не загружается, и в zip не указано, под какой GKI-вариант он собран. Переустановите %1$s из последнего релиза, чтобы убедиться, что он подходит вашему ядру.</string>
     <string name="dashboard_issue_kmod_ambiguous_try_alternative">Модуль ядра %1$s не загрузился при текущей загрузке. GKI-ветку вашего ядра не удаётся определить из uname -r — установите %2$s вместо него.</string>
     <string name="dashboard_issue_kmod_load_failed">Модуль ядра не загрузился. Ошибка insmod: %1$s. Чтобы приложить полный вывод insmod к багрепорту, нажмите Диагностика → Собрать отладочный лог.</string>
+    <string name="dashboard_issue_kmod_signature_enforced">Ваше ядро требует подписанные модули, поэтому неподписанный модуль ядра не загружается (insmod вернул EKEYREJECTED — \"Key was rejected by service\"). Magisk это не отключает. Перейдите на KernelSU Next в режиме GKI — он снимает проверку подписи, и kmod загрузится. На GKI-ядрах правильный инструмент — именно модуль ядра; не откатывайтесь на Zygisk: его хуки в процессе легко детектят банковские и антифрод-приложения.</string>
     <string name="dashboard_issue_kmod_not_supported_kernel">Для вашего ядра (%1$s) нет подходящего варианта vpnhide-kmod. Удалите модуль kmod и установите вместо него %2$s.</string>
     <string name="dashboard_issue_kprobes_missing">Ваше ядро собрано без CONFIG_KRETPROBES. Модуль ядра VPN Hide не может работать на таком ядре. Удалите kmod и используйте vpnhide-zygisk.zip.</string>
 

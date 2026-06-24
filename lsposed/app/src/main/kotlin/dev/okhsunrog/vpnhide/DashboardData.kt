@@ -31,6 +31,7 @@ enum class KmodBrokenReason {
     MissingKprobes,
     UnknownVariantInactive,
     AmbiguousLoadFailed,
+    SignatureEnforced,
 }
 
 /**
@@ -414,6 +415,14 @@ internal sealed interface KmodProblemKind {
         override val reason get() = KmodBrokenReason.MissingKprobes
     }
 
+    // The kernel enforces module signature verification and refused our
+    // unsigned .ko (insmod → EKEYREJECTED). No GKI variant will ever load on
+    // such a kernel, so the only fix is removing the enforcement — KernelSU
+    // Next (GKI mode) does that. See issue #132.
+    data object SignatureEnforced : KmodProblemKind {
+        override val reason get() = KmodBrokenReason.SignatureEnforced
+    }
+
     data class UnsupportedKernel(
         val unameR: String,
         val recommendedArtifact: String,
@@ -481,6 +490,14 @@ internal fun classifyKmodProblem(
     // Past this point every diagnosis means "installed but not loaded".
     if (kmod.active) return null
 
+    // Module-signature enforcement is the root cause regardless of GKI
+    // variant — an unsigned module never loads on such a kernel, so this
+    // takes priority over the variant/recommendation diagnoses below, which
+    // would otherwise mislead the user into reinstalling a different zip.
+    if (freshLoad && loadStatus.isModuleSignatureRejected()) {
+        return KmodProblemKind.SignatureEnforced
+    }
+
     val rec = recommendation
     // rec.recommendedArtifact is a non-null field, so a non-null rec always
     // yields a non-null artifact — the `!!` uses below are safe under the
@@ -523,6 +540,18 @@ internal fun classifyKmodProblem(
     return null
 }
 
+// EKEYREJECTED — the errno the kernel's module_sig_check() returns for an
+// unsigned module when signature enforcement is on ("Loading of unsigned
+// module is rejected"). insmod surfaces it both as its exit code and as the
+// strerror text, so match either to stay robust across insmod implementations.
+private const val EKEYREJECTED = 129
+
+internal fun KmodLoadStatus.isModuleSignatureRejected(): Boolean {
+    if (insmodExit == EKEYREJECTED) return true
+    val stderr = insmodStderr?.lowercase() ?: return false
+    return "key was rejected" in stderr || "required key not available" in stderr
+}
+
 private fun renderKmodProblem(
     kind: KmodProblemKind,
     res: android.content.res.Resources,
@@ -533,6 +562,10 @@ private fun renderKmodProblem(
             when (kind) {
                 KmodProblemKind.KprobesMissing -> {
                     res.getString(R.string.dashboard_issue_kprobes_missing)
+                }
+
+                KmodProblemKind.SignatureEnforced -> {
+                    res.getString(R.string.dashboard_issue_kmod_signature_enforced)
                 }
 
                 is KmodProblemKind.UnsupportedKernel -> {
