@@ -22,25 +22,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
-import dev.okhsunrog.vpnhide.settings.LocalSettingsState
 import dev.okhsunrog.vpnhide.ui.theme.AppMotion
 
-/**
+/*
  * Enhanced Material 3 controls: a light haptic tick on activation plus a spring
  * press-scale, for a tactile, expressive feel. Adapted from ImageToolbox's
- * `EnhancedButton` / `EnhancedSwitch` (Apache-2.0, © T8RIN).
+ * EnhancedButton / EnhancedSwitch (Apache-2.0, © T8RIN).
  */
-
-@Composable
-private fun rememberHapticTick(): () -> Unit {
-    val haptics = LocalHapticFeedback.current
-    val enabled = LocalSettingsState.current.hapticsEnabled
-    return remember(haptics, enabled) {
-        { if (enabled) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
-    }
-}
 
 @Composable
 fun EnhancedButton(

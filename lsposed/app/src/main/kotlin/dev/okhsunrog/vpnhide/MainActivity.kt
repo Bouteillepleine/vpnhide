@@ -32,6 +32,7 @@ import androidx.lifecycle.lifecycleScope
 import dev.okhsunrog.vpnhide.settings.AppSettings
 import dev.okhsunrog.vpnhide.settings.LocalSettingsState
 import dev.okhsunrog.vpnhide.settings.SettingsRepository
+import dev.okhsunrog.vpnhide.ui.components.rememberHapticTick
 import dev.okhsunrog.vpnhide.ui.theme.VpnHideTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -365,22 +366,32 @@ private fun MainScreen(onReady: () -> Unit = {}) {
             }
         },
         bottomBar = {
+            val tabHaptic = rememberHapticTick()
             NavigationBar {
                 NavigationBarItem(
                     selected = currentTab == Tab.Dashboard,
-                    onClick = { currentTab = Tab.Dashboard },
+                    onClick = {
+                        tabHaptic()
+                        currentTab = Tab.Dashboard
+                    },
                     icon = { Icon(Icons.Default.Home, contentDescription = null) },
                     label = { Text(stringResource(R.string.tab_dashboard)) },
                 )
                 NavigationBarItem(
                     selected = currentTab == Tab.Protection,
-                    onClick = { currentTab = Tab.Protection },
+                    onClick = {
+                        tabHaptic()
+                        currentTab = Tab.Protection
+                    },
                     icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
                     label = { Text(stringResource(R.string.tab_protection)) },
                 )
                 NavigationBarItem(
                     selected = currentTab == Tab.Diagnostics,
-                    onClick = { currentTab = Tab.Diagnostics },
+                    onClick = {
+                        tabHaptic()
+                        currentTab = Tab.Diagnostics
+                    },
                     icon = { Icon(Icons.Default.CheckCircle, contentDescription = null) },
                     label = { Text(stringResource(R.string.tab_diagnostics)) },
                 )

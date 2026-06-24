@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -58,11 +59,24 @@ fun Modifier.hapticsClickable(
     enabled: Boolean = true,
     onClick: () -> Unit,
 ): Modifier {
-    val haptics = LocalHapticFeedback.current
-    val hapticsEnabled = LocalSettingsState.current.hapticsEnabled
+    val tick = rememberHapticTick()
     return this.clickable(enabled = enabled) {
-        if (hapticsEnabled) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        tick()
         onClick()
+    }
+}
+
+/**
+ * A reusable haptic "tick" bound to the current settings + haptic feedback.
+ * Fires a light feedback when haptics are enabled; no-op otherwise. Call the
+ * returned lambda from any onClick (buttons, switches, nav items).
+ */
+@Composable
+fun rememberHapticTick(): () -> Unit {
+    val haptics = LocalHapticFeedback.current
+    val enabled = LocalSettingsState.current.hapticsEnabled
+    return remember(haptics, enabled) {
+        { if (enabled) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
     }
 }
 
