@@ -38,8 +38,17 @@ Vectors exercised (`init.sh`):
 emulation) — correct, just slow. The test kernel is *our* `kernel/common` build
 with `qemu.config` merged, not a byte-identical vendor GKI release, so it does
 not cover vendor patches. A device smoke-test is still the final word — but the
-gate is far tighter than "it compiled". With LTO left on (the gki_defconfig
-default), inlining and static-function calling conventions match real devices.
+gate is far tighter than "it compiled".
+
+LTO is left to each KMI's `gki_defconfig` (not pinned in `qemu.config`), which
+is the device-faithful setting and varies by generation: android12/13-5.10 +
+5.15 ship **full LTO + CFI** (5.10's CFI requires LTO), while android14-6.1+
+ship **LTO_NONE + CFI via KCFI** (confirmed against the shipped Pixel 8 Pro
+factory image). Forcing one mode breaks both fidelity and the build — e.g.
+forcing `LTO_NONE` on 5.10 also drops CFI (unmet dependency), yielding a kernel
+no device runs and on which a GKI-built module won't register its kretprobes.
+The full-LTO generations are heavier to build; `qemu-image.yml` frees disk and
+adds swap to fit them.
 
 ## Usage
 
@@ -60,9 +69,53 @@ Requirements: `docker` (for build-kernel.sh), `qemu-system-aarch64`, `cpio`,
 
 ## CI
 
-Building a virtio GKI kernel takes ~30 min, so it must not run per-PR. The plan
-(next change) is to **bake** the per-KMI bootable kernel + a ready rootfs into
-per-KMI images (`FROM ghcr.io/ylarod/ddk-min:<kmi>` + qemu + Image + rootfs),
-rebuilt rarely like `ci-image.yml`. The kmod CI matrix then, per KMI, builds the
-module and boots QEMU with the baked kernel — turning the build-only matrix into
-a real per-version runtime gate.
+Building a virtio GKI kernel takes ~30 min, so it must not run per-PR. Instead
+the bootable kernel + Alpine rootfs are **baked** into per-KMI images
+(`.github/docker/ddk-qemu/Dockerfile` = `FROM ddk-min:<kmi>` + qemu + Image +
+rootfs), built rarely by `.github/workflows/qemu-image.yml` (matrix over the 7
+KMIs; triggers on `qemu.config`/Dockerfile changes, monthly, or manually).
+
+The module is **not** baked — a `kdir`-built module (what the `kmod` job already
+produces for devices) loads on the baked virtio kernel (same source → same
+vermagic), so CI reuses that artifact and passes it in via `VPNHIDE_QEMU_KO`.
+`run.sh` reads `VPNHIDE_QEMU_IMAGE` / `VPNHIDE_QEMU_ROOTFS` / `VPNHIDE_QEMU_KO`
+to use the baked artifacts instead of the local cache.
+
+GitHub runners have no KVM, so QEMU runs under TCG — slow but fine (~1-3 min per
+job, matrix runs in parallel). `init.sh` apk-adds iproute2 over QEMU user-mode
+networking (the runner has internet); prebaking iproute2 into the rootfs is a
+possible later optimization if the Alpine CDN proves flaky.
+
+### Rollout (two steps — images must exist before the gate)
+
+1. Merge this (Dockerfile + workflow + harness), then run **qemu-image.yml**
+   once (it triggers on the Dockerfile/`qemu.config` paths, or dispatch it
+   manually) so `ghcr.io/<owner>/vpnhide/ddk-qemu:<kmi>` exist for all 7 KMIs.
+2. Add the gate job to `ci.yml` (so PRs don't reference images that don't exist
+   yet):
+
+   ```yaml
+   kmod-qemu:
+     needs: kmod
+     runs-on: ubuntu-latest
+     strategy:
+       fail-fast: false
+       matrix:
+         kmi: [android12-5.10, android13-5.10, android13-5.15,
+               android14-5.15, android14-6.1, android15-6.6, android16-6.12]
+     container:
+       image: ghcr.io/${{ github.repository }}/ddk-qemu:${{ matrix.kmi }}
+     steps:
+       - uses: actions/checkout@v7
+       - uses: actions/download-artifact@v7
+         with:
+           name: vpnhide-kmod-${{ matrix.kmi }}
+       - name: Extract module
+         run: unzip -p vpnhide-kmod-${{ matrix.kmi }}.zip vpnhide_kmod.ko > /tmp/vpnhide_kmod.ko
+       - name: QEMU runtime test
+         env:
+           VPNHIDE_QEMU_KO: /tmp/vpnhide_kmod.ko
+         run: kmod/test/run.sh ${{ matrix.kmi }}
+   ```
+
+   (`VPNHIDE_QEMU_IMAGE`/`VPNHIDE_QEMU_ROOTFS` come from the image's `ENV`.)
