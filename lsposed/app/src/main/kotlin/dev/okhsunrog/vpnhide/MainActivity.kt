@@ -2,10 +2,19 @@ package dev.okhsunrog.vpnhide
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -16,11 +25,13 @@ import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -30,6 +41,17 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import dev.okhsunrog.vpnhide.settings.AppSettings
+import dev.okhsunrog.vpnhide.settings.LocalSettingsInteractor
+import dev.okhsunrog.vpnhide.settings.LocalSettingsState
+import dev.okhsunrog.vpnhide.settings.RepositorySettingsInteractor
+import dev.okhsunrog.vpnhide.settings.SettingsRepository
+import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
+import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
+import dev.okhsunrog.vpnhide.ui.components.pulse
+import dev.okhsunrog.vpnhide.ui.components.rememberHapticTick
+import dev.okhsunrog.vpnhide.ui.theme.AppEasing
+import dev.okhsunrog.vpnhide.ui.theme.VpnHideTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -85,39 +107,44 @@ fun VpnHideApp(
     onDashboardReady: () -> Unit = {},
     onRootDeniedReady: () -> Unit = {},
 ) {
-    val darkTheme = isSystemInDarkTheme()
     val context = LocalContext.current
-    val colorScheme =
-        if (android.os.Build.VERSION.SDK_INT >= 31) {
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        } else {
-            if (darkTheme) darkColorScheme() else lightColorScheme()
+    val settingsRepository = remember(context) { SettingsRepository(context.applicationContext) }
+    val settings by settingsRepository.settings.collectAsState(initial = AppSettings())
+    val settingsScope = rememberCoroutineScope()
+    val settingsInteractor =
+        remember(settingsRepository, settingsScope) {
+            RepositorySettingsInteractor(settingsRepository, settingsScope)
         }
 
-    MaterialTheme(colorScheme = colorScheme) {
-        var rootState by remember { mutableStateOf<RootState?>(null) }
+    CompositionLocalProvider(
+        LocalSettingsState provides settings,
+        LocalSettingsInteractor provides settingsInteractor,
+    ) {
+        VpnHideTheme {
+            var rootState by remember { mutableStateOf<RootState?>(null) }
 
-        LaunchedEffect(Unit) {
-            rootState =
-                withContext(Dispatchers.IO) {
-                    if (checkRootAccess()) RootState.Granted else RootState.Denied
+            LaunchedEffect(Unit) {
+                rootState =
+                    withContext(Dispatchers.IO) {
+                        if (checkRootAccess()) RootState.Granted else RootState.Denied
+                    }
+                StartupTrace.mark("root_check_done")
+            }
+
+            when (rootState) {
+                // splash holds until root check completes
+                null -> {
                 }
-            StartupTrace.mark("root_check_done")
-        }
 
-        when (rootState) {
-            // splash holds until root check completes
-            null -> {
-            }
+                RootState.Denied -> {
+                    // Drop splash — RootDeniedScreen has no async prerequisites.
+                    LaunchedEffect(Unit) { onRootDeniedReady() }
+                    RootDeniedScreen()
+                }
 
-            RootState.Denied -> {
-                // Drop splash — RootDeniedScreen has no async prerequisites.
-                LaunchedEffect(Unit) { onRootDeniedReady() }
-                RootDeniedScreen()
-            }
-
-            RootState.Granted -> {
-                MainScreen(onReady = onDashboardReady)
+                RootState.Granted -> {
+                    MainScreen(onReady = onDashboardReady)
+                }
             }
         }
     }
@@ -130,6 +157,72 @@ private data class RefreshContext(
     val onRefresh: () -> Unit,
 )
 
+@Composable
+private fun AppTopBarTitle(currentTab: Tab) {
+    val tabLabel =
+        when (currentTab) {
+            Tab.Dashboard -> stringResource(R.string.tab_dashboard)
+            Tab.Protection -> stringResource(R.string.tab_protection)
+            Tab.Diagnostics -> stringResource(R.string.tab_diagnostics)
+        }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            painter = painterResource(R.drawable.topbar_mark),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(46.dp),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Text(
+                text = stringResource(R.string.app_name),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = tabLabel,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TopBarActionButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    active: Boolean = false,
+    content: @Composable () -> Unit,
+) {
+    val containerColor =
+        if (active) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHigh
+        }
+    val contentColor =
+        if (active) {
+            MaterialTheme.colorScheme.onPrimaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        }
+    FilledTonalIconButton(
+        onClick = onClick,
+        modifier = modifier.size(44.dp),
+        enabled = enabled,
+        colors =
+            IconButtonDefaults.filledTonalIconButtonColors(
+                containerColor = containerColor,
+                contentColor = contentColor,
+                disabledContainerColor = containerColor.copy(alpha = 0.48f),
+                disabledContentColor = contentColor.copy(alpha = 0.55f),
+            ),
+        content = content,
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MainScreen(onReady: () -> Unit = {}) {
@@ -137,6 +230,8 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val appContext = context.applicationContext
     val startupCoordinator = remember(appContext) { StartupCoordinator(appContext) }
+    val settings = LocalSettingsState.current
+    val settingsInteractor = LocalSettingsInteractor.current
     var currentTab by remember { mutableStateOf(Tab.Dashboard) }
     var searchQuery by remember { mutableStateOf("") }
     var searchActive by remember { mutableStateOf(false) }
@@ -216,6 +311,13 @@ private fun MainScreen(onReady: () -> Unit = {}) {
         }
     }
 
+    var showSettings by remember { mutableStateOf(false) }
+    if (showSettings) {
+        BackHandler { showSettings = false }
+        SettingsScreen(onBack = { showSettings = false })
+        return
+    }
+
     Scaffold(
         topBar = {
             if (searchActive && currentTab == Tab.Protection) {
@@ -244,120 +346,130 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                     modifier = Modifier.fillMaxWidth(),
                 ) {}
             } else {
-                TopAppBar(
-                    title = { Text(stringResource(R.string.app_name)) },
+                LargeTopAppBar(
+                    title = { AppTopBarTitle(currentTab) },
                     colors =
                         TopAppBarDefaults.topAppBarColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                            scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                            titleContentColor = MaterialTheme.colorScheme.onSurface,
+                            actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                         ),
                     actions = {
-                        // Refresh is contextual: Protection refreshes
-                        // the app list, Dashboard refreshes the dashboard
-                        // state + update check. Diagnostics has its own
-                        // run buttons per-check, no top-bar refresh.
-                        val refreshContext =
-                            when (currentTab) {
-                                Tab.Dashboard -> {
-                                    RefreshContext(
-                                        loading = dashboardLoading,
-                                        onRefresh = {
-                                            startupCoordinator.refreshDashboard(scope, refreshRestart)
-                                        },
-                                    )
-                                }
+                        Row(
+                            modifier = Modifier.padding(end = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            // Refresh is contextual: Protection refreshes
+                            // the app list, Dashboard refreshes the dashboard
+                            // state + update check. Diagnostics has its own
+                            // run buttons per-check, no top-bar refresh. Keep
+                            // it immediately before Settings when present.
+                            val refreshContext =
+                                when (currentTab) {
+                                    Tab.Dashboard -> {
+                                        RefreshContext(
+                                            loading = dashboardLoading,
+                                            onRefresh = {
+                                                startupCoordinator.refreshDashboard(scope, refreshRestart)
+                                            },
+                                        )
+                                    }
 
-                                Tab.Protection -> {
-                                    RefreshContext(
-                                        loading = appListLoading || targetsLoading,
-                                        onRefresh = {
-                                            startupCoordinator.refreshProtection(scope)
-                                        },
-                                    )
-                                }
+                                    Tab.Protection -> {
+                                        RefreshContext(
+                                            loading = appListLoading || targetsLoading,
+                                            onRefresh = {
+                                                startupCoordinator.refreshProtection(scope)
+                                            },
+                                        )
+                                    }
 
-                                Tab.Diagnostics -> {
-                                    null
+                                    Tab.Diagnostics -> {
+                                        null
+                                    }
                                 }
-                            }
-                        refreshContext?.let { rc ->
-                            IconButton(
-                                onClick = rc.onRefresh,
-                                enabled = !rc.loading,
-                            ) {
-                                if (rc.loading) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(20.dp),
-                                        strokeWidth = 2.dp,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    )
-                                } else {
+                            if (currentTab == Tab.Protection) {
+                                TopBarActionButton(onClick = { searchActive = true }) {
                                     Icon(
-                                        Icons.Default.Refresh,
-                                        contentDescription = stringResource(R.string.action_refresh_apps),
-                                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        Icons.Default.Search,
+                                        contentDescription = null,
                                     )
                                 }
-                            }
-                        }
-                        if (currentTab == Tab.Protection) {
-                            IconButton(onClick = { searchActive = true }) {
-                                Icon(
-                                    Icons.Default.Search,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                )
-                            }
-                            Box {
-                                val anyFilterActive = showSystem || showRussianOnly
-                                // Active-filter indicator: the old `tint = primary`
-                                // did not contrast reliably against the topbar's
-                                // `primaryContainer` on Material You palettes where
-                                // primary and primaryContainer end up close in tone.
-                                // FilledIconButton paints itself with `primary` /
-                                // `onPrimary`, a pair M3 guarantees to contrast,
-                                // so the indicator reads on any dynamic theme.
-                                if (anyFilterActive) {
-                                    FilledIconButton(onClick = { showFilterMenu = true }) {
+                                Box {
+                                    val anyFilterActive = showSystem || showRussianOnly
+                                    TopBarActionButton(
+                                        onClick = { showFilterMenu = true },
+                                        active = anyFilterActive,
+                                    ) {
                                         Icon(
                                             Icons.Default.FilterList,
                                             contentDescription = null,
                                         )
                                     }
-                                } else {
-                                    IconButton(onClick = { showFilterMenu = true }) {
-                                        Icon(
-                                            Icons.Default.FilterList,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    DropdownMenu(
+                                        expanded = showFilterMenu,
+                                        onDismissRequest = { showFilterMenu = false },
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.filter_show_system)) },
+                                            onClick = { showSystem = !showSystem },
+                                            leadingIcon = {
+                                                Checkbox(
+                                                    checked = showSystem,
+                                                    onCheckedChange = null,
+                                                )
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.filter_russian_only)) },
+                                            onClick = { showRussianOnly = !showRussianOnly },
+                                            leadingIcon = {
+                                                Checkbox(
+                                                    checked = showRussianOnly,
+                                                    onCheckedChange = null,
+                                                )
+                                            },
                                         )
                                     }
                                 }
-                                DropdownMenu(
-                                    expanded = showFilterMenu,
-                                    onDismissRequest = { showFilterMenu = false },
+                            }
+                            refreshContext?.let { rc ->
+                                TopBarActionButton(
+                                    onClick = rc.onRefresh,
+                                    enabled = !rc.loading,
                                 ) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.filter_show_system)) },
-                                        onClick = { showSystem = !showSystem },
-                                        leadingIcon = {
-                                            Checkbox(
-                                                checked = showSystem,
-                                                onCheckedChange = null,
-                                            )
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.filter_russian_only)) },
-                                        onClick = { showRussianOnly = !showRussianOnly },
-                                        leadingIcon = {
-                                            Checkbox(
-                                                checked = showRussianOnly,
-                                                onCheckedChange = null,
-                                            )
-                                        },
-                                    )
+                                    if (rc.loading) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(20.dp),
+                                            strokeWidth = 2.dp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    } else {
+                                        Icon(
+                                            Icons.Default.Refresh,
+                                            contentDescription = stringResource(R.string.action_refresh_apps),
+                                        )
+                                    }
                                 }
+                            }
+                            TopBarActionButton(
+                                onClick = {
+                                    showSettings = true
+                                    if (!settings.settingsHintSeen) {
+                                        scope.launch { settingsInteractor.setSettingsHintSeen(true) }
+                                    }
+                                },
+                                modifier =
+                                    Modifier.pulse(
+                                        enabled = !settings.settingsHintSeen && settings.animationsEnabled,
+                                    ),
+                            ) {
+                                Icon(
+                                    Icons.Default.Settings,
+                                    contentDescription = stringResource(R.string.action_settings),
+                                )
                             }
                         }
                     },
@@ -365,22 +477,35 @@ private fun MainScreen(onReady: () -> Unit = {}) {
             }
         },
         bottomBar = {
-            NavigationBar {
+            val tabHaptic = rememberHapticTick()
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                tonalElevation = 0.dp,
+            ) {
                 NavigationBarItem(
                     selected = currentTab == Tab.Dashboard,
-                    onClick = { currentTab = Tab.Dashboard },
+                    onClick = {
+                        tabHaptic()
+                        currentTab = Tab.Dashboard
+                    },
                     icon = { Icon(Icons.Default.Home, contentDescription = null) },
                     label = { Text(stringResource(R.string.tab_dashboard)) },
                 )
                 NavigationBarItem(
                     selected = currentTab == Tab.Protection,
-                    onClick = { currentTab = Tab.Protection },
+                    onClick = {
+                        tabHaptic()
+                        currentTab = Tab.Protection
+                    },
                     icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
                     label = { Text(stringResource(R.string.tab_protection)) },
                 )
                 NavigationBarItem(
                     selected = currentTab == Tab.Diagnostics,
-                    onClick = { currentTab = Tab.Diagnostics },
+                    onClick = {
+                        tabHaptic()
+                        currentTab = Tab.Diagnostics
+                    },
                     icon = { Icon(Icons.Default.CheckCircle, contentDescription = null) },
                     label = { Text(stringResource(R.string.tab_diagnostics)) },
                 )
@@ -402,28 +527,51 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                 CircularProgressIndicator()
             }
         } else {
-            when (currentTab) {
-                Tab.Dashboard -> {
-                    DashboardScreen(
-                        selfNeedsRestart = restart,
-                        modifier = Modifier.padding(innerPadding),
-                    )
-                }
+            AnimatedContent(
+                targetState = currentTab,
+                transitionSpec = {
+                    if (settings.animationsEnabled) {
+                        // ImageToolbox's pervasive AnimatedContent transition: a
+                        // fade-through with a slight scale, in place (no slide).
+                        // The old tab's rows dissolve and shrink while the new
+                        // tab's rows fade and grow into the same positions, so
+                        // one set of rows reads as morphing into the other.
+                        (
+                            fadeIn(tween(300, easing = AppEasing.Alpha)) +
+                                scaleIn(tween(400, easing = AppEasing.Scale), initialScale = 0.92f)
+                        ) togetherWith (
+                            fadeOut(tween(300, easing = AppEasing.Alpha)) +
+                                scaleOut(tween(400, easing = AppEasing.Scale), targetScale = 0.92f)
+                        )
+                    } else {
+                        EnterTransition.None togetherWith ExitTransition.None
+                    }
+                },
+                label = "tabContent",
+            ) { tab ->
+                when (tab) {
+                    Tab.Dashboard -> {
+                        DashboardScreen(
+                            selfNeedsRestart = restart,
+                            modifier = Modifier.padding(innerPadding),
+                        )
+                    }
 
-                Tab.Protection -> {
-                    ProtectionScreen(
-                        searchQuery = searchQuery,
-                        showSystem = showSystem,
-                        showRussianOnly = showRussianOnly,
-                        modifier = Modifier.padding(innerPadding),
-                    )
-                }
+                    Tab.Protection -> {
+                        ProtectionScreen(
+                            searchQuery = searchQuery,
+                            showSystem = showSystem,
+                            showRussianOnly = showRussianOnly,
+                            modifier = Modifier.padding(innerPadding),
+                        )
+                    }
 
-                Tab.Diagnostics -> {
-                    DiagnosticsScreen(
-                        selfNeedsRestart = restart,
-                        modifier = Modifier.padding(innerPadding),
-                    )
+                    Tab.Diagnostics -> {
+                        DiagnosticsScreen(
+                            selfNeedsRestart = restart,
+                            modifier = Modifier.padding(innerPadding),
+                        )
+                    }
                 }
             }
         }
@@ -442,12 +590,9 @@ private fun RootPreparationErrorScreen(
                 .padding(24.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Card(
-            colors =
-                CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                ),
+        EnhancedCard(
+            color = MaterialTheme.colorScheme.errorContainer,
+            contentColor = MaterialTheme.colorScheme.onErrorContainer,
         ) {
             Column(
                 modifier = Modifier.padding(24.dp),
@@ -466,7 +611,7 @@ private fun RootPreparationErrorScreen(
                     textAlign = TextAlign.Center,
                 )
                 Spacer(Modifier.height(16.dp))
-                Button(onClick = onRetry) {
+                EnhancedButton(onClick = onRetry) {
                     Text(stringResource(R.string.vpn_off_retry))
                 }
             }
@@ -497,11 +642,8 @@ private fun RootDeniedScreen() {
                     .padding(32.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Card(
-                colors =
-                    CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                    ),
+            EnhancedCard(
+                color = MaterialTheme.colorScheme.errorContainer,
             ) {
                 Column(
                     modifier = Modifier.padding(24.dp),

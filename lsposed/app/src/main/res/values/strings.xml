@@ -108,6 +108,16 @@
     <string name="dashboard_active_targets">Active · %d target(s)</string>
     <string name="dashboard_reboot_needed">Device reboot needed</string>
     <string name="dashboard_protection">Protection status</string>
+    <string name="dashboard_hero_protected_title">Protected</string>
+    <string name="dashboard_hero_protected_subtitle">All protections are active</string>
+    <string name="dashboard_hero_attention_title">Needs attention</string>
+    <string name="dashboard_hero_attention_subtitle">Some checks need a look</string>
+    <string name="dashboard_hero_unprotected_title">Not protected</string>
+    <string name="dashboard_hero_unprotected_subtitle">Protection is not active</string>
+    <string name="dashboard_hero_vpnoff_title">VPN is off</string>
+    <string name="dashboard_hero_vpnoff_subtitle">Protection is inactive without a VPN</string>
+    <string name="dashboard_summary_modules">Modules</string>
+    <string name="dashboard_summary_issues">Issues</string>
     <string name="dashboard_native_protection">Native level</string>
     <string name="dashboard_java_protection">Java API level</string>
     <string name="dashboard_protection_ok">OK</string>
@@ -210,4 +220,27 @@
     <string name="check_link_properties" translatable="false">LinkProperties ifname</string>
     <string name="check_link_properties_routes" translatable="false">LinkProperties routes</string>
     <string name="check_proxy_host" translatable="false">System proxy properties</string>
+
+    <!-- Settings screen -->
+    <string name="settings_title">Settings</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_back">Back</string>
+    <string name="settings_appearance">Appearance</string>
+    <string name="settings_interaction">Interaction</string>
+    <string name="settings_theme_mode">Theme</string>
+    <string name="theme_mode_system">System</string>
+    <string name="theme_mode_light">Light</string>
+    <string name="theme_mode_dark">Dark</string>
+    <string name="settings_dynamic_color">Material You colors</string>
+    <string name="settings_dynamic_color_sub">Use a palette derived from the wallpaper</string>
+    <string name="settings_amoled">AMOLED black</string>
+    <string name="settings_amoled_sub">Pure black surfaces in dark theme</string>
+    <string name="settings_squircle">Squircle corners</string>
+    <string name="settings_squircle_sub">iOS-style continuous corners</string>
+    <string name="settings_shadows">Card shadows</string>
+    <string name="settings_shadows_sub">Soft elevation under cards</string>
+    <string name="settings_haptics">Haptic feedback</string>
+    <string name="settings_haptics_sub">Vibrate on taps and toggles</string>
+    <string name="settings_animations">Animations</string>
+    <string name="settings_animations_sub">Springy transitions and shape morphing</string>
 </resources>

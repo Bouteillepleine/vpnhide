@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
 
 internal data class PortsEntry(
     override val packageName: String,
@@ -117,8 +118,8 @@ private fun NotInstalledCard(modifier: Modifier = Modifier) {
         modifier = modifier.fillMaxSize().padding(24.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        EnhancedCard(
+            color = MaterialTheme.colorScheme.surfaceVariant,
         ) {
             Column(
                 modifier = Modifier.padding(20.dp),

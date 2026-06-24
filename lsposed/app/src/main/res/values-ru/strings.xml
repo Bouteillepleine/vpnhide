@@ -77,6 +77,16 @@
     <string name="dashboard_active_targets">Активен · целей: %d</string>
     <string name="dashboard_reboot_needed">Требуется перезагрузка устройства</string>
     <string name="dashboard_protection">Статус защиты</string>
+    <string name="dashboard_hero_protected_title">Защищено</string>
+    <string name="dashboard_hero_protected_subtitle">Все защиты активны</string>
+    <string name="dashboard_hero_attention_title">Требует внимания</string>
+    <string name="dashboard_hero_attention_subtitle">Часть проверок требует внимания</string>
+    <string name="dashboard_hero_unprotected_title">Не защищено</string>
+    <string name="dashboard_hero_unprotected_subtitle">Защита не активна</string>
+    <string name="dashboard_hero_vpnoff_title">VPN выключен</string>
+    <string name="dashboard_hero_vpnoff_subtitle">Без VPN защита неактивна</string>
+    <string name="dashboard_summary_modules">Модули</string>
+    <string name="dashboard_summary_issues">Проблемы</string>
     <string name="dashboard_native_protection">Нативный уровень</string>
     <string name="dashboard_java_protection">Java API уровень</string>
     <string name="dashboard_protection_ok">ОК</string>
@@ -171,4 +181,27 @@
     <string name="banner_network_blocked">Доступ к сети отключён для этого приложения. Проверки ioctl (SIOCGIFFLAGS, SIOCGIFMTU, SIOCGIFCONF) не могут быть выполнены. Включите в Настройки → Приложения → VPN Hide → Мобильный интернет и Wi-Fi.</string>
     <string name="section_native">Нативный уровень (kmod / zygisk)</string>
     <string name="section_java">Java API уровень (LSPosed)</string>
+
+    <!-- Экран настроек -->
+    <string name="settings_title">Настройки</string>
+    <string name="action_settings">Настройки</string>
+    <string name="action_back">Назад</string>
+    <string name="settings_appearance">Внешний вид</string>
+    <string name="settings_interaction">Взаимодействие</string>
+    <string name="settings_theme_mode">Тема</string>
+    <string name="theme_mode_system">Системная</string>
+    <string name="theme_mode_light">Светлая</string>
+    <string name="theme_mode_dark">Тёмная</string>
+    <string name="settings_dynamic_color">Цвета Material You</string>
+    <string name="settings_dynamic_color_sub">Палитра на основе обоев</string>
+    <string name="settings_amoled">AMOLED-чёрный</string>
+    <string name="settings_amoled_sub">Чистый чёрный фон в тёмной теме</string>
+    <string name="settings_squircle">Squircle-углы</string>
+    <string name="settings_squircle_sub">Плавные углы в стиле iOS</string>
+    <string name="settings_shadows">Тени карточек</string>
+    <string name="settings_shadows_sub">Мягкая тень под карточками</string>
+    <string name="settings_haptics">Тактильный отклик</string>
+    <string name="settings_haptics_sub">Вибрация при нажатиях и переключениях</string>
+    <string name="settings_animations">Анимации</string>
+    <string name="settings_animations_sub">Пружинные переходы и морфинг форм</string>
 </resources>

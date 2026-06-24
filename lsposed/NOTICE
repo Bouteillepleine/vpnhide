@@ -1,0 +1,14 @@
+vpnhide — lsposed module
+
+This product includes UI components and motion/shape design adapted from
+ImageToolbox (https://github.com/T8RIN/ImageToolbox),
+Copyright (c) 2024-2026 T8RIN (Malik Mukhametzyanov), licensed under the
+Apache License, Version 2.0.
+
+Specifically, the following are derived from ImageToolbox's `core/ui` module:
+- the expressive MotionScheme / easing values (ui/theme/Motion.kt)
+- the container / enhanced-widget / preference-row design system
+  (ui/components/*)
+
+A copy of the Apache License 2.0 is available at the repository root (LICENSE)
+and at http://www.apache.org/licenses/LICENSE-2.0.

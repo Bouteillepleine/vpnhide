@@ -4,7 +4,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    // kotlin-android removed: AGP 9+ has built-in Kotlin support.
     alias(libs.plugins.kotlin.atomicfu)
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.gobley.cargo)
@@ -60,7 +60,13 @@ uniffi {
 
 android {
     namespace = "dev.okhsunrog.vpnhide"
-    compileSdk = 36
+    // 37 required transitively by material3 1.5.0-alpha22 (compose 1.12.0-alpha).
+    compileSdk = 37
+
+    // Pin the latest stable NDK (r28.2); r28.0 and r29 are still beta. Without
+    // this AGP falls back to its bundled default, which lags behind. The Rust
+    // cdylibs (zygisk/lsposed native) cross-compile against it via cargo-ndk.
+    ndkVersion = "28.2.13676358"
 
     // Effective build version from ../scripts/build-version.py:
     //   release tag    -> "0.6.2"
@@ -86,7 +92,7 @@ android {
     defaultConfig {
         applicationId = "dev.okhsunrog.vpnhide"
         minSdk = 29
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 701
         versionName = buildVersion
 
@@ -173,6 +179,13 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
     implementation("androidx.compose.material:material-icons-extended")
+    // Reactive theme/settings store (replaces ad-hoc SharedPreferences for UI prefs).
+    implementation(libs.datastore.preferences)
+    // Material You color-scheme generation + harmonization (seed -> full M3 scheme,
+    // AMOLED, contrast, palette styles). Powers VpnHideTheme.
+    implementation(libs.material.kolor)
+    // iOS-style continuous ("squircle") corners for CornerStyle.Smooth.
+    implementation(libs.squircle.shape)
     implementation("io.github.oikvpqya.compose.fastscroller:fastscroller-material3:0.3.2")
     implementation("io.github.oikvpqya.compose.fastscroller:fastscroller-indicator:0.3.2")
     implementation(libs.compose.ui.tooling.preview)

@@ -4,7 +4,9 @@ import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -26,6 +28,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
+import dev.okhsunrog.vpnhide.ui.components.EnhancedOutlinedButton
+import dev.okhsunrog.vpnhide.ui.components.container
 import java.io.File
 
 /**
@@ -45,29 +50,30 @@ internal object StatusColors {
         lightArgb: Long,
     ): Color = if (isSystemInDarkTheme()) Color(darkArgb).copy(alpha = darkAlpha) else Color(lightArgb)
 
-    @Composable fun successContainer() = container(0xFF1B5E20, 0.3f, 0xFFE8F5E9)
+    @Composable fun successContainer() = container(0xFF0A4A43, 0.34f, 0xFFE4F7F1)
 
-    @Composable fun warningContainer() = container(0xFFE65100, 0.2f, 0xFFFFF3E0)
+    @Composable fun warningContainer() = container(0xFF7A4B00, 0.3f, 0xFFFFF3D8)
 
-    @Composable fun errorContainer() = container(0xFFB71C1C, 0.3f, 0xFFFFEBEE)
+    @Composable fun errorContainer() = container(0xFF8C1D35, 0.34f, 0xFFFFE8ED)
 
-    @Composable fun infoContainer() = container(0xFF0D47A1, 0.28f, 0xFFE3F2FD)
+    @Composable fun infoContainer() = container(0xFF124A73, 0.34f, 0xFFE6F3FF)
 
     // Distinct from warning only in dark mode — the "install zygisk instead"
     // recommendation card uses a brown tint where warnings use orange.
-    @Composable fun zygiskRecommendContainer() = container(0xFF4E342E, 0.32f, 0xFFFFF3E0)
+    @Composable fun zygiskRecommendContainer() = container(0xFF4A3A2A, 0.34f, 0xFFFFF0DC)
 
-    @Composable fun errorHeader() = if (isSystemInDarkTheme()) Color(0xFFEF9A9A) else Color(0xFFC62828)
+    @Composable fun errorHeader() = if (isSystemInDarkTheme()) Color(0xFFFFB3C0) else Color(0xFFC9184A)
 
-    @Composable fun warningHeader() = if (isSystemInDarkTheme()) Color(0xFFFFB74D) else Color(0xFFE65100)
+    @Composable fun warningHeader() = if (isSystemInDarkTheme()) Color(0xFFFFC56D) else Color(0xFFC96A00)
 
     // Accent colors (status dots / status text / pass-fail badges). These are
     // fixed regardless of theme — they sit on the tinted containers above.
-    val successDot = Color(0xFF4CAF50)
-    val successBadge = Color(0xFF2E7D32)
-    val warningAccent = Color(0xFFFF9800)
-    val errorDot = Color(0xFFB71C1C)
-    val errorAccent = Color(0xFFC62828)
+    val successDot = Color(0xFF0BAE7A)
+    val successBadge = Color(0xFF087C61)
+    val warningAccent = Color(0xFFE58A00)
+    val errorDot = Color(0xFFD92D4B)
+    val errorAccent = Color(0xFFC9184A)
+    val infoAccent = Color(0xFF2E7CF6)
 }
 
 /**
@@ -82,10 +88,16 @@ internal fun StatusBanner(
     contentColor: Color,
     modifier: Modifier = Modifier,
 ) {
-    Card(
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = containerColor),
-        modifier = modifier.fillMaxWidth(),
+    Box(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .container(
+                    shape = MaterialTheme.shapes.medium,
+                    color = containerColor,
+                    drawBorder = false,
+                    shadowElevation = 0.dp,
+                ),
     ) {
         Text(
             text = text,
@@ -134,20 +146,20 @@ internal fun FileSaveShareRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        OutlinedButton(onClick = onSave, modifier = Modifier.weight(1f)) {
+        EnhancedOutlinedButton(onClick = onSave, modifier = Modifier.weight(1f)) {
             Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text(saveLabel)
         }
-        val shareContent: @Composable () -> Unit = {
+        val shareContent: @Composable RowScope.() -> Unit = {
             Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text(shareLabel)
         }
         if (sharePrimary) {
-            Button(onClick = onShare, modifier = Modifier.weight(1f)) { shareContent() }
+            EnhancedButton(onClick = onShare, modifier = Modifier.weight(1f)) { shareContent() }
         } else {
-            OutlinedButton(onClick = onShare, modifier = Modifier.weight(1f)) { shareContent() }
+            EnhancedOutlinedButton(onClick = onShare, modifier = Modifier.weight(1f)) { shareContent() }
         }
     }
 }
