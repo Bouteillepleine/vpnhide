@@ -33,6 +33,7 @@ class SettingsRepository(
         val THEME_MODE = intPreferencesKey("theme_mode")
         val ANIMATIONS = booleanPreferencesKey("animations_enabled")
         val HAPTICS = booleanPreferencesKey("haptics_enabled")
+        val SETTINGS_HINT_SEEN = booleanPreferencesKey("settings_hint_seen")
     }
 
     val settings: Flow<AppSettings> =
@@ -47,6 +48,7 @@ class SettingsRepository(
                 themeMode = p[Keys.THEME_MODE]?.let { ThemeMode.entries.getOrNull(it) } ?: defaults.themeMode,
                 animationsEnabled = p[Keys.ANIMATIONS] ?: defaults.animationsEnabled,
                 hapticsEnabled = p[Keys.HAPTICS] ?: defaults.hapticsEnabled,
+                settingsHintSeen = p[Keys.SETTINGS_HINT_SEEN] ?: defaults.settingsHintSeen,
             )
         }
 
@@ -65,6 +67,8 @@ class SettingsRepository(
     suspend fun setAnimationsEnabled(value: Boolean) = edit { it[Keys.ANIMATIONS] = value }
 
     suspend fun setHapticsEnabled(value: Boolean) = edit { it[Keys.HAPTICS] = value }
+
+    suspend fun setSettingsHintSeen(value: Boolean) = edit { it[Keys.SETTINGS_HINT_SEEN] = value }
 
     private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
         context.uiSettingsStore.edit(block)

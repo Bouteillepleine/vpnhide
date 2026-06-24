@@ -5,6 +5,15 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -35,7 +44,9 @@ import dev.okhsunrog.vpnhide.settings.LocalSettingsState
 import dev.okhsunrog.vpnhide.settings.SettingsRepository
 import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
 import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
+import dev.okhsunrog.vpnhide.ui.components.pulse
 import dev.okhsunrog.vpnhide.ui.components.rememberHapticTick
+import dev.okhsunrog.vpnhide.ui.theme.AppEasing
 import dev.okhsunrog.vpnhide.ui.theme.VpnHideTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -141,6 +152,8 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val appContext = context.applicationContext
     val startupCoordinator = remember(appContext) { StartupCoordinator(appContext) }
+    val settings = LocalSettingsState.current
+    val settingsRepo = remember(appContext) { SettingsRepository(appContext) }
     var currentTab by remember { mutableStateOf(Tab.Dashboard) }
     var searchQuery by remember { mutableStateOf("") }
     var searchActive by remember { mutableStateOf(false) }
@@ -262,7 +275,18 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                             titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                         ),
                     actions = {
-                        IconButton(onClick = { showSettings = true }) {
+                        IconButton(
+                            onClick = {
+                                showSettings = true
+                                if (!settings.settingsHintSeen) {
+                                    scope.launch { settingsRepo.setSettingsHintSeen(true) }
+                                }
+                            },
+                            modifier =
+                                Modifier.pulse(
+                                    enabled = !settings.settingsHintSeen && settings.animationsEnabled,
+                                ),
+                        ) {
                             Icon(
                                 Icons.Default.Settings,
                                 contentDescription = stringResource(R.string.action_settings),
@@ -429,28 +453,46 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                 CircularProgressIndicator()
             }
         } else {
-            when (currentTab) {
-                Tab.Dashboard -> {
-                    DashboardScreen(
-                        selfNeedsRestart = restart,
-                        modifier = Modifier.padding(innerPadding),
-                    )
-                }
+            AnimatedContent(
+                targetState = currentTab,
+                transitionSpec = {
+                    if (settings.animationsEnabled) {
+                        (
+                            fadeIn(tween(300, easing = AppEasing.Alpha)) +
+                                slideInHorizontally(tween(300, easing = AppEasing.FancyTransition)) { it / 10 }
+                        ) togetherWith (
+                            fadeOut(tween(180, easing = AppEasing.Alpha)) +
+                                slideOutHorizontally(tween(300, easing = AppEasing.FancyTransition)) { -it / 10 }
+                        )
+                    } else {
+                        EnterTransition.None togetherWith ExitTransition.None
+                    }
+                },
+                label = "tabContent",
+            ) { tab ->
+                when (tab) {
+                    Tab.Dashboard -> {
+                        DashboardScreen(
+                            selfNeedsRestart = restart,
+                            modifier = Modifier.padding(innerPadding),
+                        )
+                    }
 
-                Tab.Protection -> {
-                    ProtectionScreen(
-                        searchQuery = searchQuery,
-                        showSystem = showSystem,
-                        showRussianOnly = showRussianOnly,
-                        modifier = Modifier.padding(innerPadding),
-                    )
-                }
+                    Tab.Protection -> {
+                        ProtectionScreen(
+                            searchQuery = searchQuery,
+                            showSystem = showSystem,
+                            showRussianOnly = showRussianOnly,
+                            modifier = Modifier.padding(innerPadding),
+                        )
+                    }
 
-                Tab.Diagnostics -> {
-                    DiagnosticsScreen(
-                        selfNeedsRestart = restart,
-                        modifier = Modifier.padding(innerPadding),
-                    )
+                    Tab.Diagnostics -> {
+                        DiagnosticsScreen(
+                            selfNeedsRestart = restart,
+                            modifier = Modifier.padding(innerPadding),
+                        )
+                    }
                 }
             }
         }

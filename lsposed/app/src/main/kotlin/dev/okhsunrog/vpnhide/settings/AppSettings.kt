@@ -41,6 +41,8 @@ data class AppSettings(
     val animationsEnabled: Boolean = true,
     /** Subtle haptic feedback on taps/toggles. */
     val hapticsEnabled: Boolean = true,
+    /** Whether the user has opened Settings at least once (gates the gear hint). */
+    val settingsHintSeen: Boolean = false,
 ) {
     companion object {
         /** Brand seed — a calm teal, used as the non-dynamic fallback palette. */

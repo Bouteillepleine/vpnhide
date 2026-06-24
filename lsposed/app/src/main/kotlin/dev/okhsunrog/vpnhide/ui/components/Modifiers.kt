@@ -1,5 +1,10 @@
 package dev.okhsunrog.vpnhide.ui.components
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,11 +20,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.okhsunrog.vpnhide.settings.LocalSettingsState
+import dev.okhsunrog.vpnhide.ui.theme.AppEasing
 
 /*
  * Shared visual + interaction modifiers for the design system.
@@ -77,6 +84,36 @@ fun rememberHapticTick(): () -> Unit {
     val enabled = LocalSettingsState.current.hapticsEnabled
     return remember(haptics, enabled) {
         { if (enabled) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
+    }
+}
+
+/**
+ * A gentle, looping scale "breathing" used to draw attention to a control
+ * (e.g. the settings gear on first launch). No-op when [enabled] is false.
+ * Adapted from ImageToolbox's `Pulsate` modifier (Apache-2.0, © T8RIN).
+ */
+@Composable
+fun Modifier.pulse(
+    enabled: Boolean,
+    min: Float = 0.9f,
+    max: Float = 1.12f,
+    durationMillis: Int = 900,
+): Modifier {
+    if (!enabled) return this
+    val transition = rememberInfiniteTransition(label = "pulse")
+    val scale by transition.animateFloat(
+        initialValue = min,
+        targetValue = max,
+        animationSpec =
+            infiniteRepeatable(
+                animation = tween(durationMillis, easing = AppEasing.Alpha),
+                repeatMode = RepeatMode.Reverse,
+            ),
+        label = "pulseScale",
+    )
+    return this.graphicsLayer {
+        scaleX = scale
+        scaleY = scale
     }
 }
 
