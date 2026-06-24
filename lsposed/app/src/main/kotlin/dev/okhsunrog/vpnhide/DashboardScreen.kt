@@ -2,8 +2,12 @@ package dev.okhsunrog.vpnhide
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -13,6 +17,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -20,8 +25,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import dev.okhsunrog.vpnhide.settings.LocalSettingsState
 import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
 import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
+import dev.okhsunrog.vpnhide.ui.components.pulse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -518,6 +525,7 @@ private fun NativeProtectionCard(result: NativeResult) {
         statusText = statusText,
         statusColor = statusColor,
         containerColor = containerColor,
+        pulsing = result is NativeResult.Ok,
     )
 }
 
@@ -554,6 +562,7 @@ private fun JavaProtectionCard(result: JavaResult) {
         statusText = statusText,
         statusColor = statusColor,
         containerColor = containerColor,
+        pulsing = result is JavaResult.Ok,
     )
 }
 
@@ -563,7 +572,9 @@ private fun ProtectionCardShell(
     statusText: String,
     statusColor: Color,
     containerColor: Color,
+    pulsing: Boolean = false,
 ) {
+    val animations = LocalSettingsState.current.animationsEnabled
     EnhancedCard(
         modifier = Modifier.fillMaxWidth(),
         color = containerColor,
@@ -578,12 +589,27 @@ private fun ProtectionCardShell(
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Medium,
             )
-            Text(
-                text = statusText,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Bold,
-                color = statusColor,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (pulsing) {
+                    Box(
+                        modifier =
+                            Modifier
+                                .size(9.dp)
+                                .pulse(enabled = animations, min = 0.55f, max = 1f, durationMillis = 1100)
+                                .clip(CircleShape)
+                                .background(statusColor),
+                    )
+                }
+                Text(
+                    text = statusText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = statusColor,
+                )
+            }
         }
     }
 }
