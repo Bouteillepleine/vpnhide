@@ -425,44 +425,11 @@ class HookEntry : IXposedHookLoadPackage {
     //  system_server hooks — per-UID Binder filtering
     // ==================================================================
 
-    @Volatile private var systemServerTargetUids: Set<Int>? = null
+    private val targetUidCache = SystemServerTargetUidCache()
 
     @Volatile private var targetUidsFileObserver: android.os.FileObserver? = null
-    private val uidLock = Any()
 
-    private fun loadTargetUids(): Set<Int> {
-        // Fast path: already cached (volatile read)
-        systemServerTargetUids?.let { return it }
-
-        // Slow path: only one thread reads the file
-        synchronized(uidLock) {
-            systemServerTargetUids?.let { return it }
-
-            val uids = mutableSetOf<Int>()
-
-            // Read pre-resolved numeric UIDs written by vpnhide-kmod's
-            // service.sh into /data/system/vpnhide_uids.txt.
-            // system_server can read /data/system/ (SELinux: system_data_file).
-            try {
-                val file = File("/data/system/vpnhide_uids.txt")
-                if (file.exists()) {
-                    file.readLines().forEach { line ->
-                        line.trim().toIntOrNull()?.let { uids.add(it) }
-                    }
-                }
-            } catch (t: Throwable) {
-                HookLog.e("VpnHide: failed to read UIDs: ${t.message}")
-            }
-
-            val result: Set<Int> = uids.toSet()
-            if (result.isNotEmpty()) {
-                HookLog.i("VpnHide: system_server loaded ${result.size} target UIDs: $result")
-            }
-            // Always cache (even if empty) to avoid re-reading until invalidated
-            systemServerTargetUids = result
-            return result
-        }
-    }
+    private fun loadTargetUids(): Set<Int> = targetUidCache.load()
 
     // Smoke-check at install time: every private AOSP field/ctor we touch
     // by reflection in the writeToParcel hooks. Returns the keys that
@@ -608,7 +575,7 @@ class HookEntry : IXposedHookLoadPackage {
             watchSystemDataDir { path ->
                 if (path == filename) {
                     HookLog.i("VpnHide: $filename changed, invalidating UID cache")
-                    systemServerTargetUids = null
+                    targetUidCache.invalidate()
                 }
             }
         HookLog.i("VpnHide: watching /data/system for $filename changes (inotify)")
