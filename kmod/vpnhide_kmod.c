@@ -15,7 +15,7 @@
  *   - inet_fill_ifaddr: filters RTM_GETADDR IPv4 responses (getifaddrs)
  *   - fib_route_seq_show: filters /proc/net/route entries
  *   - ipv6_route_seq_show: filters /proc/net/ipv6_route entries
- *   - fib_dump_info / rt_fill_info: filter IPv4 RTM_GETROUTE replies
+ *   - fib_dump_info: filters IPv4 RTM_GETROUTE dump replies
  *   - rt6_fill_node: filters IPv6 RTM_GETROUTE replies
  *   - fib_nl_fill_rule: filters policy routing rules for target UIDs
  *
@@ -970,6 +970,49 @@ static bool is_public_host_route_via_physical(const struct fib_rt_info *fri,
 	return is_physical_ifname(name);
 }
 
+static bool is_public_ipv6(const struct in6_addr *addr)
+{
+	u8 b0 = addr->s6_addr[0];
+
+	/* Global unicast 2000::/3 only. Excludes ::/:: 1 (unspec/loopback),
+	 * fe80::/10 (link-local), fc00::/7 (ULA), ff00::/8 (multicast). */
+	if ((b0 & 0xe0) != 0x20)
+		return false;
+	/* 2001:db8::/32 documentation range. */
+	if (addr->s6_addr[0] == 0x20 && addr->s6_addr[1] == 0x01 &&
+	    addr->s6_addr[2] == 0x0d && addr->s6_addr[3] == 0xb8)
+		return false;
+	return true;
+}
+
+/* IPv6 analogue of is_public_host_route_via_physical: a /128 route to a
+ * public address pinned to a physical interface is the host-route a VPN
+ * client installs so tunnel packets can reach the server — it leaks the
+ * server's IPv6 even when the tun interface itself is hidden. fib6_dst
+ * (struct rt6key { struct in6_addr addr; int plen; }) is stable across
+ * GKI 5.10..6.12; read it fault-safe since `rt` comes from a raw reg. */
+static bool is_public_host_route6_via_physical(struct fib6_info *rt,
+					       struct net_device *dev)
+{
+	struct in6_addr addr;
+	int plen = 0;
+	char name[IFNAMSIZ];
+
+	if (!rt || !dev)
+		return false;
+	if (copy_from_kernel_nofault(&plen, &rt->fib6_dst.plen, sizeof(plen)) !=
+		    0 ||
+	    plen != 128)
+		return false;
+	if (copy_from_kernel_nofault(&addr, &rt->fib6_dst.addr, sizeof(addr)) !=
+		    0 ||
+	    !is_public_ipv6(&addr))
+		return false;
+	if (!copy_dev_name(dev, name))
+		return false;
+	return is_physical_ifname(name);
+}
+
 static struct net_device *dev_from_nexthop(struct nexthop *nh)
 {
 	struct net_device *dev = NULL;
@@ -1168,12 +1211,20 @@ static int rt6_fill_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 	dev = dev_from_fib6_info(rt);
 	if (!dev && dst)
 		copy_from_kernel_nofault(&dev, &dst->dev, sizeof(dev));
-	if (copy_dev_name(dev, dev_name) && is_vpn_ifname(dev_name)) {
-		data->skb = (struct sk_buff *)regs->regs[1];
-		data->saved_len = data->skb ? data->skb->len : 0;
-		data->should_filter = true;
-		vpnhide_dbg("rt6_fill_entry: hiding route via %s\n",
-			    dev_name);
+	if (copy_dev_name(dev, dev_name)) {
+		bool vpn_route = is_vpn_ifname(dev_name);
+		bool host_hint = !vpn_route &&
+				 is_public_host_route6_via_physical(rt, dev);
+
+		if (vpn_route || host_hint) {
+			data->skb = (struct sk_buff *)regs->regs[1];
+			data->saved_len = data->skb ? data->skb->len : 0;
+			data->should_filter = true;
+			vpnhide_dbg("rt6_fill_entry: hiding %s via %s\n",
+				    vpn_route ? "VPN route" :
+						"public host route",
+				    dev_name);
+		}
 	}
 	rcu_read_unlock();
 
@@ -1193,50 +1244,32 @@ static struct kretprobe rt6_fill_krp = {
 	.kp.symbol_name = "rt6_fill_node",
 };
 
-/* ================================================================== */
-/*  Hook 10: rt_fill_info — IPv4 single RTM_GETROUTE lookup           */
-/*                                                                    */
-/*  arm64 on current GKI: x3=rt (struct rtable*), x7=skb             */
-/* ================================================================== */
-
-static int rt_fill_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
-{
-	struct route_skb_data *data = (void *)ri->data;
-	struct rtable *rt = (struct rtable *)regs->regs[3];
-	struct net_device *dev = NULL;
-	char dev_name[IFNAMSIZ];
-
-	init_route_skb_data(data);
-
-	if (!is_target_uid() || !rt)
-		return 0;
-
-	if (copy_from_kernel_nofault(&dev, &rt->dst.dev, sizeof(dev)) != 0 ||
-	    !copy_dev_name(dev, dev_name) || !is_vpn_ifname(dev_name))
-		return 0;
-
-	data->skb = (struct sk_buff *)regs->regs[7];
-	data->saved_len = data->skb ? data->skb->len : 0;
-	data->should_filter = true;
-	vpnhide_dbg("rt_fill_entry: hiding route via %s\n", dev_name);
-	return 0;
-}
-
-static int rt_fill_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
-{
-	return route_skb_ret((void *)ri->data, regs, "rt_fill_ret");
-}
-
-static struct kretprobe rt_fill_krp = {
-	.handler = rt_fill_ret,
-	.entry_handler = rt_fill_entry,
-	.data_size = sizeof(struct route_skb_data),
-	.maxactive = VPNHIDE_KRETPROBE_MAXACTIVE,
-	.kp.symbol_name = "rt_fill_info",
-};
+/*
+ * Note: rt_fill_info (single-lookup RTM_GETROUTE serializer for
+ * `ip route get <dst>`) is intentionally NOT hooked.
+ *
+ * It is a `static` function called directly within net/ipv4/route.c, so
+ * the compiler is free to ignore AAPCS64 and assign its arguments to
+ * arbitrary registers (interprocedural register allocation). Verified in
+ * QEMU on a no-LTO android12-5.10 build: regs[3] held table_id (254),
+ * not the `struct rtable *` the source signature places there — so no
+ * fixed regs[N] read is correct across builds (the value differs between
+ * LTO device builds and no-LTO builds). A hardcoded register is build-
+ * dependent guesswork that fails silently (or panics, without nofault).
+ *
+ * It is also low value here: IPv4 route *enumeration* (RTM_GETROUTE with
+ * NLM_F_DUMP — what detection apps actually use) goes through the global,
+ * ABI-stable fib_dump_info hook above, not rt_fill_info. Single lookups
+ * respect the caller's own routing, which under the recommended split-
+ * tunnel setup resolves to the physical interface anyway.
+ *
+ * If single-lookup concealment is ever needed, hook rtnl_unicast instead
+ * (global EXPORT_SYMBOL, ABI-stable, runs in caller context) and rewrite
+ * RTA_OIF in the reply skb — see docs/ROADMAP.md.
+ */
 
 /* ================================================================== */
-/*  Hook 11: fib_nl_fill_rule — RTM_GETRULE policy rules              */
+/*  Hook 10: fib_nl_fill_rule — RTM_GETRULE policy rules              */
 /*                                                                    */
 /*  arm64: x0=skb, x1=rule (struct fib_rule*)                        */
 /* ================================================================== */
@@ -1267,8 +1300,7 @@ static int fib_rule_fill_entry(struct kretprobe_instance *ri,
 	} else {
 		uid_t start =
 			from_kuid(&init_user_ns, rule_copy.uid_range.start);
-		uid_t end =
-			from_kuid(&init_user_ns, rule_copy.uid_range.end);
+		uid_t end = from_kuid(&init_user_ns, rule_copy.uid_range.end);
 
 		if (uid >= start && uid <= end &&
 		    (start != 0 || end != (uid_t)~0) &&
@@ -1329,7 +1361,6 @@ static struct kretprobe_reg probes[] = {
 	{ &ipv6_route_krp, "ipv6_route_seq_show", false },
 	{ &fib_dump_krp, "fib_dump_info", false },
 	{ &rt6_fill_krp, "rt6_fill_node", false },
-	{ &rt_fill_krp, "rt_fill_info", false },
 	{ &fib_rule_fill_krp, "fib_nl_fill_rule", false },
 };
 

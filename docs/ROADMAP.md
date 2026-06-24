@@ -49,6 +49,33 @@ Follow-up work:
 - Consider short-lived caching for the selected replacement network if real
   devices show measurable overhead from repeated `ConnectivityService` lookups.
 
+## Kernel Module (kmod)
+
+### Single-lookup route concealment (low priority)
+
+The kmod hides VPN routes from netlink route *dumps* (`RTM_GETROUTE` with
+`NLM_F_DUMP`, via the global `fib_dump_info` hook) and from `/proc/net/route`
+and `/proc/net/ipv6_route`. It does **not** hide single resolved-route lookups
+(`ip route get <dst>`, `RTM_GETROUTE` without `NLM_F_DUMP`), served by the
+`static` `rt_fill_info`.
+
+`rt_fill_info` is intentionally left unhooked. As a directly-called `static`
+function it has no stable argument→register ABI: a fixed `regs[N]` read is
+correct on some builds and wrong on others (verified to differ between a
+real LTO device build and a no-LTO QEMU build, where `regs[3]` held
+`table_id` instead of the `struct rtable *`). The vector is also low value —
+detection apps enumerate routes via dumps (covered by `fib_dump_info`), and
+single lookups respect the caller's own routing, which under the recommended
+split-tunnel setup resolves to the physical interface anyway.
+
+Follow-up work (low priority):
+
+- If single-lookup concealment is ever wanted, hook the global `rtnl_unicast`
+  (ABI-stable, runs in caller context) — the choke point for every
+  single-reply rtnetlink response, IPv4 and IPv6 — and rewrite `RTA_OIF` in
+  the reply skb to a physical ifindex, instead of reading a fixed register
+  off the static `rt_fill_info`.
+
 ## Diagnostics And Observability
 
 - Add optional per-hook interception counters so users can see which apps are
