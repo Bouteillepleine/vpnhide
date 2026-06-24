@@ -63,6 +63,11 @@ android {
     // 37 required transitively by material3 1.5.0-alpha22 (compose 1.12.0-alpha).
     compileSdk = 37
 
+    // Pin the latest stable NDK (r28.2); r28.0 and r29 are still beta. Without
+    // this AGP falls back to its bundled default, which lags behind. The Rust
+    // cdylibs (zygisk/lsposed native) cross-compile against it via cargo-ndk.
+    ndkVersion = "28.2.13676358"
+
     // Effective build version from ../scripts/build-version.py:
     //   release tag    -> "0.6.2"
     //   dev build      -> "0.6.1-5-gabc1234" (+"-dirty" if uncommitted)
@@ -87,7 +92,7 @@ android {
     defaultConfig {
         applicationId = "dev.okhsunrog.vpnhide"
         minSdk = 29
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 701
         versionName = buildVersion
 
