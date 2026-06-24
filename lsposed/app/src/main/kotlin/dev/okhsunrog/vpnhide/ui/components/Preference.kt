@@ -1,6 +1,8 @@
 package dev.okhsunrog.vpnhide.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,17 +14,25 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import dev.okhsunrog.vpnhide.ui.theme.groupCornerRadii
+import dev.okhsunrog.vpnhide.ui.theme.groupedShape
+import dev.okhsunrog.vpnhide.ui.theme.shapeByInteraction
 
 /**
  * A settings row: optional leading icon chip, title + optional subtitle, and an
  * optional trailing slot, on the shared [container] surface. Adapted from
  * ImageToolbox's `PreferenceRow` (Apache-2.0, © T8RIN).
+ *
+ * Pass [index]/[count] to make the row part of a vertical group (grouped
+ * corners that morph on press); leave them defaulted for a standalone row.
  */
 @Composable
 fun PreferenceRow(
@@ -31,17 +41,41 @@ fun PreferenceRow(
     subtitle: String? = null,
     icon: ImageVector? = null,
     enabled: Boolean = true,
+    index: Int = -1,
+    count: Int = 1,
     onClick: (() -> Unit)? = null,
     trailing: @Composable (() -> Unit)? = null,
 ) {
-    val shape = MaterialTheme.shapes.large
+    val effectiveIndex = if (index < 0) 0 else index
+    val effectiveCount = if (index < 0) 1 else count
+    val interaction = remember { MutableInteractionSource() }
+    val base = groupCornerRadii(effectiveIndex, effectiveCount)
+    val shape =
+        if (onClick != null) {
+            shapeByInteraction(base, interaction)
+        } else {
+            groupedShape(effectiveIndex, effectiveCount)
+        }
+    val tick = rememberHapticTick()
     Row(
         modifier =
             modifier
                 .fillMaxWidth()
                 .container(shape = shape)
-                .then(if (onClick != null) Modifier.hapticsClickable(enabled = enabled) { onClick() } else Modifier)
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .then(
+                    if (onClick != null) {
+                        Modifier.clickable(
+                            interactionSource = interaction,
+                            indication = ripple(),
+                            enabled = enabled,
+                        ) {
+                            tick()
+                            onClick()
+                        }
+                    } else {
+                        Modifier
+                    },
+                ).padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (icon != null) {
@@ -92,6 +126,8 @@ fun PreferenceRowSwitch(
     subtitle: String? = null,
     icon: ImageVector? = null,
     enabled: Boolean = true,
+    index: Int = -1,
+    count: Int = 1,
 ) {
     PreferenceRow(
         title = title,
@@ -99,6 +135,8 @@ fun PreferenceRowSwitch(
         subtitle = subtitle,
         icon = icon,
         enabled = enabled,
+        index = index,
+        count = count,
         onClick = { onCheckedChange(!checked) },
         trailing = {
             EnhancedSwitch(

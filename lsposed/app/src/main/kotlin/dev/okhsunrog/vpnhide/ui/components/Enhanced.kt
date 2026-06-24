@@ -1,6 +1,7 @@
 package dev.okhsunrog.vpnhide.ui.components
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.contentColorFor
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -30,6 +32,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.graphics.vector.ImageVector
 import dev.okhsunrog.vpnhide.ui.theme.AppMotion
+import dev.okhsunrog.vpnhide.ui.theme.groupCornerRadii
+import dev.okhsunrog.vpnhide.ui.theme.groupedShape
+import dev.okhsunrog.vpnhide.ui.theme.shapeByInteraction
 
 /*
  * Enhanced Material 3 controls: a light haptic tick on activation plus a spring
@@ -57,6 +62,56 @@ fun EnhancedCard(
                 modifier
                     .container(shape = shape, color = color)
                     .then(if (onClick != null) Modifier.hapticsClickable { onClick() } else Modifier),
+            content = content,
+        )
+    }
+}
+
+/**
+ * An [EnhancedCard] that participates in a vertical group: it takes the grouped
+ * shape for its [index] of [count] (big outer corners on the group's edges,
+ * small inner corners) so a stack of these reads as one unit. When [onClick] is
+ * set the corners morph on press (`shapeByInteraction`); otherwise they morph as
+ * group membership changes. This is the signature ImageToolbox grouped look —
+ * place several in a `Column` with a small spacing (≈3.dp).
+ */
+@Composable
+fun GroupedCard(
+    index: Int,
+    count: Int,
+    modifier: Modifier = Modifier,
+    color: Color = MaterialTheme.colorScheme.surfaceContainerLow,
+    contentColor: Color = contentColorFor(color).takeOrElse { MaterialTheme.colorScheme.onSurface },
+    onClick: (() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val base = groupCornerRadii(index, count)
+    val shape =
+        if (onClick != null) {
+            shapeByInteraction(base, interaction)
+        } else {
+            groupedShape(index, count)
+        }
+    val tick = rememberHapticTick()
+    CompositionLocalProvider(LocalContentColor provides contentColor) {
+        Column(
+            modifier =
+                modifier
+                    .container(shape = shape, color = color)
+                    .then(
+                        if (onClick != null) {
+                            Modifier.clickable(
+                                interactionSource = interaction,
+                                indication = ripple(),
+                            ) {
+                                tick()
+                                onClick()
+                            }
+                        } else {
+                            Modifier
+                        },
+                    ),
             content = content,
         )
     }
