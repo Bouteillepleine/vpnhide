@@ -897,6 +897,13 @@ class HookEntry : IXposedHookLoadPackage {
                     object : XC_MethodHook() {
                         override fun afterHookedMethod(param: MethodHookParam) {
                             rememberConnectivityService(param.thisObject)
+                            // getNetworkInfo(int networkType): an app that probes the
+                            // legacy VPN type directly (getNetworkInfo(TYPE_VPN)) must
+                            // get null — disguising the result as a *connected* WIFI
+                            // NetworkInfo still answers "a VPN-type network exists and
+                            // is connected", which isConnectedOrConnecting() reports as
+                            // true. See issue #85 (Улыбка радуги).
+                            if (method in LEGACY_TYPE_INFO_METHODS && suppressLegacyVpnTypeQuery(param)) return
                             val explicitUid = uidArgIndex?.let { param.args.getOrNull(it) as? Int }
                             sanitizeMethodResult(param, explicitUid)
                         }
@@ -976,6 +983,21 @@ class HookEntry : IXposedHookLoadPackage {
         HookLog.i("VpnHide: suppressed getNetworkForType(TYPE_VPN) for uid=${effectiveCallerUid()}")
     }
 
+    // getNetworkInfo(int networkType) — null the result for a target caller that
+    // probes TYPE_VPN directly. Returns true when the call was a TYPE_VPN query
+    // (handled: either already null or nulled here), so the caller skips the
+    // disguise-as-WIFI path that would otherwise leak a connected NetworkInfo.
+    // Non-VPN types and non-target callers fall through to normal sanitizing.
+    private fun suppressLegacyVpnTypeQuery(param: XC_MethodHook.MethodHookParam): Boolean {
+        val type = param.args.getOrNull(0) as? Int ?: return false
+        if (type != ConnectivityManager.TYPE_VPN) return false
+        if (param.result == null) return true
+        if (!isTargetCallerOrUid()) return false
+        param.result = null
+        HookLog.i("VpnHide: suppressed getNetworkInfo(TYPE_VPN) for uid=${effectiveCallerUid()}")
+        return true
+    }
+
     // The callback recipient UID lives on the NetworkRequestInfo arg under
     // different field names across AOSP versions (mAsUid is the UID the callback
     // is delivered as). Returns -1 if none found.
@@ -1017,6 +1039,10 @@ class HookEntry : IXposedHookLoadPackage {
         private const val CALLBACK_BUNDLE_ARG_INDEX = 2
         private val RECIPIENT_UID_FIELDS = listOf("mAsUid", "mUid", "uid")
         private val CALLBACK_DISPATCH_METHODS = listOf("callCallbackForRequest", "sendPendingIntentForRequest")
+
+        // Result methods that take a legacy connectivity type as arg 0 and may be
+        // queried with TYPE_VPN to probe for an active VPN (issue #85).
+        private val LEGACY_TYPE_INFO_METHODS = setOf("getNetworkInfo", "getNetworkInfoForType")
         private val CONNECTIVITY_RESULT_METHODS =
             listOf(
                 "getActiveLinkProperties" to null,
