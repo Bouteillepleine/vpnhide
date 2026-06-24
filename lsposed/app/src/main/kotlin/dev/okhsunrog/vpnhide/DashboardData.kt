@@ -160,6 +160,61 @@ internal data class DashboardState(
     val issues: List<Issue>,
 )
 
+internal enum class HeroStatus { Protected, Attention, Unprotected, VpnOff }
+
+/** Overall health, ranked worst-signal-wins from protection state + issues. */
+internal fun computeHeroStatus(
+    state: DashboardState,
+    errorCount: Int,
+    warningCount: Int,
+): HeroStatus {
+    val p = state.protection
+    if (p is ProtectionCheck.NoVpn) return HeroStatus.VpnOff
+    // 0 = protected, 1 = attention, 2 = unprotected — keep the worst signal.
+    var rank = 0
+    when (p) {
+        ProtectionCheck.NoVpn -> {}
+
+        // handled above
+        ProtectionCheck.NeedsRestart -> {
+            rank = maxOf(rank, 1)
+        }
+
+        is ProtectionCheck.Checked -> {
+            val native = p.native
+            val java = p.java
+            val hardFail = (native is NativeResult.Fail && native.passed == 0) || java is JavaResult.Fail
+            val partial =
+                native is NativeResult.Fail || native is NativeResult.NoModule || java is JavaResult.HooksInactive
+            when {
+                hardFail -> rank = maxOf(rank, 2)
+                partial -> rank = maxOf(rank, 1)
+            }
+        }
+    }
+    when {
+        errorCount > 0 -> rank = maxOf(rank, 2)
+        warningCount > 0 -> rank = maxOf(rank, 1)
+    }
+    return when (rank) {
+        0 -> HeroStatus.Protected
+        1 -> HeroStatus.Attention
+        else -> HeroStatus.Unprotected
+    }
+}
+
+internal fun moduleSummaryText(state: DashboardState): String = "${activeModuleCount(state)}/4"
+
+internal fun activeModuleCount(state: DashboardState): Int =
+    listOf(
+        state.lsposed is LsposedState.Active,
+        moduleActive(state.kmod),
+        moduleActive(state.zygisk),
+        moduleActive(state.ports),
+    ).count { it }
+
+internal fun moduleActive(state: ModuleState): Boolean = (state as? ModuleState.Installed)?.active == true
+
 internal data class NativeInstallRecommendation(
     val androidVersion: String,
     val kernelVersion: String,

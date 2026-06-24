@@ -242,49 +242,6 @@ private fun SectionHeader(
     )
 }
 
-/** Overall health, ranked worst-signal-wins from protection state + issues. */
-private enum class HeroStatus { Protected, Attention, Unprotected, VpnOff }
-
-private fun computeHeroStatus(
-    state: DashboardState,
-    errorCount: Int,
-    warningCount: Int,
-): HeroStatus {
-    val p = state.protection
-    if (p is ProtectionCheck.NoVpn) return HeroStatus.VpnOff
-    // 0 = protected, 1 = attention, 2 = unprotected — keep the worst signal.
-    var rank = 0
-    when (p) {
-        ProtectionCheck.NoVpn -> {}
-
-        // handled above
-        ProtectionCheck.NeedsRestart -> {
-            rank = maxOf(rank, 1)
-        }
-
-        is ProtectionCheck.Checked -> {
-            val native = p.native
-            val java = p.java
-            val hardFail = (native is NativeResult.Fail && native.passed == 0) || java is JavaResult.Fail
-            val partial =
-                native is NativeResult.Fail || native is NativeResult.NoModule || java is JavaResult.HooksInactive
-            when {
-                hardFail -> rank = maxOf(rank, 2)
-                partial -> rank = maxOf(rank, 1)
-            }
-        }
-    }
-    when {
-        errorCount > 0 -> rank = maxOf(rank, 2)
-        warningCount > 0 -> rank = maxOf(rank, 1)
-    }
-    return when (rank) {
-        0 -> HeroStatus.Protected
-        1 -> HeroStatus.Attention
-        else -> HeroStatus.Unprotected
-    }
-}
-
 private data class HeroVisual(
     val container: Color,
     val accent: Color,
@@ -514,8 +471,6 @@ private fun HeroMetric(
     }
 }
 
-private fun moduleSummaryText(state: DashboardState): String = "${activeModuleCount(state)}/4"
-
 @Composable
 private fun moduleSummaryAccent(state: DashboardState): Color {
     val nativeActive = moduleActive(state.kmod) || moduleActive(state.zygisk)
@@ -526,16 +481,6 @@ private fun moduleSummaryAccent(state: DashboardState): Color {
         else -> StatusColors.errorAccent
     }
 }
-
-private fun activeModuleCount(state: DashboardState): Int =
-    listOf(
-        state.lsposed is LsposedState.Active,
-        moduleActive(state.kmod),
-        moduleActive(state.zygisk),
-        moduleActive(state.ports),
-    ).count { it }
-
-private fun moduleActive(state: ModuleState): Boolean = (state as? ModuleState.Installed)?.active == true
 
 @Composable
 private fun nativeSummaryText(protection: ProtectionCheck): String =
