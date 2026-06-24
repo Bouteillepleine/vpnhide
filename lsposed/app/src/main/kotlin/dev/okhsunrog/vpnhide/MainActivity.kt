@@ -12,8 +12,8 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -469,12 +469,17 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                 targetState = currentTab,
                 transitionSpec = {
                     if (settings.animationsEnabled) {
+                        // ImageToolbox's pervasive AnimatedContent transition: a
+                        // fade-through with a slight scale, in place (no slide).
+                        // The old tab's rows dissolve and shrink while the new
+                        // tab's rows fade and grow into the same positions, so
+                        // one set of rows reads as morphing into the other.
                         (
                             fadeIn(tween(300, easing = AppEasing.Alpha)) +
-                                slideInHorizontally(tween(300, easing = AppEasing.FancyTransition)) { it / 10 }
+                                scaleIn(tween(400, easing = AppEasing.Scale), initialScale = 0.92f)
                         ) togetherWith (
-                            fadeOut(tween(180, easing = AppEasing.Alpha)) +
-                                slideOutHorizontally(tween(300, easing = AppEasing.FancyTransition)) { -it / 10 }
+                            fadeOut(tween(300, easing = AppEasing.Alpha)) +
+                                scaleOut(tween(400, easing = AppEasing.Scale), targetScale = 0.92f)
                         )
                     } else {
                         EnterTransition.None togetherWith ExitTransition.None
