@@ -31,6 +31,7 @@ import dev.okhsunrog.vpnhide.checks.CheckOutput
 import dev.okhsunrog.vpnhide.generated.IfaceLists
 import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
 import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
+import dev.okhsunrog.vpnhide.ui.components.GroupedCard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -210,9 +211,9 @@ fun DiagnosticsScreen(
 
                     SectionHeader(stringResource(R.string.section_native))
                     Spacer(Modifier.height(6.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for (check in r.nativeAll) {
-                            CheckCard(check)
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        r.nativeAll.forEachIndexed { i, check ->
+                            CheckCard(check, index = i, count = r.nativeAll.size)
                         }
                     }
 
@@ -220,9 +221,9 @@ fun DiagnosticsScreen(
 
                     SectionHeader(stringResource(R.string.section_java))
                     Spacer(Modifier.height(6.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for (check in r.java) {
-                            CheckCard(check)
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        r.java.forEachIndexed { i, check ->
+                            CheckCard(check, index = i, count = r.java.size)
                         }
                     }
                 }
@@ -473,7 +474,11 @@ private fun SectionHeader(title: String) {
 }
 
 @Composable
-private fun CheckCard(r: CheckResult) {
+private fun CheckCard(
+    r: CheckResult,
+    index: Int = -1,
+    count: Int = 1,
+) {
     val actualColor =
         when (r.passed) {
             true -> StatusColors.successContainer()
@@ -497,10 +502,11 @@ private fun CheckCard(r: CheckResult) {
             null -> MaterialTheme.colorScheme.onSurfaceVariant
         }
 
-    EnhancedCard(
+    GroupedCard(
+        index = index,
+        count = count,
         modifier = Modifier.fillMaxWidth(),
         color = actualColor,
-        shape = MaterialTheme.shapes.medium,
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
