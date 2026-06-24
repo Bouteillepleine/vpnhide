@@ -31,6 +31,7 @@ class SettingsRepository(
         val SEED = longPreferencesKey("seed_color")
         val CORNER_STYLE = intPreferencesKey("corner_style")
         val THEME_MODE = intPreferencesKey("theme_mode")
+        val CONTAINER_SHADOWS = booleanPreferencesKey("container_shadows")
         val ANIMATIONS = booleanPreferencesKey("animations_enabled")
         val HAPTICS = booleanPreferencesKey("haptics_enabled")
         val SETTINGS_HINT_SEEN = booleanPreferencesKey("settings_hint_seen")
@@ -46,6 +47,7 @@ class SettingsRepository(
                 seedColor = p[Keys.SEED] ?: defaults.seedColor,
                 cornerStyle = p[Keys.CORNER_STYLE]?.let { CornerStyle.entries.getOrNull(it) } ?: defaults.cornerStyle,
                 themeMode = p[Keys.THEME_MODE]?.let { ThemeMode.entries.getOrNull(it) } ?: defaults.themeMode,
+                drawContainerShadows = p[Keys.CONTAINER_SHADOWS] ?: defaults.drawContainerShadows,
                 animationsEnabled = p[Keys.ANIMATIONS] ?: defaults.animationsEnabled,
                 hapticsEnabled = p[Keys.HAPTICS] ?: defaults.hapticsEnabled,
                 settingsHintSeen = p[Keys.SETTINGS_HINT_SEEN] ?: defaults.settingsHintSeen,
@@ -63,6 +65,8 @@ class SettingsRepository(
     suspend fun setCornerStyle(value: CornerStyle) = edit { it[Keys.CORNER_STYLE] = value.ordinal }
 
     suspend fun setThemeMode(value: ThemeMode) = edit { it[Keys.THEME_MODE] = value.ordinal }
+
+    suspend fun setDrawContainerShadows(value: Boolean) = edit { it[Keys.CONTAINER_SHADOWS] = value }
 
     suspend fun setAnimationsEnabled(value: Boolean) = edit { it[Keys.ANIMATIONS] = value }
 
