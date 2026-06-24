@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -217,6 +218,12 @@ private fun MainScreen(onReady: () -> Unit = {}) {
         }
     }
 
+    var showSettings by remember { mutableStateOf(false) }
+    if (showSettings) {
+        SettingsScreen(onBack = { showSettings = false })
+        return
+    }
+
     Scaffold(
         topBar = {
             if (searchActive && currentTab == Tab.Protection) {
@@ -253,6 +260,13 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                             titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                         ),
                     actions = {
+                        IconButton(onClick = { showSettings = true }) {
+                            Icon(
+                                Icons.Default.Settings,
+                                contentDescription = stringResource(R.string.action_settings),
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
                         // Refresh is contextual: Protection refreshes
                         // the app list, Dashboard refreshes the dashboard
                         // state + update check. Diagnostics has its own
