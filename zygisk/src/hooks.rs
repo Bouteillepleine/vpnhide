@@ -858,10 +858,12 @@ unsafe fn maybe_filter_netlink_buf(fd: c_int, buf: *mut u8, ret: isize) -> isize
 //  Hook: recv — filter netlink responses received via recv()
 // ============================================================================
 //
-// bionic's `recv()` tail-calls into `recvfrom()` via a bare `b` branch.
-// We cannot hook `recvfrom` because shadowhook would overwrite its prologue,
-// breaking `recv`'s branch target. Instead we hook `recv` directly — it's
-// 12 bytes (3 instructions), and shadowhook's island mode only needs 4.
+// Covers callers that resolve the `recv` libc symbol directly. bionic's
+// `recv()` tail-calls `recvfrom()`, and FORTIFY lowers fixed-buffer
+// `recv(fd, buf, sizeof(buf), 0)` calls to `recvfrom` / `__recvfrom_chk`;
+// those paths are caught by the dedicated recvfrom hooks below, so this
+// hook only has to handle the bare `recv` symbol. (Hooking `recvfrom`
+// turned out to be fine in practice — see the recvfrom hook block.)
 
 static REAL_RECV: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
 
