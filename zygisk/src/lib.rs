@@ -87,8 +87,9 @@ use zygisk_api::api::v2::{AppSpecializeArgs, V2, ZygiskOption};
 use zygisk_api::jni::JNIEnv;
 
 use crate::hooks::{
-    hooked_getifaddrs, hooked_ioctl, hooked_openat, hooked_recv, hooked_recvmsg,
-    set_real_getifaddrs_ptr, set_real_ioctl_ptr, set_real_openat_ptr, set_real_recv_ptr,
+    hooked_getifaddrs, hooked_ioctl, hooked_openat, hooked_recv, hooked_recvfrom,
+    hooked_recvfrom_chk, hooked_recvmsg, set_real_getifaddrs_ptr, set_real_ioctl_ptr,
+    set_real_openat_ptr, set_real_recv_ptr, set_real_recvfrom_chk_ptr, set_real_recvfrom_ptr,
     set_real_recvmsg_ptr,
 };
 
@@ -369,7 +370,7 @@ fn install_hooks() -> Result<(), String> {
     // would break recv. recv itself is 12 bytes (3 instructions),
     // safe for island-mode hooking.
     type StoreFn = fn(*const ());
-    let plan: [(&core::ffi::CStr, *mut core::ffi::c_void, StoreFn); 5] = [
+    let plan: [(&core::ffi::CStr, *mut core::ffi::c_void, StoreFn); 7] = [
         (c"ioctl", hooked_ioctl as *mut _, set_real_ioctl_ptr),
         (
             c"getifaddrs",
@@ -379,6 +380,18 @@ fn install_hooks() -> Result<(), String> {
         (c"openat", hooked_openat as *mut _, set_real_openat_ptr),
         (c"recvmsg", hooked_recvmsg as *mut _, set_real_recvmsg_ptr),
         (c"recv", hooked_recv as *mut _, set_real_recv_ptr),
+        // recvfrom + __recvfrom_chk catch FORTIFY'd / direct callers that
+        // never touch the `recv` symbol (issue #86 native route dump).
+        (
+            c"recvfrom",
+            hooked_recvfrom as *mut _,
+            set_real_recvfrom_ptr,
+        ),
+        (
+            c"__recvfrom_chk",
+            hooked_recvfrom_chk as *mut _,
+            set_real_recvfrom_chk_ptr,
+        ),
     ];
 
     let mut installed: Vec<*mut core::ffi::c_void> = Vec::with_capacity(plan.len());

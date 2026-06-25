@@ -290,9 +290,48 @@ const NLMSG_ALIGNTO: usize = 4;
 const NLMSG_HDRLEN: usize = 16; // sizeof(struct nlmsghdr), already aligned
 pub(crate) const RTM_NEWLINK: u16 = 16;
 pub(crate) const RTM_NEWADDR: u16 = 20;
+pub(crate) const RTM_NEWROUTE: u16 = 24;
+
+/// `sizeof(struct rtmsg)` — the fixed header that precedes the rtattr TLVs
+/// in an `RTM_NEWROUTE` payload (family, dst_len, src_len, tos, table,
+/// protocol, scope, type, then a `u32` rtm_flags = 8 + 4 bytes).
+const RTMSG_HDRLEN: usize = 12;
+const RTA_ALIGNTO: usize = 4;
+/// `rtattr` type carrying the output interface index (`RTA_OIF`).
+const RTA_OIF: u16 = 4;
 
 const fn nlmsg_align(len: usize) -> usize {
     (len + NLMSG_ALIGNTO - 1) & !(NLMSG_ALIGNTO - 1)
+}
+
+const fn rta_align(len: usize) -> usize {
+    (len + RTA_ALIGNTO - 1) & !(RTA_ALIGNTO - 1)
+}
+
+/// Extract the `RTA_OIF` (output interface index) from a single
+/// `RTM_NEWROUTE` message `msg` (the whole message, starting at the
+/// `nlmsghdr`). Walks the rtattr TLVs that follow `struct rtmsg`.
+///
+/// Returns `None` if there is no `RTA_OIF` attribute — e.g. multipath
+/// routes encode next-hops in `RTA_MULTIPATH` instead, which we don't
+/// unpack here (option-1 scope: the leaking default route a detector
+/// flags as `if<N>` always carries a single `RTA_OIF`).
+fn route_oif(msg: &[u8]) -> Option<u32> {
+    let mut pos = NLMSG_HDRLEN + RTMSG_HDRLEN;
+    // Each rtattr: u16 rta_len (incl. 4-byte header) + u16 rta_type, then
+    // payload padded to RTA_ALIGNTO.
+    while pos + 4 <= msg.len() {
+        let rta_len = read_u16_ne(msg, pos)? as usize;
+        let rta_type = read_u16_ne(msg, pos + 2)?;
+        if rta_len < 4 || pos + rta_len > msg.len() {
+            break;
+        }
+        if rta_type == RTA_OIF && rta_len >= 8 {
+            return read_u32_ne(msg, pos + 4);
+        }
+        pos += rta_align(rta_len);
+    }
+    None
 }
 
 fn read_u32_ne(data: &[u8], off: usize) -> Option<u32> {
@@ -305,12 +344,20 @@ fn read_u16_ne(data: &[u8], off: usize) -> Option<u16> {
     Some(u16::from_ne_bytes(*bytes))
 }
 
-/// Filter netlink dump responses in-place: remove `RTM_NEWLINK` and
-/// `RTM_NEWADDR` messages whose interface index is in `vpn_indices`.
+/// Filter netlink dump responses in-place: remove `RTM_NEWLINK`,
+/// `RTM_NEWADDR` and `RTM_NEWROUTE` messages tied to a VPN interface
+/// index in `vpn_indices`.
 ///
 /// Both `struct ifinfomsg` (RTM_NEWLINK) and `struct ifaddrmsg`
 /// (RTM_NEWADDR) have the interface index as a `u32` at offset 4
 /// within the payload, so the same extraction works for both.
+///
+/// `RTM_NEWROUTE` is different: the output interface lives in an
+/// `RTA_OIF` rtattr after `struct rtmsg`, so we walk the TLVs (see
+/// [`route_oif`]). This is what closes the `if<N>` route leak from
+/// issue #86 — a detector dumping the route table via `RTM_GETROUTE`
+/// sees the VPN's default route by oif index even when the interface
+/// name itself is hidden, then renders it as the synthetic `if<index>`.
 ///
 /// Returns the new valid length of the buffer.
 pub fn filter_netlink_dump(data: &mut [u8], vpn_indices: &[u32]) -> usize {
@@ -342,6 +389,12 @@ pub fn filter_netlink_dump(data: &mut [u8], vpn_indices: &[u32]) -> usize {
             // ifinfomsg and ifaddrmsg.
             let if_index = read_u32_ne(data, read_pos + NLMSG_HDRLEN + 4).unwrap_or(0);
             vpn_indices.contains(&if_index)
+        } else if nlmsg_type == RTM_NEWROUTE && nlmsg_len >= NLMSG_HDRLEN + RTMSG_HDRLEN {
+            // Output interface is an RTA_OIF rtattr after struct rtmsg.
+            match route_oif(&data[read_pos..read_pos + nlmsg_len]) {
+                Some(oif) => vpn_indices.contains(&oif),
+                None => false,
+            }
         } else {
             false
         };
@@ -564,5 +617,90 @@ mod tests {
         let orig_len = buf.len();
         let new_len = filter_netlink_dump(&mut buf, &[]);
         assert_eq!(new_len, orig_len);
+    }
+
+    // ---- RTM_NEWROUTE (issue #86 `if<N>` leak) tests ----
+
+    /// Build an RTM_NEWROUTE message: nlmsghdr + struct rtmsg + a single
+    /// RTA_OIF rtattr carrying `oif`. Total = 16 + 12 + 8 = 36 bytes.
+    fn make_route_nlmsg(oif: u32) -> Vec<u8> {
+        make_route_nlmsg_inner(Some(oif))
+    }
+
+    fn make_route_nlmsg_inner(oif: Option<u32>) -> Vec<u8> {
+        let body_len = if oif.is_some() {
+            NLMSG_HDRLEN + RTMSG_HDRLEN + 8
+        } else {
+            NLMSG_HDRLEN + RTMSG_HDRLEN
+        };
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&(body_len as u32).to_ne_bytes()); // nlmsg_len
+        msg.extend_from_slice(&RTM_NEWROUTE.to_ne_bytes()); // nlmsg_type
+        msg.extend_from_slice(&0u16.to_ne_bytes()); // nlmsg_flags
+        msg.extend_from_slice(&1u32.to_ne_bytes()); // nlmsg_seq
+        msg.extend_from_slice(&0u32.to_ne_bytes()); // nlmsg_pid
+        // struct rtmsg: family, dst_len, src_len, tos, table, protocol,
+        // scope, type (8 bytes) + rtm_flags (u32).
+        msg.extend_from_slice(&[2u8, 0, 0, 0, 254, 3, 0, 1]);
+        msg.extend_from_slice(&0u32.to_ne_bytes());
+        if let Some(oif) = oif {
+            // RTA_OIF rtattr: rta_len (incl. 4-byte header) = 8, type, u32.
+            msg.extend_from_slice(&8u16.to_ne_bytes());
+            msg.extend_from_slice(&RTA_OIF.to_ne_bytes());
+            msg.extend_from_slice(&oif.to_ne_bytes());
+        }
+        msg
+    }
+
+    /// Offset of the RTA_OIF value within a make_route_nlmsg() message.
+    const ROUTE_OIF_OFF: usize = NLMSG_HDRLEN + RTMSG_HDRLEN + 4;
+
+    #[test]
+    fn route_oif_extracts_index() {
+        let msg = make_route_nlmsg(33);
+        assert_eq!(route_oif(&msg), Some(33));
+        let no_oif = make_route_nlmsg_inner(None);
+        assert_eq!(route_oif(&no_oif), None);
+    }
+
+    #[test]
+    fn netlink_filter_removes_vpn_newroute() {
+        let vpn_idx: u32 = 33; // tun0 — the `if33` case
+        let route_len = make_route_nlmsg(0).len();
+
+        let mut buf = Vec::new();
+        buf.extend(make_route_nlmsg(2)); // wlan0 — keep
+        buf.extend(make_route_nlmsg(vpn_idx)); // tun0 — remove
+        buf.extend(make_route_nlmsg(4)); // rmnet — keep
+
+        let new_len = filter_netlink_dump(&mut buf, &[vpn_idx]);
+        assert_eq!(new_len, route_len * 2);
+        // Remaining messages are wlan0 then rmnet, VPN route gone.
+        assert_eq!(read_u32_ne(&buf, ROUTE_OIF_OFF), Some(2));
+        assert_eq!(read_u32_ne(&buf, route_len + ROUTE_OIF_OFF), Some(4));
+    }
+
+    #[test]
+    fn netlink_filter_keeps_route_without_oif() {
+        // Multipath / oif-less routes must pass through untouched.
+        let mut buf = make_route_nlmsg_inner(None);
+        let orig_len = buf.len();
+        let new_len = filter_netlink_dump(&mut buf, &[33]);
+        assert_eq!(new_len, orig_len);
+    }
+
+    #[test]
+    fn netlink_filter_mixed_link_and_route() {
+        // A dump can interleave message types; only VPN-indexed ones drop.
+        let vpn_idx: u32 = 33;
+        let mut buf = Vec::new();
+        buf.extend(make_nlmsg(RTM_NEWLINK, vpn_idx)); // remove
+        buf.extend(make_route_nlmsg(2)); // keep (wlan0)
+        buf.extend(make_route_nlmsg(vpn_idx)); // remove (tun0)
+
+        let new_len = filter_netlink_dump(&mut buf, &[vpn_idx]);
+        assert_eq!(new_len, make_route_nlmsg(0).len());
+        assert_eq!(read_u16_ne(&buf, 4), Some(RTM_NEWROUTE));
+        assert_eq!(read_u32_ne(&buf, ROUTE_OIF_OFF), Some(2));
     }
 }
