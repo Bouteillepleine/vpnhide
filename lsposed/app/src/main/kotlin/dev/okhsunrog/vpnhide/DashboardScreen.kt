@@ -35,6 +35,7 @@ import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
 import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
 import dev.okhsunrog.vpnhide.ui.components.GroupedCard
 import dev.okhsunrog.vpnhide.ui.components.pulse
+import dev.okhsunrog.vpnhide.ui.theme.AppColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -308,7 +309,7 @@ private fun DashboardHeroCard(
     EnhancedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.extraLarge,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        color = AppColors.cardContainer,
     ) {
         Column(modifier = Modifier.padding(18.dp).fillMaxWidth()) {
             Row(
@@ -449,7 +450,7 @@ private fun HeroMetric(
         modifier =
             modifier
                 .clip(MaterialTheme.shapes.medium)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .background(AppColors.cardContainerStrong)
                 .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Text(
@@ -593,7 +594,7 @@ private fun ModuleCard(
                 version = null,
                 subtitle = stringResource(R.string.dashboard_not_installed),
                 accentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                accentContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                accentContainerColor = AppColors.neutralAccentContainer,
             )
         }
 
@@ -658,7 +659,7 @@ private fun LsposedCard(
                 version = installedVersion,
                 subtitle = stringResource(R.string.dashboard_not_installed),
                 accentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                accentContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                accentContainerColor = AppColors.neutralAccentContainer,
             )
         }
 
@@ -725,7 +726,7 @@ private fun ModuleCardShell(
         index = index,
         count = count,
         modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        color = AppColors.cardContainer,
     ) {
         Row(
             modifier = Modifier.padding(16.dp).fillMaxWidth(),
@@ -995,7 +996,7 @@ private fun ProtectionCardShell(
         index = index,
         count = count,
         modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        color = AppColors.cardContainer,
     ) {
         Row(
             modifier = Modifier.padding(16.dp).fillMaxWidth(),

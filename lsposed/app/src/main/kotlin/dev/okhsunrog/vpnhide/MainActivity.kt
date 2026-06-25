@@ -50,6 +50,7 @@ import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
 import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
 import dev.okhsunrog.vpnhide.ui.components.pulse
 import dev.okhsunrog.vpnhide.ui.components.rememberHapticTick
+import dev.okhsunrog.vpnhide.ui.theme.AppColors
 import dev.okhsunrog.vpnhide.ui.theme.AppEasing
 import dev.okhsunrog.vpnhide.ui.theme.VpnHideTheme
 import kotlinx.coroutines.Dispatchers
@@ -200,7 +201,7 @@ private fun TopBarActionButton(
         if (active) {
             MaterialTheme.colorScheme.primaryContainer
         } else {
-            MaterialTheme.colorScheme.surfaceContainerHigh
+            AppColors.toolbarActionContainer
         }
     val contentColor =
         if (active) {
@@ -319,6 +320,7 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     }
 
     Scaffold(
+        containerColor = AppColors.screenBackground,
         topBar = {
             if (searchActive && currentTab == Tab.Protection) {
                 SearchBar(
@@ -350,8 +352,8 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                     title = { AppTopBarTitle(currentTab) },
                     colors =
                         TopAppBarDefaults.topAppBarColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-                            scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                            containerColor = AppColors.topBarContainer,
+                            scrolledContainerColor = AppColors.topBarScrolledContainer,
                             titleContentColor = MaterialTheme.colorScheme.onSurface,
                             actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                         ),
@@ -479,7 +481,7 @@ private fun MainScreen(onReady: () -> Unit = {}) {
         bottomBar = {
             val tabHaptic = rememberHapticTick()
             NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                containerColor = AppColors.navigationBarContainer,
                 tonalElevation = 0.dp,
             ) {
                 NavigationBarItem(

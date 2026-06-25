@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.okhsunrog.vpnhide.settings.LocalSettingsState
+import dev.okhsunrog.vpnhide.ui.theme.AppColors
 import dev.okhsunrog.vpnhide.ui.theme.AppEasing
 
 /*
@@ -44,7 +45,7 @@ import dev.okhsunrog.vpnhide.ui.theme.AppEasing
 @Composable
 fun Modifier.container(
     shape: Shape = MaterialTheme.shapes.large,
-    color: Color = MaterialTheme.colorScheme.surfaceContainerLow,
+    color: Color = AppColors.cardContainer,
     borderColor: Color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
     drawBorder: Boolean = true,
     shadowElevation: Dp = 1.dp,
