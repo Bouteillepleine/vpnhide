@@ -33,6 +33,7 @@ import dev.okhsunrog.vpnhide.settings.LocalSettingsState
 import dev.okhsunrog.vpnhide.settings.ThemeMode
 import dev.okhsunrog.vpnhide.ui.components.PreferenceRow
 import dev.okhsunrog.vpnhide.ui.components.PreferenceRowSwitch
+import dev.okhsunrog.vpnhide.ui.theme.AppColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -41,6 +42,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val interactor = LocalSettingsInteractor.current
 
     Scaffold(
+        containerColor = AppColors.screenBackground,
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.settings_title)) },
@@ -54,7 +56,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 },
                 colors =
                     TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                        containerColor = AppColors.topBarContainer,
                         titleContentColor = MaterialTheme.colorScheme.onSurface,
                         navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     ),

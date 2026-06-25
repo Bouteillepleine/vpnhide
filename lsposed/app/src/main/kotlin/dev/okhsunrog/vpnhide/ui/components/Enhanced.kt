@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.graphics.vector.ImageVector
+import dev.okhsunrog.vpnhide.ui.theme.AppColors
 import dev.okhsunrog.vpnhide.ui.theme.AppMotion
 import dev.okhsunrog.vpnhide.ui.theme.groupCornerRadii
 import dev.okhsunrog.vpnhide.ui.theme.groupedShape
@@ -51,7 +52,7 @@ import dev.okhsunrog.vpnhide.ui.theme.shapeByInteraction
 fun EnhancedCard(
     modifier: Modifier = Modifier,
     shape: Shape = MaterialTheme.shapes.large,
-    color: Color = MaterialTheme.colorScheme.surfaceContainerLow,
+    color: Color = AppColors.cardContainer,
     contentColor: Color = contentColorFor(color).takeOrElse { MaterialTheme.colorScheme.onSurface },
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
@@ -80,7 +81,7 @@ fun GroupedCard(
     index: Int,
     count: Int,
     modifier: Modifier = Modifier,
-    color: Color = MaterialTheme.colorScheme.surfaceContainerLow,
+    color: Color = AppColors.cardContainer,
     contentColor: Color = contentColorFor(color).takeOrElse { MaterialTheme.colorScheme.onSurface },
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
