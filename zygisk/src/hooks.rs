@@ -835,9 +835,14 @@ unsafe fn maybe_filter_netlink_buf(fd: c_int, buf: *mut u8, ret: isize) -> isize
 
     let data = unsafe { core::slice::from_raw_parts_mut(buf, ret as usize) };
 
-    // Quick check: first message type must be RTM_NEWADDR or RTM_NEWLINK.
+    // Quick check: first message type must be one we filter. Route dumps
+    // (RTM_GETROUTE) come back as RTM_NEWROUTE and must not be skipped —
+    // that gap was the issue #86 `if<N>` leak.
     let nlmsg_type = u16::from_ne_bytes([data[4], data[5]]);
-    if nlmsg_type != crate::filter::RTM_NEWADDR && nlmsg_type != crate::filter::RTM_NEWLINK {
+    if nlmsg_type != crate::filter::RTM_NEWADDR
+        && nlmsg_type != crate::filter::RTM_NEWLINK
+        && nlmsg_type != crate::filter::RTM_NEWROUTE
+    {
         return ret;
     }
 
@@ -892,6 +897,108 @@ pub unsafe extern "C" fn hooked_recv(
     };
 
     let ret = unsafe { real(fd, buf, len, flags) };
+
+    unsafe { maybe_filter_netlink_buf(fd, buf as *mut u8, ret) }
+}
+
+// ============================================================================
+//  Hook: recvfrom / __recvfrom_chk — filter netlink responses
+// ============================================================================
+//
+// `recv()` is NOT enough. With `_FORTIFY_SOURCE` (the NDK default in release
+// builds) a call like `recv(fd, buf, sizeof(buf), 0)` over a fixed-size `buf`
+// is lowered by the compiler to `__recvfrom_chk` (or the bypass-fortify
+// `recvfrom`), and `recv()` itself tail-calls `recvfrom()`. So a fortified
+// native detector — e.g. RKNHardering reading the `RTM_GETROUTE` dump —
+// never touches the `recv` symbol and slips past the recv hook. We hook both
+// `recvfrom` and `__recvfrom_chk` so the netlink filter sees that traffic
+// too (this is what actually closes the issue #86 `if<N>` leak on-device).
+//
+// `is_netlink_fd` in `maybe_filter_netlink_buf` keeps TCP/UDP/Unix recvfrom
+// traffic untouched, so hooking these high-traffic symbols is safe.
+
+static REAL_RECVFROM: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+
+type RecvfromFn =
+    unsafe extern "C" fn(c_int, *mut c_void, usize, c_int, *mut c_void, *mut c_void) -> isize;
+
+#[inline(always)]
+fn real_recvfrom() -> Option<RecvfromFn> {
+    let raw = REAL_RECVFROM.load(Ordering::Relaxed);
+    if raw.is_null() {
+        None
+    } else {
+        Some(unsafe { core::mem::transmute::<*mut c_void, RecvfromFn>(raw) })
+    }
+}
+
+pub fn set_real_recvfrom_ptr(p: *const ()) {
+    REAL_RECVFROM.store(p as *mut c_void, Ordering::Relaxed);
+}
+
+/// Replacement for `libc::recvfrom`. Filters the flat buffer like `recv`.
+pub unsafe extern "C" fn hooked_recvfrom(
+    fd: c_int,
+    buf: *mut c_void,
+    len: usize,
+    flags: c_int,
+    src_addr: *mut c_void,
+    addrlen: *mut c_void,
+) -> isize {
+    let Some(real) = real_recvfrom() else {
+        set_errno(libc::EFAULT);
+        return -1;
+    };
+
+    let ret = unsafe { real(fd, buf, len, flags, src_addr, addrlen) };
+
+    unsafe { maybe_filter_netlink_buf(fd, buf as *mut u8, ret) }
+}
+
+static REAL_RECVFROM_CHK: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+
+/// `ssize_t __recvfrom_chk(int, void*, size_t len, size_t buf_size, int flags,
+///                         const struct sockaddr*, socklen_t*)` — bionic FORTIFY.
+type RecvfromChkFn = unsafe extern "C" fn(
+    c_int,
+    *mut c_void,
+    usize,
+    usize,
+    c_int,
+    *mut c_void,
+    *mut c_void,
+) -> isize;
+
+#[inline(always)]
+fn real_recvfrom_chk() -> Option<RecvfromChkFn> {
+    let raw = REAL_RECVFROM_CHK.load(Ordering::Relaxed);
+    if raw.is_null() {
+        None
+    } else {
+        Some(unsafe { core::mem::transmute::<*mut c_void, RecvfromChkFn>(raw) })
+    }
+}
+
+pub fn set_real_recvfrom_chk_ptr(p: *const ()) {
+    REAL_RECVFROM_CHK.store(p as *mut c_void, Ordering::Relaxed);
+}
+
+/// Replacement for bionic's `__recvfrom_chk`. Same filtering as `recvfrom`.
+pub unsafe extern "C" fn hooked_recvfrom_chk(
+    fd: c_int,
+    buf: *mut c_void,
+    len: usize,
+    buf_size: usize,
+    flags: c_int,
+    src_addr: *mut c_void,
+    addrlen: *mut c_void,
+) -> isize {
+    let Some(real) = real_recvfrom_chk() else {
+        set_errno(libc::EFAULT);
+        return -1;
+    };
+
+    let ret = unsafe { real(fd, buf, len, buf_size, flags, src_addr, addrlen) };
 
     unsafe { maybe_filter_netlink_buf(fd, buf as *mut u8, ret) }
 }
