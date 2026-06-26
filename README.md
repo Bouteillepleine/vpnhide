@@ -167,13 +167,13 @@ vpnhide — это не один переключатель, а три разн�
 | 4 | `ioctl(SIOCGIFCONF)` перечисление интерфейсов | | x | x | |
 | 5 | Все остальные `SIOCGIF*` (INDEX, HWADDR, ADDR и т.д.) | | x | x | |
 | 6 | `getifaddrs()` (использует netlink внутри) | | x | x | |
-| 7 | netlink `RTM_GETLINK` дамп | блок. | x | x | |
-| 8 | netlink `RTM_GETADDR` дамп (IPv4 + IPv6) | блок. | x | | |
-| 9 | netlink `RTM_GETROUTE` дамп | блок. | | | |
+| 7 | netlink `RTM_GETLINK` дамп | | x | x | |
+| 8 | netlink `RTM_GETADDR` дамп (IPv4 + IPv6) | | x | x | |
+| 9 | netlink `RTM_GETROUTE` дамп | | x | x | |
 | 10 | `/proc/net/route` | блок. | x | x | |
-| 11 | `/proc/net/ipv6_route` | блок. | | x | |
+| 11 | `/proc/net/ipv6_route` | блок. | x | x | |
 | 12 | `/proc/net/if_inet6` | блок. | | x | |
-| 13 | `/proc/net/tcp`, `tcp6` | блок. | | | |
+| 13 | `/proc/net/tcp`, `tcp6` | блок. | | x | |
 | 14 | `/proc/net/udp`, `udp6` | блок. | | | |
 | 15 | `/proc/net/dev` | блок. | | | |
 | 16 | `/proc/net/fib_trie` | блок. | | | |
@@ -188,9 +188,11 @@ vpnhide — это не один переключатель, а три разн�
 | 25 | `System.getProperty` (настройки прокси) | | | x | |
 | 26 | `/proc/net/route` через Java `FileInputStream` | блок. | x | x | |
 
-**блок.** = SELinux запрещает доступ для обычных приложений (Android 10+). Хуки не нужны.
+**блок.** = на сток-enforcing сборках (Android 10+) SELinux обычно запрещает обычным приложениям доступ к этому файлу `/proc/net/*` / `/sys`. Но политика SELinux настроена **по-разному на разных устройствах и прошивках** (OEM- и кастомные ROM, `permissive`-сборки), поэтому слои vpnhide всё равно фильтруют эти пути и не полагаются на SELinux.
 
-Строки 1–6, 21 и 24 — единственные векторы, доступные обычным приложениям. Всё остальное либо заблокировано SELinux, либо проходит через Java API (покрывается lsposed).
+Важно: **netlink-дампы (строки 7–9) SELinux не ограничивает** — обычное приложение читает интерфейсы, адреса и маршруты через `NETLINK_ROUTE` напрямую. Именно так детекторы вроде RKNHardering обходят блокировку `/proc/net/route` (см. [issue #86](https://github.com/okhsunrog/vpnhide/issues/86)). Поэтому векторы, реально доступные обычному приложению, — это строки 1–9 и 24; их закрывают kmod / zygisk. Остальное либо часто блокируется SELinux на стоке (но это зависит от устройства), либо идёт через Java API и покрывается lsposed.
+
+Полная карта векторов — с разбивкой по слоям, нюансами SELinux и известными пробелами — в [docs/detection-vectors.md](docs/detection-vectors.md).
 
 ## Сборка из исходников
 

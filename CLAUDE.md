@@ -22,6 +22,7 @@ These short files cover everything specific to this repo. Skipping them leads to
 - [CONTRIBUTING.md](CONTRIBUTING.md) — PR process, commit conventions, changelog requirement
 - [docs/development.md](docs/development.md) — prereqs, per-module build quickstart, keystore setup, device install, CI lints
 - [docs/state.md](docs/state.md) — every persistent path / proc entry / iptables chain the project touches; who writes, who reads, lifetime
+- [docs/detection-vectors.md](docs/detection-vectors.md) — what an app can probe to detect the VPN (or a hidden package), which component (kmod / zygisk / lsposed / SELinux) covers each vector, how it manifests. Read before adding or changing a hook.
 - [docs/changelog.md](docs/changelog.md) — changelog storage (`changelog.d/` fragments + history JSON), `./scripts/changelog.py` usage
 - [docs/releasing.md](docs/releasing.md) — `./scripts/release.py` usage, version-bump flow
 - [kmod/BUILDING.md](kmod/BUILDING.md) — kernel-module build (one-command DDK via `./kmod/build.py`, GKI matrix, troubleshooting)
