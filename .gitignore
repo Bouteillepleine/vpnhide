@@ -37,6 +37,8 @@ kmod/module/vpnhide_kmod.ko
 kmod/.env
 kmod/*.lds
 kmod/test_iface_lists
+kmod/*.kpm
+kmod/shared/test_vpnhide_logic
 
 # General
 *.swp
