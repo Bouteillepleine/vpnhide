@@ -134,7 +134,12 @@ bootloop**, where the `.ko`'s kretprobe would just fail to register. So:
       offsets derived from source (`fib_info`, `fib6_info`, `inet6_ifaddr`,
       `fib_rule`); a static `getifaddrs()` probe (`gai-probe.c`) proves the
       address path is closed (target getifaddrs vpn0: 3 → 0).
-- [x] Runtime kver offset table (`kver_offsets.h`) — **6.1 + 5.10 + 5.4 + 4.19 + 4.14, all full + QEMU-validated 9/9**
+- [x] Runtime kver offset table (`kver_offsets.h`) — **6.1 + 5.15 + 5.10 + 5.4 + 4.19 + 4.14, all full + QEMU-validated 9/9**
+- [x] **5.15 (android13-5.15) — full parity, QEMU-validated 9/9** on a DDK GKI
+      Image. Caught a latent bug: 5.15's `struct fib6_info` gained
+      `offload`/`offload_failed` (like 6.1), so `nh`@160 / `fib6_nh`@176 — the
+      old table silently routed 5.15 through 5.10's 152/168 and would misread
+      the IPv6 route dev. Now its own entry; everything else matches 5.10.
 - [x] **6.1 (android14-6.1) — full parity, QEMU-validated 9/9** on a DDK-built
       (clang) GKI Image. Derived from source: idev@168 (the `inet6_ifaddr`
       prefix is byte-identical to 5.10, so the on-device 216 first taken from

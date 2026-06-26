@@ -125,7 +125,8 @@ static const struct vpnhide_offsets vpnhide_off_6_1 = {
 	.proc_uses_proc_ops = 1,
 };
 
-/* 5.10 / 5.15 — older skb layout (skb.len = 104 per soranerai); rest TODO. */
+/* 5.10 (android12-5.10) — QEMU-validated 9/9. (5.15 has a different fib6_info
+ * and gets its own table below.) */
 static const struct vpnhide_offsets vpnhide_off_5_x = {
 	.skb_len = 104,
 	.netdev_name = 0,
@@ -158,6 +159,37 @@ static const struct vpnhide_offsets vpnhide_off_5_x = {
 	.fib_rule_uid_start = 120,
 	.fib_rule_uid_end = 124,
 	.proc_uses_proc_ops = 1, /* 5.6+; for <5.6 use file_operations below */
+};
+
+/* 5.15 (android13-5.15, derived from source + QEMU-validated). Identical to
+ * 5.10 EXCEPT struct fib6_info gained offload/offload_failed fields (same
+ * shape as 6.1), pushing nh@160 and fib6_nh[]@176 (5.10 is 152/168). This is
+ * why 5.15 can't share the 5.10 table — its IPv6 route-dump dev would be
+ * misread. Everything else (idev@168, fib_info 96/104/128, fib_dump via
+ * fib_rt_info*@arg4, fib_rule) matches 5.10. */
+static const struct vpnhide_offsets vpnhide_off_5_15 = {
+	.skb_len = 104, /* GKI 5.15 head (validated); bump to 112 if conntrack on */
+	.netdev_name = 0,
+	.seqfile_buf = 0,
+	.seqfile_count = 24,
+	.in_ifaddr_ifa_dev = 24,
+	.in_device_dev = 0,
+	.inet6_ifaddr_idev = 168,
+	.inet6_dev_dev = 0,
+	.fib_info_fib_nhs = 96,
+	.fib_info_nh = 104,
+	.fib_info_fib_nh = 128,
+	.fib_dump_fi_arg = 4,
+	.fib_dump_fi_via_fri = 1,
+	/* fib6_info with offload/offload_failed (cf. 6.1): nh@160, fib6_nh[]@176. */
+	.fib6_info_nh = 160,
+	.fib6_info_fib6_nh = 176,
+	.fib_rule_table = 36,
+	.fib_rule_iifname = 88,
+	.fib_rule_oifname = 104,
+	.fib_rule_uid_start = 120,
+	.fib_rule_uid_end = 124,
+	.proc_uses_proc_ops = 1,
 };
 
 /* 5.4 (android11-5.4, derived from AOSP common source + QEMU-validated).
@@ -284,8 +316,10 @@ static inline const struct vpnhide_offsets *vpnhide_select_offsets(unsigned int 
 {
 	if (kver >= VPNHIDE_KVER(6, 0, 0))
 		return &vpnhide_off_6_1; /* 6.x — only 6.1 proven so far */
+	if (kver >= VPNHIDE_KVER(5, 15, 0))
+		return &vpnhide_off_5_15; /* 5.15+: fib6_info gained offload fields */
 	if (kver >= VPNHIDE_KVER(5, 6, 0))
-		return &vpnhide_off_5_x;
+		return &vpnhide_off_5_x; /* 5.6–5.14 */
 	if (kver >= VPNHIDE_KVER(5, 0, 0))
 		return &vpnhide_off_5_4; /* 5.0–5.5: legacy fib_dump_info + proc */
 	if (kver >= VPNHIDE_KVER(4, 19, 0))
