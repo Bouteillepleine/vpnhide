@@ -30,12 +30,13 @@
  */
 #pragma GCC visibility push(hidden)
 #include <compiler.h>
+#include <common.h> /* kver + VERSION(major,minor,patch) */
 #include <kpmodule.h>
 #include <hook.h>
-#include <kputils.h>
+#include <kputils.h> /* current_uid() */
 #include <log.h>
 #include <symbol.h>
-#include <kallsyms.h>
+#include <kallsyms.h> /* kallsyms_lookup_name (KP-resolved pointer) */
 #pragma GCC visibility pop
 
 #include "../generated/iface_lists.h"
@@ -50,12 +51,6 @@ KPM_DESCRIPTION("Hide VPN interfaces from selected UIDs (KPM backend, WIP)");
 
 #define MODNAME "vpnhide"
 #define MAX_TARGET_UIDS 64
-
-/* KernelPatch runtime helpers (provided by the headers above). Declared
- * here for the skeleton; confirm exact spelling against the KernelPatch
- * tree when wiring the real build.  [TODO: verify current_uid / kver source] */
-extern unsigned long (*kallsyms_lookup_name)(const char *name);
-extern uid_t current_uid(void);
 
 /* ------------------------------------------------------------------ */
 /*  Resolved state                                                    */
@@ -266,13 +261,21 @@ static int resolve_symbols(void)
 	return _skb_trim ? 0 : -1;
 }
 
-/* TODO: source the running kernel version from KernelPatch rather than this
- * placeholder (e.g. a `kver` global, or parse `linux_banner`/init_uts_ns).
- * Returning 0 here makes vpnhide_select_offsets() bail — intentional until
- * wired, so the skeleton can't install hooks with a wrong table. */
-static unsigned int running_kver(void)
+/* Parse a NUL-terminated list of target UIDs (newline/space separated, `#`
+ * comments) into the live set. Used from KPM load args and the ctl0 control
+ * channel — same parser as the .ko's /proc writer (shared/vpnhide_logic.h).
+ * proc is a secondary path (TODO); args/ctl0 need no procfs ABI guessing. */
+static void apply_targets(const char *s)
 {
-	return 0; /* TODO */
+	unsigned long n = 0;
+
+	if (!s)
+		return;
+	while (s[n])
+		n++;
+	nr_target_uids = vpnhide_parse_target_uids(s, n, target_uids,
+						   MAX_TARGET_UIDS);
+	vpnhide_dbg("loaded %d target UIDs\n", nr_target_uids);
 }
 
 static long vpnhide_kpm_init(const char *args, const char *event,
@@ -280,9 +283,12 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 {
 	unsigned long fn;
 
-	logki(MODNAME ": KPM init (event=%s)\n", event ? event : "");
+	logki(MODNAME ": KPM init (event=%s) kver=0x%x\n", event ? event : "",
+	      (unsigned int)kver);
 
-	off = vpnhide_select_offsets(running_kver());
+	/* `kver` is KernelPatch's running-kernel version (common.h), encoded
+	 * the same way as VPNHIDE_KVER. NULL table = unsupported → bail. */
+	off = vpnhide_select_offsets((unsigned int)kver);
 	if (!off) {
 		logki(MODNAME ": unsupported kernel version — refusing to install\n");
 		return -1; /* never guess offsets */
@@ -291,6 +297,10 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 		logki(MODNAME ": symbol resolution failed\n");
 		return -1;
 	}
+
+	/* Targets can come at load time: sc_kpm_load(key, path, "10010 10020").
+	 * (proc + a runtime ctl0 path also feed the same set.) */
+	apply_targets(args);
 
 	/* TODO: create /proc/vpnhide_targets + /proc/vpnhide_debug using the
 	 * proc-ABI selected by off->proc_uses_proc_ops. */
@@ -312,12 +322,12 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 
 static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 {
-	/* TODO: optional userspace control channel (sc_kpm_control). For now
-	 * targets come through /proc, matching the .ko's control plane. */
-	(void)args;
+	/* Runtime control via supercall: sc_kpm_control(key, "vpnhide", uids...).
+	 * Lets the test / app update targets without a reboot or proc write. */
 	(void)out_msg;
 	(void)outlen;
-	return 0;
+	apply_targets(args);
+	return nr_target_uids;
 }
 
 static long vpnhide_kpm_exit(void *__user reserved)
