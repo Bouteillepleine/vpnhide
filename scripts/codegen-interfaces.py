@@ -208,6 +208,75 @@ def kt_str_lit(s: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+# Self-contained C matcher helpers (no libc/kernel headers). Literal template
+# block — `\t` becomes a tab in the generated header (kernel style), same as
+# the rest of the emitter. Shared verbatim by the .ko and the KPM backend.
+KMOD_MATCHER_HELPERS = """\
+static inline char vpnhide__lc(char c)
+{
+\treturn (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+}
+
+static inline int vpnhide_iface_starts_with_ci(const char *name, const char *prefix)
+{
+\tint i;
+\tfor (i = 0; prefix[i]; i++) {
+\t\tif (!name[i])
+\t\t\treturn 0;
+\t\tif (vpnhide__lc(name[i]) != vpnhide__lc(prefix[i]))
+\t\t\treturn 0;
+\t}
+\treturn 1;
+}
+
+static inline int vpnhide_iface_starts_with_then_digits_ci(const char *name,
+\t\t\t\t\t\t\t   const char *prefix)
+{
+\tint i = 0;
+\tif (!vpnhide_iface_starts_with_ci(name, prefix))
+\t\treturn 0;
+\twhile (prefix[i])
+\t\ti++;
+\tif (!name[i])
+\t\treturn 0;
+\tfor (; name[i]; i++)
+\t\tif (name[i] < '0' || name[i] > '9')
+\t\t\treturn 0;
+\treturn 1;
+}
+
+static inline int vpnhide_iface_equals_ci(const char *name, const char *other)
+{
+\tint i;
+\tfor (i = 0; other[i]; i++) {
+\t\tif (!name[i])
+\t\t\treturn 0;
+\t\tif (vpnhide__lc(name[i]) != vpnhide__lc(other[i]))
+\t\t\treturn 0;
+\t}
+\treturn name[i] == '\\0';
+}
+
+static inline int vpnhide_iface_contains_ci(const char *name, const char *needle)
+{
+\tint i, j;
+\tif (!needle[0])
+\t\treturn 1;
+\tfor (i = 0; name[i]; i++) {
+\t\tfor (j = 0; needle[j]; j++) {
+\t\t\tif (!name[i + j])
+\t\t\t\treturn 0;
+\t\t\tif (vpnhide__lc(name[i + j]) != vpnhide__lc(needle[j]))
+\t\t\t\tbreak;
+\t\t}
+\t\tif (!needle[j])
+\t\t\treturn 1;
+\t}
+\treturn 0;
+}
+"""
+
+
 def emit_kmod(rules: list[Rule]) -> str:
     """Render an inline header for the kernel module.
 
@@ -220,99 +289,28 @@ def emit_kmod(rules: list[Rule]) -> str:
     lines.append("#ifndef VPNHIDE_GENERATED_IFACE_LISTS_H")
     lines.append("#define VPNHIDE_GENERATED_IFACE_LISTS_H")
     lines.append("")
-    lines.append("#ifdef __KERNEL__")
-    lines.append("# include <linux/string.h>")
-    lines.append("# include <linux/ctype.h>")
-    lines.append("# include <linux/types.h>")
-    lines.append("#else")
-    lines.append("# include <ctype.h>")
-    lines.append("# include <stdbool.h>")
-    lines.append("# include <stddef.h>")
-    lines.append("# include <string.h>")
-    lines.append("#endif")
-    lines.append("")
-    lines.append("static inline bool vpnhide_iface_starts_with_ci(")
-    lines.append("\tconst char *name, const char *prefix)")
-    lines.append("{")
-    lines.append("\tsize_t i;")
-    lines.append("\tfor (i = 0; prefix[i]; i++) {")
-    lines.append("\t\tif (!name[i])")
-    lines.append("\t\t\treturn false;")
-    lines.append("\t\tif (tolower((unsigned char)name[i]) !=")
-    lines.append("\t\t    (unsigned char)prefix[i])")
-    lines.append("\t\t\treturn false;")
-    lines.append("\t}")
-    lines.append("\treturn true;")
-    lines.append("}")
-    lines.append("")
-    lines.append("static inline bool vpnhide_iface_starts_with_then_digits_ci(")
-    lines.append("\tconst char *name, const char *prefix)")
-    lines.append("{")
-    lines.append("\tsize_t i;")
-    lines.append("\tif (!vpnhide_iface_starts_with_ci(name, prefix))")
-    lines.append("\t\treturn false;")
-    lines.append("\ti = strlen(prefix);")
-    lines.append("\tif (!name[i])")
-    lines.append("\t\treturn false;")
-    lines.append("\tfor (; name[i]; i++)")
-    lines.append("\t\tif (name[i] < '0' || name[i] > '9')")
-    lines.append("\t\t\treturn false;")
-    lines.append("\treturn true;")
-    lines.append("}")
-    lines.append("")
-    lines.append("static inline bool vpnhide_iface_equals_ci(")
-    lines.append("\tconst char *name, const char *other)")
-    lines.append("{")
-    lines.append("\tsize_t i;")
-    lines.append("\tfor (i = 0; other[i]; i++) {")
-    lines.append("\t\tif (!name[i])")
-    lines.append("\t\t\treturn false;")
-    lines.append("\t\tif (tolower((unsigned char)name[i]) !=")
-    lines.append("\t\t    (unsigned char)other[i])")
-    lines.append("\t\t\treturn false;")
-    lines.append("\t}")
-    lines.append("\treturn name[i] == '\\0';")
-    lines.append("}")
-    lines.append("")
-    lines.append("static inline bool vpnhide_iface_contains_ci(")
-    lines.append("\tconst char *name, const char *needle)")
-    lines.append("{")
-    lines.append("\tsize_t nlen = strlen(needle);")
-    lines.append("\tsize_t i, j;")
-    lines.append("\tif (nlen == 0)")
-    lines.append("\t\treturn true;")
-    lines.append("\tfor (i = 0; name[i]; i++) {")
-    lines.append("\t\tfor (j = 0; j < nlen; j++) {")
-    lines.append("\t\t\tif (!name[i + j])")
-    lines.append("\t\t\t\treturn false;")
-    lines.append("\t\t\tif (tolower((unsigned char)name[i + j]) !=")
-    lines.append("\t\t\t    (unsigned char)needle[j])")
-    lines.append("\t\t\t\tbreak;")
-    lines.append("\t\t}")
-    lines.append("\t\tif (j == nlen)")
-    lines.append("\t\t\treturn true;")
-    lines.append("\t}")
-    lines.append("\treturn false;")
-    lines.append("}")
-    lines.append("")
-    lines.append("static inline bool vpnhide_iface_is_vpn(const char *name)")
+    # Self-contained matcher: no <ctype.h>/<string.h>/<stdbool.h>/<linux/*>,
+    # so the SAME header compiles in every world that consumes it — the
+    # kretprobe .ko (real kernel headers), the KernelPatch KPM (-nostdinc, no
+    # libc/ctype stubs), and the host unit test. ASCII case-fold and length
+    # are done locally; returns int (0/1).
+    lines.append(KMOD_MATCHER_HELPERS)
+    lines.append("static inline int vpnhide_iface_is_vpn(const char *name)")
     lines.append("{")
     lines.append("\tif (!name || !name[0])")
-    lines.append("\t\treturn false;")
+    lines.append("\t\treturn 0;")
+    fn_for_kind = {
+        "exact": "vpnhide_iface_equals_ci",
+        "prefix": "vpnhide_iface_starts_with_ci",
+        "prefix_digits": "vpnhide_iface_starts_with_then_digits_ci",
+        "contains": "vpnhide_iface_contains_ci",
+    }
     for r in rules:
         if r.note:
             lines.append(f"\t/* {r.note} */")
-        if r.kind == "exact":
-            fn = "vpnhide_iface_equals_ci"
-        elif r.kind == "prefix":
-            fn = "vpnhide_iface_starts_with_ci"
-        elif r.kind == "prefix_digits":
-            fn = "vpnhide_iface_starts_with_then_digits_ci"
-        elif r.kind == "contains":
-            fn = "vpnhide_iface_contains_ci"
-        lines.append(f"\tif ({fn}(name, {c_str_lit(r.needle)}))")
-        lines.append("\t\treturn true;")
-    lines.append("\treturn false;")
+        lines.append(f"\tif ({fn_for_kind[r.kind]}(name, {c_str_lit(r.needle)}))")
+        lines.append("\t\treturn 1;")
+    lines.append("\treturn 0;")
     lines.append("}")
     lines.append("")
     lines.append("#endif /* VPNHIDE_GENERATED_IFACE_LISTS_H */")

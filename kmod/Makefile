@@ -12,9 +12,10 @@ CLANG := $(if $(CLANG_DIR),$(CLANG_DIR)/clang,clang)
 #  KPM backend — relocatable `.kpm`, KernelPatch headers, NO kernel  #
 #  source / Module.symvers.  Build: make kpm KP_DIR=/path/KernelPatch #
 # ================================================================== #
-# KernelPatch's own header tree (its kernel/ include dirs + linux stubs).
-KPM_INCLUDE_DIRS := kernel kernel/include kernel/patch/include kernel/linux/include
-KPM_INCLUDES := $(foreach d,$(KPM_INCLUDE_DIRS),-I$(KP_DIR)/$(d))
+# KernelPatch's own header tree (mirrors kpms/*/Makefile INCLUDE_DIRS).
+KPM_INCLUDE_DIRS := . include patch/include linux/include \
+	linux/arch/arm64/include linux/tools/arch/arm64/include
+KPM_INCLUDES := $(foreach d,$(KPM_INCLUDE_DIRS),-I$(KP_DIR)/kernel/$(d))
 
 KPM_CFLAGS := -target aarch64-linux-android \
 	-O2 -fno-pic -fno-pie -fno-plt -mcmodel=small \

@@ -68,19 +68,24 @@ legwork and tested on-device — credit due):
 - Control: userspace talks to the module via the supercall (`syscall 45`)
   → `sc_kpm_control` → the module's `KPM_CTL0` handler.
 
-## Build (not yet wired into CI)
+## Build
 
 A KPM is a relocatable object built with clang against the KernelPatch
 header tree — **no kernel source needed**:
 
 ```sh
-# KP_DIR must point at a KernelPatch checkout (its kernel/ include dirs).
-make -C kmod kpm KP_DIR=/path/to/KernelPatch
+git clone --depth 1 https://github.com/bmax121/KernelPatch
+make -C kmod kpm KP_DIR=$PWD/KernelPatch
 ```
 
-See `../Makefile` (`kpm*` targets). The KernelPatch headers are **not**
-vendored yet — **TODO**: add them as a submodule or `third_party/` drop so
-CI can build the `.kpm` reproducibly (like `zygisk/third_party/`).
+This **works today** — `vpnhide.kpm` builds against `bmax121/KernelPatch`
+and emits a valid KPM ELF (`.kpm.info` / `.kpm.init` / `.kpm.ctl0` /
+`.kpm.exit` sections, metadata populated). See `../Makefile` (`kpm*`
+targets). Include dirs mirror KernelPatch's own `kpms/*/Makefile`.
+
+**TODO**: vendor the KernelPatch headers as a submodule / `third_party/`
+drop + a `build.py` KPM path, so CI builds the `.kpm` reproducibly (like
+`zygisk/third_party/`). Building != working — see Status.
 
 ## Deploy
 
@@ -113,6 +118,7 @@ bootloop**, where the `.ko`'s kretprobe would just fail to register. So:
 - [x] Shared filtering logic extracted (`../shared/vpnhide_logic.h`)
 - [x] Runtime kver offset table scaffold (`kver_offsets.h`) — **6.1 only**
 - [x] KPM skeleton + 2 PoC hooks (`fib_route_seq_show`, `rtnl_fill_ifinfo`)
+- [x] **Compiles against `bmax121/KernelPatch` → valid `.kpm` ELF** (self-contained matcher; `hook_fargs12_t` is the max bucket — rtnl reads arg0/arg1 only)
 - [ ] Source the running `kver` from KernelPatch (currently a stub → refuses to install)
 - [ ] proc_ops vs file_operations mock per kver (the HyperOS-5.4 crash class)
 - [ ] Remaining hooks (see the coverage table in `vpnhide_kpm.c`)

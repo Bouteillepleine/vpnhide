@@ -8,11 +8,12 @@
  * Loaded by the KernelPatch runtime (target: KPatch-Next on KernelSU-Next),
  * NOT insmod — so it also works where module signing blocks a `.ko`.
  *
- * STATUS: structural scaffold for review. NOT yet buildable here (needs the
- * KernelPatch header tree, see ../Makefile `kpm*` targets and README.md) and
- * NOT yet validated. Per-kver offsets in kver_offsets.h and every hook below
- * must pass the QEMU KPM harness before anything ships — a wrong offset is a
- * panic/bootloop, not a soft failure.
+ * STATUS: compiles against the KernelPatch header tree into a valid .kpm
+ * (`make kpm KP_DIR=/path/to/KernelPatch`; verified against bmax121/KernelPatch).
+ * NOT yet validated on a kernel: the running-kver source is a stub (so it
+ * refuses to install), several hooks are still TODO, and every per-kver offset
+ * in kver_offsets.h must pass the QEMU KPM harness before anything ships — a
+ * wrong offset is a panic/bootloop, not a soft failure.
  *
  * DESIGN (how this differs from soranerai's prototype, deliberately):
  *   - ONE source + a runtime kver offset table (kver_offsets.h), not three
@@ -158,7 +159,7 @@ static void fib_route_after(hook_fargs2_t *fargs, void *udata)
 /*  We do NOT return -EMSGSIZE (infinite retry on 6.1 — issue #38).    */
 /* ================================================================== */
 
-static void rtnl_fill_before(hook_fargs14_t *fargs, void *udata)
+static void rtnl_fill_before(hook_fargs12_t *fargs, void *udata)
 {
 	void *skb = (void *)fargs->arg0;
 	void *dev = (void *)fargs->arg1;
@@ -175,7 +176,7 @@ static void rtnl_fill_before(hook_fargs14_t *fargs, void *udata)
 		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
 }
 
-static void rtnl_fill_after(hook_fargs14_t *fargs, void *udata)
+static void rtnl_fill_after(hook_fargs12_t *fargs, void *udata)
 {
 	if (!fargs->local.data0)
 		return;
@@ -302,7 +303,7 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 
 	fn = kallsyms_lookup_name("rtnl_fill_ifinfo");
 	if (fn)
-		hook_wrap((void *)fn, 14, (void *)rtnl_fill_before,
+		hook_wrap((void *)fn, 12, (void *)rtnl_fill_before,
 			  (void *)rtnl_fill_after, 0);
 
 	logki(MODNAME ": KPM hooks installed\n");
