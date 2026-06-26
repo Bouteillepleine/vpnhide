@@ -356,6 +356,54 @@ static void fib_dump_after(hook_fargs8_t *fargs, void *udata)
 	fargs->ret = 0;
 }
 
+/* ================================================================== */
+/*  Hook 7: rt6_fill_node — IPv6 RTM_GETROUTE dump                     */
+/*  arg1 = skb, arg2 = fib6_info*.  IPv6 analogue of fib_dump_info.     */
+/* ================================================================== */
+
+static void *dev_from_fib6_info(void *rt)
+{
+	void *nh;
+
+	if (!rt || !off->fib6_info_fib6_nh)
+		return 0;
+	nh = *(void **)((char *)rt + off->fib6_info_nh);
+	if (nh)
+		return 0; /* nexthop-object route — not unpacked yet */
+	return *(void **)((char *)rt + off->fib6_info_fib6_nh);
+}
+
+static void rt6_fill_before(hook_fargs12_t *fargs, void *udata)
+{
+	void *skb = (void *)fargs->arg1;
+	void *rt = (void *)fargs->arg2;
+	void *dev;
+
+	fargs->local.data0 = 0;
+	if (!is_target_uid() || !skb || !rt)
+		return;
+	dev = dev_from_fib6_info(rt);
+	if (!dev || !iface_is_vpn(netdev_name(dev)))
+		return;
+
+	fargs->local.data0 = 1;
+	fargs->local.data1 = (uint64_t)skb;
+	fargs->local.data2 =
+		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
+}
+
+static void rt6_fill_after(hook_fargs12_t *fargs, void *udata)
+{
+	if (!fargs->local.data0)
+		return;
+	if ((long)fargs->ret < 0)
+		return;
+	if (_skb_trim)
+		_skb_trim((void *)fargs->local.data1,
+			  (unsigned int)fargs->local.data2);
+	fargs->ret = 0;
+}
+
 /*
  * HOOK COVERAGE — to reach parity with vpnhide_kmod.c (the .ko). Each line
  * below is a hook_wrap target; PoC ones are wired above, the rest are the
@@ -373,7 +421,7 @@ static void fib_dump_after(hook_fargs8_t *fargs, void *udata)
  * TODO — version-specific struct derefs needing more per-kver offsets
  * (derive from source, tune against the harness — a wrong offset is an A/B
  * fail or a contained panic, not a brick):
- *   rt6_fill_node          RTM_GETROUTE v6        fib6_info nexthop dev
+ *   ( rt6_fill_node — done above ✓ )
  *   fib_nl_fill_rule       RTM_GETRULE            fib_rule iif/oif/uid_range
  *   inet_fill_ifaddr       RTM_GETADDR v4         in_ifaddr.ifa_dev->dev
  *   inet6_fill_ifaddr      RTM_GETADDR v6         inet6_ifaddr.idev->dev
@@ -517,6 +565,11 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 		hook_wrap((void *)fn, 6, (void *)fib_dump_before,
 			  (void *)fib_dump_after, 0);
 
+	fn = kallsyms_lookup_name("rt6_fill_node");
+	if (fn)
+		hook_wrap((void *)fn, 11, (void *)rt6_fill_before,
+			  (void *)rt6_fill_after, 0);
+
 	logki(MODNAME ": KPM hooks installed\n");
 	return 0;
 }
@@ -557,6 +610,10 @@ static long vpnhide_kpm_exit(void *__user reserved)
 	if (fn)
 		hook_unwrap((void *)fn, (void *)fib_dump_before,
 			    (void *)fib_dump_after);
+	fn = kallsyms_lookup_name("rt6_fill_node");
+	if (fn)
+		hook_unwrap((void *)fn, (void *)rt6_fill_before,
+			    (void *)rt6_fill_after);
 
 	if (_remove_proc_entry) {
 		_remove_proc_entry("vpnhide_targets", 0);
