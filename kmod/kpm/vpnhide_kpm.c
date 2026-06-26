@@ -443,7 +443,13 @@ static void *dev_from_fib6_info(void *rt)
 {
 	void *nh;
 
-	if (!rt || !off->fib6_info_fib6_nh)
+	if (!rt)
+		return 0;
+	/* Pre-fib6_info kernels: rt is a struct rt6_info* whose embedded
+	 * dst_entry holds the dev directly (no nexthop walk). */
+	if (off->rt6_via_dst)
+		return *(void **)((char *)rt + off->rt6_dst_dev);
+	if (!off->fib6_info_fib6_nh)
 		return 0;
 	/* fib6_info_nh == 0 => this version has no nexthop-object field (e.g.
 	 * 4.19/4.14); skip the check rather than misread fib6_info's head. */
@@ -768,7 +774,7 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 			hook_wrap((void *)fn, 11, (void *)fib_dump_before,
 				  (void *)fib_dump_after, 0);
 	}
-	if (off->fib6_info_fib6_nh) {
+	if (off->fib6_info_fib6_nh || off->rt6_via_dst) {
 		fn = lookup_fn("rt6_fill_node");
 		if (fn)
 			hook_wrap((void *)fn, 11, (void *)rt6_fill_before,

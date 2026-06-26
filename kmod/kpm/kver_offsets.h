@@ -70,6 +70,12 @@ struct vpnhide_offsets {
 	unsigned int fib6_info_nh;
 	unsigned int fib6_info_fib6_nh;
 
+	/* Pre-fib6_info kernels (<= 4.14): rt6_fill_node takes a struct rt6_info*
+	 * (which begins with a struct dst_entry), not a fib6_info. When
+	 * rt6_via_dst is set, dev = *(rt + rt6_dst_dev) (dst_entry.dev). */
+	int rt6_via_dst;
+	unsigned int rt6_dst_dev;
+
 	/* Policy rules (fib_nl_fill_rule -> struct fib_rule). */
 	unsigned int fib_rule_table;
 	unsigned int fib_rule_iifname;
@@ -213,31 +219,43 @@ static const struct vpnhide_offsets vpnhide_off_4_19 = {
 	.proc_uses_proc_ops = 0, /* <5.6 → file_operations */
 };
 
-/* 4.14 (vanilla 4.14.336, derived from source + QEMU-validated). Offsets that
- * match 5.x are noted; the route-dump hooks (fib_dump_info, rt6_fill_node)
- * are STRUCTURALLY different on 4.14 (fi passed directly at a different arg,
- * no nexthop objects, IPv6 uses rt6_info not fib6_info) so their offsets stay
- * 0 here = not installed until the hooks learn the 4.14 shape (see the
- * coverage notes in vpnhide_kpm.c). procfs is file_operations (<5.6). */
+/* 4.14 (vanilla 4.14.336, derived from source + QEMU-validated, 9/9). Oldest
+ * target and the most structurally different: fib_dump_info uses the legacy
+ * <5.6 prototype (fi at arg 9), there are no nexthop objects, and IPv6 still
+ * uses struct rt6_info (not fib6_info) — so the IPv6 dev comes from the
+ * embedded dst_entry (rt6_via_dst) rather than a fib6_nh walk. procfs is
+ * file_operations (<5.6). */
 static const struct vpnhide_offsets vpnhide_off_4_x = {
-	.skb_len = 104, /* confirmed: rtnl A/B PASSes on 4.14 */
+	.skb_len = 104, /* older sk_buff head -> len@104 even with conntrack */
 	.netdev_name = 0,
 	.seqfile_buf = 0,
 	.seqfile_count = 24,
 	.in_ifaddr_ifa_dev = 24, /* in_ifaddr: hash(16)+ifa_next(8) — same as 5.x */
 	.in_device_dev = 0,
-	.inet6_ifaddr_idev = 168, /* 4.14: no rt_priority (-4) but timer_list has `data` (+8) -> idev@168 */
+	.inet6_ifaddr_idev = 168, /* no rt_priority (-4) but timer_list has `data` (+8) -> 168 */
 	.inet6_dev_dev = 0,
-	/* fib_rule offsets match 5.10 (verified), BUT left 0 (hook gated off) on
-	 * 4.14: with the hook installed it never filters — fib_nl_fill_rule is a
-	 * `static` fn on 4.14 and appears to be inlined (dead kallsyms symbol,
-	 * like dev_ifconf on 5.10 LTO), so the probe never fires. Needs an
-	 * alternate hook point before it can be enabled here. */
-	.fib_rule_table = 0,
+	/* fib_info: fib_nhs@80, rcu@88, fib_nh[]@104 (fib_weight, if
+	 * CONFIG_IP_ROUTE_MULTIPATH, fills the pad slot @84 so fib_nh stays @104);
+	 * fib_nh.nh_dev is first. No nexthop objects. */
+	.fib_info_fib_nhs = 80,
+	.fib_info_nh = 0,
+	.fib_info_fib_nh = 104,
+	.fib_dump_fi_arg = 9, /* legacy prototype: fib_info* at arg 9 */
+	.fib_dump_fi_via_fri = 0,
+	/* IPv6: rt6_fill_node(rt6_info*). rt6_info begins with struct dst_entry,
+	 * whose first member is net_device *dev -> dev = *(rt + 0). */
+	.fib6_info_nh = 0,
+	.fib6_info_fib6_nh = 0,
+	.rt6_via_dst = 1,
+	.rt6_dst_dev = 0,
+	/* struct fib_rule layout matches 5.10; the symbol is fib_nl_fill_rule
+	 * .isra.N under gcc — the fuzzy resolver finds it. */
+	.fib_rule_table = 36,
+	.fib_rule_iifname = 88,
+	.fib_rule_oifname = 104,
+	.fib_rule_uid_start = 120,
+	.fib_rule_uid_end = 124,
 	.proc_uses_proc_ops = 0, /* <5.6 → file_operations */
-	/* fib_dump_info / rt6_fill_node deliberately 0: structurally different on
-	 * 4.14 (fi at a different arg, no nexthop objects, IPv6 = rt6_info not
-	 * fib6_info) — needs table-driven arg/extraction, then derive + validate. */
 };
 
 /*
