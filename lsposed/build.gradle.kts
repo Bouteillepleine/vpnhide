@@ -14,7 +14,7 @@ plugins {
 // run locally with `./gradlew cpdCheck`, report at build/reports/cpd/. For a
 // genuinely-unavoidable clone, refactor it or raise minimumTokenCount.
 cpd {
-    toolVersion = "7.8.0"
+    toolVersion = "7.25.0"
     language = "kotlin"
     // Tune up if too noisy / down to catch smaller clones. ~100 tokens ≈ a
     // small duplicated function.

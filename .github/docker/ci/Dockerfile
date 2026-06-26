@@ -51,7 +51,7 @@ RUN mkdir -p "${ANDROID_HOME}/cmdline-tools" && \
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH \
-    RUST_VERSION=1.95.0 \
+    RUST_VERSION=1.96.0 \
     CARGO_NDK_VERSION=4.1.2
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
@@ -62,7 +62,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
     chmod -R a+w /usr/local/rustup /usr/local/cargo
 
 # ── Android NDK (for zygisk) ─────────────────────────────────────────
-ENV ANDROID_NDK_VERSION=r28b
+ENV ANDROID_NDK_VERSION=r28c
 ENV ANDROID_NDK_HOME=/opt/android-ndk
 # Gobley's cargo plugin reads ANDROID_NDK_ROOT (not _HOME) to find the NDK
 # when looking up the toolchain library directory for Android Rust targets.
