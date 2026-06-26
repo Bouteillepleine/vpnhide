@@ -146,6 +146,24 @@ static void fib_route_after(hook_fargs2_t *fargs, void *udata)
 					    VPNHIDE_FIELD_FIRST, iface_is_vpn);
 }
 
+/* ipv6_route_seq_show — /proc/net/ipv6_route. Same as fib_route but the iface
+ * name is the LAST field. Shares fib_route_before (stashes seq->count). */
+static void ipv6_route_after(hook_fargs2_t *fargs, void *udata)
+{
+	void *seq = (void *)fargs->arg0;
+	char *buf;
+	unsigned long *countp;
+	unsigned long start = (unsigned long)fargs->local.data0;
+
+	if (!seq || !is_target_uid())
+		return;
+
+	buf = *(char **)((char *)seq + off->seqfile_buf);
+	countp = (unsigned long *)((char *)seq + off->seqfile_count);
+	*countp = vpnhide_compact_seq_lines(buf, start, *countp,
+					    VPNHIDE_FIELD_LAST, iface_is_vpn);
+}
+
 /* ================================================================== */
 /*  Hook 2 (PoC): rtnl_fill_ifinfo — RTM_NEWLINK (getifaddrs path)    */
 /*  arg0 = skb, arg1 = net_device.  If the dev is a VPN iface and the  */
@@ -316,6 +334,11 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 		hook_wrap((void *)fn, 12, (void *)rtnl_fill_before,
 			  (void *)rtnl_fill_after, 0);
 
+	fn = kallsyms_lookup_name("ipv6_route_seq_show");
+	if (fn)
+		hook_wrap((void *)fn, 2, (void *)fib_route_before,
+			  (void *)ipv6_route_after, 0);
+
 	logki(MODNAME ": KPM hooks installed\n");
 	return 0;
 }
@@ -342,6 +365,10 @@ static long vpnhide_kpm_exit(void *__user reserved)
 	if (fn)
 		hook_unwrap((void *)fn, (void *)rtnl_fill_before,
 			    (void *)rtnl_fill_after);
+	fn = kallsyms_lookup_name("ipv6_route_seq_show");
+	if (fn)
+		hook_unwrap((void *)fn, (void *)fib_route_before,
+			    (void *)ipv6_route_after);
 
 	if (_remove_proc_entry) {
 		_remove_proc_entry("vpnhide_targets", 0);

@@ -102,7 +102,7 @@ echo "-------------------------------------------------------------------"
 [ "$(kpmload "$TG_LOG")" = ok ] || { echo "ERROR: KPM did not load (target boot)"; tail -20 "$TG_LOG"; exit 1; }
 
 PASS=0; FAIL=0
-for vec in proc_route_v4 getifaddrs; do
+for vec in proc_route_v4 getifaddrs proc_route_v6; do
 	nt="$(vec_count "$vec" "$NT_LOG")"
 	tg="$(vec_count "$vec" "$TG_LOG")"
 	if [ "$nt" -gt 0 ] && [ "$tg" -eq 0 ]; then

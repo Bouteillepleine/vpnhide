@@ -31,15 +31,18 @@ echo "nameserver 10.0.2.3" > /etc/resolv.conf
 echo "https://dl-cdn.alpinelinux.org/alpine/v3.21/main" > /etc/apk/repositories
 if apk add --no-cache iproute2 >/dev/null 2>&1; then echo "IPROUTE2=ok"; else echo "IPROUTE2=FAIL"; fi
 
-# fabricate a VPN-like interface + a route through it
+# fabricate a VPN-like interface + routes through it (v4 + v6)
 ip link add vpn0 type dummy 2>/dev/null
 ip link set vpn0 up 2>/dev/null
 ip addr add 10.9.0.1/24 dev vpn0 2>/dev/null
 ip route add 10.9.9.0/24 dev vpn0 2>/dev/null
+ip -6 addr add fd00:9::1/64 dev vpn0 2>/dev/null
+ip -6 route add fd00:99::/64 dev vpn0 2>/dev/null
 
-# Vectors covered by the two PoC hooks. Count vpn0 hits as seen by root.
-echo "VEC proc_route_v4=$(cat /proc/net/route 2>/dev/null | grep -c vpn0)"   # fib_route_seq_show
-echo "VEC getifaddrs=$(ip addr show 2>/dev/null | grep -c 'vpn0')"            # rtnl_fill_ifinfo
+# Vectors covered by the wired hooks. Count vpn0 hits as seen by root.
+echo "VEC proc_route_v4=$(cat /proc/net/route 2>/dev/null | grep -c vpn0)"        # fib_route_seq_show
+echo "VEC getifaddrs=$(ip addr show 2>/dev/null | grep -c 'vpn0')"                # rtnl_fill_ifinfo
+echo "VEC proc_route_v6=$(cat /proc/net/ipv6_route 2>/dev/null | grep -c vpn0)"   # ipv6_route_seq_show
 
 PANIC=$(dmesg | grep -ci 'Unable to handle\|Internal error\|Oops\|BUG:\|Kernel panic')
 echo "PANIC=$PANIC"
