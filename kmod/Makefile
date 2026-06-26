@@ -12,7 +12,10 @@ CLANG := $(if $(CLANG_DIR),$(CLANG_DIR)/clang,clang)
 #  KPM backend — relocatable `.kpm`, KernelPatch headers, NO kernel  #
 #  source / Module.symvers.  Build: make kpm KP_DIR=/path/KernelPatch #
 # ================================================================== #
-# KernelPatch's own header tree (mirrors kpms/*/Makefile INCLUDE_DIRS).
+# KernelPatch header tree — vendored as a submodule by default; override
+# KP_DIR to point at your own checkout. Run `git submodule update --init`.
+KP_DIR ?= $(CURDIR)/third_party/KernelPatch
+# Include dirs mirror KernelPatch's own kpms/*/Makefile INCLUDE_DIRS.
 KPM_INCLUDE_DIRS := . include patch/include linux/include \
 	linux/arch/arm64/include linux/tools/arch/arm64/include
 KPM_INCLUDES := $(foreach d,$(KPM_INCLUDE_DIRS),-I$(KP_DIR)/kernel/$(d))
@@ -27,8 +30,10 @@ KPM_CFLAGS := -target aarch64-linux-android \
 .PHONY: all strip clean kpm kpm-clean
 
 kpm:
-	@if [ -z "$(KP_DIR)" ]; then \
-		echo "KP_DIR is not set — point it at a KernelPatch checkout (for its kernel/ headers)"; \
+	@if [ ! -f "$(KP_DIR)/kernel/include/kpmodule.h" ]; then \
+		echo "KernelPatch headers not found at $(KP_DIR)."; \
+		echo "Run: git submodule update --init kmod/third_party/KernelPatch"; \
+		echo "(or override KP_DIR=/path/to/KernelPatch)"; \
 		exit 1; \
 	fi
 	$(CLANG) $(KPM_CFLAGS) $(KPM_INCLUDES) -I$(CURDIR) -r \

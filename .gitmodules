@@ -2,3 +2,6 @@
 	path = zygisk/third_party/android-inline-hook
 	url = https://github.com/okhsunrog/android-inline-hook.git
 	branch = vpnhide-zygisk
+[submodule "kmod/third_party/KernelPatch"]
+	path = kmod/third_party/KernelPatch
+	url = https://github.com/bmax121/KernelPatch
