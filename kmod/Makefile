@@ -2,6 +2,46 @@ obj-m += vpnhide_kmod.o
 
 ifeq ($(KERNELRELEASE),)
 
+# Default target stays the LKM (.ko) build, even though `kpm` is defined first.
+.DEFAULT_GOAL := all
+
+# clang is needed by both backends; prefer $(CLANG_DIR) if the .env set it.
+CLANG := $(if $(CLANG_DIR),$(CLANG_DIR)/clang,clang)
+
+# ================================================================== #
+#  KPM backend — relocatable `.kpm`, KernelPatch headers, NO kernel  #
+#  source / Module.symvers.  Build: make kpm KP_DIR=/path/KernelPatch #
+# ================================================================== #
+# KernelPatch's own header tree (its kernel/ include dirs + linux stubs).
+KPM_INCLUDE_DIRS := kernel kernel/include kernel/patch/include kernel/linux/include
+KPM_INCLUDES := $(foreach d,$(KPM_INCLUDE_DIRS),-I$(KP_DIR)/$(d))
+
+KPM_CFLAGS := -target aarch64-linux-android \
+	-O2 -fno-pic -fno-pie -fno-plt -mcmodel=small \
+	-fvisibility=hidden -mno-outline-atomics \
+	-fno-stack-protector -fno-common -fno-builtin -ffreestanding \
+	-fno-asynchronous-unwind-tables -fno-unwind-tables -nostdinc \
+	-D__KERNEL__ -DCONFIG_ARM64 -DMODNAME=\"vpnhide\"
+
+.PHONY: all strip clean kpm kpm-clean
+
+kpm:
+	@if [ -z "$(KP_DIR)" ]; then \
+		echo "KP_DIR is not set — point it at a KernelPatch checkout (for its kernel/ headers)"; \
+		exit 1; \
+	fi
+	$(CLANG) $(KPM_CFLAGS) $(KPM_INCLUDES) -I$(CURDIR) -r \
+		-o vpnhide.kpm kpm/vpnhide_kpm.c
+
+kpm-clean:
+	rm -f vpnhide.kpm
+
+# ================================================================== #
+#  LKM backend — `.ko` via Kbuild. Requires the GKI kernel headers.  #
+#  These requirements must NOT fire for the `kpm` targets above.     #
+# ================================================================== #
+ifeq ($(filter kpm kpm-clean,$(MAKECMDGOALS)),)
+
 # KERNEL_SRC and CLANG_DIR come from the environment (set via .env + direnv).
 ifndef KERNEL_SRC
 $(error KERNEL_SRC is not set — copy .env.example to .env and fill in paths)
@@ -35,4 +75,6 @@ strip: all
 clean:
 	$(MAKE) $(MAKE_ARGS) clean
 
-endif
+endif # not a kpm target
+
+endif # KERNELRELEASE
