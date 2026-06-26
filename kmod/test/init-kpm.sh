@@ -49,6 +49,8 @@ echo "VEC dev_ioctl=$(ifconfig vpn0 2>/dev/null | grep -c vpn0)"                
 echo "VEC netlink_route4=$(ip route show table all 2>/dev/null | grep -c vpn0)"     # fib_dump_info (#86)
 echo "VEC netlink_route6=$(ip -6 route show table all 2>/dev/null | grep -c vpn0)"  # rt6_fill_node
 echo "VEC policy_rule=$(ip rule show 2>/dev/null | grep -c 199)"                    # fib_nl_fill_rule
+# Native getifaddrs() (RTM_GETLINK+RTM_GETADDR) — isolates inet*_fill_ifaddr.
+[ -x /gai ] && echo "VEC gai_getifaddrs=$(/gai 2>/dev/null | sed 's/.*=//')"        # inet*_fill_ifaddr
 
 PANIC=$(dmesg | grep -ci 'Unable to handle\|Internal error\|Oops\|BUG:\|Kernel panic')
 echo "PANIC=$PANIC"

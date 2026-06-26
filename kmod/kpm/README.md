@@ -104,11 +104,12 @@ Inline hooks have **no kprobe safety net**: a wrong offset in
 `kver_offsets.h` or a mismatched kernel **corrupts kernel text → panic /
 bootloop**, where the `.ko`'s kretprobe would just fail to register. So:
 
-- **Every offset and every hook must pass the QEMU KPM harness first.**
-  TODO: extend `kmod/test/` to boot a KernelPatch-patched kernel and run
-  the same A/B vector assertions (target UID sees nothing, non-target sees
-  `vpn0`, no panic). This harness is the whole reason the `.ko` is trusted;
-  the KPM needs the equivalent before it touches a daily-driver.
+- **Every offset and every hook must pass the QEMU KPM harness first**
+  (`../test/run-kpm.sh` — patches a KernelPatch kernel, boots it, runs the
+  A/B vector assertions: target UID sees nothing, non-target sees `vpn0`, no
+  panic). This harness is the whole reason the `.ko` is trusted; the KPM has
+  the equivalent now, and a new offset table for a version is only as
+  trustworthy as a green harness run on that version.
 - Test with ephemeral **Load** (lost on reboot) before **Embed**.
 - Patch the **inactive A/B slot** so a bad build falls back to the
   unpatched kernel.
@@ -125,16 +126,20 @@ bootloop**, where the `.ko`'s kretprobe would just fail to register. So:
       PoC hooks PASS on android12-5.10**: root sees `vpn0` when not targeted,
       not when targeted; no panic. Validates the inline hooks + the 5.x
       offsets (skb.len=104) + `fargs->local` state passing on a real kernel.
-- [x] Runtime kver offset table (`kver_offsets.h`) — **5.x + 6.1**; 4.14 TODO
-- [x] **5/10 hooks ported + QEMU-validated** (android12-5.10, no panic): the
-      offset-safe set — `fib_route_seq_show`, `rtnl_fill_ifinfo`,
-      `ipv6_route_seq_show`, `dev_ioctl`, `sock_ioctl`
+- [x] **All 10 hooks ported + QEMU-validated** on android12-5.10 (no panic),
+      full native-vector parity with the `.ko`: `fib_route_seq_show`,
+      `ipv6_route_seq_show`, `rtnl_fill_ifinfo`, `inet_fill_ifaddr`,
+      `inet6_fill_ifaddr`, `dev_ioctl`, `sock_ioctl`, `fib_dump_info` (#86),
+      `rt6_fill_node`, `fib_nl_fill_rule`. The deep-struct ones use 5.10
+      offsets derived from source (`fib_info`, `fib6_info`, `inet6_ifaddr`,
+      `fib_rule`); a static `getifaddrs()` probe (`gai-probe.c`) proves the
+      address path is closed (target getifaddrs vpn0: 3 → 0).
+- [x] Runtime kver offset table (`kver_offsets.h`) — **5.10 only**
 - [ ] proc_ops vs file_operations mock per kver (the HyperOS-5.4 crash class) — A/B currently uses load-args, so proc isn't on the critical path
-- [ ] Remaining 5 hooks — `inet_fill_ifaddr`, `inet6_fill_ifaddr`,
-      `fib_dump_info` (#86), `rt6_fill_node`, `fib_nl_fill_rule` — these
-      dereference version-specific kernel structs, so each needs a per-kver
-      offset (derive from GKI source, tune against the harness)
-- [ ] Confirm 4.14 + deeper struct offsets (with soranerai & cyberc3dr — closed-kernel devices)
+- [ ] **Offset tables for other versions** — start with the real KPM targets
+      (4.14 #33, 5.4) and 6.1; each derived from that version's source +
+      validated by the harness (build a QEMU kernel of that version)
+- [ ] Confirm offsets on the closed-kernel targets with soranerai & cyberc3dr (real devices)
 - [ ] `build.py` KPM path + wire `run-kpm.sh` into CI (qemu-image job)
 - [ ] Wire the `.ko` to `../shared/vpnhide_logic.h` (mechanical; gate on a local `.ko` harness run)
 

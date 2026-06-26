@@ -99,9 +99,12 @@ static const struct vpnhide_offsets vpnhide_off_5_x = {
 	.netdev_name = 0,
 	.seqfile_buf = 0,
 	.seqfile_count = 24,
-	.in_ifaddr_ifa_dev = 24, /* TODO: confirm on 5.4/5.10 */
+	/* in_ifaddr: hash(16)+ifa_next(8) -> ifa_dev@24; in_device.dev@0. */
+	.in_ifaddr_ifa_dev = 24,
 	.in_device_dev = 0,
-	.inet6_ifaddr_idev = 0, /* TODO: derive for 5.x */
+	/* inet6_ifaddr.idev@168 (derived; past lock/dad_work — verify via gai),
+	 * inet6_dev.dev@0. */
+	.inet6_ifaddr_idev = 168,
 	.inet6_dev_dev = 0,
 	/* android12-5.10 fib_info (LP64, no ifdefs before fib_nh[]): fib_nhs@96,
 	 * nh@104, fib_nh[]@128; nhc_dev is first in fib_nh -> +128. */

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 /*
- * vpnhide — KernelPatch Module (KPM) backend.  *** SKELETON / WIP ***
+ * vpnhide — KernelPatch Module (KPM) backend.  *** WIP: 5.10 only ***
  *
  * A third native backend alongside the kretprobe `.ko`, for kernels the
  * `.ko` can't serve: non-GKI / proprietary kernels with no published
@@ -9,11 +9,12 @@
  * NOT insmod — so it also works where module signing blocks a `.ko`.
  *
  * STATUS: builds (`make kpm`) and runs end-to-end under QEMU via the KPM
- * harness (../test/run-kpm.sh). On android12-5.10, 7/10 hooks are A/B-
- * validated with no panic. Only 5.10 offsets are filled in kver_offsets.h;
- * other versions + the remaining hooks are TODO. Every per-kver offset must
- * pass the harness before that version ships — a wrong offset is a contained
- * QEMU panic / A/B failure here, but a bootloop on a real device.
+ * harness (../test/run-kpm.sh). On android12-5.10, all 10 hooks are A/B-
+ * validated with no panic (full native-vector parity with the .ko). Only the
+ * 5.10 offset table is filled in kver_offsets.h; other kernel versions (and
+ * the procfs control plane) are TODO. Every per-kver offset must pass the
+ * harness before that version ships — a wrong offset is a contained QEMU
+ * panic / A/B failure here, but a bootloop on a real device.
  *
  * DESIGN (how this differs from soranerai's prototype, deliberately):
  *   - ONE source + a runtime kver offset table (kver_offsets.h), not three
@@ -296,6 +297,68 @@ static void sock_ioctl_after(hook_fargs3_t *fargs, void *udata)
 }
 
 /* ================================================================== */
+/*  Hooks 9-10: inet_fill_ifaddr / inet6_fill_ifaddr — RTM_GETADDR     */
+/*  arg0 = skb, arg1 = ifa.  getifaddrs() enumerates addresses via      */
+/*  RTM_GETADDR even when the link (rtnl_fill_ifinfo) is hidden, so      */
+/*  these close the address path. dev = ifa->{ifa_dev|idev}->dev.       */
+/* ================================================================== */
+
+/* p = *(*(base+off1)+off2) with NULL guards (two-pointer deref). */
+static void *deref2(void *base, unsigned int off1, unsigned int off2)
+{
+	void *p;
+
+	if (!base)
+		return 0;
+	p = *(void **)((char *)base + off1);
+	if (!p)
+		return 0;
+	return *(void **)((char *)p + off2);
+}
+
+/* Shared by both addr-fill hooks: stash skb + len if ifa's dev is VPN. */
+static void addr_fill_before(hook_fargs4_t *fargs, void *dev)
+{
+	void *skb = (void *)fargs->arg0;
+
+	fargs->local.data0 = 0;
+	if (!is_target_uid() || !skb || !dev)
+		return;
+	if (!iface_is_vpn(netdev_name(dev)))
+		return;
+	fargs->local.data0 = 1;
+	fargs->local.data1 = (uint64_t)skb;
+	fargs->local.data2 =
+		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
+}
+
+static void addr_fill_after(hook_fargs4_t *fargs, void *udata)
+{
+	if (!fargs->local.data0)
+		return;
+	if ((long)fargs->ret < 0)
+		return;
+	if (_skb_trim)
+		_skb_trim((void *)fargs->local.data1,
+			  (unsigned int)fargs->local.data2);
+	fargs->ret = 0;
+}
+
+static void inet_fill_before(hook_fargs4_t *fargs, void *udata)
+{
+	void *dev = deref2((void *)fargs->arg1, off->in_ifaddr_ifa_dev,
+			   off->in_device_dev);
+	addr_fill_before(fargs, dev);
+}
+
+static void inet6_fill_before(hook_fargs4_t *fargs, void *udata)
+{
+	void *dev = deref2((void *)fargs->arg1, off->inet6_ifaddr_idev,
+			   off->inet6_dev_dev);
+	addr_fill_before(fargs, dev);
+}
+
+/* ================================================================== */
 /*  Hook 6: fib_dump_info — IPv4 RTM_GETROUTE dump (issue #86)         */
 /*  arg0 = skb, arg4 = fib_rt_info*.  Resolve the route's output dev    */
 /*  (fri->fi->fib_nh[0].nh_common.nhc_dev for a legacy single-nexthop   */
@@ -459,26 +522,22 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
 }
 
 /*
- * HOOK COVERAGE — to reach parity with vpnhide_kmod.c (the .ko). Each line
- * below is a hook_wrap target; PoC ones are wired above, the rest are the
- * porting backlog. Mirror the .ko's logic; reuse shared/vpnhide_logic.h.
+ * HOOK COVERAGE — full parity with vpnhide_kmod.c (the .ko). All 10 hooks
+ * ported and QEMU-validated A/B on android12-5.10 (no panic). Mirror the
+ * .ko's logic; reuse shared/vpnhide_logic.h. Per-version struct offsets live
+ * in kver_offsets.h (5.10 only so far) — a wrong offset is a contained QEMU
+ * A/B fail / panic here, a bootloop on a real device.
  *
- * DONE + QEMU-validated on android12-5.10 (offset-safe — no kernel-internal
- * struct offsets, only seq_file + uapi ifreq/ifr_name@0):
- *   fib_route_seq_show     /proc/net/route        ✓
- *   rtnl_fill_ifinfo       RTM_NEWLINK            ✓ (skb.len)
- *   ipv6_route_seq_show    /proc/net/ipv6_route   ✓
+ *   fib_route_seq_show     /proc/net/route        ✓ (seq compactor)
+ *   ipv6_route_seq_show    /proc/net/ipv6_route   ✓ (seq compactor)
+ *   rtnl_fill_ifinfo       RTM_GETLINK            ✓ (skb.len)
+ *   inet_fill_ifaddr       RTM_GETADDR v4         ✓ (in_ifaddr.ifa_dev->dev)
+ *   inet6_fill_ifaddr      RTM_GETADDR v6         ✓ (inet6_ifaddr.idev->dev)
  *   dev_ioctl              SIOCGIF* by name       ✓ (ret -> -ENODEV)
  *   sock_ioctl             SIOCGIFCONF            ✓ (ifconf compaction)
- *   fib_dump_info          RTM_GETROUTE v4 dump   ✓ (#86; derived fib_info offsets)
- *
- * TODO — version-specific struct derefs needing more per-kver offsets
- * (derive from source, tune against the harness — a wrong offset is an A/B
- * fail or a contained panic, not a brick):
- *   ( rt6_fill_node — done above ✓ )
- *   fib_nl_fill_rule       RTM_GETRULE            fib_rule iif/oif/uid_range
- *   inet_fill_ifaddr       RTM_GETADDR v4         in_ifaddr.ifa_dev->dev
- *   inet6_fill_ifaddr      RTM_GETADDR v6         inet6_ifaddr.idev->dev
+ *   fib_dump_info          RTM_GETROUTE v4 dump   ✓ (#86; fib_info nexthop)
+ *   rt6_fill_node          RTM_GETROUTE v6 dump   ✓ (fib6_info nexthop)
+ *   fib_nl_fill_rule       RTM_GETRULE            ✓ (fib_rule iif/oif/uid)
  *   ( rt_fill_info — intentionally NOT hooked; unstable arg->reg ABI )
  */
 
@@ -606,6 +665,16 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 		hook_wrap((void *)fn, 2, (void *)fib_route_before,
 			  (void *)ipv6_route_after, 0);
 
+	fn = kallsyms_lookup_name("inet_fill_ifaddr");
+	if (fn)
+		hook_wrap((void *)fn, 3, (void *)inet_fill_before,
+			  (void *)addr_fill_after, 0);
+
+	fn = kallsyms_lookup_name("inet6_fill_ifaddr");
+	if (fn)
+		hook_wrap((void *)fn, 3, (void *)inet6_fill_before,
+			  (void *)addr_fill_after, 0);
+
 	fn = kallsyms_lookup_name("dev_ioctl");
 	if (fn)
 		hook_wrap((void *)fn, 5, 0, (void *)dev_ioctl_after, 0);
@@ -659,6 +728,14 @@ static long vpnhide_kpm_exit(void *__user reserved)
 	if (fn)
 		hook_unwrap((void *)fn, (void *)fib_route_before,
 			    (void *)ipv6_route_after);
+	fn = kallsyms_lookup_name("inet_fill_ifaddr");
+	if (fn)
+		hook_unwrap((void *)fn, (void *)inet_fill_before,
+			    (void *)addr_fill_after);
+	fn = kallsyms_lookup_name("inet6_fill_ifaddr");
+	if (fn)
+		hook_unwrap((void *)fn, (void *)inet6_fill_before,
+			    (void *)addr_fill_after);
 	fn = kallsyms_lookup_name("dev_ioctl");
 	if (fn)
 		hook_unwrap((void *)fn, 0, (void *)dev_ioctl_after);

@@ -56,6 +56,20 @@ if [ ! -f "$KPM" ]; then
 	make -C "$KMOD" kpm >/dev/null
 fi
 
+# --- optional static getifaddrs probe (validates the addr-fill hooks) --------
+# bionic getifaddrs() = RTM_GETLINK + RTM_GETADDR; the `ip addr` vector can't
+# isolate the addr path. Built static so it runs on the Alpine VM regardless
+# of libc; skipped (gai vector absent) if no aarch64 cross-cc is found.
+GAI=""
+GAI_CC="${VPNHIDE_GAI_CC:-$(ls "$HOME"/Android/Sdk/ndk/*/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android*-clang 2>/dev/null | sort | tail -1)}"
+[ -n "$GAI_CC" ] || GAI_CC="$(command -v aarch64-linux-gnu-gcc || true)"
+if [ -n "$GAI_CC" ] && [ -x "$GAI_CC" ]; then
+	GAI="$CACHE/gai"
+	"$GAI_CC" -static -O2 -o "$GAI" "$HERE/gai-probe.c" 2>/dev/null || GAI=""
+fi
+[ -n "$GAI" ] && echo "[run-kpm] getifaddrs probe built ($(basename "$GAI_CC"))" || \
+	echo "[run-kpm] no aarch64 static cross-cc — skipping getifaddrs probe"
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -72,6 +86,7 @@ boot_phase() {
 	tar xzf "$ALPINE_TAR" -C "$rfs"
 	cp "$HERE/init-kpm.sh" "$rfs/init"
 	chmod +x "$rfs/init"
+	[ -n "$GAI" ] && { cp "$GAI" "$rfs/gai"; chmod +x "$rfs/gai"; }
 	( cd "$rfs" && find . | cpio -o -H newc 2>/dev/null | gzip > "$WORK/initramfs.$tag.gz" )
 
 	echo "[run-kpm] $KMI: booting phase '$tag' (args='${args}')…" >&2
@@ -102,7 +117,7 @@ echo "-------------------------------------------------------------------"
 [ "$(kpmload "$TG_LOG")" = ok ] || { echo "ERROR: KPM did not load (target boot)"; tail -20 "$TG_LOG"; exit 1; }
 
 PASS=0; FAIL=0
-for vec in proc_route_v4 getifaddrs proc_route_v6 siocgifconf dev_ioctl netlink_route4 netlink_route6 policy_rule; do
+for vec in proc_route_v4 getifaddrs proc_route_v6 siocgifconf dev_ioctl netlink_route4 netlink_route6 policy_rule gai_getifaddrs; do
 	nt="$(vec_count "$vec" "$NT_LOG")"
 	tg="$(vec_count "$vec" "$TG_LOG")"
 	if [ "$nt" -gt 0 ] && [ "$tg" -eq 0 ]; then
