@@ -89,14 +89,37 @@ drop + a `build.py` KPM path, so CI builds the `.kpm` reproducibly (like
 
 ## Deploy
 
-- Runtime: **KPatch-Next on KernelSU-Next** (so existing KSU-Next users
-  add KPM support by flashing one module — no switch to APatch). The same
-  `.kpm` also loads under APatch. Target the upstream `kpm.h` ABI.
-- Persistence: a runtime `sc_kpm_load` is **lost on reboot**. Either
-  **embed** the `.kpm` in the patched `boot.img`, or re-`sc_kpm_load` each
-  boot from `post-fs-data.sh` (same shape as the `.ko`'s `insmod`). The
-  control plane (`targets.txt` → `/proc/vpnhide_targets` → live reload) is
-  identical to the `.ko`.
+A KPM runs on **inline hooks**, which physically require the KernelPatch
+runtime (`kpimg`) to be embedded in the kernel — there is **no** "KPM on a
+stock kernel". The `boot.img` always gets patched; the only question is which
+root solution drives that patch. The `.kpm` itself is the same binary
+everywhere (target the upstream `kpm.h` ABI).
+
+Supported runtimes — pick whichever matches the device's root:
+
+- **APatch** — KernelPatch is built in; `.kpm` loads directly.
+- **KernelSU-Next** — flash **KPatch-Next** (one module, no switch to APatch).
+- **Magisk or stock KernelSU** — flash the standalone
+  [KPatch-Next-Module](https://github.com/KernelSU-Next/KPatch-Next-Module).
+  It bundles `kpimg` + `kptools` + `magiskboot`, patches `boot.img` from its
+  WebUI to embed KernelPatch, then (`service.sh`) auto-loads every
+  `/data/adb/kp-next/kpm/*.kpm` on each boot via `kpatch kpm load`. So plain
+  Magisk / KernelSU users get KPM support without changing root solution —
+  the kernel is still patched, it's just automated. (Conflicts with APatch,
+  which already ships KernelPatch.)
+
+Persistence: a one-shot runtime `sc_kpm_load` is **lost on reboot**. Either
+**embed** the `.kpm` in the patched `boot.img`, or — the easy path on the
+runtimes above — drop `vpnhide.kpm` into `/data/adb/kp-next/kpm/` and let
+their boot service reload it every boot (same shape as the `.ko`'s `insmod`
+from `post-fs-data.sh`).
+
+Targeting / control plane: our target-UID set is delivered via the module's
+own `KPM_CTL0` supercall + load-args (the shape the QEMU harness exercises) —
+this is independent of KPatch-Next's generic `package_config` →
+`kpatch exclude_set <uid>` mechanism. The `.ko`'s
+`targets.txt` → `/proc/vpnhide_targets` → live-reload plane is the same idea;
+the matching procfs plane for the KPM is still TODO (see backlog).
 
 ## Safety — read before testing on a device
 
