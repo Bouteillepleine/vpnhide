@@ -57,9 +57,24 @@ Key consequences:
   (`ConnectivityManager`, `LinkProperties`, capabilities, callbacks) and
   **package visibility**. Native layers cannot synthesize a coherent
   `NetworkCapabilities` parcel; framework layers cannot touch `getifaddrs`.
-- The layers are **complementary, not redundant**. The recommended install is
-  all three; each closes vectors the others structurally cannot. Where only one
-  layer covers a vector, that is called out below.
+- **kmod and zygisk are two implementations of the *same* native layer — you
+  install one, not both.** They cover essentially the same native vectors
+  (interface enumeration, routes, procfs, netlink); the choice is a tradeoff,
+  not an addition:
+    - **kmod** is preferred — bypass-proof and out-of-process (zero footprint in
+      the app), but needs a supported GKI kernel with `CONFIG_KPROBES`.
+    - **zygisk** is the fallback for kernels kmod doesn't support — works on any
+      arm64 kernel, but only catches libc-routed calls (a raw `svc #0` slips
+      past) and runs inside the app process (visible to aggressive anti-tamper).
+  Running both at once is redundant, not additive (both would filter the same
+  data for the same target). The small deltas between them — e.g. zygisk also
+  filters `/proc/net/{if_inet6,tcp,tcp6}`, kmod also handles `RTM_GETRULE` and
+  the server host-route — are noted in the matrix; neither delta is a reason to
+  stack them.
+- So a complete install is **two roles**: the native layer (kmod *or* zygisk)
+  **plus** lsposed for the Java vectors, with SELinux as an unreliable platform
+  backstop underneath. Where only one layer covers a vector, that is called out
+  below.
 
 > **SELinux is a free but unreliable backstop.** On a Pixel 4a / Android 13,
 > `untrusted_app` is already *denied* `read` on `/proc/net/route` and `search`
