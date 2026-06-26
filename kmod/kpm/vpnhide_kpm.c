@@ -10,9 +10,9 @@
  *
  * STATUS: builds (`make kpm`) and runs end-to-end under QEMU via the KPM
  * harness (../test/run-kpm.sh). All 10 hooks are A/B-validated with no panic
- * (full native-vector parity with the .ko) on android12-5.10 AND android11-5.4
- * (a separate from-source QEMU kernel). 4.14 has 7 hooks validated; offset
- * tables for 4.19 / 6.1 and the procfs control plane are TODO. Every per-kver
+ * (full native-vector parity with the .ko) on FIVE kernels, each a separate
+ * from-source QEMU Image: 4.14, 4.19, 5.4, 5.10 and 6.1 (9/9 vectors apiece).
+ * The procfs control plane is still TODO (A/B uses load-args). Every per-kver
  * offset must pass the harness before that version ships — a wrong offset is a
  * contained QEMU panic / A/B failure here, but a bootloop on a real device.
  *

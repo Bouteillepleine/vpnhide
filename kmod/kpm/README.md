@@ -134,7 +134,13 @@ bootloop**, where the `.ko`'s kretprobe would just fail to register. So:
       offsets derived from source (`fib_info`, `fib6_info`, `inet6_ifaddr`,
       `fib_rule`); a static `getifaddrs()` probe (`gai-probe.c`) proves the
       address path is closed (target getifaddrs vpn0: 3 → 0).
-- [x] Runtime kver offset table (`kver_offsets.h`) — **5.10 + 5.4 + 4.19 + 4.14 (all full)**
+- [x] Runtime kver offset table (`kver_offsets.h`) — **6.1 + 5.10 + 5.4 + 4.19 + 4.14, all full + QEMU-validated 9/9**
+- [x] **6.1 (android14-6.1) — full parity, QEMU-validated 9/9** on a DDK-built
+      (clang) GKI Image. Derived from source: idev@168 (the `inet6_ifaddr`
+      prefix is byte-identical to 5.10, so the on-device 216 first taken from
+      soranerai was wrong — the `getifaddrs()` probe confirms 168), fib_info
+      96/104/128 + fib_dump via `fib_rt_info*`@arg4 (= 5.10), fib6_info
+      nh@160 / fib6_nh@176 (ANDROID_KABI_RESERVE before fib6_nh), skb.len@112.
 - [x] **4.14 now full parity, QEMU-validated 9/9** (was 7). The oldest/most
       divergent target: IPv4 route dump via the legacy arg-9 fib_info (no
       nexthop objects); IPv6 route dump hooks `rt6_fill_node(struct rt6_info*)`
@@ -163,8 +169,6 @@ bootloop**, where the `.ko`'s kretprobe would just fail to register. So:
         so e.g. `fib_nl_fill_rule.isra.21` is hooked. Clang device kernels keep
         the plain name (exact match wins first); this just hardens gcc kernels.
 - [ ] proc_ops vs file_operations mock per kver (the HyperOS-5.4 crash class) — A/B currently uses load-args, so proc isn't on the critical path
-- [ ] **Offset table for 6.1** — soranerai has on-device values; complete the
-      route-dump (fib_info/fib6_info) entries + validate via the harness.
 - [ ] Confirm offsets on the closed-kernel targets with soranerai & cyberc3dr (real devices)
 - [ ] `build.py` KPM path + wire `run-kpm.sh` into CI (qemu-image job)
 - [ ] Wire the `.ko` to `../shared/vpnhide_logic.h` (mechanical; gate on a local `.ko` harness run)

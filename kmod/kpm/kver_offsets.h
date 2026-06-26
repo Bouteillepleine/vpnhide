@@ -90,21 +90,38 @@ struct vpnhide_offsets {
 };
 
 /*
- * GKI 6.1 — values confirmed by soranerai's working module on-device.
- *   skb.len = 112, inet6_ifaddr.idev = 216, in_ifaddr.ifa_dev = 24.
+ * GKI 6.1 (android14-6.1, derived from AOSP common source + QEMU-validated).
+ * inet6_ifaddr's prefix up to dad_work is identical to 5.10, so idev@168
+ * (NOT the 216 first taken from soranerai — left a note, the harness decides).
+ * fib_dump_info uses the fib_rt_info* form (arg 4, like 5.10); fib_info and
+ * fib_rule layouts match 5.10; fib6_info has an ANDROID_KABI_RESERVE before
+ * fib6_nh[]. procfs is proc_ops (>=5.6).
  */
 static const struct vpnhide_offsets vpnhide_off_6_1 = {
-	.skb_len = 112,
+	.skb_len = 112, /* modern head + _nfct (conntrack on in GKI 6.1) */
 	.netdev_name = 0,
 	.seqfile_buf = 0,
 	.seqfile_count = 24,
 	.in_ifaddr_ifa_dev = 24,
-	.in_device_dev = 0, /* TODO: confirm in_device.dev offset on 6.1 */
-	.inet6_ifaddr_idev = 216,
-	.inet6_dev_dev = 0, /* TODO: confirm inet6_dev.dev offset on 6.1 */
-	.fib_info_fib_nhs = 0, /* TODO 6.1 */
-	.fib_info_nh = 0,
-	.fib_info_fib_nh = 0,
+	.in_device_dev = 0,
+	.inet6_ifaddr_idev = 168, /* same struct prefix as validated 5.10 */
+	.inet6_dev_dev = 0,
+	/* fib_info identical to 5.10: fib_nhs@96, nh@104, fib_nh[]@128. */
+	.fib_info_fib_nhs = 96,
+	.fib_info_nh = 104,
+	.fib_info_fib_nh = 128,
+	.fib_dump_fi_arg = 4, /* fib_rt_info* form (5.6+) */
+	.fib_dump_fi_via_fri = 1,
+	/* fib6_info: bitfield@136, rcu@144, nh@160, ANDROID_KABI_RESERVE(1)@168,
+	 * fib6_nh[]@176; nhc_dev first in fib6_nh -> dev@176. */
+	.fib6_info_nh = 160,
+	.fib6_info_fib6_nh = 176,
+	/* struct fib_rule layout identical to 5.10. */
+	.fib_rule_table = 36,
+	.fib_rule_iifname = 88,
+	.fib_rule_oifname = 104,
+	.fib_rule_uid_start = 120,
+	.fib_rule_uid_end = 124,
 	.proc_uses_proc_ops = 1,
 };
 
