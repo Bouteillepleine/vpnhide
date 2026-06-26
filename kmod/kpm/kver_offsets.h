@@ -33,7 +33,8 @@ struct vpnhide_offsets {
 	/* sk_buff.len — saved before a netlink fill, restored via skb_trim. */
 	unsigned int skb_len;
 
-	/* net_device.name — first member on all supported versions. */
+	/* net_device.name — first member (@0) up to 6.6; 6.12 moved it behind
+	 * the new cacheline-group reorg (@296). */
 	unsigned int netdev_name;
 
 	/* seq_file.{buf,count} — stable across the seq_file lifetime. */
@@ -119,6 +120,39 @@ static const struct vpnhide_offsets vpnhide_off_6_1 = {
 	.fib6_info_nh = 160,
 	.fib6_info_fib6_nh = 176,
 	/* struct fib_rule layout identical to 5.10. */
+	.fib_rule_table = 36,
+	.fib_rule_iifname = 88,
+	.fib_rule_oifname = 104,
+	.fib_rule_uid_start = 120,
+	.fib_rule_uid_end = 124,
+	.proc_uses_proc_ops = 1,
+};
+
+/* 6.12 (android16-6.12) — QEMU-validated 9/9. Identical to 6.1 EXCEPT struct
+ * fib6_info inserted `struct hlist_node gc_link` (16 B) after `expires`,
+ * shifting nh@176 and fib6_nh[]@192 (6.1 is 160/176). (fib_info also gained a
+ * `pfsrc_removed` bool, but it fits the existing pad so nh stays @104.) */
+static const struct vpnhide_offsets vpnhide_off_6_12 = {
+	.skb_len = 112,
+	/* 6.12 reorganised struct net_device into cacheline groups (TX/TXRX/RX
+	 * read-mostly), so `name` is no longer first — offsetof = 296 (derived by
+	 * compiling offsetof(struct net_device, name) against the gki_defconfig
+	 * 6.12 headers). Every other version keeps name@0. */
+	.netdev_name = 296,
+	.seqfile_buf = 0,
+	.seqfile_count = 24,
+	.in_ifaddr_ifa_dev = 24,
+	.in_device_dev = 0,
+	.inet6_ifaddr_idev = 168,
+	.inet6_dev_dev = 0,
+	.fib_info_fib_nhs = 96,
+	.fib_info_nh = 104,
+	.fib_info_fib_nh = 128,
+	.fib_dump_fi_arg = 4,
+	.fib_dump_fi_via_fri = 1,
+	/* fib6_info + gc_link(16) before fib6_metrics -> nh@176, fib6_nh[]@192. */
+	.fib6_info_nh = 176,
+	.fib6_info_fib6_nh = 192,
 	.fib_rule_table = 36,
 	.fib_rule_iifname = 88,
 	.fib_rule_oifname = 104,
@@ -316,8 +350,10 @@ static const struct vpnhide_offsets vpnhide_off_4_x = {
  */
 static inline const struct vpnhide_offsets *vpnhide_select_offsets(unsigned int kver)
 {
+	if (kver >= VPNHIDE_KVER(6, 12, 0))
+		return &vpnhide_off_6_12; /* 6.12: fib6_info gained gc_link */
 	if (kver >= VPNHIDE_KVER(6, 0, 0))
-		return &vpnhide_off_6_1; /* 6.x — 6.1 + 6.6 proven identical */
+		return &vpnhide_off_6_1; /* 6.0–6.11 — 6.1 + 6.6 proven identical */
 	if (kver >= VPNHIDE_KVER(5, 15, 0))
 		return &vpnhide_off_5_15; /* 5.15+: fib6_info gained offload fields */
 	if (kver >= VPNHIDE_KVER(5, 6, 0))

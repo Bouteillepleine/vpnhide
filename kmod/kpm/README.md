@@ -134,7 +134,15 @@ bootloop**, where the `.ko`'s kretprobe would just fail to register. So:
       offsets derived from source (`fib_info`, `fib6_info`, `inet6_ifaddr`,
       `fib_rule`); a static `getifaddrs()` probe (`gai-probe.c`) proves the
       address path is closed (target getifaddrs vpn0: 3 → 0).
-- [x] Runtime kver offset table (`kver_offsets.h`) — **6.6 + 6.1 + 5.15 + 5.10 + 5.4 + 4.19 + 4.14, all full + QEMU-validated 9/9**
+- [x] Runtime kver offset table (`kver_offsets.h`) — **6.12 + 6.6 + 6.1 + 5.15 + 5.10 + 5.4 + 4.19 + 4.14, all full + QEMU-validated 9/9** (the complete Android kernel range, 8→16)
+- [x] **6.12 (android16-6.12) — full parity, QEMU-validated 9/9** on a DDK GKI
+      Image. Two version-specific changes vs 6.1: (a) `struct fib6_info` gained
+      `gc_link` → `fib6_nh[]`@192; (b) the big **`struct net_device`
+      cacheline-group reorg** moved `name` off offset 0 → `netdev_name`@296
+      (derived by compiling `offsetof(struct net_device, name)` against the
+      6.12 headers, then harness-confirmed). This is the first version where
+      `name` isn't first, so the table's `netdev_name` field finally earns its
+      keep — every name-based hook (link/addr/route dumps) depends on it.
 - [x] **6.6 (android15-6.6) — full parity, QEMU-validated 9/9** on a DDK GKI
       Image. Every offset is byte-identical to 6.1 (unlike the 5.10→5.15 jump),
       so it shares the 6.1 table; the run just confirms it.
