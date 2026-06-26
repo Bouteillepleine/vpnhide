@@ -70,6 +70,7 @@ static int (*_single_release)(void *, void *);
 static void *_seq_read, *_seq_lseek;
 static void (*_seq_printf)(void *, const char *, ...);
 static unsigned long (*_copy_from_user)(void *, const void *, unsigned long);
+static unsigned long (*_copy_to_user)(void *, const void *, unsigned long);
 static void (*_skb_trim)(void *, unsigned int);
 
 #define vpnhide_dbg(fmt, ...) \
@@ -201,22 +202,122 @@ static void rtnl_fill_after(hook_fargs12_t *fargs, void *udata)
 	fargs->ret = 0;
 }
 
+/* ================================================================== */
+/*  Hook 4: dev_ioctl — per-interface ioctls (SIOCGIF* by name)        */
+/*  arg1 = cmd, arg2 = ifr (KERNEL ptr; ifr_name at offset 0, uapi-     */
+/*  stable). If the result names a VPN iface, return -ENODEV. Covers    */
+/*  SIOCGIFNAME (index->name, name is output) + FLAGS/MTU/INDEX/HWADDR/  */
+/*  ADDR (name is input). No kernel-internal offsets — only ifr_name@0. */
+/* ================================================================== */
+
+#define VPNHIDE_ENODEV ((uint64_t)(-19))
+
+/* SIOCGIF* range (0x8910..0x8930). SIOCGIFCONF (0x8912) goes via sock_ioctl,
+ * never dev_ioctl, so the overlap is harmless here. */
+static int is_siocgif(unsigned long cmd)
+{
+	return cmd >= 0x8910 && cmd <= 0x8930;
+}
+
+static void dev_ioctl_after(hook_fargs5_t *fargs, void *udata)
+{
+	unsigned long cmd = (unsigned long)fargs->arg1;
+	const char *ifr = (const char *)fargs->arg2; /* ifr_name @ offset 0 */
+
+	if ((long)fargs->ret != 0 || !ifr)
+		return;
+	if (!is_target_uid() || !is_siocgif(cmd))
+		return;
+	if (iface_is_vpn(ifr)) {
+		vpnhide_dbg("dev_ioctl: hiding cmd=0x%lx\n", cmd);
+		fargs->ret = VPNHIDE_ENODEV;
+	}
+}
+
+/* ================================================================== */
+/*  Hook 5: sock_ioctl — SIOCGIFCONF enumeration                       */
+/*  arg1 = cmd, arg2 = userspace struct ifconf*. After the call, compact */
+/*  VPN entries out of the returned ifreq[] array. All uapi-stable:      */
+/*  struct ifconf { int ifc_len; <pad>; ptr ifc_req@8 }, sizeof ifreq=40,*/
+/*  ifr_name @ offset 0.                                                */
+/* ================================================================== */
+
+#define VPNHIDE_SIOCGIFCONF 0x8912
+#define VPNHIDE_IFREQ_SZ 40 /* sizeof(struct ifreq) on arm64 */
+
+static void filter_ifconf(void *uifc)
+{
+	char ifc[16];   /* struct ifconf snapshot: len@0 (int), req@8 (ptr) */
+	char e[VPNHIDE_IFREQ_SZ];
+	char *req;
+	int len, n, i, dst = 0;
+
+	if (!_copy_from_user || !_copy_to_user)
+		return;
+	if (_copy_from_user(ifc, uifc, sizeof(ifc)))
+		return;
+	len = *(int *)ifc;
+	req = *(char **)(ifc + 8);
+	if (!req || len <= 0)
+		return;
+
+	n = len / VPNHIDE_IFREQ_SZ;
+	for (i = 0; i < n; i++) {
+		if (_copy_from_user(e, req + (long)i * VPNHIDE_IFREQ_SZ,
+				    VPNHIDE_IFREQ_SZ))
+			return;
+		e[VPNHIDE_IFNAMSIZ - 1] = '\0';
+		if (iface_is_vpn(e))
+			continue; /* drop VPN entry */
+		if (dst != i &&
+		    _copy_to_user(req + (long)dst * VPNHIDE_IFREQ_SZ, e,
+				  VPNHIDE_IFREQ_SZ))
+			return;
+		dst++;
+	}
+	if (dst != n) {
+		int newlen = dst * VPNHIDE_IFREQ_SZ;
+
+		_copy_to_user(uifc, &newlen, sizeof(newlen)); /* shrink ifc_len */
+		vpnhide_dbg("sock_ioctl: ifconf %d -> %d\n", len, newlen);
+	}
+}
+
+static void sock_ioctl_after(hook_fargs3_t *fargs, void *udata)
+{
+	unsigned long cmd = (unsigned long)fargs->arg1;
+	void *argp = (void *)fargs->arg2;
+
+	if ((long)fargs->ret != 0 || !argp)
+		return;
+	if (cmd != VPNHIDE_SIOCGIFCONF || !is_target_uid())
+		return;
+	filter_ifconf(argp);
+}
+
 /*
  * HOOK COVERAGE — to reach parity with vpnhide_kmod.c (the .ko). Each line
  * below is a hook_wrap target; PoC ones are wired above, the rest are the
  * porting backlog. Mirror the .ko's logic; reuse shared/vpnhide_logic.h.
  *
- *   fib_route_seq_show     /proc/net/route        PoC (above)
- *   rtnl_fill_ifinfo       RTM_NEWLINK            PoC (above)
- *   ipv6_route_seq_show    /proc/net/ipv6_route   TODO (FIELD_LAST compactor)
- *   inet_fill_ifaddr       RTM_GETADDR v4         TODO (skb_trim; ifa->ifa_dev->dev)
- *   inet6_fill_ifaddr      RTM_GETADDR v6         TODO (skb_trim; ifa->idev->dev)
- *   dev_ioctl              SIOCGIF* by name       TODO (rewrite ret -> -ENODEV)
- *   sock_ioctl             SIOCGIFCONF            TODO (ifconf compaction via copy_*_user)
- *   fib_dump_info          RTM_GETROUTE v4 dump   TODO (#86; fib_info nexthop dev)
- *   rt6_fill_node          RTM_GETROUTE v6        TODO
- *   fib_nl_fill_rule       RTM_GETRULE            TODO
- *   ( rt_fill_info — intentionally NOT hooked; unstable ABI )
+ * DONE + QEMU-validated on android12-5.10 (offset-safe — no kernel-internal
+ * struct offsets, only seq_file + uapi ifreq/ifr_name@0):
+ *   fib_route_seq_show     /proc/net/route        ✓
+ *   rtnl_fill_ifinfo       RTM_NEWLINK            ✓ (skb.len)
+ *   ipv6_route_seq_show    /proc/net/ipv6_route   ✓
+ *   dev_ioctl              SIOCGIF* by name       ✓ (ret -> -ENODEV)
+ *   sock_ioctl             SIOCGIFCONF            ✓ (ifconf compaction)
+ *
+ * TODO — these dereference version-specific kernel structs, so they need a
+ * per-kver offset table entry derived from each GKI's source (the genuinely
+ * fragile part; tune against the QEMU harness, where a wrong offset is an
+ * A/B fail or a contained panic, not a brick):
+ *   inet_fill_ifaddr       RTM_GETADDR v4         in_ifaddr.ifa_dev->dev
+ *   inet6_fill_ifaddr      RTM_GETADDR v6         inet6_ifaddr.idev->dev
+ *   fib_dump_info          RTM_GETROUTE v4 dump   #86; fib_info nexthop dev
+ *   rt6_fill_node          RTM_GETROUTE v6        fib6_info nexthop dev
+ *   fib_nl_fill_rule       RTM_GETRULE            fib_rule iif/oif/uid_range
+ *   ( rt_fill_info — intentionally NOT hooked; unstable arg->reg ABI )
  */
 
 /* ------------------------------------------------------------------ */
@@ -270,6 +371,10 @@ static int resolve_symbols(void)
 	_copy_from_user = (void *)kallsyms_lookup_name("__arch_copy_from_user");
 	if (!_copy_from_user)
 		_copy_from_user = (void *)kallsyms_lookup_name("_copy_from_user");
+
+	_copy_to_user = (void *)kallsyms_lookup_name("__arch_copy_to_user");
+	if (!_copy_to_user)
+		_copy_to_user = (void *)kallsyms_lookup_name("_copy_to_user");
 
 	_skb_trim = (void *)kallsyms_lookup_name("__skb_trim");
 	if (!_skb_trim)
@@ -339,6 +444,14 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 		hook_wrap((void *)fn, 2, (void *)fib_route_before,
 			  (void *)ipv6_route_after, 0);
 
+	fn = kallsyms_lookup_name("dev_ioctl");
+	if (fn)
+		hook_wrap((void *)fn, 5, 0, (void *)dev_ioctl_after, 0);
+
+	fn = kallsyms_lookup_name("sock_ioctl");
+	if (fn)
+		hook_wrap((void *)fn, 3, 0, (void *)sock_ioctl_after, 0);
+
 	logki(MODNAME ": KPM hooks installed\n");
 	return 0;
 }
@@ -369,6 +482,12 @@ static long vpnhide_kpm_exit(void *__user reserved)
 	if (fn)
 		hook_unwrap((void *)fn, (void *)fib_route_before,
 			    (void *)ipv6_route_after);
+	fn = kallsyms_lookup_name("dev_ioctl");
+	if (fn)
+		hook_unwrap((void *)fn, 0, (void *)dev_ioctl_after);
+	fn = kallsyms_lookup_name("sock_ioctl");
+	if (fn)
+		hook_unwrap((void *)fn, 0, (void *)sock_ioctl_after);
 
 	if (_remove_proc_entry) {
 		_remove_proc_entry("vpnhide_targets", 0);

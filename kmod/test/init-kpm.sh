@@ -43,6 +43,8 @@ ip -6 route add fd00:99::/64 dev vpn0 2>/dev/null
 echo "VEC proc_route_v4=$(cat /proc/net/route 2>/dev/null | grep -c vpn0)"        # fib_route_seq_show
 echo "VEC getifaddrs=$(ip addr show 2>/dev/null | grep -c 'vpn0')"                # rtnl_fill_ifinfo
 echo "VEC proc_route_v6=$(cat /proc/net/ipv6_route 2>/dev/null | grep -c vpn0)"   # ipv6_route_seq_show
+echo "VEC siocgifconf=$(ifconfig -a 2>/dev/null | grep -c vpn0)"                  # sock_ioctl
+echo "VEC dev_ioctl=$(ifconfig vpn0 2>/dev/null | grep -c vpn0)"                  # dev_ioctl
 
 PANIC=$(dmesg | grep -ci 'Unable to handle\|Internal error\|Oops\|BUG:\|Kernel panic')
 echo "PANIC=$PANIC"
