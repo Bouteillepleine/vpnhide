@@ -48,6 +48,14 @@ struct vpnhide_offsets {
 	unsigned int inet6_ifaddr_idev;
 	unsigned int inet6_dev_dev;
 
+	/* IPv4 route dump (fib_dump_info): fib_rt_info.fi=0, fib_nh_common.nhc_dev=0
+	 * (constants). These three vary per version; for the legacy single-nexthop
+	 * route: dev = *(fi + fib_info_fib_nh + nhc_dev). fib_info_nh != 0 marks a
+	 * nexthop-object route (not unpacked yet). 0 => hook bails (no guessing). */
+	unsigned int fib_info_fib_nhs;
+	unsigned int fib_info_nh;
+	unsigned int fib_info_fib_nh;
+
 	/* 1 if procfs uses `struct proc_ops` (>=5.6), 0 if `file_operations`
 	 * (<5.6). Mixing these up is the most likely cause of the
 	 * /proc/vpnhide_targets crash reported on HyperOS 5.4. */
@@ -67,6 +75,9 @@ static const struct vpnhide_offsets vpnhide_off_6_1 = {
 	.in_device_dev = 0, /* TODO: confirm in_device.dev offset on 6.1 */
 	.inet6_ifaddr_idev = 216,
 	.inet6_dev_dev = 0, /* TODO: confirm inet6_dev.dev offset on 6.1 */
+	.fib_info_fib_nhs = 0, /* TODO 6.1 */
+	.fib_info_nh = 0,
+	.fib_info_fib_nh = 0,
 	.proc_uses_proc_ops = 1,
 };
 
@@ -80,6 +91,11 @@ static const struct vpnhide_offsets vpnhide_off_5_x = {
 	.in_device_dev = 0,
 	.inet6_ifaddr_idev = 0, /* TODO: derive for 5.x */
 	.inet6_dev_dev = 0,
+	/* android12-5.10 fib_info (LP64, no ifdefs before fib_nh[]): fib_nhs@96,
+	 * nh@104, fib_nh[]@128; nhc_dev is first in fib_nh -> +128. */
+	.fib_info_fib_nhs = 96,
+	.fib_info_nh = 104,
+	.fib_info_fib_nh = 128,
 	.proc_uses_proc_ops = 1, /* 5.6+; for <5.6 use file_operations below */
 };
 

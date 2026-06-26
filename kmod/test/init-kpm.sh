@@ -45,6 +45,7 @@ echo "VEC getifaddrs=$(ip addr show 2>/dev/null | grep -c 'vpn0')"              
 echo "VEC proc_route_v6=$(cat /proc/net/ipv6_route 2>/dev/null | grep -c vpn0)"   # ipv6_route_seq_show
 echo "VEC siocgifconf=$(ifconfig -a 2>/dev/null | grep -c vpn0)"                  # sock_ioctl
 echo "VEC dev_ioctl=$(ifconfig vpn0 2>/dev/null | grep -c vpn0)"                  # dev_ioctl
+echo "VEC netlink_route4=$(ip route show table all 2>/dev/null | grep -c vpn0)"     # fib_dump_info (#86)
 
 PANIC=$(dmesg | grep -ci 'Unable to handle\|Internal error\|Oops\|BUG:\|Kernel panic')
 echo "PANIC=$PANIC"

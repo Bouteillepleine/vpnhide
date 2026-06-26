@@ -295,6 +295,67 @@ static void sock_ioctl_after(hook_fargs3_t *fargs, void *udata)
 	filter_ifconf(argp);
 }
 
+/* ================================================================== */
+/*  Hook 6: fib_dump_info — IPv4 RTM_GETROUTE dump (issue #86)         */
+/*  arg0 = skb, arg4 = fib_rt_info*.  Resolve the route's output dev    */
+/*  (fri->fi->fib_nh[0].nh_common.nhc_dev for a legacy single-nexthop   */
+/*  route) and, if it's a VPN iface, undo the fill (skb_trim) + ret 0.  */
+/*  This is the first hook that dereferences version-specific kernel    */
+/*  structs — offsets live in kver_offsets.h, validated by the harness. */
+/* ================================================================== */
+
+/* net_device* for a route's fib_info (legacy single-nexthop path only). */
+static void *dev_from_fib_info(void *fi)
+{
+	void *nh;
+	int nhs;
+
+	if (!fi || !off->fib_info_fib_nh)
+		return 0;
+	/* A non-NULL nexthop object means an `ip nexthop`-style route, whose
+	 * dev lives behind a separate struct nexthop walk — not unpacked yet. */
+	nh = *(void **)((char *)fi + off->fib_info_nh);
+	if (nh)
+		return 0;
+	nhs = *(int *)((char *)fi + off->fib_info_fib_nhs);
+	if (nhs <= 0)
+		return 0;
+	/* nhc_dev is the first member of fib_nh[0] (== fib_nh_common). */
+	return *(void **)((char *)fi + off->fib_info_fib_nh);
+}
+
+static void fib_dump_before(hook_fargs8_t *fargs, void *udata)
+{
+	void *skb = (void *)fargs->arg0;
+	void *fri = (void *)fargs->arg4;
+	void *fi, *dev;
+
+	fargs->local.data0 = 0;
+	if (!is_target_uid() || !skb || !fri)
+		return;
+	fi = *(void **)fri; /* fib_rt_info.fi @ offset 0 */
+	dev = dev_from_fib_info(fi);
+	if (!dev || !iface_is_vpn(netdev_name(dev)))
+		return;
+
+	fargs->local.data0 = 1;
+	fargs->local.data1 = (uint64_t)skb;
+	fargs->local.data2 =
+		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
+}
+
+static void fib_dump_after(hook_fargs8_t *fargs, void *udata)
+{
+	if (!fargs->local.data0)
+		return;
+	if ((long)fargs->ret < 0)
+		return;
+	if (_skb_trim)
+		_skb_trim((void *)fargs->local.data1,
+			  (unsigned int)fargs->local.data2);
+	fargs->ret = 0;
+}
+
 /*
  * HOOK COVERAGE — to reach parity with vpnhide_kmod.c (the .ko). Each line
  * below is a hook_wrap target; PoC ones are wired above, the rest are the
@@ -307,16 +368,15 @@ static void sock_ioctl_after(hook_fargs3_t *fargs, void *udata)
  *   ipv6_route_seq_show    /proc/net/ipv6_route   ✓
  *   dev_ioctl              SIOCGIF* by name       ✓ (ret -> -ENODEV)
  *   sock_ioctl             SIOCGIFCONF            ✓ (ifconf compaction)
+ *   fib_dump_info          RTM_GETROUTE v4 dump   ✓ (#86; derived fib_info offsets)
  *
- * TODO — these dereference version-specific kernel structs, so they need a
- * per-kver offset table entry derived from each GKI's source (the genuinely
- * fragile part; tune against the QEMU harness, where a wrong offset is an
- * A/B fail or a contained panic, not a brick):
- *   inet_fill_ifaddr       RTM_GETADDR v4         in_ifaddr.ifa_dev->dev
- *   inet6_fill_ifaddr      RTM_GETADDR v6         inet6_ifaddr.idev->dev
- *   fib_dump_info          RTM_GETROUTE v4 dump   #86; fib_info nexthop dev
+ * TODO — version-specific struct derefs needing more per-kver offsets
+ * (derive from source, tune against the harness — a wrong offset is an A/B
+ * fail or a contained panic, not a brick):
  *   rt6_fill_node          RTM_GETROUTE v6        fib6_info nexthop dev
  *   fib_nl_fill_rule       RTM_GETRULE            fib_rule iif/oif/uid_range
+ *   inet_fill_ifaddr       RTM_GETADDR v4         in_ifaddr.ifa_dev->dev
+ *   inet6_fill_ifaddr      RTM_GETADDR v6         inet6_ifaddr.idev->dev
  *   ( rt_fill_info — intentionally NOT hooked; unstable arg->reg ABI )
  */
 
@@ -452,6 +512,11 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 	if (fn)
 		hook_wrap((void *)fn, 3, 0, (void *)sock_ioctl_after, 0);
 
+	fn = kallsyms_lookup_name("fib_dump_info");
+	if (fn)
+		hook_wrap((void *)fn, 6, (void *)fib_dump_before,
+			  (void *)fib_dump_after, 0);
+
 	logki(MODNAME ": KPM hooks installed\n");
 	return 0;
 }
@@ -488,6 +553,10 @@ static long vpnhide_kpm_exit(void *__user reserved)
 	fn = kallsyms_lookup_name("sock_ioctl");
 	if (fn)
 		hook_unwrap((void *)fn, 0, (void *)sock_ioctl_after);
+	fn = kallsyms_lookup_name("fib_dump_info");
+	if (fn)
+		hook_unwrap((void *)fn, (void *)fib_dump_before,
+			    (void *)fib_dump_after);
 
 	if (_remove_proc_entry) {
 		_remove_proc_entry("vpnhide_targets", 0);
