@@ -134,7 +134,14 @@ bootloop**, where the `.ko`'s kretprobe would just fail to register. So:
       offsets derived from source (`fib_info`, `fib6_info`, `inet6_ifaddr`,
       `fib_rule`); a static `getifaddrs()` probe (`gai-probe.c`) proves the
       address path is closed (target getifaddrs vpn0: 3 → 0).
-- [x] Runtime kver offset table (`kver_offsets.h`) — **5.10 + 5.4 (full) + 4.14 (partial)**
+- [x] Runtime kver offset table (`kver_offsets.h`) — **5.10 + 5.4 + 4.19 (full) + 4.14 (partial)**
+- [x] **4.19 (vanilla 4.19.325) — full parity, QEMU-validated 9/9.** Pre-nexthop
+      kernel: fib_info/fib6_info have no `struct nexthop` field (the nh guards
+      skip), fib_dump_info uses the legacy `<5.6` prototype (fib_info* at arg 9,
+      shared with 5.4). Already has the `struct fib6_info` IPv6 model (4.14 does
+      not). One config-sensitive offset: `fib6_nh.nh_dev` sits at +16 in
+      `fib6_nh` (pre-`fib_nh_common`), and `CONFIG_IPV6_ROUTER_PREF` (Android-
+      common, validated =y) shifts `fib6_nh` to @160 → dev@176.
 - [x] **5.4 (android11-5.4) — full parity, QEMU-validated 9/9** on a from-source
       `5.4.302` Image. All vectors pass incl. both route dumps and policy rules.
       Notable per-version work that landed here:

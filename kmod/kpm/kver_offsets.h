@@ -176,6 +176,43 @@ static const struct vpnhide_offsets vpnhide_off_5_4 = {
 	.proc_uses_proc_ops = 0, /* <5.6 → file_operations */
 };
 
+/* 4.19 (vanilla 4.19.325, derived from source + QEMU-validated). Pre-nexthop
+ * kernel: fib_info/fib6_info have NO `struct nexthop *nh` field (so the nh
+ * guards in dev_from_fib*_info skip), and fib_dump_info uses the legacy <5.6
+ * prototype (fib_info* directly at arg 9). Unlike 4.14 it already has the
+ * struct fib6_info IPv6 route model (4.14 still uses rt6_info). procfs is
+ * file_operations (<5.6). */
+static const struct vpnhide_offsets vpnhide_off_4_19 = {
+	.skb_len = 112, /* modern sk_buff head + _nfct (conntrack) -> len@112 */
+	.netdev_name = 0,
+	.seqfile_buf = 0,
+	.seqfile_count = 24,
+	.in_ifaddr_ifa_dev = 24,
+	.in_device_dev = 0,
+	.inet6_ifaddr_idev = 168, /* rt_priority present, post-4.15 timer_list */
+	.inet6_dev_dev = 0,
+	/* fib_info: fib_nhs@80, rcu@88, fib_nh[]@104; fib_nh.nh_dev is first ->
+	 * dev = *(fi+104). No nexthop objects (fib_info_nh = 0). */
+	.fib_info_fib_nhs = 80,
+	.fib_info_nh = 0,
+	.fib_info_fib_nh = 104,
+	.fib_dump_fi_arg = 9, /* legacy prototype: fib_info* at arg 9 */
+	.fib_dump_fi_via_fri = 0,
+	/* fib6_info (no nexthop objects): fib6_nh embedded (not fib_nh_common),
+	 * nh_dev is the 2nd field (@+16 after in6_addr nh_gw). With
+	 * CONFIG_IPV6_ROUTER_PREF (Android-common) fib6_nh@160 -> nh_dev@176.
+	 * (Without ROUTER_PREF it would be @168 — config-sensitive.) */
+	.fib6_info_nh = 0,
+	.fib6_info_fib6_nh = 176,
+	/* struct fib_rule layout identical to 5.4/5.10. */
+	.fib_rule_table = 36,
+	.fib_rule_iifname = 88,
+	.fib_rule_oifname = 104,
+	.fib_rule_uid_start = 120,
+	.fib_rule_uid_end = 124,
+	.proc_uses_proc_ops = 0, /* <5.6 → file_operations */
+};
+
 /* 4.14 (vanilla 4.14.336, derived from source + QEMU-validated). Offsets that
  * match 5.x are noted; the route-dump hooks (fib_dump_info, rt6_fill_node)
  * are STRUCTURALLY different on 4.14 (fi passed directly at a different arg,
@@ -216,6 +253,8 @@ static inline const struct vpnhide_offsets *vpnhide_select_offsets(unsigned int 
 		return &vpnhide_off_5_x;
 	if (kver >= VPNHIDE_KVER(5, 0, 0))
 		return &vpnhide_off_5_4; /* 5.0–5.5: legacy fib_dump_info + proc */
+	if (kver >= VPNHIDE_KVER(4, 19, 0))
+		return &vpnhide_off_4_19; /* 4.19: fib6_info, no nexthop objects */
 	if (kver >= VPNHIDE_KVER(4, 0, 0))
 		return &vpnhide_off_4_x;
 	return 0; /* unsupported → do not install */
