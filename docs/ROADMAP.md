@@ -4,6 +4,11 @@ This document tracks larger product directions that are too broad for a
 single changelog entry. It is not a release commitment; concrete work should
 still be tracked in GitHub issues and pull requests.
 
+For the current state — which detection vectors exist and which component
+covers each — see [detection-vectors.md](detection-vectors.md). This file is
+the *forward-looking* counterpart: vectors that are partially covered or
+intentionally deferred are described there and cross-linked from here.
+
 ## VPN Hiding Modes
 
 ### VPN-preserving concealment

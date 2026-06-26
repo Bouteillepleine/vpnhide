@@ -167,13 +167,13 @@ Any issues found are shown as actionable cards with specific instructions.
 | 4 | `ioctl(SIOCGIFCONF)` interface enumeration | | x | x | |
 | 5 | All other `SIOCGIF*` (INDEX, HWADDR, ADDR, etc.) | | x | x | |
 | 6 | `getifaddrs()` (uses netlink internally) | | x | x | |
-| 7 | netlink `RTM_GETLINK` dump | blocked | x | x | |
-| 8 | netlink `RTM_GETADDR` dump (IPv4 + IPv6) | blocked | x | | |
-| 9 | netlink `RTM_GETROUTE` dump | blocked | | | |
+| 7 | netlink `RTM_GETLINK` dump | | x | x | |
+| 8 | netlink `RTM_GETADDR` dump (IPv4 + IPv6) | | x | x | |
+| 9 | netlink `RTM_GETROUTE` dump | | x | x | |
 | 10 | `/proc/net/route` | blocked | x | x | |
-| 11 | `/proc/net/ipv6_route` | blocked | | x | |
+| 11 | `/proc/net/ipv6_route` | blocked | x | x | |
 | 12 | `/proc/net/if_inet6` | blocked | | x | |
-| 13 | `/proc/net/tcp`, `tcp6` | blocked | | | |
+| 13 | `/proc/net/tcp`, `tcp6` | blocked | | x | |
 | 14 | `/proc/net/udp`, `udp6` | blocked | | | |
 | 15 | `/proc/net/dev` | blocked | | | |
 | 16 | `/proc/net/fib_trie` | blocked | | | |
@@ -188,9 +188,11 @@ Any issues found are shown as actionable cards with specific instructions.
 | 25 | `System.getProperty` (proxy settings) | | | x | |
 | 26 | `/proc/net/route` via Java `FileInputStream` | blocked | x | x | |
 
-**blocked** = SELinux denies access for untrusted apps (Android 10+). No hook needed.
+**blocked** = on stock-enforcing builds (Android 10+) SELinux usually denies untrusted apps access to that `/proc/net/*` / `/sys` file. But **SELinux policy is configured differently across devices and ROMs** (OEM and custom ROMs, `permissive` builds), so the vpnhide layers filter these paths anyway and never rely on SELinux.
 
-Rows 1-6, 21, and 24 are the only vectors reachable by regular apps. Everything else is either blocked by SELinux or goes through Java APIs (covered by lsposed).
+Important: **netlink dumps (rows 7-9) are not restricted by SELinux** — a regular app reads interfaces, addresses, and routes directly over `NETLINK_ROUTE`. This is exactly how detectors like RKNHardering bypass the `/proc/net/route` denial (see [issue #86](https://github.com/okhsunrog/vpnhide/issues/86)). So the vectors actually reachable by a regular app are rows 1-9 and 24, closed by kmod / zygisk; everything else is either often SELinux-blocked on stock (device-dependent) or goes through Java APIs and is covered by lsposed.
+
+The full vector map — per-layer breakdown, SELinux caveats, and known gaps — lives in [docs/detection-vectors.md](docs/detection-vectors.md).
 
 ## Building from source
 
