@@ -38,6 +38,7 @@ ip addr add 10.9.0.1/24 dev vpn0 2>/dev/null
 ip route add 10.9.9.0/24 dev vpn0 2>/dev/null
 ip -6 addr add fd00:9::1/64 dev vpn0 2>/dev/null
 ip -6 route add fd00:99::/64 dev vpn0 2>/dev/null
+ip rule add uidrange 0-0 table 199 2>/dev/null
 
 # Vectors covered by the wired hooks. Count vpn0 hits as seen by root.
 echo "VEC proc_route_v4=$(cat /proc/net/route 2>/dev/null | grep -c vpn0)"        # fib_route_seq_show
@@ -47,6 +48,7 @@ echo "VEC siocgifconf=$(ifconfig -a 2>/dev/null | grep -c vpn0)"                
 echo "VEC dev_ioctl=$(ifconfig vpn0 2>/dev/null | grep -c vpn0)"                  # dev_ioctl
 echo "VEC netlink_route4=$(ip route show table all 2>/dev/null | grep -c vpn0)"     # fib_dump_info (#86)
 echo "VEC netlink_route6=$(ip -6 route show table all 2>/dev/null | grep -c vpn0)"  # rt6_fill_node
+echo "VEC policy_rule=$(ip rule show 2>/dev/null | grep -c 199)"                    # fib_nl_fill_rule
 
 PANIC=$(dmesg | grep -ci 'Unable to handle\|Internal error\|Oops\|BUG:\|Kernel panic')
 echo "PANIC=$PANIC"

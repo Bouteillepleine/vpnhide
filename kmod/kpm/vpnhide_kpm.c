@@ -8,12 +8,12 @@
  * Loaded by the KernelPatch runtime (target: KPatch-Next on KernelSU-Next),
  * NOT insmod — so it also works where module signing blocks a `.ko`.
  *
- * STATUS: compiles against the KernelPatch header tree into a valid .kpm
- * (`make kpm KP_DIR=/path/to/KernelPatch`; verified against bmax121/KernelPatch).
- * NOT yet validated on a kernel: the running-kver source is a stub (so it
- * refuses to install), several hooks are still TODO, and every per-kver offset
- * in kver_offsets.h must pass the QEMU KPM harness before anything ships — a
- * wrong offset is a panic/bootloop, not a soft failure.
+ * STATUS: builds (`make kpm`) and runs end-to-end under QEMU via the KPM
+ * harness (../test/run-kpm.sh). On android12-5.10, 7/10 hooks are A/B-
+ * validated with no panic. Only 5.10 offsets are filled in kver_offsets.h;
+ * other versions + the remaining hooks are TODO. Every per-kver offset must
+ * pass the harness before that version ships — a wrong offset is a contained
+ * QEMU panic / A/B failure here, but a bootloop on a real device.
  *
  * DESIGN (how this differs from soranerai's prototype, deliberately):
  *   - ONE source + a runtime kver offset table (kver_offsets.h), not three
@@ -404,6 +404,60 @@ static void rt6_fill_after(hook_fargs12_t *fargs, void *udata)
 	fargs->ret = 0;
 }
 
+/* ================================================================== */
+/*  Hook 8: fib_nl_fill_rule — RTM_GETRULE (policy routing rules)      */
+/*  arg0 = skb, arg1 = fib_rule*.  Hide a rule if it routes via a VPN   */
+/*  iface (iif/oifname) or selects a non-standard table for a target    */
+/*  UID range — the per-UID VPN policy rules.                          */
+/* ================================================================== */
+
+static void fib_rule_before(hook_fargs8_t *fargs, void *udata)
+{
+	void *skb = (void *)fargs->arg0;
+	char *rule = (char *)fargs->arg1;
+	const char *iif, *oif;
+	int filter = 0;
+
+	fargs->local.data0 = 0;
+	if (!is_target_uid() || !skb || !rule || !off->fib_rule_table)
+		return;
+
+	iif = rule + off->fib_rule_iifname;
+	oif = rule + off->fib_rule_oifname;
+	if ((iif[0] && iface_is_vpn(iif)) || (oif[0] && iface_is_vpn(oif))) {
+		filter = 1;
+	} else {
+		uint32_t table = *(uint32_t *)(rule + off->fib_rule_table);
+		uint32_t start = *(uint32_t *)(rule + off->fib_rule_uid_start);
+		uint32_t end = *(uint32_t *)(rule + off->fib_rule_uid_end);
+		uint32_t uid = (uint32_t)current_uid();
+
+		if (uid >= start && uid <= end &&
+		    (start != 0 || end != 0xffffffffu) && table != 253 &&
+		    table != 254 && table != 255 && table > 100)
+			filter = 1;
+	}
+
+	if (filter) {
+		fargs->local.data0 = 1;
+		fargs->local.data1 = (uint64_t)skb;
+		fargs->local.data2 = (uint64_t) *
+				     (unsigned int *)((char *)skb + off->skb_len);
+	}
+}
+
+static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
+{
+	if (!fargs->local.data0)
+		return;
+	if ((long)fargs->ret < 0)
+		return;
+	if (_skb_trim)
+		_skb_trim((void *)fargs->local.data1,
+			  (unsigned int)fargs->local.data2);
+	fargs->ret = 0;
+}
+
 /*
  * HOOK COVERAGE — to reach parity with vpnhide_kmod.c (the .ko). Each line
  * below is a hook_wrap target; PoC ones are wired above, the rest are the
@@ -570,6 +624,11 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 		hook_wrap((void *)fn, 11, (void *)rt6_fill_before,
 			  (void *)rt6_fill_after, 0);
 
+	fn = kallsyms_lookup_name("fib_nl_fill_rule");
+	if (fn)
+		hook_wrap((void *)fn, 7, (void *)fib_rule_before,
+			  (void *)fib_rule_after, 0);
+
 	logki(MODNAME ": KPM hooks installed\n");
 	return 0;
 }
@@ -614,6 +673,10 @@ static long vpnhide_kpm_exit(void *__user reserved)
 	if (fn)
 		hook_unwrap((void *)fn, (void *)rt6_fill_before,
 			    (void *)rt6_fill_after);
+	fn = kallsyms_lookup_name("fib_nl_fill_rule");
+	if (fn)
+		hook_unwrap((void *)fn, (void *)fib_rule_before,
+			    (void *)fib_rule_after);
 
 	if (_remove_proc_entry) {
 		_remove_proc_entry("vpnhide_targets", 0);

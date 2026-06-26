@@ -61,6 +61,13 @@ struct vpnhide_offsets {
 	unsigned int fib6_info_nh;
 	unsigned int fib6_info_fib6_nh;
 
+	/* Policy rules (fib_nl_fill_rule -> struct fib_rule). */
+	unsigned int fib_rule_table;
+	unsigned int fib_rule_iifname;
+	unsigned int fib_rule_oifname;
+	unsigned int fib_rule_uid_start;
+	unsigned int fib_rule_uid_end;
+
 	/* 1 if procfs uses `struct proc_ops` (>=5.6), 0 if `file_operations`
 	 * (<5.6). Mixing these up is the most likely cause of the
 	 * /proc/vpnhide_targets crash reported on HyperOS 5.4. */
@@ -105,6 +112,12 @@ static const struct vpnhide_offsets vpnhide_off_5_x = {
 	 * nh@152, fib6_nh[]@168; nhc_dev first in fib6_nh -> +168. */
 	.fib6_info_nh = 152,
 	.fib6_info_fib6_nh = 168,
+	/* android12-5.10 struct fib_rule (LP64). */
+	.fib_rule_table = 36,
+	.fib_rule_iifname = 88,
+	.fib_rule_oifname = 104,
+	.fib_rule_uid_start = 120,
+	.fib_rule_uid_end = 124,
 	.proc_uses_proc_ops = 1, /* 5.6+; for <5.6 use file_operations below */
 };
 
