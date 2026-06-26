@@ -134,11 +134,27 @@ bootloop**, where the `.ko`'s kretprobe would just fail to register. So:
       offsets derived from source (`fib_info`, `fib6_info`, `inet6_ifaddr`,
       `fib_rule`); a static `getifaddrs()` probe (`gai-probe.c`) proves the
       address path is closed (target getifaddrs vpn0: 3 → 0).
-- [x] Runtime kver offset table (`kver_offsets.h`) — **5.10 only**
+- [x] Runtime kver offset table (`kver_offsets.h`) — **5.10 (full) + 4.14 (partial)**
+- [x] **4.14 (#33) — bring-up, QEMU-validated** on a from-source `4.14.336`
+      Image (KernelPatch patches + boots it; `-cpu cortex-a57` — `max` faults
+      pre-console on pre-GKI). **7 hooks proven** A/B with no panic:
+      `fib_route_seq_show`, `ipv6_route_seq_show`, `rtnl_fill_ifinfo`,
+      `inet_fill_ifaddr`, `inet6_fill_ifaddr` (the `getifaddrs()` probe goes
+      target→0), `dev_ioctl`, `sock_ioctl`. Offset subtleties vs 5.10:
+      `inet6_ifaddr.idev`@168 (no `rt_priority`, but 4.14 `timer_list` still
+      carries the `data` field → `delayed_work` is +8). **Not yet on 4.14:**
+      `fib_dump_info`/`rt6_fill_node` (structurally different — `fi` at a
+      different arg, no nexthop objects, IPv6 uses `rt6_info` not `fib6_info`;
+      needs table-driven arg/extraction) and `fib_nl_fill_rule` (installs but
+      never fires — the symbol is `static` and looks inlined on 4.14). These
+      stay gated off (offset 0) until ported, so a 4.14 device gets the 7
+      proven hooks and no panic.
 - [ ] proc_ops vs file_operations mock per kver (the HyperOS-5.4 crash class) — A/B currently uses load-args, so proc isn't on the critical path
-- [ ] **Offset tables for other versions** — start with the real KPM targets
-      (4.14 #33, 5.4) and 6.1; each derived from that version's source +
-      validated by the harness (build a QEMU kernel of that version)
+- [ ] **4.14 route-dump + policy-rule hooks** — table-driven arg index +
+      per-version extraction so `fib_dump_info`/`rt6_fill_node` work on the
+      4.14 shape; find an un-inlined hook point for the rule dump
+- [ ] **Offset tables for other versions** — 5.4 and 6.1; each derived from
+      that version's source + validated by the harness (build a QEMU kernel)
 - [ ] Confirm offsets on the closed-kernel targets with soranerai & cyberc3dr (real devices)
 - [ ] `build.py` KPM path + wire `run-kpm.sh` into CI (qemu-image job)
 - [ ] Wire the `.ko` to `../shared/vpnhide_logic.h` (mechanical; gate on a local `.ko` harness run)

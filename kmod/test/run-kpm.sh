@@ -33,6 +33,10 @@ ALPINE_URL="https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-
 # Prebuilt KernelPatch host tool + generic runtime (no need to build them).
 KP_RELEASE="${VPNHIDE_KP_RELEASE:-}" # empty = latest
 SKEY="vpnhide-qemu-test"
+# QEMU CPU model. `max` is fastest and fine for 5.10+, but pre-GKI kernels
+# (e.g. 4.14) fault on its newer features before the console comes up — use
+# `cortex-a57` for those.  Override: VPNHIDE_QEMU_CPU=cortex-a57
+QEMU_CPU="${VPNHIDE_QEMU_CPU:-max}"
 
 command -v qemu-system-aarch64 >/dev/null || { echo "ERROR: qemu-system-aarch64 not installed"; exit 2; }
 [ -f "$IMAGE" ] || { echo "ERROR: kernel missing: $IMAGE — run: $HERE/build-kernel.sh $KMI"; exit 2; }
@@ -91,7 +95,7 @@ boot_phase() {
 
 	echo "[run-kpm] $KMI: booting phase '$tag' (args='${args}')…" >&2
 	timeout 300 qemu-system-aarch64 \
-		-machine virt -cpu max -accel tcg,thread=multi,tb-size=1024 \
+		-machine virt -cpu "$QEMU_CPU" -accel tcg,thread=multi,tb-size=1024 \
 		-smp 4 -m 2G \
 		-kernel "$patched" -initrd "$WORK/initramfs.$tag.gz" \
 		-append "console=ttyAMA0 panic=-1 rdinit=/init" \

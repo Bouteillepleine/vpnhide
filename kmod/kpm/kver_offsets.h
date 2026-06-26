@@ -124,18 +124,31 @@ static const struct vpnhide_offsets vpnhide_off_5_x = {
 	.proc_uses_proc_ops = 1, /* 5.6+; for <5.6 use file_operations below */
 };
 
-/* 4.14 / 4.19 / pre-5.6 — procfs still uses `file_operations`. All struct
- * offsets TODO; this entry only encodes the proc-ABI flag for now. */
+/* 4.14 (vanilla 4.14.336, derived from source + QEMU-validated). Offsets that
+ * match 5.x are noted; the route-dump hooks (fib_dump_info, rt6_fill_node)
+ * are STRUCTURALLY different on 4.14 (fi passed directly at a different arg,
+ * no nexthop objects, IPv6 uses rt6_info not fib6_info) so their offsets stay
+ * 0 here = not installed until the hooks learn the 4.14 shape (see the
+ * coverage notes in vpnhide_kpm.c). procfs is file_operations (<5.6). */
 static const struct vpnhide_offsets vpnhide_off_4_x = {
-	.skb_len = 104, /* TODO: confirm for 4.14 */
+	.skb_len = 104, /* confirmed: rtnl A/B PASSes on 4.14 */
 	.netdev_name = 0,
 	.seqfile_buf = 0,
 	.seqfile_count = 24,
-	.in_ifaddr_ifa_dev = 0, /* TODO */
+	.in_ifaddr_ifa_dev = 24, /* in_ifaddr: hash(16)+ifa_next(8) — same as 5.x */
 	.in_device_dev = 0,
-	.inet6_ifaddr_idev = 0,
+	.inet6_ifaddr_idev = 168, /* 4.14: no rt_priority (-4) but timer_list has `data` (+8) -> idev@168 */
 	.inet6_dev_dev = 0,
+	/* fib_rule offsets match 5.10 (verified), BUT left 0 (hook gated off) on
+	 * 4.14: with the hook installed it never filters — fib_nl_fill_rule is a
+	 * `static` fn on 4.14 and appears to be inlined (dead kallsyms symbol,
+	 * like dev_ifconf on 5.10 LTO), so the probe never fires. Needs an
+	 * alternate hook point before it can be enabled here. */
+	.fib_rule_table = 0,
 	.proc_uses_proc_ops = 0, /* <5.6 → file_operations */
+	/* fib_dump_info / rt6_fill_node deliberately 0: structurally different on
+	 * 4.14 (fi at a different arg, no nexthop objects, IPv6 = rt6_info not
+	 * fib6_info) — needs table-driven arg/extraction, then derive + validate. */
 };
 
 /*

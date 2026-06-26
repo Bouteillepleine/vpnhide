@@ -649,54 +649,68 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 	/* TODO: create /proc/vpnhide_targets + /proc/vpnhide_debug using the
 	 * proc-ABI selected by off->proc_uses_proc_ops. */
 
-	/* Install the PoC hooks. hook_wrap(func, argno, before, after, udata). */
-	fn = kallsyms_lookup_name("fib_route_seq_show");
-	if (fn)
-		hook_wrap((void *)fn, 2, (void *)fib_route_before,
-			  (void *)fib_route_after, 0);
-
-	fn = kallsyms_lookup_name("rtnl_fill_ifinfo");
-	if (fn)
-		hook_wrap((void *)fn, 12, (void *)rtnl_fill_before,
-			  (void *)rtnl_fill_after, 0);
-
-	fn = kallsyms_lookup_name("ipv6_route_seq_show");
-	if (fn)
-		hook_wrap((void *)fn, 2, (void *)fib_route_before,
-			  (void *)ipv6_route_after, 0);
-
-	fn = kallsyms_lookup_name("inet_fill_ifaddr");
-	if (fn)
-		hook_wrap((void *)fn, 3, (void *)inet_fill_before,
-			  (void *)addr_fill_after, 0);
-
-	fn = kallsyms_lookup_name("inet6_fill_ifaddr");
-	if (fn)
-		hook_wrap((void *)fn, 3, (void *)inet6_fill_before,
-			  (void *)addr_fill_after, 0);
+	/*
+	 * Install hooks. Each one is gated on the offset(s) it dereferences
+	 * being known for this kernel version (0 => not installed), so a
+	 * partially-filled offset table is SAFE: a hook never runs with a
+	 * wrong/zero offset and panics. seq_file + ioctl hooks need only
+	 * stable offsets (seqfile_count, uapi ifreq) so they install whenever
+	 * the symbol exists. hook_wrap(func, argno, before, after, udata).
+	 */
+	if (off->seqfile_count) {
+		fn = kallsyms_lookup_name("fib_route_seq_show");
+		if (fn)
+			hook_wrap((void *)fn, 2, (void *)fib_route_before,
+				  (void *)fib_route_after, 0);
+		fn = kallsyms_lookup_name("ipv6_route_seq_show");
+		if (fn)
+			hook_wrap((void *)fn, 2, (void *)fib_route_before,
+				  (void *)ipv6_route_after, 0);
+	}
 
 	fn = kallsyms_lookup_name("dev_ioctl");
 	if (fn)
 		hook_wrap((void *)fn, 5, 0, (void *)dev_ioctl_after, 0);
-
 	fn = kallsyms_lookup_name("sock_ioctl");
 	if (fn)
 		hook_wrap((void *)fn, 3, 0, (void *)sock_ioctl_after, 0);
 
-	fn = kallsyms_lookup_name("fib_dump_info");
-	if (fn)
-		hook_wrap((void *)fn, 6, (void *)fib_dump_before,
-			  (void *)fib_dump_after, 0);
-
-	fn = kallsyms_lookup_name("rt6_fill_node");
-	if (fn)
-		hook_wrap((void *)fn, 11, (void *)rt6_fill_before,
-			  (void *)rt6_fill_after, 0);
-
-	fn = kallsyms_lookup_name("fib_nl_fill_rule");
-	if (fn)
-		hook_wrap((void *)fn, 7, (void *)fib_rule_before,
-			  (void *)fib_rule_after, 0);
+	if (off->skb_len) {
+		fn = kallsyms_lookup_name("rtnl_fill_ifinfo");
+		if (fn)
+			hook_wrap((void *)fn, 12, (void *)rtnl_fill_before,
+				  (void *)rtnl_fill_after, 0);
+	}
+	if (off->in_ifaddr_ifa_dev) {
+		fn = kallsyms_lookup_name("inet_fill_ifaddr");
+		if (fn)
+			hook_wrap((void *)fn, 3, (void *)inet_fill_before,
+				  (void *)addr_fill_after, 0);
+	}
+	if (off->inet6_ifaddr_idev) {
+		fn = kallsyms_lookup_name("inet6_fill_ifaddr");
+		if (fn)
+			hook_wrap((void *)fn, 3, (void *)inet6_fill_before,
+				  (void *)addr_fill_after, 0);
+	}
+	if (off->fib_info_fib_nh) {
+		fn = kallsyms_lookup_name("fib_dump_info");
+		if (fn)
+			hook_wrap((void *)fn, 6, (void *)fib_dump_before,
+				  (void *)fib_dump_after, 0);
+	}
+	if (off->fib6_info_fib6_nh) {
+		fn = kallsyms_lookup_name("rt6_fill_node");
+		if (fn)
+			hook_wrap((void *)fn, 11, (void *)rt6_fill_before,
+				  (void *)rt6_fill_after, 0);
+	}
+	if (off->fib_rule_table) {
+		fn = kallsyms_lookup_name("fib_nl_fill_rule");
+		if (fn)
+			hook_wrap((void *)fn, 7, (void *)fib_rule_before,
+				  (void *)fib_rule_after, 0);
+	}
 
 	logki(MODNAME ": KPM hooks installed\n");
 	return 0;
