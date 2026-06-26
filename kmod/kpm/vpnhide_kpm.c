@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 /*
- * vpnhide — KernelPatch Module (KPM) backend.  *** WIP: 5.10 only ***
+ * vpnhide — KernelPatch Module (KPM) backend.  *** WIP ***
  *
  * A third native backend alongside the kretprobe `.ko`, for kernels the
  * `.ko` can't serve: non-GKI / proprietary kernels with no published
@@ -9,12 +9,12 @@
  * NOT insmod — so it also works where module signing blocks a `.ko`.
  *
  * STATUS: builds (`make kpm`) and runs end-to-end under QEMU via the KPM
- * harness (../test/run-kpm.sh). On android12-5.10, all 10 hooks are A/B-
- * validated with no panic (full native-vector parity with the .ko). Only the
- * 5.10 offset table is filled in kver_offsets.h; other kernel versions (and
- * the procfs control plane) are TODO. Every per-kver offset must pass the
- * harness before that version ships — a wrong offset is a contained QEMU
- * panic / A/B failure here, but a bootloop on a real device.
+ * harness (../test/run-kpm.sh). All 10 hooks are A/B-validated with no panic
+ * (full native-vector parity with the .ko) on android12-5.10 AND android11-5.4
+ * (a separate from-source QEMU kernel). 4.14 has 7 hooks validated; offset
+ * tables for 4.19 / 6.1 and the procfs control plane are TODO. Every per-kver
+ * offset must pass the harness before that version ships — a wrong offset is a
+ * contained QEMU panic / A/B failure here, but a bootloop on a real device.
  *
  * DESIGN (how this differs from soranerai's prototype, deliberately):
  *   - ONE source + a runtime kver offset table (kver_offsets.h), not three
@@ -360,9 +360,10 @@ static void inet6_fill_before(hook_fargs4_t *fargs, void *udata)
 
 /* ================================================================== */
 /*  Hook 6: fib_dump_info — IPv4 RTM_GETROUTE dump (issue #86)         */
-/*  arg0 = skb, arg4 = fib_rt_info*.  Resolve the route's output dev    */
-/*  (fri->fi->fib_nh[0].nh_common.nhc_dev for a legacy single-nexthop   */
-/*  route) and, if it's a VPN iface, undo the fill (skb_trim) + ret 0.  */
+/*  arg0 = skb; the fib_info arg index varies by version (table-driven).*/
+/*  Resolve the route's output dev (fib_nh[0].nh_common.nhc_dev for a   */
+/*  legacy single-nexthop route) and, if it's a VPN iface, undo the     */
+/*  fill (skb_trim) + ret 0.                                            */
 /*  This is the first hook that dereferences version-specific kernel    */
 /*  structs — offsets live in kver_offsets.h, validated by the harness. */
 /* ================================================================== */
@@ -376,10 +377,14 @@ static void *dev_from_fib_info(void *fi)
 	if (!fi || !off->fib_info_fib_nh)
 		return 0;
 	/* A non-NULL nexthop object means an `ip nexthop`-style route, whose
-	 * dev lives behind a separate struct nexthop walk — not unpacked yet. */
-	nh = *(void **)((char *)fi + off->fib_info_nh);
-	if (nh)
-		return 0;
+	 * dev lives behind a separate struct nexthop walk — not unpacked yet.
+	 * fib_info_nh == 0 means this version has no nexthop-object field at all
+	 * (e.g. 4.14), so skip the check rather than misread fib_info's head. */
+	if (off->fib_info_nh) {
+		nh = *(void **)((char *)fi + off->fib_info_nh);
+		if (nh)
+			return 0;
+	}
 	nhs = *(int *)((char *)fi + off->fib_info_fib_nhs);
 	if (nhs <= 0)
 		return 0;
@@ -387,16 +392,26 @@ static void *dev_from_fib_info(void *fi)
 	return *(void **)((char *)fi + off->fib_info_fib_nh);
 }
 
-static void fib_dump_before(hook_fargs8_t *fargs, void *udata)
+/*
+ * fib_dump_info's prototype moved the fib_info across versions, so the arg
+ * index + how to reach the fib_info are table-driven (kver_offsets.h):
+ *   - 5.6+ : fib_dump_info(skb, portid, seq, event, struct fib_rt_info *fri,
+ *            flags) — fi = fri->fi, fi_arg=4, via_fri=1.
+ *   - <5.6 : fib_dump_info(skb, portid, seq, event, tb_id, type, dst, dst_len,
+ *            tos, struct fib_info *fi, flags) — fi_arg=9, via_fri=0.
+ * Always hooked as a 12-arg frame (argno=11): KP just saves the extra slots,
+ * the same way rtnl_fill_ifinfo is over-specified — only the fi arg is read.
+ */
+static void fib_dump_before(hook_fargs12_t *fargs, void *udata)
 {
 	void *skb = (void *)fargs->arg0;
-	void *fri = (void *)fargs->arg4;
+	void *p = (void *)fargs->args[off->fib_dump_fi_arg];
 	void *fi, *dev;
 
 	fargs->local.data0 = 0;
-	if (!is_target_uid() || !skb || !fri)
+	if (!is_target_uid() || !skb || !p)
 		return;
-	fi = *(void **)fri; /* fib_rt_info.fi @ offset 0 */
+	fi = off->fib_dump_fi_via_fri ? *(void **)p : p; /* fib_rt_info.fi @0 */
 	dev = dev_from_fib_info(fi);
 	if (!dev || !iface_is_vpn(netdev_name(dev)))
 		return;
@@ -407,7 +422,7 @@ static void fib_dump_before(hook_fargs8_t *fargs, void *udata)
 		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
 }
 
-static void fib_dump_after(hook_fargs8_t *fargs, void *udata)
+static void fib_dump_after(hook_fargs12_t *fargs, void *udata)
 {
 	if (!fargs->local.data0)
 		return;
@@ -430,9 +445,13 @@ static void *dev_from_fib6_info(void *rt)
 
 	if (!rt || !off->fib6_info_fib6_nh)
 		return 0;
-	nh = *(void **)((char *)rt + off->fib6_info_nh);
-	if (nh)
-		return 0; /* nexthop-object route — not unpacked yet */
+	/* fib6_info_nh == 0 => this version has no nexthop-object field (e.g.
+	 * 4.19/4.14); skip the check rather than misread fib6_info's head. */
+	if (off->fib6_info_nh) {
+		nh = *(void **)((char *)rt + off->fib6_info_nh);
+		if (nh)
+			return 0; /* nexthop-object route — not unpacked yet */
+	}
 	return *(void **)((char *)rt + off->fib6_info_fib6_nh);
 }
 
@@ -579,6 +598,56 @@ static long targets_write(void *file, const char __user *ubuf, unsigned long cou
 /*  Init / exit                                                       */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Resolve a hook target by name, tolerating compiler-renamed clones. GCC may
+ * emit a static function as `name.isra.N` / `name.constprop.N` (a specialised
+ * clone) — kallsyms_lookup_name("name") then misses it. Android *device*
+ * kernels are clang-built (name intact), but a gcc-built kernel (incl. our
+ * QEMU test kernels) renames e.g. fib_nl_fill_rule -> fib_nl_fill_rule.isra.N.
+ * Fall back to the first symbol equal to `name`, or `name.` + suffix — the
+ * dot only appears on compiler clones, so this never matches an unrelated fn.
+ */
+struct vpnhide_sym_q {
+	const char *base;
+	int baselen;
+	unsigned long addr;
+};
+
+static int vpnhide_sym_cb(void *data, const char *name, struct module *mod,
+			  unsigned long addr)
+{
+	struct vpnhide_sym_q *q = data;
+	int i;
+
+	(void)mod;
+	for (i = 0; i < q->baselen; i++)
+		if (name[i] != q->base[i])
+			return 0;
+	if (name[q->baselen] == '\0' || name[q->baselen] == '.') {
+		q->addr = addr;
+		return 1; /* found — stop iterating */
+	}
+	return 0;
+}
+
+static unsigned long lookup_fn(const char *name)
+{
+	unsigned long fn = kallsyms_lookup_name(name);
+	struct vpnhide_sym_q q;
+
+	if (fn)
+		return fn;
+	if (!kallsyms_on_each_symbol)
+		return 0;
+	q.base = name;
+	q.baselen = 0;
+	while (name[q.baselen])
+		q.baselen++;
+	q.addr = 0;
+	kallsyms_on_each_symbol(vpnhide_sym_cb, &q);
+	return q.addr;
+}
+
 static int resolve_symbols(void)
 {
 	_proc_create_data = (void *)kallsyms_lookup_name("proc_create_data");
@@ -658,55 +727,55 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 	 * the symbol exists. hook_wrap(func, argno, before, after, udata).
 	 */
 	if (off->seqfile_count) {
-		fn = kallsyms_lookup_name("fib_route_seq_show");
+		fn = lookup_fn("fib_route_seq_show");
 		if (fn)
 			hook_wrap((void *)fn, 2, (void *)fib_route_before,
 				  (void *)fib_route_after, 0);
-		fn = kallsyms_lookup_name("ipv6_route_seq_show");
+		fn = lookup_fn("ipv6_route_seq_show");
 		if (fn)
 			hook_wrap((void *)fn, 2, (void *)fib_route_before,
 				  (void *)ipv6_route_after, 0);
 	}
 
-	fn = kallsyms_lookup_name("dev_ioctl");
+	fn = lookup_fn("dev_ioctl");
 	if (fn)
 		hook_wrap((void *)fn, 5, 0, (void *)dev_ioctl_after, 0);
-	fn = kallsyms_lookup_name("sock_ioctl");
+	fn = lookup_fn("sock_ioctl");
 	if (fn)
 		hook_wrap((void *)fn, 3, 0, (void *)sock_ioctl_after, 0);
 
 	if (off->skb_len) {
-		fn = kallsyms_lookup_name("rtnl_fill_ifinfo");
+		fn = lookup_fn("rtnl_fill_ifinfo");
 		if (fn)
 			hook_wrap((void *)fn, 12, (void *)rtnl_fill_before,
 				  (void *)rtnl_fill_after, 0);
 	}
 	if (off->in_ifaddr_ifa_dev) {
-		fn = kallsyms_lookup_name("inet_fill_ifaddr");
+		fn = lookup_fn("inet_fill_ifaddr");
 		if (fn)
 			hook_wrap((void *)fn, 3, (void *)inet_fill_before,
 				  (void *)addr_fill_after, 0);
 	}
 	if (off->inet6_ifaddr_idev) {
-		fn = kallsyms_lookup_name("inet6_fill_ifaddr");
+		fn = lookup_fn("inet6_fill_ifaddr");
 		if (fn)
 			hook_wrap((void *)fn, 3, (void *)inet6_fill_before,
 				  (void *)addr_fill_after, 0);
 	}
-	if (off->fib_info_fib_nh) {
-		fn = kallsyms_lookup_name("fib_dump_info");
+	if (off->fib_dump_fi_arg) {
+		fn = lookup_fn("fib_dump_info");
 		if (fn)
-			hook_wrap((void *)fn, 6, (void *)fib_dump_before,
+			hook_wrap((void *)fn, 11, (void *)fib_dump_before,
 				  (void *)fib_dump_after, 0);
 	}
 	if (off->fib6_info_fib6_nh) {
-		fn = kallsyms_lookup_name("rt6_fill_node");
+		fn = lookup_fn("rt6_fill_node");
 		if (fn)
 			hook_wrap((void *)fn, 11, (void *)rt6_fill_before,
 				  (void *)rt6_fill_after, 0);
 	}
 	if (off->fib_rule_table) {
-		fn = kallsyms_lookup_name("fib_nl_fill_rule");
+		fn = lookup_fn("fib_nl_fill_rule");
 		if (fn)
 			hook_wrap((void *)fn, 7, (void *)fib_rule_before,
 				  (void *)fib_rule_after, 0);
@@ -730,41 +799,41 @@ static long vpnhide_kpm_exit(void *__user reserved)
 {
 	unsigned long fn;
 
-	fn = kallsyms_lookup_name("fib_route_seq_show");
+	fn = lookup_fn("fib_route_seq_show");
 	if (fn)
 		hook_unwrap((void *)fn, (void *)fib_route_before,
 			    (void *)fib_route_after);
-	fn = kallsyms_lookup_name("rtnl_fill_ifinfo");
+	fn = lookup_fn("rtnl_fill_ifinfo");
 	if (fn)
 		hook_unwrap((void *)fn, (void *)rtnl_fill_before,
 			    (void *)rtnl_fill_after);
-	fn = kallsyms_lookup_name("ipv6_route_seq_show");
+	fn = lookup_fn("ipv6_route_seq_show");
 	if (fn)
 		hook_unwrap((void *)fn, (void *)fib_route_before,
 			    (void *)ipv6_route_after);
-	fn = kallsyms_lookup_name("inet_fill_ifaddr");
+	fn = lookup_fn("inet_fill_ifaddr");
 	if (fn)
 		hook_unwrap((void *)fn, (void *)inet_fill_before,
 			    (void *)addr_fill_after);
-	fn = kallsyms_lookup_name("inet6_fill_ifaddr");
+	fn = lookup_fn("inet6_fill_ifaddr");
 	if (fn)
 		hook_unwrap((void *)fn, (void *)inet6_fill_before,
 			    (void *)addr_fill_after);
-	fn = kallsyms_lookup_name("dev_ioctl");
+	fn = lookup_fn("dev_ioctl");
 	if (fn)
 		hook_unwrap((void *)fn, 0, (void *)dev_ioctl_after);
-	fn = kallsyms_lookup_name("sock_ioctl");
+	fn = lookup_fn("sock_ioctl");
 	if (fn)
 		hook_unwrap((void *)fn, 0, (void *)sock_ioctl_after);
-	fn = kallsyms_lookup_name("fib_dump_info");
+	fn = lookup_fn("fib_dump_info");
 	if (fn)
 		hook_unwrap((void *)fn, (void *)fib_dump_before,
 			    (void *)fib_dump_after);
-	fn = kallsyms_lookup_name("rt6_fill_node");
+	fn = lookup_fn("rt6_fill_node");
 	if (fn)
 		hook_unwrap((void *)fn, (void *)rt6_fill_before,
 			    (void *)rt6_fill_after);
-	fn = kallsyms_lookup_name("fib_nl_fill_rule");
+	fn = lookup_fn("fib_nl_fill_rule");
 	if (fn)
 		hook_unwrap((void *)fn, (void *)fib_rule_before,
 			    (void *)fib_rule_after);

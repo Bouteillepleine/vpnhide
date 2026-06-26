@@ -56,6 +56,15 @@ struct vpnhide_offsets {
 	unsigned int fib_info_nh;
 	unsigned int fib_info_fib_nh;
 
+	/* fib_dump_info arg shape (its fib_info moved across versions):
+	 *   fib_dump_fi_arg     = args[] index of the fib_info/fib_rt_info ptr
+	 *                         (0 => hook not installed for this version)
+	 *   fib_dump_fi_via_fri = 1 if that arg is a fib_rt_info* (fi=*(arg+0),
+	 *                         5.6+), 0 if it is the fib_info* directly (<5.6).
+	 * Always hooked as a 12-arg frame; only this one arg is read. */
+	unsigned int fib_dump_fi_arg;
+	int fib_dump_fi_via_fri;
+
 	/* IPv6 route dump (rt6_fill_node): fib6_info.nh != 0 => nexthop object;
 	 * else dev = *(rt + fib6_info_fib6_nh) (fib6_nh[0].nhc_dev). */
 	unsigned int fib6_info_nh;
@@ -111,6 +120,10 @@ static const struct vpnhide_offsets vpnhide_off_5_x = {
 	.fib_info_fib_nhs = 96,
 	.fib_info_nh = 104,
 	.fib_info_fib_nh = 128,
+	/* 5.6+ fib_dump_info(skb, portid, seq, event, fib_rt_info *fri, flags):
+	 * fi = fri->fi, so arg index 4, dereffed through fri. */
+	.fib_dump_fi_arg = 4,
+	.fib_dump_fi_via_fri = 1,
 	/* android12-5.10 fib6_info (LP64; rt6key=20, ANDROID_KABI_RESERVE=8):
 	 * nh@152, fib6_nh[]@168; nhc_dev first in fib6_nh -> +168. */
 	.fib6_info_nh = 152,
@@ -122,6 +135,45 @@ static const struct vpnhide_offsets vpnhide_off_5_x = {
 	.fib_rule_uid_start = 120,
 	.fib_rule_uid_end = 124,
 	.proc_uses_proc_ops = 1, /* 5.6+; for <5.6 use file_operations below */
+};
+
+/* 5.4 (android11-5.4, derived from AOSP common source + QEMU-validated).
+ * Mostly identical to 5.10, with two version-specific differences:
+ *   - fib_dump_info still uses the legacy <5.6 prototype (fib_info* passed
+ *     directly at arg 9, 11 args) — not the fib_rt_info* form 5.10 has.
+ *   - struct fib6_info has no ANDROID_KABI_RESERVE before fib6_nh[] here, so
+ *     fib6_nh[]@160 (vs 5.10's 168).
+ * procfs is file_operations (<5.6). */
+static const struct vpnhide_offsets vpnhide_off_5_4 = {
+	.skb_len = 112, /* modern sk_buff head + _nfct (CONFIG_NF_CONNTRACK) ->
+			 * len@112. Real 5.4 devices carry conntrack, so this is
+			 * the device-faithful value; a conntrack-less kernel would
+			 * be @104 (cf. the 5.10 test kernel). */
+	.netdev_name = 0,
+	.seqfile_buf = 0,
+	.seqfile_count = 24,
+	.in_ifaddr_ifa_dev = 24, /* hash(16)+ifa_next(8) — same as 5.10 */
+	.in_device_dev = 0,
+	.inet6_ifaddr_idev = 168, /* rt_priority present + post-4.15 timer_list */
+	.inet6_dev_dev = 0,
+	/* fib_info identical to 5.10: fib_nhs@96, nh@104, fib_nh[]@128. */
+	.fib_info_fib_nhs = 96,
+	.fib_info_nh = 104,
+	.fib_info_fib_nh = 128,
+	/* legacy fib_dump_info(skb,...,tos, struct fib_info *fi, flags): fi@arg9,
+	 * passed directly (not via fib_rt_info). */
+	.fib_dump_fi_arg = 9,
+	.fib_dump_fi_via_fri = 0,
+	/* fib6_info: rt6key=20, NO KABI reserve -> nh@152, fib6_nh[]@160. */
+	.fib6_info_nh = 152,
+	.fib6_info_fib6_nh = 160,
+	/* struct fib_rule layout identical to 5.10. */
+	.fib_rule_table = 36,
+	.fib_rule_iifname = 88,
+	.fib_rule_oifname = 104,
+	.fib_rule_uid_start = 120,
+	.fib_rule_uid_end = 124,
+	.proc_uses_proc_ops = 0, /* <5.6 → file_operations */
 };
 
 /* 4.14 (vanilla 4.14.336, derived from source + QEMU-validated). Offsets that
@@ -162,6 +214,8 @@ static inline const struct vpnhide_offsets *vpnhide_select_offsets(unsigned int 
 		return &vpnhide_off_6_1; /* 6.x — only 6.1 proven so far */
 	if (kver >= VPNHIDE_KVER(5, 6, 0))
 		return &vpnhide_off_5_x;
+	if (kver >= VPNHIDE_KVER(5, 0, 0))
+		return &vpnhide_off_5_4; /* 5.0–5.5: legacy fib_dump_info + proc */
 	if (kver >= VPNHIDE_KVER(4, 0, 0))
 		return &vpnhide_off_4_x;
 	return 0; /* unsupported → do not install */

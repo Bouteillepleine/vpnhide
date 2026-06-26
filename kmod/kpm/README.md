@@ -134,7 +134,21 @@ bootloop**, where the `.ko`'s kretprobe would just fail to register. So:
       offsets derived from source (`fib_info`, `fib6_info`, `inet6_ifaddr`,
       `fib_rule`); a static `getifaddrs()` probe (`gai-probe.c`) proves the
       address path is closed (target getifaddrs vpn0: 3 → 0).
-- [x] Runtime kver offset table (`kver_offsets.h`) — **5.10 (full) + 4.14 (partial)**
+- [x] Runtime kver offset table (`kver_offsets.h`) — **5.10 + 5.4 (full) + 4.14 (partial)**
+- [x] **5.4 (android11-5.4) — full parity, QEMU-validated 9/9** on a from-source
+      `5.4.302` Image. All vectors pass incl. both route dumps and policy rules.
+      Notable per-version work that landed here:
+      - `fib_dump_info` is the legacy `<5.6` prototype on 5.4 (fib_info passed
+        *directly* at arg 9, not via `fib_rt_info`) — the hook is now
+        table-driven (`fib_dump_fi_arg` / `fib_dump_fi_via_fri`) and unified on
+        a 12-arg frame, so one callback serves 5.4 and 5.10.
+      - `struct fib6_info` has no `ANDROID_KABI_RESERVE` here → `fib6_nh[]`@160
+        (5.10 is 168); `inet6_ifaddr.idev`@168; `skb.len`@112 (conntrack on).
+      - **Fuzzy symbol resolution**: gcc renames static fns to `name.isra.N` /
+        `name.constprop.N`, which `kallsyms_lookup_name` misses. Hook lookups
+        now fall back to the `name.`-prefixed clone (`kallsyms_on_each_symbol`),
+        so e.g. `fib_nl_fill_rule.isra.21` is hooked. Clang device kernels keep
+        the plain name (exact match wins first); this just hardens gcc kernels.
 - [x] **4.14 (#33) — bring-up, QEMU-validated** on a from-source `4.14.336`
       Image (KernelPatch patches + boots it; `-cpu cortex-a57` — `max` faults
       pre-console on pre-GKI). **7 hooks proven** A/B with no panic:
