@@ -91,6 +91,8 @@ struct vpnhide_offsets {
 
 /*
  * GKI 6.1 (android14-6.1, derived from AOSP common source + QEMU-validated).
+ * Also covers 6.6 (android15-6.6): every offset here is byte-identical on 6.6,
+ * confirmed by a separate 9/9 harness run on a DDK-built 6.6 GKI Image.
  * inet6_ifaddr's prefix up to dad_work is identical to 5.10, so idev@168
  * (NOT the 216 first taken from soranerai — left a note, the harness decides).
  * fib_dump_info uses the fib_rt_info* form (arg 4, like 5.10); fib_info and
@@ -315,7 +317,7 @@ static const struct vpnhide_offsets vpnhide_off_4_x = {
 static inline const struct vpnhide_offsets *vpnhide_select_offsets(unsigned int kver)
 {
 	if (kver >= VPNHIDE_KVER(6, 0, 0))
-		return &vpnhide_off_6_1; /* 6.x — only 6.1 proven so far */
+		return &vpnhide_off_6_1; /* 6.x — 6.1 + 6.6 proven identical */
 	if (kver >= VPNHIDE_KVER(5, 15, 0))
 		return &vpnhide_off_5_15; /* 5.15+: fib6_info gained offload fields */
 	if (kver >= VPNHIDE_KVER(5, 6, 0))
