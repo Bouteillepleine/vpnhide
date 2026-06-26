@@ -116,16 +116,21 @@ bootloop**, where the `.ko`'s kretprobe would just fail to register. So:
 ## Status & backlog
 
 - [x] Shared filtering logic extracted (`../shared/vpnhide_logic.h`)
-- [x] Runtime kver offset table scaffold (`kver_offsets.h`) — **6.1 only**
 - [x] KPM skeleton + 2 PoC hooks (`fib_route_seq_show`, `rtnl_fill_ifinfo`)
 - [x] **Compiles against `bmax121/KernelPatch` → valid `.kpm` ELF** (self-contained matcher; `hook_fargs12_t` is the max bucket — rtnl reads arg0/arg1 only)
-- [ ] Source the running `kver` from KernelPatch (currently a stub → refuses to install)
-- [ ] proc_ops vs file_operations mock per kver (the HyperOS-5.4 crash class)
+- [x] **Runtime `kver` detection** from KernelPatch's `kver` (common.h)
+- [x] Target UIDs via load-args / `ctl0` supercall (reuses the shared parser)
+- [x] **QEMU KPM harness** (`../test/run-kpm.sh`) — patches a GKI Image with
+      KernelPatch, embeds the `.kpm`, boots under QEMU, two-boot A/B. **Both
+      PoC hooks PASS on android12-5.10**: root sees `vpn0` when not targeted,
+      not when targeted; no panic. Validates the inline hooks + the 5.x
+      offsets (skb.len=104) + `fargs->local` state passing on a real kernel.
+- [x] Runtime kver offset table (`kver_offsets.h`) — **5.x + 6.1**; 4.14 TODO
+- [ ] proc_ops vs file_operations mock per kver (the HyperOS-5.4 crash class) — A/B currently uses load-args, so proc isn't on the critical path
 - [ ] Remaining hooks (see the coverage table in `vpnhide_kpm.c`)
-- [ ] Confirm 5.x / 4.14 offsets (with soranerai & cyberc3dr — they have the closed-kernel devices)
-- [ ] Vendor KernelPatch headers + a `build.py` KPM path + CI
-- [ ] **QEMU KPM harness** (gates everything above)
-- [ ] Wire the `.ko` to `../shared/vpnhide_logic.h` (mechanical; do it once a local `.ko` build + harness run can confirm no regression)
+- [ ] Confirm 4.14 + deeper struct offsets (with soranerai & cyberc3dr — closed-kernel devices)
+- [ ] `build.py` KPM path + wire `run-kpm.sh` into CI (qemu-image job)
+- [ ] Wire the `.ko` to `../shared/vpnhide_logic.h` (mechanical; gate on a local `.ko` harness run)
 
 ## Credits
 

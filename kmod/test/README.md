@@ -76,6 +76,24 @@ Building a virtio GKI kernel takes ~15-40 min, so it must not run per-PR:
   repo-owned (private), so the job pulls it with `credentials:` and a
   lowercased name from the `setup` job output, like the other image jobs.
 
+## KPM backend harness (`run-kpm.sh`)
+
+`run-kpm.sh` is the sibling for the [KPM backend](../kpm/): instead of
+`insmod`-ing a `.ko`, it patches the cached GKI `Image` with KernelPatch
+(`kptools-linux` + `kpimg-linux`, fetched from the KernelPatch releases),
+embeds `vpnhide.kpm`, and boots the patched kernel under the same QEMU/TCG
+setup. The KPM loads at boot (KernelPatch hijacks `paging_init`), so there
+is no insmod and no `/proc` dependency — target UIDs are passed via the
+embedded extra-args (`kptools -A`). The A/B is done across **two boots**
+(no target → root sees `vpn0`; target=0 → root doesn't), driven by
+`init-kpm.sh`. Verified: `fib_route_seq_show` + `rtnl_fill_ifinfo` pass on
+android12-5.10 with no panic.
+
+```sh
+make -C kmod kpm                 # build vpnhide.kpm
+kmod/test/run-kpm.sh android12-5.10
+```
+
 ## Design decisions
 
 Each of these was forced by a concrete failure; they are easy to "simplify"
