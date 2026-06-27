@@ -15,6 +15,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         qemu-system-arm cpio gzip xz-utils bzip2 curl ca-certificates git make \
         bc bison flex libelf-dev libssl-dev \
+        gcc g++ libc6-dev \
         clang gcc-aarch64-linux-gnu && \
     rm -rf /var/lib/apt/lists/*
 
