@@ -79,20 +79,43 @@ Building a virtio GKI kernel takes ~15-40 min, so it must not run per-PR:
 ## KPM backend harness (`run-kpm.sh`)
 
 `run-kpm.sh` is the sibling for the [KPM backend](../kpm/): instead of
-`insmod`-ing a `.ko`, it patches the cached GKI `Image` with KernelPatch
+`insmod`-ing a `.ko`, it patches a bootable `Image` with KernelPatch
 (`kptools-linux` + `kpimg-linux`, fetched from the KernelPatch releases),
 embeds `vpnhide.kpm`, and boots the patched kernel under the same QEMU/TCG
 setup. The KPM loads at boot (KernelPatch hijacks `paging_init`), so there
 is no insmod and no `/proc` dependency — target UIDs are passed via the
 embedded extra-args (`kptools -A`). The A/B is done across **two boots**
 (no target → root sees `vpn0`; target=0 → root doesn't), driven by
-`init-kpm.sh`. Verified: `fib_route_seq_show` + `rtnl_fill_ifinfo` pass on
-android12-5.10 with no panic.
+`init-kpm.sh`. All 10 hooks are validated 9/9 with no panic across the full
+kernel range — 4.14, 4.19, 5.4, 5.10, 5.15, 6.1, 6.6, 6.12 (the GKI ones via
+the DDK `Image`, the older ones via a from-source `Image` passed with
+`VPNHIDE_QEMU_IMAGE=`).
 
 ```sh
 make -C kmod kpm                 # build vpnhide.kpm
 kmod/test/run-kpm.sh android12-5.10
 ```
+
+Two knobs the KPM harness needs that the `.ko` one doesn't:
+
+- **`VPNHIDE_QEMU_CPU`** — defaults to `max`, but kernels older than 5.10
+  (4.14/4.19/5.4) fault on `max`'s newer CPU features before the console comes
+  up, so they need `VPNHIDE_QEMU_CPU=cortex-a57`. KernelPatch also writes its
+  restore region into kernel text, so the boot args carry `rodata=off` (some
+  from-source layouts otherwise put that page read-only → early abort).
+- **PAN is enforced on every kernel.** `qemu.config` sets
+  `CONFIG_ARM64_SW_TTBR0_PAN=y` so a hook that dereferences a *userspace*
+  pointer as kernel memory **panics in the test** rather than silently passing.
+  QEMU emulates whatever the chosen `-cpu` advertises: `-cpu max` advertises
+  hardware PAN (FEAT_PAN) and the GKI kernels run on it, but the <5.10 kernels
+  must run on `-cpu cortex-a57` (ARMv8.0, *no* PAN feature) — so on the exact
+  CPU where the bug lives there is no hardware PAN to emulate. Software PAN
+  (`SW_TTBR0_PAN`, the kernel's own TTBR0-switching fallback) enforces the
+  boundary independent of the CPU model, so it works under both `-cpu` choices.
+  This is how a real bug shipped: `dev_ioctl`'s ifreq arg is a `__user` pointer
+  on <5.5 kernels, and reading it directly only faulted on real PAN hardware (a
+  Pixel 4a on 4.14) until SW PAN was turned on here — now the buggy build
+  panics on the `target` boot of the 4.14 run, and the fixed build is clean.
 
 ## Design decisions
 
