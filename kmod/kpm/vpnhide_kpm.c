@@ -685,13 +685,23 @@ static int resolve_symbols(void)
 	_seq_lseek = (void *)kallsyms_lookup_name("seq_lseek");
 	_seq_printf = (void *)kallsyms_lookup_name("seq_printf");
 
-	_copy_from_user = (void *)kallsyms_lookup_name("__arch_copy_from_user");
+	/* Prefer the generic `_copy_*_user` wrappers, NOT the raw
+	 * `__arch_copy_*_user`. The wrapper does the uaccess enable/disable
+	 * (access_ok + the TTBR0 switch / PAN toggle) around the copy; the raw
+	 * asm only copies. On a kernel using software PAN
+	 * (CONFIG_ARM64_SW_TTBR0_PAN — old ARMv8.0 cores with no hardware PAN,
+	 * and the QEMU harness on `-cpu cortex-a57`) the TTBR0 switch lives in
+	 * the C wrapper on >=5.x, so calling the raw routine directly faults on
+	 * the unmapped user page (caught by the 5.4 harness run). The wrapper is
+	 * correct under both hardware and software PAN; fall back to the raw
+	 * symbol only if the wrapper is absent. */
+	_copy_from_user = (void *)kallsyms_lookup_name("_copy_from_user");
 	if (!_copy_from_user)
-		_copy_from_user = (void *)kallsyms_lookup_name("_copy_from_user");
+		_copy_from_user = (void *)kallsyms_lookup_name("__arch_copy_from_user");
 
-	_copy_to_user = (void *)kallsyms_lookup_name("__arch_copy_to_user");
+	_copy_to_user = (void *)kallsyms_lookup_name("_copy_to_user");
 	if (!_copy_to_user)
-		_copy_to_user = (void *)kallsyms_lookup_name("_copy_to_user");
+		_copy_to_user = (void *)kallsyms_lookup_name("__arch_copy_to_user");
 
 	_skb_trim = (void *)kallsyms_lookup_name("__skb_trim");
 	if (!_skb_trim)
