@@ -20,7 +20,11 @@ KPM_INCLUDE_DIRS := . include patch/include linux/include \
 	linux/arch/arm64/include linux/tools/arch/arm64/include
 KPM_INCLUDES := $(foreach d,$(KPM_INCLUDE_DIRS),-I$(KP_DIR)/kernel/$(d))
 
-KPM_CFLAGS := -target aarch64-linux-android \
+# -fuse-ld=lld: the `-r` link targets aarch64; lld handles the cross link with
+# one binary. DDK clang bundles lld and defaults to it, but a plain distro clang
+# (the legacy KPM image) defaults to the host GNU ld, which can't do the aarch64
+# relocatable link — force lld so both toolchains build the .kpm identically.
+KPM_CFLAGS := -target aarch64-linux-android -fuse-ld=lld \
 	-O2 -fno-pic -fno-pie -fno-plt -mcmodel=small \
 	-fvisibility=hidden -mno-outline-atomics \
 	-fno-stack-protector -fno-common -fno-builtin -ffreestanding \

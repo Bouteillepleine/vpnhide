@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         qemu-system-arm cpio gzip xz-utils bzip2 curl ca-certificates git make \
         bc bison flex libelf-dev libssl-dev \
         gcc g++ libc6-dev \
-        clang gcc-aarch64-linux-gnu && \
+        clang lld gcc-aarch64-linux-gnu && \
     rm -rf /var/lib/apt/lists/*
 
 # Build the 3 legacy kernels (Bootlin gcc, pinned sources, qemu.config + SW PAN)
