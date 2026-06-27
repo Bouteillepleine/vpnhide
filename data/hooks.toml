@@ -1,0 +1,110 @@
+# Single source of truth for the vpnhide hook registry — the global id space
+# shared by the control/stats protocol (docs/protocol.md §5).
+#
+#   - bit N of a config `hookmask` == hook id N.
+#   - a `stats` line emits `<hook_id>:<count>` pairs over the same ids.
+#   - each backend acts only on `mask & <backend>_own` and ignores foreign bits.
+#
+# Read at codegen time by scripts/codegen-hooks.py, which renders the matching
+# id enums + per-backend masks + status error codes for every language that
+# touches the protocol (kmod/KPM C, zygisk Rust, lsposed-native Rust, app
+# Kotlin). A CI lint step re-runs the codegen and fails if the generated files
+# drift, so the numbering can never diverge between backends.
+#
+# APPEND-ONLY. A hook id, once assigned, is permanent: stats from an old backend
+# must keep meaning the same hook forever, and an old reader skips unknown ids
+# rather than misreading them (protocol §4.5). To add a hook, append it with the
+# next free id — never renumber, never reuse a retired id.
+
+# --- kernel hooks (.ko + KPM share these; ids match the install order) -------
+
+[[hook]]
+id = 0
+name = "fib_route_seq_show"
+backend = "kernel"
+note = "/proc/net/route — IPv4 route lines"
+
+[[hook]]
+id = 1
+name = "ipv6_route_seq_show"
+backend = "kernel"
+note = "/proc/net/ipv6_route — IPv6 route lines"
+
+[[hook]]
+id = 2
+name = "rtnl_fill_ifinfo"
+backend = "kernel"
+note = "RTM_NEWLINK — getifaddrs() link enumeration"
+
+[[hook]]
+id = 3
+name = "inet_fill_ifaddr"
+backend = "kernel"
+note = "RTM_GETADDR — IPv4 address dump"
+
+[[hook]]
+id = 4
+name = "inet6_fill_ifaddr"
+backend = "kernel"
+note = "RTM_GETADDR — IPv6 address dump"
+
+[[hook]]
+id = 5
+name = "dev_ioctl"
+backend = "kernel"
+note = "SIOCGIF* by name (per-interface ioctls)"
+
+[[hook]]
+id = 6
+name = "sock_ioctl"
+backend = "kernel"
+note = "SIOCGIFCONF — interface list ioctl"
+
+[[hook]]
+id = 7
+name = "fib_dump_info"
+backend = "kernel"
+note = "RTM_GETROUTE — IPv4 route dump (issue #86)"
+
+[[hook]]
+id = 8
+name = "rt6_fill_node"
+backend = "kernel"
+note = "RTM_GETROUTE — IPv6 route dump"
+
+[[hook]]
+id = 9
+name = "fib_nl_fill_rule"
+backend = "kernel"
+note = "RTM_GETRULE — policy routing rules"
+
+# --- zygisk libc hooks and lsposed Java hooks take the next free ids as they
+# --- are wired into the protocol; appended here then (kept here as the record).
+
+# --- status error codes (protocol §5.1) -------------------------------------
+# A single dominant fault code returned in a `status` payload's `error` field.
+
+[[error]]
+id = 0
+name = "ok"
+note = "healthy; every requested, owned hook installed"
+
+[[error]]
+id = 1
+name = "unsupported_kver"
+note = "no offset table for the running kernel — refused, no hooks"
+
+[[error]]
+id = 2
+name = "conflicting_backend"
+note = "the other kernel backend (.ko<->KPM) is loaded — refused (protocol §1.2)"
+
+[[error]]
+id = 3
+name = "symbol_resolution_failed"
+note = "a required kallsyms symbol was missing — refused"
+
+[[error]]
+id = 4
+name = "partial_hooks"
+note = "installed, but some owned hooks did not resolve (see the hooks mask)"
