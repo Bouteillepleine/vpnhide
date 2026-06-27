@@ -205,13 +205,21 @@ static void rtnl_fill_after(hook_fargs12_t *fargs, void *udata)
 
 /* ================================================================== */
 /*  Hook 4: dev_ioctl — per-interface ioctls (SIOCGIF* by name)        */
-/*  arg1 = cmd, arg2 = ifr (KERNEL ptr; ifr_name at offset 0, uapi-     */
-/*  stable). If the result names a VPN iface, return -ENODEV. Covers    */
-/*  SIOCGIFNAME (index->name, name is output) + FLAGS/MTU/INDEX/HWADDR/  */
-/*  ADDR (name is input). No kernel-internal offsets — only ifr_name@0. */
+/*  arg1 = cmd, arg2 = ifr (ifr_name at offset 0, uapi-stable). NOTE:   */
+/*  arg2 is a *kernel* struct ifreq* on >=5.5, but a *userspace* ptr on */
+/*  <5.5 (4.14/4.19/5.4 do the copy inside dev_ioctl). Dereferencing a  */
+/*  user ptr directly from kernel context faults under PAN on real HW   */
+/*  (QEMU without PAN didn't), so the name is read through the right     */
+/*  path for whichever the pointer is. If it names a VPN iface, -ENODEV. */
 /* ================================================================== */
 
 #define VPNHIDE_ENODEV ((uint64_t)(-19))
+
+/* arm64: TTBR1 (kernel) addresses have the top 16 bits set; user ptrs don't. */
+static int ptr_is_kernel(const void *p)
+{
+	return ((unsigned long)p >> 48) == 0xffffUL;
+}
 
 /* SIOCGIF* range (0x8910..0x8930). SIOCGIFCONF (0x8912) goes via sock_ioctl,
  * never dev_ioctl, so the overlap is harmless here. */
@@ -224,12 +232,25 @@ static void dev_ioctl_after(hook_fargs5_t *fargs, void *udata)
 {
 	unsigned long cmd = (unsigned long)fargs->arg1;
 	const char *ifr = (const char *)fargs->arg2; /* ifr_name @ offset 0 */
+	char name[VPNHIDE_IFNAMSIZ];
+	int is_vpn;
 
 	if ((long)fargs->ret != 0 || !ifr)
 		return;
 	if (!is_target_uid() || !is_siocgif(cmd))
 		return;
-	if (iface_is_vpn(ifr)) {
+
+	if (ptr_is_kernel(ifr)) {
+		is_vpn = iface_is_vpn(ifr); /* >=5.5: ifr is kernel memory */
+	} else {
+		/* <5.5: ifr is a __user pointer — copy the name in safely. */
+		if (!_copy_from_user ||
+		    _copy_from_user(name, ifr, VPNHIDE_IFNAMSIZ))
+			return;
+		name[VPNHIDE_IFNAMSIZ - 1] = '\0';
+		is_vpn = iface_is_vpn(name);
+	}
+	if (is_vpn) {
 		vpnhide_dbg("dev_ioctl: hiding cmd=0x%lx\n", cmd);
 		fargs->ret = VPNHIDE_ENODEV;
 	}
