@@ -59,25 +59,51 @@ for a in kptools-linux kpimg-linux; do
 done
 chmod +x "$KPBIN/kptools-linux"
 
+# Fail loudly if the host tool can't run here — the prebuilt kptools-linux is
+# linked against a recent glibc (>= 2.38), so an older base image (e.g. Debian
+# bookworm = 2.36) trips the dynamic loader. Without this check the patch step
+# below fails silently and the harness boots an unpatched kernel, surfacing only
+# as the confusing "KPM did not load".
+"$KPBIN/kptools-linux" --help >/dev/null 2>&1 || {
+	echo "ERROR: $KPBIN/kptools-linux is not runnable in this environment:"
+	"$KPBIN/kptools-linux" --help 2>&1 | head -2
+	exit 2
+}
+
 # --- build the .kpm if not provided -----------------------------------------
 if [ ! -f "$KPM" ]; then
 	echo "[run-kpm] building vpnhide.kpm…"
 	make -C "$KMOD" kpm >/dev/null
 fi
 
-# --- optional static getifaddrs probe (validates the addr-fill hooks) --------
+# --- static getifaddrs probe (validates the addr-fill hooks) -----------------
 # bionic getifaddrs() = RTM_GETLINK + RTM_GETADDR; the `ip addr` vector can't
-# isolate the addr path. Built static so it runs on the Alpine VM regardless
-# of libc; skipped (gai vector absent) if no aarch64 cross-cc is found.
+# isolate the addr path. The probe MUST be a *bionic* binary: it validates how
+# *Android's* getifaddrs parses the filtered netlink dump. A glibc build is
+# deliberately NOT used — glibc's getifaddrs walks the RTM_GETADDR stream more
+# strictly and spins on the filtered output on some kernels (e.g. 5.4); that is
+# a glibc parsing quirk, not a product bug (Android is bionic, which passes).
+#
+# Source order:
+#   1. VPNHIDE_GAI_BIN — a prebuilt bionic binary baked into the CI image
+#      (built from this exact gai-probe.c with the NDK; see the Dockerfiles).
+#   2. an NDK clang on this host (dev machines) — build from source.
+#   3. neither — skip the vector (the 8 core vectors still run).
 GAI=""
-GAI_CC="${VPNHIDE_GAI_CC:-$(ls "$HOME"/Android/Sdk/ndk/*/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android*-clang 2>/dev/null | sort | tail -1)}"
-[ -n "$GAI_CC" ] || GAI_CC="$(command -v aarch64-linux-gnu-gcc || true)"
-if [ -n "$GAI_CC" ] && [ -x "$GAI_CC" ]; then
-	GAI="$CACHE/gai"
-	"$GAI_CC" -static -O2 -o "$GAI" "$HERE/gai-probe.c" 2>/dev/null || GAI=""
+if [ -n "${VPNHIDE_GAI_BIN:-}" ] && [ -x "${VPNHIDE_GAI_BIN:-}" ]; then
+	GAI="$VPNHIDE_GAI_BIN"
+	echo "[run-kpm] getifaddrs probe: prebuilt bionic ($GAI)"
+else
+	# `|| true`: with no NDK present the glob matches nothing and `ls` exits
+	# non-zero, which under `set -euo pipefail` would kill the script silently.
+	GAI_CC="${VPNHIDE_GAI_CC:-$(ls "$HOME"/Android/Sdk/ndk/*/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android*-clang 2>/dev/null | sort | tail -1 || true)}"
+	if [ -n "$GAI_CC" ] && [ -x "$GAI_CC" ]; then
+		GAI="$CACHE/gai"
+		"$GAI_CC" -static -O2 -o "$GAI" "$HERE/gai-probe.c" 2>/dev/null || GAI=""
+	fi
+	[ -n "$GAI" ] && echo "[run-kpm] getifaddrs probe built ($(basename "$GAI_CC"))" || \
+		echo "[run-kpm] no bionic toolchain/binary — skipping getifaddrs probe (8 core vectors still run)"
 fi
-[ -n "$GAI" ] && echo "[run-kpm] getifaddrs probe built ($(basename "$GAI_CC"))" || \
-	echo "[run-kpm] no aarch64 static cross-cc — skipping getifaddrs probe"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -127,6 +153,12 @@ echo "-------------------------------------------------------------------"
 
 PASS=0; FAIL=0
 for vec in proc_route_v4 getifaddrs proc_route_v6 siocgifconf dev_ioctl netlink_route4 netlink_route6 policy_rule gai_getifaddrs; do
+	# The gai_getifaddrs vector only exists when the bionic probe is available
+	# (baked VPNHIDE_GAI_BIN, or built from an NDK on this host). If neither is
+	# present the probe can't run, so skip the vector instead of failing it.
+	if [ "$vec" = gai_getifaddrs ] && [ -z "$GAI" ]; then
+		echo "RESULT $vec=SKIP (no bionic getifaddrs probe available)"; continue
+	fi
 	nt="$(vec_count "$vec" "$NT_LOG")"
 	tg="$(vec_count "$vec" "$TG_LOG")"
 	if [ "$nt" -gt 0 ] && [ "$tg" -eq 0 ]; then
