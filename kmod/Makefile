@@ -24,7 +24,10 @@ KPM_INCLUDES := $(foreach d,$(KPM_INCLUDE_DIRS),-I$(KP_DIR)/kernel/$(d))
 # one binary. DDK clang bundles lld and defaults to it, but a plain distro clang
 # (the legacy KPM image) defaults to the host GNU ld, which can't do the aarch64
 # relocatable link — force lld so both toolchains build the .kpm identically.
-KPM_CFLAGS := -target aarch64-linux-android -fuse-ld=lld \
+# -nostdlib: this is a freestanding relocatable kernel object; older Android
+# clang drivers (e.g. clang-12 on android12-5.10) otherwise add CRT startup
+# files + -lc/-ldl to the `-r` link and fail (crtbegin_dynamic.o / -lc not found).
+KPM_CFLAGS := -target aarch64-linux-android -fuse-ld=lld -nostdlib \
 	-O2 -fno-pic -fno-pie -fno-plt -mcmodel=small \
 	-fvisibility=hidden -mno-outline-atomics \
 	-fno-stack-protector -fno-common -fno-builtin -ffreestanding \
