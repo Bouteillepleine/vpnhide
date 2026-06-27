@@ -9,8 +9,10 @@ on:
     branches: [main]
     paths:
       - .github/docker/ddk-qemu/Dockerfile
+      - .github/docker/kpm-qemu-legacy/Dockerfile
       - .github/workflows/qemu-image.yml
       - kmod/test/qemu.config
+      - kmod/test/build-source-kernel.sh
   schedule:
     - cron: '0 4 1 * *'
   workflow_dispatch:
@@ -83,3 +85,43 @@ jobs:
           tags: ${{ steps.img.outputs.image }}
           cache-from: type=gha,scope=ddk-qemu-${{ matrix.kmi }}
           cache-to: type=gha,mode=max,scope=ddk-qemu-${{ matrix.kmi }}
+
+  # One lightweight image with the 3 from-source legacy kernels (4.14/4.19/5.4)
+  # for the KPM harness. Not a matrix — a single image with all three Images,
+  # built by build-source-kernel.sh (Bootlin gcc, no DDK, no kernel tree).
+  build-legacy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Three gcc kernel builds + the AOSP 5.4 checkout are disk-hungry.
+      - name: Free up disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          large-packages: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: img
+        env:
+          REPO: ${{ github.repository }}
+        run: echo "image=ghcr.io/${REPO,,}/kpm-qemu-legacy:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: .github/docker/kpm-qemu-legacy/Dockerfile
+          push: true
+          tags: ${{ steps.img.outputs.image }}
+          cache-from: type=gha,scope=kpm-qemu-legacy
+          cache-to: type=gha,mode=max,scope=kpm-qemu-legacy

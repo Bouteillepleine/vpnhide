@@ -24,6 +24,7 @@ jobs:
     outputs:
       image: ${{ steps.img.outputs.image }}
       ddkqemu: ${{ steps.img.outputs.ddkqemu }}
+      kpmlegacy: ${{ steps.img.outputs.kpmlegacy }}
     steps:
       - id: img
         env:
@@ -31,6 +32,7 @@ jobs:
         run: |
           echo "image=ghcr.io/${REPO,,}/ci:latest" >> "$GITHUB_OUTPUT"
           echo "ddkqemu=ghcr.io/${REPO,,}/ddk-qemu" >> "$GITHUB_OUTPUT"
+          echo "kpmlegacy=ghcr.io/${REPO,,}/kpm-qemu-legacy:latest" >> "$GITHUB_OUTPUT"
 
   lint:
     needs: setup
@@ -290,6 +292,42 @@ jobs:
           CLANG_BIN="$(ls -d /opt/ddk/clang/*/bin | head -1)"
           make -C kmod kpm CLANG_DIR="$CLANG_BIN"
           kmod/test/run-kpm.sh "$KMI"
+
+  # Legacy pre-GKI kernels (4.14/4.19/5.4) — the KPM's whole reason to exist
+  # (the .ko can't serve them). One image holds all three from-source Images;
+  # `-cpu cortex-a57` (those kernels fault on `-cpu max`) with software PAN
+  # compiled in, so the user/kernel pointer-domain bug class is caught here on
+  # the exact cores where it lives.
+  kpm-qemu-legacy:
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ver: ["4.14", "4.19", "5.4"]
+    container:
+      image: ${{ needs.setup.outputs.kpmlegacy }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive   # KernelPatch headers needed by `make kpm`
+
+      - name: Mark workspace safe
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build .kpm + legacy KPM QEMU test
+        # plain clang from the legacy image; the baked Image + rootfs + KP tools
+        # come from ENV (VPNHIDE_QEMU_ROOTFS / VPNHIDE_KP_BIN). The KMI arg is
+        # just a label here — VPNHIDE_QEMU_IMAGE picks the from-source kernel.
+        run: |
+          make -C kmod kpm
+          VPNHIDE_QEMU_IMAGE="/opt/qemu/legacy/${{ matrix.ver }}/Image" \
+          VPNHIDE_QEMU_CPU=cortex-a57 \
+            kmod/test/run-kpm.sh android12-5.10
 
   zygisk:
     needs: setup
