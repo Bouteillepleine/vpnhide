@@ -288,6 +288,10 @@ jobs:
         # `make kpm` builds the relocatable .kpm against the KernelPatch
         # submodule (no kernel tree needed). run-kpm.sh patches the baked Image
         # with KernelPatch (VPNHIDE_KP_BIN), embeds the .kpm, and boots the A/B.
+        # VPNHIDE_GAI_REQUIRED: the bionic getifaddrs probe is baked into the
+        # image, so a skip means it's missing — fail rather than drop coverage.
+        env:
+          VPNHIDE_GAI_REQUIRED: "1"
         run: |
           CLANG_BIN="$(ls -d /opt/ddk/clang/*/bin | head -1)"
           make -C kmod kpm CLANG_DIR="$CLANG_BIN"
@@ -323,6 +327,10 @@ jobs:
         # plain clang from the legacy image; the baked Image + rootfs + KP tools
         # come from ENV (VPNHIDE_QEMU_ROOTFS / VPNHIDE_KP_BIN). The KMI arg is
         # just a label here — VPNHIDE_QEMU_IMAGE picks the from-source kernel.
+        # VPNHIDE_GAI_REQUIRED: the bionic getifaddrs probe is baked into the
+        # image, so a skip means it's missing — fail rather than drop coverage.
+        env:
+          VPNHIDE_GAI_REQUIRED: "1"
         run: |
           make -C kmod kpm
           VPNHIDE_QEMU_IMAGE="/opt/qemu/legacy/${{ matrix.ver }}/Image" \

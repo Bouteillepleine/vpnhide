@@ -105,6 +105,18 @@ else
 		echo "[run-kpm] no bionic toolchain/binary — skipping getifaddrs probe (8 core vectors still run)"
 fi
 
+# In CI the probe is baked into the image (VPNHIDE_GAI_BIN), so a skip there
+# means the baked binary is missing / not executable — a silent addr-fill
+# coverage regression that would otherwise still go green. VPNHIDE_GAI_REQUIRED
+# (set by the CI jobs) turns that into a hard failure. Locally, with no flag,
+# the skip stays soft so the harness still runs without an NDK.
+if [ -z "$GAI" ] && [ -n "${VPNHIDE_GAI_REQUIRED:-}" ]; then
+	echo "ERROR: getifaddrs probe is required here (VPNHIDE_GAI_REQUIRED set) but" \
+	     "unavailable — VPNHIDE_GAI_BIN='${VPNHIDE_GAI_BIN:-}' missing/not executable."
+	echo "       Refusing to pass with the addr-fill (inet*_fill_ifaddr) hook unchecked."
+	exit 2
+fi
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
