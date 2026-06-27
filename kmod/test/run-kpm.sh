@@ -23,7 +23,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 KMOD="$(cd "$HERE/.." && pwd)"
 CACHE="$HERE/.cache"
 KDIR="$CACHE/$KMI"
-KPBIN="$CACHE/kp"
+# KernelPatch host tool + runtime. Defaults to a per-run download cache, but CI
+# points VPNHIDE_KP_BIN at the copies baked into the test image (hermetic — no
+# per-run network fetch). If the dir already has both binaries, the fetch below
+# is skipped.
+KPBIN="${VPNHIDE_KP_BIN:-$CACHE/kp}"
 
 IMAGE="${VPNHIDE_QEMU_IMAGE:-$KDIR/Image}"
 KPM="${VPNHIDE_KPM:-$KMOD/vpnhide.kpm}"

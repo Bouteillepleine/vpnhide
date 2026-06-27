@@ -248,6 +248,49 @@ jobs:
           make -C kmod KERNEL_SRC="$VPNHIDE_QEMU_KSRC" CLANG_DIR="$CLANG_BIN"
           VPNHIDE_QEMU_KO="$PWD/kmod/vpnhide_kmod.ko" kmod/test/run.sh "$KMI"
 
+  # KPM backend on the SAME baked GKI kernels as kmod-qemu, but patched with
+  # KernelPatch instead of insmod (run-kpm.sh). Reuses the ddk-qemu image: the
+  # baked Image/rootfs + KernelPatch tool/runtime (VPNHIDE_KP_BIN) make this
+  # hermetic. Legacy pre-GKI kernels (4.14/4.19/5.4) are a separate job/image.
+  kpm-qemu:
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        kmi:
+          - android12-5.10
+          - android13-5.10
+          - android13-5.15
+          - android14-5.15
+          - android14-6.1
+          - android15-6.6
+          - android16-6.12
+    container:
+      image: ${{ needs.setup.outputs.ddkqemu }}:${{ matrix.kmi }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      KMI: ${{ matrix.kmi }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive   # KernelPatch headers needed by `make kpm`
+
+      - name: Mark workspace safe
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build .kpm + KPM QEMU runtime test
+        # `make kpm` builds the relocatable .kpm against the KernelPatch
+        # submodule (no kernel tree needed). run-kpm.sh patches the baked Image
+        # with KernelPatch (VPNHIDE_KP_BIN), embeds the .kpm, and boots the A/B.
+        run: |
+          CLANG_BIN="$(ls -d /opt/ddk/clang/*/bin | head -1)"
+          make -C kmod kpm CLANG_DIR="$CLANG_BIN"
+          kmod/test/run-kpm.sh "$KMI"
+
   zygisk:
     needs: setup
     runs-on: ubuntu-latest

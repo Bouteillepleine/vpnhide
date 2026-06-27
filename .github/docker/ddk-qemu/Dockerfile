@@ -18,7 +18,8 @@ ARG KMI
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         qemu-system-arm cpio gzip curl ca-certificates git \
-        bc bison flex libelf-dev libssl-dev && \
+        bc bison flex libelf-dev libssl-dev \
+        gcc-aarch64-linux-gnu && \
     rm -rf /var/lib/apt/lists/*
 
 # Build the kernel and KEEP its tree: the test module must be built against the
@@ -47,8 +48,21 @@ RUN curl -fsSL \
         https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-3.21.2-aarch64.tar.gz \
         -o /opt/qemu/alpine-minirootfs.tar.gz
 
-# run.sh reads these to use the baked kernel + rootfs instead of the local cache.
-# VPNHIDE_QEMU_KSRC is the kernel tree to build the test module against.
+# KernelPatch host tool (kptools) + runtime (kpimg) for the KPM harness
+# (run-kpm.sh) — baked at a pinned version so the per-PR kpm-qemu job is
+# hermetic (no per-run release download). Same binaries for every KMI.
+ARG KP_VER=0.13.1
+RUN mkdir -p /opt/qemu/kp && \
+    for a in kptools-linux kpimg-linux; do \
+        curl -fsSL "https://github.com/bmax121/KernelPatch/releases/download/${KP_VER}/$a" \
+            -o "/opt/qemu/kp/$a"; \
+    done && chmod +x /opt/qemu/kp/kptools-linux
+
+# run.sh / run-kpm.sh read these to use the baked artifacts instead of the local
+# cache. VPNHIDE_QEMU_KSRC is the kernel tree to build the test module against;
+# VPNHIDE_KP_BIN is the baked KernelPatch tool/runtime dir (KPM only). The
+# harness's static getifaddrs probe builds with the apt aarch64-linux-gnu gcc.
 ENV VPNHIDE_QEMU_IMAGE=/opt/qemu/Image
 ENV VPNHIDE_QEMU_ROOTFS=/opt/qemu/alpine-minirootfs.tar.gz
 ENV VPNHIDE_QEMU_KSRC=/opt/qemu/linux
+ENV VPNHIDE_KP_BIN=/opt/qemu/kp
