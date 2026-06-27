@@ -12,13 +12,35 @@
 # VPNHIDE_QEMU_KO (a kdir-built module loads fine here: same source, same
 # vermagic). Built rarely by qemu-image.yml since kernels change seldom.
 ARG KMI
+
+# --- builder: the bionic getifaddrs probe ----------------------------------
+# The gai_getifaddrs vector must run a *bionic* binary (it validates how
+# Android's getifaddrs parses our filtered netlink dump — glibc differs and is
+# the wrong libc to test). Build it from gai-probe.c with the NDK here; only
+# the ~420 KB static binary is copied into the final image (no NDK retained).
+# The DDK clang can't build it (no bionic userspace sysroot), hence the NDK.
+FROM debian:trixie-slim AS gai
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl ca-certificates unzip && rm -rf /var/lib/apt/lists/*
+ARG NDK_VER=r28c
+RUN curl -fsSL "https://dl.google.com/android/repository/android-ndk-${NDK_VER}-linux.zip" \
+        -o /tmp/ndk.zip && \
+    unzip -q /tmp/ndk.zip "android-ndk-${NDK_VER}/toolchains/llvm/prebuilt/linux-x86_64/*" \
+        -d /opt && rm /tmp/ndk.zip
+COPY kmod/test/gai-probe.c /tmp/gai-probe.c
+RUN TC="/opt/android-ndk-${NDK_VER}/toolchains/llvm/prebuilt/linux-x86_64/bin" && \
+    "$TC/aarch64-linux-android24-clang" -static -O2 -o /opt/gai /tmp/gai-probe.c && \
+    "$TC/llvm-strip" /opt/gai
+
 FROM ghcr.io/ylarod/ddk-min:${KMI}-20260313
 ARG KMI
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         qemu-system-arm cpio gzip curl ca-certificates git \
-        bc bison flex libelf-dev libssl-dev && \
+        bc bison flex libelf-dev libssl-dev \
+        gcc-aarch64-linux-gnu && \
     rm -rf /var/lib/apt/lists/*
 
 # Build the kernel and KEEP its tree: the test module must be built against the
@@ -47,8 +69,27 @@ RUN curl -fsSL \
         https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-3.21.2-aarch64.tar.gz \
         -o /opt/qemu/alpine-minirootfs.tar.gz
 
-# run.sh reads these to use the baked kernel + rootfs instead of the local cache.
-# VPNHIDE_QEMU_KSRC is the kernel tree to build the test module against.
+# KernelPatch host tool (kptools) + runtime (kpimg) for the KPM harness
+# (run-kpm.sh) — baked at a pinned version so the per-PR kpm-qemu job is
+# hermetic (no per-run release download). Same binaries for every KMI.
+ARG KP_VER=0.13.1
+RUN mkdir -p /opt/qemu/kp && \
+    for a in kptools-linux kpimg-linux; do \
+        curl -fsSL "https://github.com/bmax121/KernelPatch/releases/download/${KP_VER}/$a" \
+            -o "/opt/qemu/kp/$a"; \
+    done && chmod +x /opt/qemu/kp/kptools-linux
+
+# Prebuilt bionic getifaddrs probe (built from gai-probe.c with the NDK in the
+# `gai` stage). run-kpm.sh picks it up via VPNHIDE_GAI_BIN so the addr-fill
+# hook is validated in CI on every KMI — not skipped.
+COPY --from=gai /opt/gai /opt/qemu/gai
+
+# run.sh / run-kpm.sh read these to use the baked artifacts instead of the local
+# cache. VPNHIDE_QEMU_KSRC is the kernel tree to build the test module against;
+# VPNHIDE_KP_BIN is the baked KernelPatch tool/runtime dir (KPM only);
+# VPNHIDE_GAI_BIN is the prebuilt bionic getifaddrs probe.
 ENV VPNHIDE_QEMU_IMAGE=/opt/qemu/Image
 ENV VPNHIDE_QEMU_ROOTFS=/opt/qemu/alpine-minirootfs.tar.gz
 ENV VPNHIDE_QEMU_KSRC=/opt/qemu/linux
+ENV VPNHIDE_KP_BIN=/opt/qemu/kp
+ENV VPNHIDE_GAI_BIN=/opt/qemu/gai

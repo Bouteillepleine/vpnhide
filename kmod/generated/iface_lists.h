@@ -2,119 +2,107 @@
 #ifndef VPNHIDE_GENERATED_IFACE_LISTS_H
 #define VPNHIDE_GENERATED_IFACE_LISTS_H
 
-#ifdef __KERNEL__
-# include <linux/string.h>
-# include <linux/ctype.h>
-# include <linux/types.h>
-#else
-# include <ctype.h>
-# include <stdbool.h>
-# include <stddef.h>
-# include <string.h>
-#endif
-
-static inline bool vpnhide_iface_starts_with_ci(
-	const char *name, const char *prefix)
+static inline char vpnhide__lc(char c)
 {
-	size_t i;
+	return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+}
+
+static inline int vpnhide_iface_starts_with_ci(const char *name, const char *prefix)
+{
+	int i;
 	for (i = 0; prefix[i]; i++) {
 		if (!name[i])
-			return false;
-		if (tolower((unsigned char)name[i]) !=
-		    (unsigned char)prefix[i])
-			return false;
+			return 0;
+		if (vpnhide__lc(name[i]) != vpnhide__lc(prefix[i]))
+			return 0;
 	}
-	return true;
+	return 1;
 }
 
-static inline bool vpnhide_iface_starts_with_then_digits_ci(
-	const char *name, const char *prefix)
+static inline int vpnhide_iface_starts_with_then_digits_ci(const char *name,
+							   const char *prefix)
 {
-	size_t i;
+	int i = 0;
 	if (!vpnhide_iface_starts_with_ci(name, prefix))
-		return false;
-	i = strlen(prefix);
+		return 0;
+	while (prefix[i])
+		i++;
 	if (!name[i])
-		return false;
+		return 0;
 	for (; name[i]; i++)
 		if (name[i] < '0' || name[i] > '9')
-			return false;
-	return true;
+			return 0;
+	return 1;
 }
 
-static inline bool vpnhide_iface_equals_ci(
-	const char *name, const char *other)
+static inline int vpnhide_iface_equals_ci(const char *name, const char *other)
 {
-	size_t i;
+	int i;
 	for (i = 0; other[i]; i++) {
 		if (!name[i])
-			return false;
-		if (tolower((unsigned char)name[i]) !=
-		    (unsigned char)other[i])
-			return false;
+			return 0;
+		if (vpnhide__lc(name[i]) != vpnhide__lc(other[i]))
+			return 0;
 	}
 	return name[i] == '\0';
 }
 
-static inline bool vpnhide_iface_contains_ci(
-	const char *name, const char *needle)
+static inline int vpnhide_iface_contains_ci(const char *name, const char *needle)
 {
-	size_t nlen = strlen(needle);
-	size_t i, j;
-	if (nlen == 0)
-		return true;
+	int i, j;
+	if (!needle[0])
+		return 1;
 	for (i = 0; name[i]; i++) {
-		for (j = 0; j < nlen; j++) {
+		for (j = 0; needle[j]; j++) {
 			if (!name[i + j])
-				return false;
-			if (tolower((unsigned char)name[i + j]) !=
-			    (unsigned char)needle[j])
+				return 0;
+			if (vpnhide__lc(name[i + j]) != vpnhide__lc(needle[j]))
 				break;
 		}
-		if (j == nlen)
-			return true;
+		if (!needle[j])
+			return 1;
 	}
-	return false;
+	return 0;
 }
 
-static inline bool vpnhide_iface_is_vpn(const char *name)
+static inline int vpnhide_iface_is_vpn(const char *name)
 {
 	if (!name || !name[0])
-		return false;
+		return 0;
 	/* OpenVPN, WireGuard userspace, Tailscale, generic tunneling */
 	if (vpnhide_iface_starts_with_ci(name, "tun"))
-		return true;
+		return 1;
 	/* OpenVPN bridged */
 	if (vpnhide_iface_starts_with_ci(name, "tap"))
-		return true;
+		return 1;
 	/* WireGuard kernel */
 	if (vpnhide_iface_starts_with_ci(name, "wg"))
-		return true;
+		return 1;
 	/* PPTP / L2TP PPP tunnels */
 	if (vpnhide_iface_starts_with_ci(name, "ppp"))
-		return true;
+		return 1;
 	/* Android built-in IPsec VPN */
 	if (vpnhide_iface_starts_with_ci(name, "ipsec"))
-		return true;
+		return 1;
 	/* kernel IPsec XFRM framework */
 	if (vpnhide_iface_starts_with_ci(name, "xfrm"))
-		return true;
+		return 1;
 	/* Apple-style, rare on Android */
 	if (vpnhide_iface_starts_with_ci(name, "utun"))
-		return true;
+		return 1;
 	/* L2TP */
 	if (vpnhide_iface_starts_with_ci(name, "l2tp"))
-		return true;
+		return 1;
 	/* GRE tunnels */
 	if (vpnhide_iface_starts_with_ci(name, "gre"))
-		return true;
+		return 1;
 	/* catch-all for renamed clients (myvpn0, vpn-client, xvpn1, ...) */
 	if (vpnhide_iface_contains_ci(name, "vpn"))
-		return true;
+		return 1;
 	/* Anonymous netdev / renamed tunnel using the kernel's default naming pattern (e.g. `ip link set tun0 name if33` from issue #86). Does NOT match `ifb<N>` — those are kernel intermediate-functional-block traffic-shaping ifaces (different shape: `if` + letter, not + digit). */
 	if (vpnhide_iface_starts_with_then_digits_ci(name, "if"))
-		return true;
-	return false;
+		return 1;
+	return 0;
 }
 
 #endif /* VPNHIDE_GENERATED_IFACE_LISTS_H */
