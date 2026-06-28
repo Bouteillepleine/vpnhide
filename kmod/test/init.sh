@@ -80,11 +80,28 @@ check_keep() {
 	_nt=$(eval "$_cmd" 2>/dev/null | grep -c -- "$_pat")
 	set_target 0
 	_tg=$(eval "$_cmd" 2>/dev/null | grep -c -- "$_pat")
-	if [ "$_nt" -gt 0 ] && [ "$_tg" -gt 0 ]; then
-		echo "RESULT $_name=PASS (nontarget=$_nt target=$_tg)"
+	if [ "$_nt" -gt 0 ] && [ "$_tg" -gt 0 ] && [ "$_tg" -le "$_nt" ]; then
+		echo "RESULT $_name=PASS (nontarget=$_nt target=$_tg mode=nonvpn)"
 		PASS=$((PASS + 1))
 	else
-		echo "RESULT $_name=FAIL (nontarget=$_nt target=$_tg)"
+		echo "RESULT $_name=FAIL (nontarget=$_nt target=$_tg mode=nonvpn)"
+		FAIL=$((FAIL + 1))
+	fi
+}
+
+check_keep_exact() {
+	_name=$1
+	_cmd=$2
+	_pat=$3
+	set_target 5555
+	_nt=$(eval "$_cmd" 2>/dev/null | grep -c -- "$_pat")
+	set_target 0
+	_tg=$(eval "$_cmd" 2>/dev/null | grep -c -- "$_pat")
+	if [ "$_nt" -gt 0 ] && [ "$_tg" -eq "$_nt" ]; then
+		echo "RESULT $_name=PASS (nontarget=$_nt target=$_tg mode=exact)"
+		PASS=$((PASS + 1))
+	else
+		echo "RESULT $_name=FAIL (nontarget=$_nt target=$_tg mode=exact)"
 		FAIL=$((FAIL + 1))
 	fi
 }
@@ -119,11 +136,11 @@ check_gai() {
 		FAIL=$((FAIL + 1))
 	fi
 
-	if [ "$_nt_other" -gt 0 ] && [ "$_tg_other" -gt 0 ]; then
-		echo "RESULT keep_gai_getifaddrs=PASS (nontarget=$_nt_other target=$_tg_other)"
+	if [ "$_nt_other" -gt 0 ] && [ "$_tg_other" -gt 0 ] && [ "$_tg_other" -le "$_nt_other" ]; then
+		echo "RESULT keep_gai_getifaddrs=PASS (nontarget=$_nt_other target=$_tg_other mode=nonvpn)"
 		PASS=$((PASS + 1))
 	else
-		echo "RESULT keep_gai_getifaddrs=FAIL (nontarget=$_nt_other target=$_tg_other)"
+		echo "RESULT keep_gai_getifaddrs=FAIL (nontarget=$_nt_other target=$_tg_other mode=nonvpn)"
 		FAIL=$((FAIL + 1))
 	fi
 }
@@ -141,12 +158,12 @@ check_gai
 
 # Non-VPN entries must survive target filtering. This catches over-trimming
 # regressions where a hook hides the whole dump instead of only vpn0 rows.
-check_keep keep_proc_route_v4   "cat /proc/net/route"     "^eth0"
-check_keep keep_getifaddrs      "ip addr show"            ": eth0:"
-check_keep keep_siocgifconf     "ifconfig -a"             "^eth0"
-check_keep keep_dev_ioctl       "ifconfig eth0"           "^eth0"
+check_keep_exact keep_proc_route_v4   "cat /proc/net/route"     "^eth0"
+check_keep_exact keep_getifaddrs      "ip addr show"            ": eth0:"
+check_keep_exact keep_siocgifconf     "ifconfig -a"             "^eth0"
+check_keep_exact keep_dev_ioctl       "ifconfig eth0"           "^eth0"
 check_keep keep_netlink_route4  "ip route show table all" "dev eth0"
-check_keep keep_policy_rule     "ip rule show"            "lookup main"
+check_keep_exact keep_policy_rule     "ip rule show"            "lookup main"
 
 PANIC=$(dmesg | grep -ci 'Unable to handle\|Internal error\|Oops\|BUG:\|Kernel panic')
 echo "PANIC=$PANIC"
