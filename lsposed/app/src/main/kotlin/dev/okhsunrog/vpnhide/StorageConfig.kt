@@ -271,10 +271,8 @@ internal fun buildCanonicalConfigWriteCommand(config: CanonicalConfig): String =
 internal fun buildSuperkeyWriteCommand(superkey: String): String =
     listOf(
         "mkdir -p /data/adb/vpnhide",
-        buildAtomicRawWriteCommand(SUPERKEY_FILE, superkey.trim() + "\n"),
-        "chmod 600 $SUPERKEY_FILE 2>/dev/null",
-        "chown root:root $SUPERKEY_FILE 2>/dev/null",
-    ).joinToString(" ; ")
+        buildAtomicRootOnlyRawWriteCommand(SUPERKEY_FILE, superkey.trim() + "\n"),
+    ).joinToString(" && ")
 
 internal fun buildSuperkeyClearCommand(): String = "rm -f $SUPERKEY_FILE"
 

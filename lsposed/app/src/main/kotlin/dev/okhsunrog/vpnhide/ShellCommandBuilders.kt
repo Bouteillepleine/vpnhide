@@ -26,6 +26,20 @@ internal fun buildAtomicRawWriteCommand(
     return "TMP=$path.tmp.\$\$ ; echo '$b64' | base64 -d > \"\$TMP\" && mv \"\$TMP\" $path"
 }
 
+internal fun buildAtomicRootOnlyRawWriteCommand(
+    path: String,
+    content: String,
+): String {
+    val b64 = base64NoWrap(content)
+    return listOf(
+        "TMP=$path.tmp.\$\$",
+        "echo '$b64' | base64 -d > \"\$TMP\"",
+        "chmod 600 \"\$TMP\" 2>/dev/null",
+        "chown root:root \"\$TMP\" 2>/dev/null",
+        "mv \"\$TMP\" $path",
+    ).joinToString(" && ")
+}
+
 internal fun buildAtomicSystemDataRawWriteCommand(
     path: String,
     content: String,

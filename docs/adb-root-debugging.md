@@ -60,6 +60,15 @@ The canonical JSON is `/data/system/vpnhide_config.json`, not `/data/adb`.
 `/data/adb` is still important for module files, KPM status, superkey storage,
 KernelSU/APatch CLIs, and LSPosed module state.
 
+## APK variant for LSPosed-enabled devices
+
+Use the release APK for cold-start checks on devices where VPN Hide itself is
+enabled in LSPosed/Vector. The debug APK is intentionally unminified and can
+carry tens of megabytes of dex; LSPosed/Vector may spend longer than Android's
+process-start timeout obfuscating that dex before the app attaches, producing
+`Process ... failed to attach` / `start timeout` in logcat. The release APK is
+R8-shrunk and is the representative path for app-start diagnostics.
+
 ## KernelSU Next Shell profile
 
 If `com.android.shell` has UID 0 but zero capabilities, fix the KernelSU Next

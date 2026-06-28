@@ -35,6 +35,7 @@ internal data class TargetsSnapshot(
     val portsObservers: Set<String>,
     val uidToPkg: Map<Int, String>,
     val canonicalConfig: CanonicalConfig?,
+    val apatchSuperkeySaved: Boolean = false,
 ) {
     /** True if any native backend is installed (kmod / KPM / Zygisk). The
      * picker's "N" toggle is meaningful only when at least one is present. */
@@ -142,6 +143,7 @@ internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
             portsObservers = portsObservers,
             uidToPkg = uidToPkg,
             canonicalConfig = canonical,
+            apatchSuperkeySaved = sections["superkey_saved"]?.trim() == "1",
         )
     }
 
@@ -161,5 +163,6 @@ internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
         portsObservers = nonEmptyLines(sections["ports_observers"]),
         uidToPkg = uidToPkg,
         canonicalConfig = null,
+        apatchSuperkeySaved = sections["superkey_saved"]?.trim() == "1",
     )
 }

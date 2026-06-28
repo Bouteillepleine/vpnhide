@@ -21,6 +21,7 @@ class TargetsCacheTest {
                         "hidden_pkgs" to "com.hidden.one\ncom.hidden.two\n",
                         "observer_uids" to "10123\n1010123\nnot-a-uid\n",
                         "ports_observers" to "com.browser\n",
+                        "superkey_saved" to "1",
                         "pm_packages" to
                             "package:com.observer uid:10123,1010123\n" +
                             "package:com.other uid:20222\n",
@@ -39,6 +40,7 @@ class TargetsCacheTest {
         assertEquals(setOf(10123, 1010123), targets.observerUids)
         assertEquals(setOf("com.observer"), targets.observerNames)
         assertEquals(setOf("com.browser"), targets.portsObservers)
+        assertTrue(targets.apatchSuperkeySaved)
     }
 
     @Test
