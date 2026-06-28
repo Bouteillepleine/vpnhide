@@ -801,7 +801,12 @@ private fun writeManualHiddenApps(
             selectedManualHiddenPackages = selectedManualHiddenPackages,
             signals = apps.map(AppSummary::toAutoHideSignal),
         )
-    val (exit, _) = suExec(buildCanonicalConfigWriteCommand(canonical))
+    val cmd =
+        listOf(
+            buildCanonicalConfigWriteCommand(canonical),
+            ConfigChannels.reconcileCommand(),
+        ).joinToString(" && ")
+    val (exit, _) = suExec(cmd)
     if (exit == 0) {
         RootSnapshotCache.invalidate()
         DashboardCache.invalidate()
