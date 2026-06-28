@@ -5,7 +5,7 @@
 
 SKIPUNZIP=0
 MOD_VER="$(grep '^version=' "$MODPATH/module.prop" | cut -d= -f2)"
-ui_print "- VPN Hide (Zygisk native) ${MOD_VER:-unknown}"
+ui_print "- VPN Hide (Zygisk) ${MOD_VER:-unknown}"
 ui_print "- Installing to $MODPATH"
 
 # Make the native library readable/executable by zygote
