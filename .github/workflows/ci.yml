@@ -147,10 +147,7 @@ jobs:
 
       # C (kernel module)
       - name: clang-format
-        run: |
-          git ls-files 'kmod/*.c' 'kmod/*.h' 'kmod/**/*.c' 'kmod/**/*.h' \
-            | grep -Ev '(^kmod/third_party/|^kmod/generated/|\.mod\.c$)' \
-            | xargs clang-format --dry-run --Werror
+        run: scripts/clang-format-c.sh --check
       - name: kmod iface-list test (host build)
         run: |
           cd kmod
