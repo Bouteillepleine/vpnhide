@@ -7,7 +7,9 @@
     "org.example.proxy": { "java": true, "native": ["fib_route_seq_show", "sock_ioctl"], "appHiding": true, "ports": true }
   },
   "settings": {
-    "rememberSuperkey": true
+    "rememberSuperkey": true,
+    "autoHideVpnServices": true,
+    "autoHideVpnName": false,
+    "autoHiddenPackages": []
   }
 }
-

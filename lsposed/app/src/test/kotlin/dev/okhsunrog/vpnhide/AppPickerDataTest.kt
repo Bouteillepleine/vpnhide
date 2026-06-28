@@ -141,7 +141,115 @@ class AppPickerDataTest {
         assertEquals(true, cfg.apps.getValue(self).hidden)
     }
 
-    private fun snapshotWithCanonical(vararg apps: Pair<String, CanonicalApp>): TargetsSnapshot =
+    @Test
+    fun `save auto hides apps declaring vpn services by default`() {
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections = emptyList(),
+                snapshot = snapshotWithCanonical(),
+                autoHideSignals =
+                    listOf(
+                        AppAutoHideSignal(packageName = "com.vpn.client", declaresVpnService = true),
+                    ),
+            )
+
+        assertEquals(true, cfg.apps.getValue("com.vpn.client").hidden)
+        assertEquals(setOf("com.vpn.client"), cfg.settings.autoHiddenPackages)
+    }
+
+    @Test
+    fun `vpn name heuristic is disabled by default and can be enabled`() {
+        val signal = AppAutoHideSignal(packageName = "com.clone", nameContainsVpn = true)
+
+        val disabled =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections = emptyList(),
+                snapshot = snapshotWithCanonical(),
+                autoHideSignals = listOf(signal),
+            )
+        val enabled =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections = emptyList(),
+                snapshot =
+                    snapshotWithCanonical(
+                        settings = CanonicalSettings(autoHideVpnName = true),
+                    ),
+                autoHideSignals = listOf(signal),
+            )
+
+        assertEquals(false, disabled.apps.containsKey("com.clone"))
+        assertEquals(true, enabled.apps.getValue("com.clone").hidden)
+    }
+
+    @Test
+    fun `app hiding observer wins over auto hidden vpn app`() {
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections =
+                    listOf(
+                        AppRoleSelection(packageName = "com.vpn.client", appHiding = true),
+                    ),
+                snapshot = snapshotWithCanonical(),
+                autoHideSignals =
+                    listOf(
+                        AppAutoHideSignal(packageName = "com.vpn.client", declaresVpnService = true),
+                    ),
+            )
+
+        assertEquals(true, cfg.apps.getValue("com.vpn.client").appHiding)
+        assertEquals(false, cfg.apps.getValue("com.vpn.client").hidden)
+        assertEquals(emptySet<String>(), cfg.settings.autoHiddenPackages)
+    }
+
+    @Test
+    fun `disabling auto hide removes previous auto hidden apps but keeps manual hidden apps`() {
+        val snapshot =
+            snapshotWithCanonical(
+                "com.manual.hidden" to CanonicalApp(hidden = true),
+                "com.auto.hidden" to CanonicalApp(hidden = true),
+                settings =
+                    CanonicalSettings(
+                        autoHideVpnServices = false,
+                        autoHiddenPackages = setOf("com.auto.hidden"),
+                    ),
+            )
+
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections = emptyList(),
+                snapshot = snapshot,
+                autoHideSignals =
+                    listOf(
+                        AppAutoHideSignal(packageName = "com.auto.hidden", declaresVpnService = true),
+                    ),
+            )
+
+        assertEquals(true, cfg.apps.getValue("com.manual.hidden").hidden)
+        assertEquals(false, cfg.apps.containsKey("com.auto.hidden"))
+        assertEquals(emptySet<String>(), cfg.settings.autoHiddenPackages)
+    }
+
+    @Test
+    fun `vpn name matcher is case insensitive`() {
+        assertEquals(true, looksLikeVpnAppName("Fast VPN"))
+        assertEquals(true, looksLikeVpnAppName("fast vpn"))
+        assertEquals(false, looksLikeVpnAppName("Proxy Client"))
+    }
+
+    private fun snapshotWithCanonical(
+        vararg apps: Pair<String, CanonicalApp>,
+        settings: CanonicalSettings = CanonicalSettings(),
+    ): TargetsSnapshot =
         TargetsSnapshot(
             kmodModuleInstalled = true,
             kpmModuleInstalled = false,
@@ -155,6 +263,6 @@ class AppPickerDataTest {
             observerUids = emptySet(),
             portsObservers = emptySet(),
             uidToPkg = emptyMap(),
-            canonicalConfig = CanonicalConfig(apps = apps.toMap()),
+            canonicalConfig = CanonicalConfig(apps = apps.toMap(), settings = settings),
         )
 }

@@ -266,6 +266,13 @@
     <string name="settings_config_import_done">Config imported.</string>
     <string name="settings_config_import_invalid">Import failed: invalid config JSON.</string>
     <string name="settings_config_import_root_failed">Import failed: root config write failed.</string>
+    <string name="settings_advanced_protection">Advanced protection</string>
+    <string name="settings_auto_hide_vpn_services">Auto-hide VPN apps</string>
+    <string name="settings_auto_hide_vpn_services_sub">Hide installed apps that declare Android VpnService from app-hiding targets.</string>
+    <string name="settings_auto_hide_vpn_name">Also match VPN in app names</string>
+    <string name="settings_auto_hide_vpn_name_sub">Low-confidence heuristic for clones and renamed VPN clients. Off by default.</string>
+    <string name="settings_auto_hide_saved">App hiding settings saved.</string>
+    <string name="settings_auto_hide_failed">Failed to update app hiding settings.</string>
     <string name="settings_security">Security</string>
     <string name="settings_superkey_title">APatch SuperKey</string>
     <string name="settings_superkey_saved">Saved for boot-time KPM activation.</string>
