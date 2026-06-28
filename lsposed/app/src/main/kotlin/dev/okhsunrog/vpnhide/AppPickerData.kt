@@ -44,6 +44,7 @@ internal data class AppRoleSelection(
     val packageName: String,
     val java: Boolean = false,
     val native: Boolean = false,
+    val nativeHooks: List<String>? = null,
     val appHiding: Boolean = false,
     val ports: Boolean = false,
 )
@@ -65,6 +66,7 @@ internal fun buildCanonicalConfigForAppPickerSave(
 
     val javaPkgs = preserved { it.java } + selections.selectedPkgs { it.java } + selfPkg
     val nativePkgs = preserved { it.native.enabled } + selections.selectedPkgs { it.native } + selfPkg
+    val selectedNativeRoles = selections.selectedNativeRoles()
     val observerPkgs = preserved { it.appHiding } + selections.selectedPkgs { it.appHiding }
     val portsPkgs = preserved { it.ports } + selections.selectedPkgs { it.ports }
     val manualHiddenPkgs = base.apps.filterValues { it.hidden }.keys - base.settings.autoHiddenPackages
@@ -84,7 +86,7 @@ internal fun buildCanonicalConfigForAppPickerSave(
             observerPkgs = observerPkgs,
             portsPkgs = portsPkgs,
             existing = base,
-        )
+        ).withNativeRoles(selectedNativeRoles)
     return applyAutoHiddenPackages(
         config = canonical,
         selfPkg = selfPkg,
@@ -162,3 +164,20 @@ private fun canonicalBaseForSave(
 
 private fun Collection<AppRoleSelection>.selectedPkgs(predicate: (AppRoleSelection) -> Boolean): Set<String> =
     filter(predicate).mapTo(mutableSetOf()) { it.packageName }
+
+private fun Collection<AppRoleSelection>.selectedNativeRoles(): Map<String, NativeRole> =
+    filter { it.native }
+        .associate { selection ->
+            val hooks = selection.nativeHooks?.takeIf { it.isNotEmpty() }
+            selection.packageName to (hooks?.let { NativeRole(enabled = true, hooks = it) } ?: NativeRole.All)
+        }
+
+private fun CanonicalConfig.withNativeRoles(roles: Map<String, NativeRole>): CanonicalConfig {
+    if (roles.isEmpty()) return this
+    val updated =
+        apps
+            .mapValues { (pkg, app) ->
+                roles[pkg]?.let { app.copy(native = it) } ?: app
+            }.toSortedMap()
+    return copy(apps = updated)
+}

@@ -109,13 +109,55 @@ class AppPickerDataTest {
                 selfPkg = self,
                 selections =
                     listOf(
-                        AppRoleSelection(packageName = "com.visible", native = true),
+                        AppRoleSelection(packageName = "com.visible", native = true, nativeHooks = customNative.hooks),
                     ),
                 snapshot = snapshot,
             )
 
         assertEquals(customNative, cfg.apps.getValue("com.visible").native)
         assertEquals(customNative, cfg.apps.getValue("com.frozen").native)
+    }
+
+    @Test
+    fun `save applies selected custom native hooks for visible apps`() {
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections =
+                    listOf(
+                        AppRoleSelection(
+                            packageName = "com.visible",
+                            native = true,
+                            nativeHooks = listOf("dev_ioctl", "sock_ioctl"),
+                        ),
+                    ),
+                snapshot = snapshotWithCanonical(),
+            )
+
+        assertEquals(
+            NativeRole(enabled = true, hooks = listOf("dev_ioctl", "sock_ioctl")),
+            cfg.apps.getValue("com.visible").native,
+        )
+    }
+
+    @Test
+    fun `save converts enabled native role without hook list to all hooks`() {
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections =
+                    listOf(
+                        AppRoleSelection(packageName = "com.visible", native = true),
+                    ),
+                snapshot =
+                    snapshotWithCanonical(
+                        "com.visible" to CanonicalApp(native = NativeRole(enabled = true, hooks = listOf("sock_ioctl"))),
+                    ),
+            )
+
+        assertEquals(NativeRole.All, cfg.apps.getValue("com.visible").native)
     }
 
     @Test

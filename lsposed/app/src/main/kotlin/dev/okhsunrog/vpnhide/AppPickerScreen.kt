@@ -2,11 +2,33 @@ package dev.okhsunrog.vpnhide
 
 import android.graphics.drawable.Drawable
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import dev.okhsunrog.vpnhide.generated.HookIds
 
 /**
  * One row per app across every protection role. The three old tabs (Tun /
@@ -29,6 +51,7 @@ data class AppEntry(
     override val userIds: List<Int> = emptyList(),
     val java: Boolean = false,
     val native: Boolean = false,
+    val nativeHooks: List<String>? = null,
     val appHiding: Boolean = false,
     val ports: Boolean = false,
     val declaresVpnService: Boolean = false,
@@ -84,6 +107,7 @@ fun AppPickerScreen(
                 apps
                     .filter { it.packageName != selfPkg }
                     .map { app ->
+                        val nativeRole = baseCanonical.apps[app.packageName]?.native
                         AppEntry(
                             packageName = app.packageName,
                             label = app.label,
@@ -92,6 +116,7 @@ fun AppPickerScreen(
                             userIds = app.userIds,
                             java = app.packageName in t.lsposedTargets,
                             native = app.packageName in nativeTargets,
+                            nativeHooks = nativeRole?.hooks?.takeIf { it.isNotEmpty() },
                             appHiding = app.packageName in observers,
                             ports = app.packageName in t.portsObservers,
                             declaresVpnService = app.declaresVpnService,
@@ -124,10 +149,18 @@ fun AppPickerScreen(
                 onChange(
                     when (layer) {
                         Layer.JAVA -> app.copy(java = !app.java)
-                        Layer.NATIVE -> app.copy(native = !app.native)
+                        Layer.NATIVE -> app.copy(native = !app.native, nativeHooks = null)
                         Layer.APP_HIDING -> app.copy(appHiding = !app.appHiding)
                         Layer.PORTS -> app.copy(ports = !app.ports)
                     },
+                )
+            },
+            onNativeHooksChange = { hooks ->
+                onChange(
+                    app.copy(
+                        native = hooks == null || hooks.isNotEmpty(),
+                        nativeHooks = hooks?.takeIf { it.isNotEmpty() },
+                    ),
                 )
             },
             onToggleAll = {
@@ -136,6 +169,7 @@ fun AppPickerScreen(
                     app.copy(
                         java = newState,
                         native = if (targets.anyNativeInstalled) newState else false,
+                        nativeHooks = null,
                         appHiding = newState,
                         ports = if (targets.portsModuleInstalled) newState else false,
                     ),
@@ -180,6 +214,7 @@ private fun AppEntry.toRoleSelection(): AppRoleSelection =
         packageName = packageName,
         java = java,
         native = native,
+        nativeHooks = nativeHooks,
         appHiding = appHiding,
         ports = ports,
     )
@@ -198,8 +233,10 @@ private fun AppRow(
     anyNativeInstalled: Boolean,
     portsInstalled: Boolean,
     onToggle: (Layer) -> Unit,
+    onNativeHooksChange: (List<String>?) -> Unit,
     onToggleAll: () -> Unit,
 ) {
+    var hookDialogOpen by remember { mutableStateOf(false) }
     TargetRowShell(
         label = app.label,
         packageName = app.packageName,
@@ -210,11 +247,137 @@ private fun AppRow(
     ) {
         TargetChip(stringResource(R.string.chip_java), app.java) { onToggle(Layer.JAVA) }
         if (anyNativeInstalled) {
-            TargetChip(stringResource(R.string.chip_native), app.native) { onToggle(Layer.NATIVE) }
+            TargetChip(
+                if (app.nativeHooks == null) {
+                    stringResource(R.string.chip_native)
+                } else {
+                    stringResource(R.string.chip_native_partial)
+                },
+                app.native,
+            ) { onToggle(Layer.NATIVE) }
+            if (app.native) {
+                IconButton(
+                    onClick = { hookDialogOpen = true },
+                    modifier = Modifier.size(30.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Tune,
+                        contentDescription = stringResource(R.string.native_hooks_title),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
         }
         TargetChip(stringResource(R.string.chip_app_hiding), app.appHiding) { onToggle(Layer.APP_HIDING) }
         if (portsInstalled) {
             TargetChip(stringResource(R.string.chip_ports), app.ports) { onToggle(Layer.PORTS) }
+        }
+    }
+
+    if (hookDialogOpen) {
+        NativeHooksDialog(
+            app = app,
+            onDismiss = { hookDialogOpen = false },
+            onSave = { hooks ->
+                onNativeHooksChange(hooks)
+                hookDialogOpen = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun NativeHooksDialog(
+    app: AppEntry,
+    onDismiss: () -> Unit,
+    onSave: (List<String>?) -> Unit,
+) {
+    val hookNames = remember { HookIds.Hook.entries.map { it.hookName } }
+    var selected by remember(app.packageName, app.nativeHooks) {
+        mutableStateOf(app.nativeHooks?.toSet() ?: hookNames.toSet())
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.native_hooks_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = app.label,
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    text = app.packageName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                    items(HookIds.Hook.entries, key = { it.hookName }) { hook ->
+                        val checked = hook.hookName in selected
+                        NativeHookRow(
+                            hook = hook,
+                            checked = checked,
+                            onCheckedChange = { enabled ->
+                                selected =
+                                    if (enabled) {
+                                        selected + hook.hookName
+                                    } else {
+                                        selected - hook.hookName
+                                    }
+                            },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val ordered = hookNames.filter { it in selected }
+                    onSave(
+                        when {
+                            ordered.isEmpty() -> emptyList()
+                            ordered.size == hookNames.size -> null
+                            else -> ordered
+                        },
+                    )
+                },
+            ) {
+                Text(stringResource(R.string.btn_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.btn_cancel))
+            }
+        },
+    )
+}
+
+@Composable
+private fun NativeHookRow(
+    hook: HookIds.Hook,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .clickable { onCheckedChange(!checked) }
+                .fillMaxWidth()
+                .padding(vertical = 6.dp),
+    ) {
+        Checkbox(checked = checked, onCheckedChange = onCheckedChange)
+        Column(modifier = Modifier.padding(start = 8.dp)) {
+            Text(
+                text = hook.hookName,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = hook.note,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
