@@ -14,7 +14,7 @@ Two modes, picked automatically:
       `ghcr.io/ylarod/ddk-min` image — auto-detects kdir + clang under
       `/opt/ddk`).
 
- 2. **Container build** — this Python process spawns podman/docker,
+ 2. **Container build** — this Python process spawns docker/podman,
     bind-mounts the repo, and re-invokes itself with
     `--inside-container`. Used when none of the native conditions apply,
     i.e. the typical local `./kmod/build.py --kmi android14-6.1`
@@ -219,15 +219,18 @@ def run_native_mode(args: argparse.Namespace, kmod_dir: Path) -> int:
 
 
 def find_runtime() -> tuple[str, bool]:
-    """(binary, is_podman). Prefer podman when both are present —
-    rootless podman has the awkward SELinux/userns flags, so being
-    explicit about it avoids surprises on Fedora-family hosts."""
-    podman = shutil.which("podman")
+    """(binary, is_podman). Prefer Docker when both are present.
+
+    The CI and device-test workflows use Docker, so matching that locally
+    avoids rootless podman bind-mount/userns surprises. Podman remains a
+    supported fallback for hosts without Docker.
+    """
     docker = shutil.which("docker")
-    if podman:
-        return podman, True
     if docker:
         return docker, False
+    podman = shutil.which("podman")
+    if podman:
+        return podman, True
     print(
         "error: neither podman nor docker found in PATH. Install one, or "
         "build natively by passing --kdir <kernel source> + --inside-container.",

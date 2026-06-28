@@ -11,9 +11,9 @@ One command — same script CI runs, no container invocation to memorize:
 ./kmod/build.py --all                   # every supported GKI
 ```
 
-The script auto-detects whether to build natively (you're already inside the DDK image, or you've pointed `--kdir` at a kernel source tree) or to spawn a `ghcr.io/ylarod/ddk-min:<kmi>-<TAG>` container via podman/docker. On rootless podman (Fedora etc) it adds `--userns=keep-id` and `:Z` automatically. The output is `vpnhide-kmod-<kmi>.zip` at the repo root.
+The script auto-detects whether to build natively (you're already inside the DDK image, or you've pointed `--kdir` at a kernel source tree) or to spawn a `ghcr.io/ylarod/ddk-min:<kmi>-<TAG>` container via Docker or podman. Docker is preferred when both are installed, matching CI and device-test workflows. On rootless podman (Fedora etc) it adds `--userns=keep-id` and `:Z` automatically. The output is `vpnhide-kmod-<kmi>.zip` at the repo root.
 
-Requires `podman` or `docker`. The container image weighs ~1 GB per GKI variant on first pull.
+Requires `docker` or `podman`. The container image weighs ~1 GB per GKI variant on first pull.
 
 ### Identifying your GKI generation
 
@@ -69,6 +69,6 @@ adb shell "su -c 'cat /proc/vpnhide_ctl'"
 
 **kretprobe not firing** — check `dmesg | grep vpnhide` for registration messages and `/proc/vpnhide_ctl` for correct UIDs. Target app UIDs change on reinstall — re-resolve via the VPN Hide app.
 
-**`./kmod/build.py` says "neither podman nor docker found"** — install one (`dnf install podman` / `apt install docker.io`), or build natively against a local kernel source via `--kdir`.
+**`./kmod/build.py` says "neither podman nor docker found"** — install one (`apt install docker.io` / `dnf install podman`), or build natively against a local kernel source via `--kdir`.
 
 **Bumping the DDK image tag** — single source of truth is `DDK_IMAGE_TAG` in `kmod/build.py`. Both this script and `.github/workflows/ci.yml`'s kmod matrix pin to the same value, so update both together.
