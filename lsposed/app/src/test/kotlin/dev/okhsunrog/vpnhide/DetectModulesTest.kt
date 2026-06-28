@@ -52,7 +52,7 @@ class DetectModulesTest {
     }
 
     @Test
-    fun `ports active when iptables chain present`() {
+    fun `ports active when iptables probe reports connected chains`() {
         val sections =
             mapOf(
                 "ports_prop" to "version=0.6.3",
@@ -61,6 +61,19 @@ class DetectModulesTest {
             )
         val state = detectPortsModule(sections, self) as ModuleState.Installed
         assertEquals(true, state.active)
+        assertEquals(1, state.targetCount)
+    }
+
+    @Test
+    fun `ports inactive when iptables probe reports missing chains or jumps`() {
+        val sections =
+            mapOf(
+                "ports_prop" to "version=0.6.3",
+                "ports_chain" to "0",
+                "ports_observers" to "com.browser\n",
+            )
+        val state = detectPortsModule(sections, self) as ModuleState.Installed
+        assertEquals(false, state.active)
         assertEquals(1, state.targetCount)
     }
 

@@ -241,7 +241,13 @@ internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): S
     }
     phase_ports_chain() {
       phase_start shell_probe_ports_chain
-      emit_eval ports_chain 'iptables -L vpnhide_out -n >/dev/null 2>/dev/null && echo 1 || echo 0'
+      emit_eval ports_chain '
+        iptables -L vpnhide_out -n >/dev/null 2>&1 &&
+        iptables -C OUTPUT -j vpnhide_out >/dev/null 2>&1 &&
+        ip6tables -L vpnhide_out6 -n >/dev/null 2>&1 &&
+        ip6tables -C OUTPUT -j vpnhide_out6 >/dev/null 2>&1 &&
+        echo 1 || echo 0
+      '
       phase_end
     }
     phase_lsposed_framework() {
