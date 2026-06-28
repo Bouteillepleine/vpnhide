@@ -92,10 +92,14 @@
     <string name="self_targets_error_message">VPN Hide could not update its root target files. Check your root manager if permission was interrupted, then tap Retry.</string>
     <string name="targets_load_failed_title">Protection data unavailable</string>
     <string name="targets_load_failed_message">VPN Hide could not collect the root state needed for this tab. Check your root manager if permission was interrupted, then tap Retry.</string>
-    <string name="dashboard_kmod">Kernel module</string>
-    <string name="dashboard_zygisk">VPN Hide Zygisk module</string>
-    <string name="dashboard_lsposed_module">VPN Hide LSPosed hook</string>
     <string name="dashboard_ports">Ports hiding module</string>
+    <string name="dashboard_java_backend">Java backend</string>
+    <string name="dashboard_native_backend">Native backend</string>
+    <string name="dashboard_backend_lsposed">LSPosed</string>
+    <string name="dashboard_backend_kmod">Kmod</string>
+    <string name="dashboard_backend_kpm">KPM</string>
+    <string name="dashboard_backend_zygisk">Zygisk</string>
+    <string name="dashboard_backend_line">%1$s · %2$s</string>
     <string name="dashboard_not_installed">Not installed</string>
     <string name="dashboard_installed_inactive">Installed, inactive</string>
     <string name="dashboard_installed_restart_app">Installed, restart VPN Hide to activate</string>
@@ -140,7 +144,8 @@
     <string name="dashboard_issues">Errors (%d)</string>
     <string name="dashboard_warnings">Warnings (%d)</string>
     <string name="dashboard_issue_kmod_capable_but_zygisk">Your kernel supports the kernel module — it hooks in kernel space and is invisible to anti-tamper checks. Zygisk works too, but its hooks can be detected by banking and payment apps, so you\'d have to keep Z off for those apps individually. Install %1$s and uninstall the Zygisk module for cleaner coverage.</string>
-    <string name="dashboard_issue_both_native_active">Kernel module and Zygisk are both active, covering the same native paths. Kmod is invisible to anti-tamper, Zygisk isn\'t — so every time you add a banking or payment app as a target, you have to remember to leave Z off for it. Uninstall the Zygisk module to remove that per-app footgun; kmod keeps the coverage.</string>
+    <string name="dashboard_issue_native_conflict_kernel">The kernel module (.ko) and the KPM are both installed. They hook the same kernel functions, and having both active can hard-freeze the device. Keep only one — uninstall either the kernel module or the KPM.</string>
+    <string name="dashboard_issue_multiple_native">More than one native backend is installed. Only one can be active at a time (priority: kernel module, then KPM, then Zygisk); the others sit idle. Uninstall the ones you don\'t use to keep things clean.</string>
     <string name="dashboard_issue_debug_logging_on">Debug logging is enabled. VPN Hide is writing verbose lines to logcat that anyone with root can read. Turn it off in Diagnostics after you\'ve finished collecting a bug report.</string>
     <string name="dashboard_issue_selinux_permissive">SELinux is Permissive. Six detection vectors VPN Hide relies on the kernel to block (RTM_GETROUTE, /proc/net/{tcp,udp,dev,fib_trie}, /sys/class/net) are reachable to target apps. Run `setenforce 1` and investigate what disabled it.</string>
     <string name="dashboard_issue_self_multi_profile">VPN Hide is installed in %1$d profiles. The main-profile copy is the one that matters — LSPosed hooks system_server, which runs in the main profile only, and the picker there already sees apps from every profile and applies filters to all of them. Extra copies in secondary profiles are redundant and race each other\'s Saves to the shared target files. Uninstall from work profile / Second Space / other secondary profiles.</string>
@@ -164,6 +169,9 @@
     <string name="dashboard_issue_update_ports">Ports module version %1$s is older than app version %2$s. Open KernelSU/Magisk → Modules to update.</string>
     <string name="dashboard_issue_update_app_for_ports">Ports module version %1$s is newer than app version %2$s. Update the VPN Hide app.</string>
     <string name="dashboard_issue_ports_version_mismatch">Ports module version mismatch: module %1$s, app %2$s. Open KernelSU/Magisk → Modules to update the module.</string>
+    <string name="dashboard_issue_update_kpm">KPM version %1$s is older than app version %2$s. Open KernelSU/Magisk → Modules to update.</string>
+    <string name="dashboard_issue_update_app_for_kpm">KPM version %1$s is newer than app version %2$s. Update the VPN Hide app.</string>
+    <string name="dashboard_issue_kpm_version_mismatch">KPM version mismatch: module %1$s, app %2$s. Open KernelSU/Magisk → Modules to update the module.</string>
     <string name="dashboard_running_version">Running module version: %s</string>
 
     <!-- kmod variant / load diagnostics -->

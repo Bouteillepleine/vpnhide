@@ -96,10 +96,64 @@ sealed interface JavaResult {
     data object HooksInactive : JavaResult
 }
 
-internal enum class NativeModuleKind { Kmod, Zygisk, Ports }
+internal enum class FlashableModuleKind { Kmod, Kpm, Zygisk, Ports }
+
+// The native layer is exactly ONE of these at runtime (protocol §1.5). The
+// dashboard shows a single "Native backend" card for whichever is selected.
+internal enum class NativeBackendId { Kmod, Kpm, Zygisk }
+
+/**
+ * The one native backend to surface on the dashboard, chosen among the
+ * *installed* backends: an active one wins, otherwise the highest-priority
+ * installed (kmod > KPM > Zygisk, protocol §1.5). [id] is null when no native
+ * backend is installed at all.
+ */
+internal data class NativeBackendSelection(
+    val id: NativeBackendId?,
+    val state: ModuleState,
+)
+
+internal fun selectNativeBackend(
+    kmod: ModuleState,
+    kpm: ModuleState,
+    zygisk: ModuleState,
+): NativeBackendSelection {
+    // List order encodes the kmod > KPM > Zygisk priority.
+    val ordered =
+        listOf(
+            NativeBackendId.Kmod to kmod,
+            NativeBackendId.Kpm to kpm,
+            NativeBackendId.Zygisk to zygisk,
+        )
+    val installed = ordered.filter { it.second is ModuleState.Installed }
+    if (installed.isEmpty()) return NativeBackendSelection(null, ModuleState.NotInstalled)
+    val chosen = installed.firstOrNull { moduleActive(it.second) } ?: installed.first()
+    return NativeBackendSelection(chosen.first, chosen.second)
+}
+
+internal enum class MultiNativeSeverity { None, Warning, Error }
+
+/**
+ * Severity of having more than one native backend *installed* (protocol §1.5:
+ * only one may be active). The .ko + KPM pair is an ERROR because they wrap the
+ * same kernel functions and co-residence can hard-freeze the kernel; any other
+ * multi-install is a WARNING (merely redundant — the backstops pick one).
+ */
+internal fun classifyMultiNative(
+    kmodInstalled: Boolean,
+    kpmInstalled: Boolean,
+    zygiskInstalled: Boolean,
+): MultiNativeSeverity {
+    val count = listOf(kmodInstalled, kpmInstalled, zygiskInstalled).count { it }
+    return when {
+        count <= 1 -> MultiNativeSeverity.None
+        kmodInstalled && kpmInstalled -> MultiNativeSeverity.Error
+        else -> MultiNativeSeverity.Warning
+    }
+}
 
 internal data class ModuleMismatch(
-    val kind: NativeModuleKind,
+    val kind: FlashableModuleKind,
     val moduleVersion: String,
     val appVersion: String,
 )
@@ -109,7 +163,7 @@ internal data class ModuleMismatch(
 // three kmod / zygisk / ports callsites in loadDashboardState share one
 // code path instead of three near-identical if-blocks.
 internal fun detectModuleMismatches(
-    modules: List<Pair<ModuleState, NativeModuleKind>>,
+    modules: List<Pair<ModuleState, FlashableModuleKind>>,
     appVersion: String,
 ): List<ModuleMismatch> =
     modules.mapNotNull { (state, kind) ->
@@ -151,9 +205,12 @@ internal data class Issue(
 
 internal data class DashboardState(
     val kmod: ModuleState,
+    val kpm: ModuleState,
     val zygisk: ModuleState,
     val lsposed: LsposedState,
     val ports: ModuleState,
+    // The one native backend surfaced on the dashboard (kmod > KPM > Zygisk).
+    val nativeBackend: NativeBackendSelection,
     val nativeInstallRecommendation: NativeInstallRecommendation?,
     val kmodLoadStatus: KmodLoadStatus?,
     val protection: ProtectionCheck,
@@ -200,13 +257,14 @@ internal fun computeHeroStatus(
     }
 }
 
-internal fun moduleSummaryText(state: DashboardState): String = "${activeModuleCount(state)}/4"
+internal fun moduleSummaryText(state: DashboardState): String = "${activeModuleCount(state)}/3"
 
+// Three logical layers now: Java (LSPosed), Native (the one active backend),
+// and Ports. The native layer counts once regardless of which backend serves it.
 internal fun activeModuleCount(state: DashboardState): Int =
     listOf(
         state.lsposed is LsposedState.Active,
-        moduleActive(state.kmod),
-        moduleActive(state.zygisk),
+        moduleActive(state.nativeBackend.state),
         moduleActive(state.ports),
     ).count { it }
 
@@ -733,6 +791,27 @@ internal fun detectZygiskModule(
     )
 }
 
+internal fun detectKpmModule(
+    sections: Map<String, String>,
+    selfPkg: String,
+    currentBootId: String,
+): ModuleState {
+    val prop = parseModuleProp(sections["kpm_prop"].orEmpty())
+    if (!prop.installed) return ModuleState.NotInstalled
+    // The KPM has no /proc marker (its runtime channel is the kpatch ctl0
+    // supercall). The boot script writes load_status with loaded=1 and the
+    // boot_id it loaded under, so "active" = loaded for the current boot —
+    // the same freshness check the zygisk heartbeat uses.
+    val load = parseKeyValueLines(sections["kpm_load_status"].orEmpty())
+    val bootId = load["boot_id"]?.trim()
+    val active = load["loaded"]?.trim() == "1" && bootId != null && bootId == currentBootId.trim()
+    return ModuleState.Installed(
+        version = prop.version,
+        active = active,
+        targetCount = countTargets(sections["kpm_targets"].orEmpty(), selfPkg),
+    )
+}
+
 internal fun detectPortsModule(
     sections: Map<String, String>,
     selfPkg: String,
@@ -762,7 +841,7 @@ private fun androidMajorVersionLabel(): String {
 
 private fun buildModuleVersionIssue(
     res: android.content.res.Resources,
-    kind: NativeModuleKind,
+    kind: FlashableModuleKind,
     moduleVersion: String,
     appVersion: String,
 ): String =
@@ -770,9 +849,10 @@ private fun buildModuleVersionIssue(
         null, 0 -> {
             res.getString(
                 when (kind) {
-                    NativeModuleKind.Kmod -> R.string.dashboard_issue_kmod_version_mismatch
-                    NativeModuleKind.Zygisk -> R.string.dashboard_issue_zygisk_version_mismatch
-                    NativeModuleKind.Ports -> R.string.dashboard_issue_ports_version_mismatch
+                    FlashableModuleKind.Kmod -> R.string.dashboard_issue_kmod_version_mismatch
+                    FlashableModuleKind.Kpm -> R.string.dashboard_issue_kpm_version_mismatch
+                    FlashableModuleKind.Zygisk -> R.string.dashboard_issue_zygisk_version_mismatch
+                    FlashableModuleKind.Ports -> R.string.dashboard_issue_ports_version_mismatch
                 },
                 moduleVersion,
                 appVersion,
@@ -782,9 +862,10 @@ private fun buildModuleVersionIssue(
         in Int.MIN_VALUE..-1 -> {
             res.getString(
                 when (kind) {
-                    NativeModuleKind.Kmod -> R.string.dashboard_issue_update_kmod
-                    NativeModuleKind.Zygisk -> R.string.dashboard_issue_update_zygisk
-                    NativeModuleKind.Ports -> R.string.dashboard_issue_update_ports
+                    FlashableModuleKind.Kmod -> R.string.dashboard_issue_update_kmod
+                    FlashableModuleKind.Kpm -> R.string.dashboard_issue_update_kpm
+                    FlashableModuleKind.Zygisk -> R.string.dashboard_issue_update_zygisk
+                    FlashableModuleKind.Ports -> R.string.dashboard_issue_update_ports
                 },
                 moduleVersion,
                 appVersion,
@@ -794,9 +875,10 @@ private fun buildModuleVersionIssue(
         else -> {
             res.getString(
                 when (kind) {
-                    NativeModuleKind.Kmod -> R.string.dashboard_issue_update_app_for_kmod
-                    NativeModuleKind.Zygisk -> R.string.dashboard_issue_update_app_for_zygisk
-                    NativeModuleKind.Ports -> R.string.dashboard_issue_update_app_for_ports
+                    FlashableModuleKind.Kmod -> R.string.dashboard_issue_update_app_for_kmod
+                    FlashableModuleKind.Kpm -> R.string.dashboard_issue_update_app_for_kpm
+                    FlashableModuleKind.Zygisk -> R.string.dashboard_issue_update_app_for_zygisk
+                    FlashableModuleKind.Ports -> R.string.dashboard_issue_update_app_for_ports
                 },
                 moduleVersion,
                 appVersion,
@@ -974,10 +1056,12 @@ internal suspend fun loadDashboardState(
             ""
         }
     val zygisk = detectZygiskModule(shellSnapshot, zygiskStatusRaw, selfPkg, currentBootId)
+    val kpm = detectKpmModule(shellSnapshot, selfPkg, currentBootId)
     val ports = detectPortsModule(shellSnapshot, selfPkg)
     val kmodTargetCount = (kmodRaw as? ModuleState.Installed)?.targetCount ?: 0
+    val kpmTargetCount = (kpm as? ModuleState.Installed)?.targetCount ?: 0
     val zygiskTargetCount = (zygisk as? ModuleState.Installed)?.targetCount ?: 0
-    VpnHideLog.i(TAG, "modules: kmodRaw=$kmodRaw zygisk=$zygisk ports=$ports")
+    VpnHideLog.i(TAG, "modules: kmodRaw=$kmodRaw kpm=$kpm zygisk=$zygisk ports=$ports")
     StartupTrace.mark("dashboard_modules_done")
 
     // Recommendation based purely on the kernel — used by the install card,
@@ -1009,13 +1093,18 @@ internal suspend fun loadDashboardState(
             kmodRaw
         }
     VpnHideLog.i(TAG, "kmod (with brokenReason): $kmod")
+    // The single native backend the dashboard shows (kmod > KPM > Zygisk).
+    val nativeBackend = selectNativeBackend(kmod, kpm, zygisk)
+    VpnHideLog.i(TAG, "nativeBackend=$nativeBackend")
     // Only surface the blue "what to install" card when nothing is
     // installed yet. Wrong-variant / broken / unsupported-kernel cases
     // already emit a red error below with the same CTA — showing both
     // duplicates the instruction.
     val nativeInstallRecommendation =
         kernelRecommendation?.takeIf {
-            kmod is ModuleState.NotInstalled && zygisk is ModuleState.NotInstalled
+            kmod is ModuleState.NotInstalled &&
+                kpm is ModuleState.NotInstalled &&
+                zygisk is ModuleState.NotInstalled
         }
     VpnHideLog.i(
         TAG,
@@ -1070,7 +1159,10 @@ internal suspend fun loadDashboardState(
     StartupTrace.mark("dashboard_lsposed_done")
 
     // ── Issues ──
-    val hasNative = kmod is ModuleState.Installed || zygisk is ModuleState.Installed
+    val hasNative =
+        kmod is ModuleState.Installed ||
+            kpm is ModuleState.Installed ||
+            zygisk is ModuleState.Installed
     if (!hasNative) {
         err(res.getString(R.string.dashboard_issue_no_native))
     }
@@ -1134,16 +1226,17 @@ internal suspend fun loadDashboardState(
     val moduleMismatches =
         detectModuleMismatches(
             listOf(
-                kmod to NativeModuleKind.Kmod,
-                zygisk to NativeModuleKind.Zygisk,
-                ports to NativeModuleKind.Ports,
+                kmod to FlashableModuleKind.Kmod,
+                kpm to FlashableModuleKind.Kpm,
+                zygisk to FlashableModuleKind.Zygisk,
+                ports to FlashableModuleKind.Ports,
             ),
             appVersion,
         )
     moduleMismatches.forEach { mismatch ->
         warn(buildModuleVersionIssue(res, mismatch.kind, mismatch.moduleVersion, mismatch.appVersion))
     }
-    val totalTargets = lsposedTargetCount + kmodTargetCount + zygiskTargetCount
+    val totalTargets = lsposedTargetCount + kmodTargetCount + kpmTargetCount + zygiskTargetCount
     if (totalTargets == 0) {
         err(res.getString(R.string.dashboard_issue_no_targets))
     }
@@ -1165,7 +1258,8 @@ internal suspend fun loadDashboardState(
     // per such app; kmod is invisible to anti-tamper.
     if (kernelRecommendation?.preferKmod == true &&
         zygisk is ModuleState.Installed &&
-        kmod is ModuleState.NotInstalled
+        kmod is ModuleState.NotInstalled &&
+        kpm is ModuleState.NotInstalled
     ) {
         warn(
             res.getString(
@@ -1175,14 +1269,20 @@ internal suspend fun loadDashboardState(
         )
     }
 
-    // W2: kmod and zygisk both active simultaneously — same coverage,
-    // but Zygisk adds the per-app footgun for banking / payment targets.
-    if (kmod is ModuleState.Installed &&
-        kmod.active &&
-        zygisk is ModuleState.Installed &&
-        zygisk.active
+    // W2: more than one native backend installed. Only one may be active
+    // (protocol §1.5). The .ko + KPM pair is an ERROR — they wrap the same
+    // kernel functions and co-residence can hard-freeze the kernel; any other
+    // combination is a WARNING (merely redundant, the backstops pick one).
+    when (
+        classifyMultiNative(
+            kmodInstalled = kmod is ModuleState.Installed,
+            kpmInstalled = kpm is ModuleState.Installed,
+            zygiskInstalled = zygisk is ModuleState.Installed,
+        )
     ) {
-        warn(res.getString(R.string.dashboard_issue_both_native_active))
+        MultiNativeSeverity.Error -> err(res.getString(R.string.dashboard_issue_native_conflict_kernel))
+        MultiNativeSeverity.Warning -> warn(res.getString(R.string.dashboard_issue_multiple_native))
+        MultiNativeSeverity.None -> Unit
     }
 
     // W3: user has debug logging turned on — VPN Hide is writing verbose lines
@@ -1270,9 +1370,11 @@ internal suspend fun loadDashboardState(
 
     return DashboardState(
         kmod = kmod,
+        kpm = kpm,
         zygisk = zygisk,
         lsposed = lsposed,
         ports = ports,
+        nativeBackend = nativeBackend,
         nativeInstallRecommendation = nativeInstallRecommendation,
         kmodLoadStatus = kmodLoadStatus,
         protection = protection,
