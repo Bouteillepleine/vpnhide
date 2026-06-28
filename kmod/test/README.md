@@ -22,6 +22,10 @@ Per kernel version, the harness validates:
   non-target sees the fabricated `vpn0`, a target does not),
 - non-VPN entries such as `eth0`, the main policy rule, and bionic
   `getifaddrs()` non-vpn rows remain visible to the target UID,
+- stable non-VPN counters (`/proc/net/route`, `ip addr`, `ifconfig`, direct
+  `dev_ioctl`, and the main policy rule) are **exactly unchanged** between the
+  non-target and target passes; aggregate counters (`ip route show table all`
+  and bionic `getifaddrs()` non-vpn rows) must stay positive,
 - **no kernel panic** across the whole hook set.
 
 Vectors exercised (`init.sh`):

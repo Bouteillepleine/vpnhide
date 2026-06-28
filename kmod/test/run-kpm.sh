@@ -10,7 +10,8 @@
 #        - phase "target"  : target = uid 0 -> root must NOT see vpn0
 #   4. boot each (init-kpm.sh) and diff the per-vector vpn0 counts
 #
-# A vector PASSes iff notarget>0 and target==0, with no panic in either boot.
+# Hide vectors PASS iff notarget>0 and target==0. Stable keep vectors must be
+# exactly unchanged; aggregate keep vectors must remain positive.
 # This needs no /proc (targets come via the embedded extra-args), so it
 # validates the inline hooks + per-kver offsets independently of the procfs
 # control plane.
@@ -151,6 +152,16 @@ TG_LOG="$(boot_phase "0" target)"
 vec_count() { grep -oE "VEC $1=[0-9]+" "$2" | head -1 | grep -oE '[0-9]+$' || echo "-1"; }
 panic_count() { grep -oE 'PANIC=[0-9]+' "$1" | head -1 | grep -oE '[0-9]+$' || echo "1"; }
 kpmload() { grep -q 'KPMLOAD=ok' "$1" && echo ok || echo FAIL; }
+keep_mode() {
+	case "$1" in
+		keep_proc_route_v4|keep_getifaddrs|keep_siocgifconf|keep_dev_ioctl|keep_policy_rule)
+			echo exact
+			;;
+		*)
+			echo nonvpn
+			;;
+	esac
+}
 
 echo "------------------------- KPM test output -------------------------"
 for log in "$NT_LOG" "$TG_LOG"; do
@@ -172,9 +183,9 @@ for vec in proc_route_v4 getifaddrs proc_route_v6 siocgifconf dev_ioctl netlink_
 	nt="$(vec_count "$vec" "$NT_LOG")"
 	tg="$(vec_count "$vec" "$TG_LOG")"
 	if [ "$nt" -gt 0 ] && [ "$tg" -eq 0 ]; then
-		echo "RESULT $vec=PASS (notarget=$nt target=$tg)"; PASS=$((PASS+1))
+		echo "RESULT $vec=PASS (notarget=$nt target=$tg mode=hide)"; PASS=$((PASS+1))
 	else
-		echo "RESULT $vec=FAIL (notarget=$nt target=$tg)"; FAIL=$((FAIL+1))
+		echo "RESULT $vec=FAIL (notarget=$nt target=$tg mode=hide)"; FAIL=$((FAIL+1))
 	fi
 done
 
@@ -184,10 +195,17 @@ for vec in keep_proc_route_v4 keep_getifaddrs keep_siocgifconf keep_dev_ioctl ke
 	fi
 	nt="$(vec_count "$vec" "$NT_LOG")"
 	tg="$(vec_count "$vec" "$TG_LOG")"
-	if [ "$nt" -gt 0 ] && [ "$tg" -gt 0 ]; then
-		echo "RESULT $vec=PASS (notarget=$nt target=$tg)"; PASS=$((PASS+1))
+	mode="$(keep_mode "$vec")"
+	if [ "$mode" = exact ]; then
+		if [ "$nt" -gt 0 ] && [ "$tg" -eq "$nt" ]; then
+			echo "RESULT $vec=PASS (notarget=$nt target=$tg mode=$mode)"; PASS=$((PASS+1))
+		else
+			echo "RESULT $vec=FAIL (notarget=$nt target=$tg mode=$mode)"; FAIL=$((FAIL+1))
+		fi
+	elif [ "$nt" -gt 0 ] && [ "$tg" -gt 0 ]; then
+		echo "RESULT $vec=PASS (notarget=$nt target=$tg mode=$mode)"; PASS=$((PASS+1))
 	else
-		echo "RESULT $vec=FAIL (notarget=$nt target=$tg)"; FAIL=$((FAIL+1))
+		echo "RESULT $vec=FAIL (notarget=$nt target=$tg mode=$mode)"; FAIL=$((FAIL+1))
 	fi
 done
 
