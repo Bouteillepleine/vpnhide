@@ -73,6 +73,7 @@ class RootSnapshotCacheTest {
         assertTrue(command.contains("cat \"${'$'}PATH_TO_READ\""))
         assertTrue(command.contains("pm list packages -U --user all"))
         assertTrue(command.contains("grep -H . /sys/class/net/*/operstate"))
+        assertTrue(command.contains("[ -s $SUPERKEY_FILE ] && echo 1 || echo 0"))
         assertTrue(command.contains("probe_ok=1"))
         assertTrue(command.contains("iptables -C OUTPUT -j vpnhide_out"))
         assertTrue(command.contains("ip6tables -C OUTPUT -j vpnhide_out6"))

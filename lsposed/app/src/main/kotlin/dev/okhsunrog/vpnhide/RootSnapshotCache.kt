@@ -39,6 +39,7 @@ internal val REQUIRED_ROOT_SNAPSHOT_SECTIONS =
         "hidden_pkgs",
         "observer_uids",
         "ports_observers",
+        "superkey_saved",
         "current_boot_id",
         "kmod_load_status",
         "kmod_load_dmesg",
@@ -215,6 +216,7 @@ internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): S
       emit_file hidden_pkgs $SS_HIDDEN_PKGS_FILE
       emit_file observer_uids $SS_OBSERVER_UIDS_FILE
       emit_file ports_observers $PORTS_OBSERVERS_FILE
+      emit_eval superkey_saved '[ -s $SUPERKEY_FILE ] && echo 1 || echo 0'
       phase_end
     }
     phase_kmod_status_files() {

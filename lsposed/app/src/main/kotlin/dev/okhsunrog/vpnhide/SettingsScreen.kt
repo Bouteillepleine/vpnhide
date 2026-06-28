@@ -196,7 +196,7 @@ private fun SuperkeySettingsSection() {
     var superkey by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
-    val remembered = targets?.canonicalConfig?.settings?.rememberSuperkey == true
+    val remembered = targets?.apatchSuperkeySaved == true
     val storedMessage = stringResource(R.string.settings_superkey_stored)
     val clearedMessage = stringResource(R.string.settings_superkey_cleared)
     val failedMessage = stringResource(R.string.settings_superkey_failed)
@@ -299,14 +299,18 @@ private fun writeSuperkeySetting(
         snapshot?.let(::buildCanonicalConfigFromTargetsSnapshot)
             ?: CanonicalConfig(debug = isEnabledInPrefs(context))
     val canonical = base.copy(settings = base.settings.copy(rememberSuperkey = remember))
-    val parts =
-        buildList {
-            add(buildCanonicalConfigWriteCommand(canonical))
-            add(if (remember) buildSuperkeyWriteCommand(superkey) else buildSuperkeyClearCommand())
-            if (remember) add(ConfigChannels.reconcileCommand())
-            add("true")
+    val requiredParts =
+        listOf(
+            buildCanonicalConfigWriteCommand(canonical),
+            if (remember) buildSuperkeyWriteCommand(superkey) else buildSuperkeyClearCommand(),
+        )
+    val cmd =
+        if (remember) {
+            requiredParts.joinToString(" && ") + " && " + ConfigChannels.reconcileCommand()
+        } else {
+            requiredParts.joinToString(" && ")
         }
-    val (exit, _) = suExec(parts.joinToString(" ; "))
+    val (exit, _) = suExec(cmd)
     if (exit == 0) {
         RootSnapshotCache.invalidate()
         DashboardCache.invalidate()
