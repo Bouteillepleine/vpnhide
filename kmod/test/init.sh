@@ -31,7 +31,15 @@ if apk add --no-cache iproute2 >/dev/null 2>&1; then echo "IPROUTE2=ok"; else ec
 if insmod /vpnhide_kmod.ko; then echo "INSMOD=ok"; else echo "INSMOD=FAIL"; fi
 REGISTERED=$(dmesg | grep -c 'vpnhide:.*registered')
 echo "REGISTERED=$REGISTERED"
-echo 1 > /proc/vpnhide_debug 2>/dev/null
+
+# Write a control-protocol config snapshot (docs/protocol.md) enabling every
+# kernel hook (mask 0x3ff) for a single UID, with debug logging on. Replaces
+# the old `echo <uid> > /proc/vpnhide_targets` + `echo 1 > /proc/vpnhide_debug`
+# — both folded into the one /proc/vpnhide_ctl node.
+set_target() {
+	printf 'vpnhide 1 config\ndebug 1\ntarget 0x%x 0x3ff\n' "$1" \
+		> /proc/vpnhide_ctl 2>/dev/null
+}
 
 # --- fabricate a VPN-like interface + routes + a per-uid policy rule ---------
 ip link add vpn0 type dummy 2>/dev/null
@@ -51,9 +59,9 @@ check() {
 	_name=$1
 	_cmd=$2
 	_pat=$3
-	echo 5555 > /proc/vpnhide_targets 2>/dev/null
+	set_target 5555
 	_nt=$(eval "$_cmd" 2>/dev/null | grep -c -- "$_pat")
-	echo 0 > /proc/vpnhide_targets 2>/dev/null
+	set_target 0
 	_tg=$(eval "$_cmd" 2>/dev/null | grep -c -- "$_pat")
 	if [ "$_nt" -gt 0 ] && [ "$_tg" -eq 0 ]; then
 		echo "RESULT $_name=PASS (nontarget=$_nt target=$_tg)"

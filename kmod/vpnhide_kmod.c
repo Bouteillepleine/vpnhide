@@ -19,7 +19,12 @@
  *   - rt6_fill_node: filters IPv6 RTM_GETROUTE replies
  *   - fib_nl_fill_rule: filters policy routing rules for target UIDs
  *
- * Target UIDs are written to /proc/vpnhide_targets from userspace.
+ * Control plane: a single folded node /proc/vpnhide_ctl carries the shared
+ * control/stats protocol (docs/protocol.md). A write is a `vpnhide 1 config`
+ * snapshot (per-UID hook mask + debug flag); a read returns the backend
+ * `status` + `stats`. This replaces the old /proc/vpnhide_targets (decimal UID
+ * list) and /proc/vpnhide_debug nodes — the same wire format every backend now
+ * speaks (parser shared verbatim with the KPM via shared/vpnhide_logic.h).
  *
  * Architecture: arm64 only. The handlers read syscall arguments via
  * `regs->regs[N]` (AAPCS64 calling convention). On other architectures
@@ -52,6 +57,8 @@
 #include <net/fib_rules.h>
 
 #include "generated/iface_lists.h"
+#include "generated/hook_ids.h"
+#include "shared/vpnhide_logic.h"
 
 #ifndef CONFIG_ARM64
 #error "vpnhide_kmod currently supports only arm64 (handlers read regs->regs[N] directly)"
@@ -75,16 +82,16 @@
 #define VPNHIDE_KRETPROBE_MAXACTIVE 64
 
 /* ------------------------------------------------------------------ */
-/*  Debug logging — toggled via /proc/vpnhide_debug                   */
+/*  Debug logging — folded into the /proc/vpnhide_ctl config snapshot  */
 /* ------------------------------------------------------------------ */
 
 static bool debug_enabled;
 
 /*
- * `debug_enabled` is a single bool, written from /proc/vpnhide_debug
- * and read from every probe handler. Use READ_ONCE/WRITE_ONCE so the
- * compiler doesn't tear the access or hoist it across the probe-hot
- * path — kosher kernel style for unsynchronised flags.
+ * `debug_enabled` is a single bool, set from the `debug` line of a config
+ * snapshot written to /proc/vpnhide_ctl and read from every probe handler.
+ * Use READ_ONCE/WRITE_ONCE so the compiler doesn't tear the access or hoist
+ * it across the probe-hot path — kosher kernel style for unsynchronised flags.
  */
 #define vpnhide_dbg(fmt, ...)                                     \
 	do {                                                      \
@@ -99,40 +106,56 @@ static bool debug_enabled;
 #define is_vpn_ifname(name) vpnhide_iface_is_vpn(name)
 
 /* ------------------------------------------------------------------ */
-/*  Target UID list                                                   */
+/*  Live config (control protocol §4.3)                               */
+/*                                                                    */
+/*  Each target carries a per-hook mask so the app can enable hooks   */
+/*  individually; a hook fires only when its bit is set for the       */
+/*  calling UID. Written via /proc/vpnhide_ctl; the same `vpnhide      */
+/*  target` struct + parser the KPM uses (shared/vpnhide_logic.h).    */
 /* ------------------------------------------------------------------ */
 
-static uid_t target_uids[MAX_TARGET_UIDS];
-static int nr_target_uids;
-static DEFINE_SPINLOCK(uids_lock);
+static struct vpnhide_target targets[MAX_TARGET_UIDS];
+static int nr_targets;
+static DEFINE_SPINLOCK(targets_lock);
 
-static bool is_target_uid(void)
+/* The enabled-hook mask for the calling UID (0 if it is not a target). */
+static u32 target_mask(void)
 {
 	uid_t uid = from_kuid(&init_user_ns, current_uid());
-	bool found = false;
+	u32 mask = 0;
 	int i;
 
-	spin_lock(&uids_lock);
-	for (i = 0; i < nr_target_uids; i++) {
-		if (target_uids[i] == uid) {
-			found = true;
+	spin_lock(&targets_lock);
+	for (i = 0; i < nr_targets; i++) {
+		if (targets[i].uid == uid) {
+			mask = targets[i].hookmask;
 			break;
 		}
 	}
-	spin_unlock(&uids_lock);
-	return found;
+	spin_unlock(&targets_lock);
+	return mask;
+}
+
+/* True if `hook_id` is enabled for the calling UID (per-hook gate, §4.3).
+ * The .ko owns the full kernel hook mask, so it never masks foreign bits. */
+static bool hook_active(u32 hook_id)
+{
+	return (target_mask() & (1u << hook_id)) != 0;
 }
 
 /* ------------------------------------------------------------------ */
-/*  /proc/vpnhide_targets                                             */
+/*  /proc/vpnhide_ctl — the folded control + stats channel            */
 /* ------------------------------------------------------------------ */
 
-static ssize_t targets_write(struct file *file, const char __user *ubuf,
-			     size_t count, loff_t *ppos)
+/* Forward decl: the probe registration table drives the `status` hooks mask. */
+static u32 installed_hook_mask(void);
+
+static ssize_t ctl_write(struct file *file, const char __user *ubuf,
+			 size_t count, loff_t *ppos)
 {
-	char *buf, *line, *next;
-	int new_count = 0;
-	uid_t new_uids[MAX_TARGET_UIDS];
+	char *buf;
+	struct vpnhide_target newt[MAX_TARGET_UIDS];
+	int n, dbg;
 
 	if (count > PAGE_SIZE)
 		return -EINVAL;
@@ -147,92 +170,65 @@ static ssize_t targets_write(struct file *file, const char __user *ubuf,
 	}
 	buf[count] = '\0';
 
-	for (line = buf; line && *line && new_count < MAX_TARGET_UIDS;
-	     line = next) {
-		unsigned long uid;
-
-		next = strchr(line, '\n');
-		if (next)
-			*next++ = '\0';
-
-		while (*line == ' ' || *line == '\t')
-			line++;
-		if (!*line || *line == '#')
-			continue;
-
-		if (kstrtoul(line, 10, &uid) == 0)
-			new_uids[new_count++] = (uid_t)uid;
-	}
-
-	spin_lock(&uids_lock);
-	memcpy(target_uids, new_uids, new_count * sizeof(uid_t));
-	nr_target_uids = new_count;
-	spin_unlock(&uids_lock);
-
+	/* Seed `dbg` with the live value so an absent `debug` line means
+	 * "unchanged from current", per §4.3. */
+	dbg = READ_ONCE(debug_enabled) ? 1 : 0;
+	n = vpnhide_parse_config(buf, count, newt, MAX_TARGET_UIDS, &dbg);
 	kfree(buf);
-	pr_info(MODNAME ": loaded %d target UIDs\n", new_count);
+
+	/* A payload with no valid header / a too-new version is rejected
+	 * whole (§3) — a loud -EINVAL, never a silent partial wipe. */
+	if (n < 0)
+		return -EINVAL;
+
+	spin_lock(&targets_lock);
+	memcpy(targets, newt, (size_t)n * sizeof(*targets));
+	nr_targets = n;
+	spin_unlock(&targets_lock);
+	WRITE_ONCE(debug_enabled, dbg ? true : false);
+
+	pr_info(MODNAME ": config applied — %d targets, debug=%d\n", n, dbg);
 	return count;
 }
 
-static int targets_show(struct seq_file *m, void *v)
+/*
+ * Read side: a self-documenting banner + `status` + `stats` (§4.3/§7.1).
+ * The shared formatters render into a stack buffer which we hand to seq_file.
+ * Stats counters are not yet maintained (same TODO as the KPM): emit a valid
+ * empty `stats` snapshot so the channel + format are wired and the app can
+ * already read status.
+ */
+static int ctl_show(struct seq_file *m, void *v)
 {
-	int i;
+	char buf[256];
+	struct vpnhide_status st;
+	unsigned long len;
 
-	spin_lock(&uids_lock);
-	for (i = 0; i < nr_target_uids; i++)
-		seq_printf(m, "%u\n", target_uids[i]);
-	spin_unlock(&uids_lock);
+	seq_puts(m, VPNHIDE_READ_BANNER);
+
+	st.backend = VPNHIDE_BACKEND_KMOD;
+	st.kver = LINUX_VERSION_CODE;
+	st.hooks = installed_hook_mask();
+	st.error = (st.hooks == VPNHIDE_KERNEL_HOOK_MASK) ?
+			   VPNHIDE_ERR_OK :
+			   VPNHIDE_ERR_PARTIAL_HOOKS;
+	len = vpnhide_format_status(buf, sizeof(buf), &st);
+	seq_write(m, buf, min_t(size_t, len, sizeof(buf)));
+
+	len = vpnhide_format_stats(buf, sizeof(buf), NULL, 0);
+	seq_write(m, buf, min_t(size_t, len, sizeof(buf)));
 	return 0;
 }
 
-static int targets_open(struct inode *inode, struct file *file)
+static int ctl_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, targets_show, NULL);
+	return single_open(file, ctl_show, NULL);
 }
 
-static const struct proc_ops targets_proc_ops = {
-	.proc_open = targets_open,
+static const struct proc_ops ctl_proc_ops = {
+	.proc_open = ctl_open,
 	.proc_read = seq_read,
-	.proc_write = targets_write,
-	.proc_lseek = seq_lseek,
-	.proc_release = single_release,
-};
-
-/* ------------------------------------------------------------------ */
-/*  /proc/vpnhide_debug                                               */
-/* ------------------------------------------------------------------ */
-
-static ssize_t debug_write(struct file *file, const char __user *ubuf,
-			   size_t count, loff_t *ppos)
-{
-	char c;
-
-	if (count == 0)
-		return 0;
-	if (get_user(c, ubuf))
-		return -EFAULT;
-
-	WRITE_ONCE(debug_enabled, c == '1' || c == 'Y' || c == 'y');
-	pr_info(MODNAME ": debug %s\n",
-		READ_ONCE(debug_enabled) ? "enabled" : "disabled");
-	return count;
-}
-
-static int debug_show(struct seq_file *m, void *v)
-{
-	seq_printf(m, "%d\n", READ_ONCE(debug_enabled) ? 1 : 0);
-	return 0;
-}
-
-static int debug_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, debug_show, NULL);
-}
-
-static const struct proc_ops debug_proc_ops = {
-	.proc_open = debug_open,
-	.proc_read = seq_read,
-	.proc_write = debug_write,
+	.proc_write = ctl_write,
 	.proc_lseek = seq_lseek,
 	.proc_release = single_release,
 };
@@ -267,7 +263,7 @@ static int dev_ioctl_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 
 	data->cmd = (unsigned int)regs->regs[1];
 	data->kifr = (struct ifreq *)regs->regs[2];
-	data->active = is_target_uid();
+	data->active = hook_active(VPNHIDE_HOOK_DEV_IOCTL);
 
 	vpnhide_dbg("dev_ioctl_entry: uid=%u target=%d cmd=0x%x\n",
 		    from_kuid(&init_user_ns, current_uid()), data->active,
@@ -340,7 +336,7 @@ static struct kretprobe dev_ioctl_krp = {
 /*  arm64: x0=file, x1=cmd, x2=arg (__user ptr)                      */
 /*                                                                    */
 /*  Performance: entry handler checks cmd == SIOCGIFCONF first (one   */
-/*  compare), then is_target_uid(). For all other ioctls, overhead    */
+/*  compare), then hook_active(). For all other ioctls, overhead      */
 /*  is a single branch. SIOCGIFCONF is rare (once per getifaddrs).    */
 /* ================================================================== */
 
@@ -358,7 +354,7 @@ static int sock_ioctl_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 
 	if (cmd != SIOCGIFCONF)
 		return 0;
-	if (!is_target_uid())
+	if (!hook_active(VPNHIDE_HOOK_SOCK_IOCTL))
 		return 0;
 
 	data->target = true;
@@ -507,7 +503,7 @@ static int rtnl_fill_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 
 	data->should_filter = false;
 
-	if (!is_target_uid()) {
+	if (!hook_active(VPNHIDE_HOOK_RTNL_FILL_IFINFO)) {
 		vpnhide_dbg("rtnl_fill_entry: uid=%u target=0\n",
 			    from_kuid(&init_user_ns, current_uid()));
 		return 0;
@@ -592,7 +588,7 @@ static int inet6_fill_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 
 	data->should_filter = false;
 
-	if (!is_target_uid())
+	if (!hook_active(VPNHIDE_HOOK_INET6_FILL_IFADDR))
 		return 0;
 
 	ifa = (struct inet6_ifaddr *)regs->regs[1];
@@ -661,7 +657,7 @@ static int inet_fill_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 
 	data->should_filter = false;
 
-	if (!is_target_uid())
+	if (!hook_active(VPNHIDE_HOOK_INET_FILL_IFADDR))
 		return 0;
 
 	ifa = (struct in_ifaddr *)regs->regs[1];
@@ -730,7 +726,7 @@ static int fib_route_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 	 * return handler knows where this call's output begins.
 	 */
 	data->seq = (struct seq_file *)regs->regs[0];
-	data->target = is_target_uid();
+	data->target = hook_active(VPNHIDE_HOOK_FIB_ROUTE_SEQ_SHOW);
 
 	if (data->target && data->seq) {
 		data->start_count = data->seq->count;
@@ -827,7 +823,7 @@ static int ipv6_route_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 	struct fib_route_data *data = (void *)ri->data;
 
 	data->seq = (struct seq_file *)regs->regs[0];
-	data->target = is_target_uid();
+	data->target = hook_active(VPNHIDE_HOOK_IPV6_ROUTE_SEQ_SHOW);
 
 	if (data->target && data->seq) {
 		data->start_count = data->seq->count;
@@ -1149,7 +1145,7 @@ static int fib_dump_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 
 	init_route_skb_data(data);
 
-	if (!is_target_uid() || !fri)
+	if (!hook_active(VPNHIDE_HOOK_FIB_DUMP_INFO) || !fri)
 		return 0;
 	if (copy_from_kernel_nofault(&fri_copy, fri, sizeof(fri_copy)) != 0)
 		return 0;
@@ -1204,7 +1200,7 @@ static int rt6_fill_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 
 	init_route_skb_data(data);
 
-	if (!is_target_uid())
+	if (!hook_active(VPNHIDE_HOOK_RT6_FILL_NODE))
 		return 0;
 
 	rcu_read_lock();
@@ -1285,7 +1281,7 @@ static int fib_rule_fill_entry(struct kretprobe_instance *ri,
 
 	init_route_skb_data(data);
 
-	if (!is_target_uid() || !rule)
+	if (!hook_active(VPNHIDE_HOOK_FIB_NL_FILL_RULE) || !rule)
 		return 0;
 	if (copy_from_kernel_nofault(&rule_copy, rule, sizeof(rule_copy)) != 0)
 		return 0;
@@ -1342,27 +1338,39 @@ static struct kretprobe fib_rule_fill_krp = {
 /*  Module init / exit                                                */
 /* ================================================================== */
 
-static struct proc_dir_entry *targets_entry;
-static struct proc_dir_entry *debug_entry;
+static struct proc_dir_entry *ctl_entry;
 
 struct kretprobe_reg {
 	struct kretprobe *krp;
 	const char *name;
+	u32 hook_id; /* registry id (generated/hook_ids.h) — for the status mask */
 	bool registered;
 };
 
 static struct kretprobe_reg probes[] = {
-	{ &dev_ioctl_krp, "dev_ioctl", false },
-	{ &sock_ioctl_krp, "sock_ioctl", false },
-	{ &rtnl_fill_krp, "rtnl_fill_ifinfo", false },
-	{ &inet6_fill_krp, "inet6_fill_ifaddr", false },
-	{ &inet_fill_krp, "inet_fill_ifaddr", false },
-	{ &fib_route_krp, "fib_route_seq_show", false },
-	{ &ipv6_route_krp, "ipv6_route_seq_show", false },
-	{ &fib_dump_krp, "fib_dump_info", false },
-	{ &rt6_fill_krp, "rt6_fill_node", false },
-	{ &fib_rule_fill_krp, "fib_nl_fill_rule", false },
+	{ &dev_ioctl_krp, "dev_ioctl", VPNHIDE_HOOK_DEV_IOCTL, false },
+	{ &sock_ioctl_krp, "sock_ioctl", VPNHIDE_HOOK_SOCK_IOCTL, false },
+	{ &rtnl_fill_krp, "rtnl_fill_ifinfo", VPNHIDE_HOOK_RTNL_FILL_IFINFO, false },
+	{ &inet6_fill_krp, "inet6_fill_ifaddr", VPNHIDE_HOOK_INET6_FILL_IFADDR, false },
+	{ &inet_fill_krp, "inet_fill_ifaddr", VPNHIDE_HOOK_INET_FILL_IFADDR, false },
+	{ &fib_route_krp, "fib_route_seq_show", VPNHIDE_HOOK_FIB_ROUTE_SEQ_SHOW, false },
+	{ &ipv6_route_krp, "ipv6_route_seq_show", VPNHIDE_HOOK_IPV6_ROUTE_SEQ_SHOW, false },
+	{ &fib_dump_krp, "fib_dump_info", VPNHIDE_HOOK_FIB_DUMP_INFO, false },
+	{ &rt6_fill_krp, "rt6_fill_node", VPNHIDE_HOOK_RT6_FILL_NODE, false },
+	{ &fib_rule_fill_krp, "fib_nl_fill_rule", VPNHIDE_HOOK_FIB_NL_FILL_RULE, false },
 };
+
+/* Bitset of hooks that actually registered — the `status` hooks mask (§4.3). */
+static u32 installed_hook_mask(void)
+{
+	u32 mask = 0;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(probes); i++)
+		if (probes[i].registered)
+			mask |= (1u << probes[i].hook_id);
+	return mask;
+}
 
 static int __init vpnhide_init(void)
 {
@@ -1390,27 +1398,23 @@ static int __init vpnhide_init(void)
 				"some detection paths are not covered\n",
 			ok, ARRAY_SIZE(probes));
 
-	/* 0600: root-only read/write. UIDs are written here by service.sh
-	 * and the VPN Hide app (both root). Apps must not see the target list. */
-	targets_entry =
-		proc_create("vpnhide_targets", 0600, NULL, &targets_proc_ops);
-	if (!targets_entry) {
-		/* Without /proc/vpnhide_targets userspace cannot configure
-		 * the target UID list, so the module would silently filter
-		 * nothing — fail loudly instead of pretending to work. */
-		pr_err(MODNAME
-		       ": proc_create(vpnhide_targets) failed; aborting\n");
+	/* 0600: root-only read/write. The config snapshot is written here by
+	 * service.sh and the VPN Hide app (both root). Apps must not see the
+	 * control channel. (Renamed from vpnhide_targets for semantic accuracy
+	 * — it is now control+stats, not just targets, §OPEN-4.) */
+	ctl_entry = proc_create("vpnhide_ctl", 0600, NULL, &ctl_proc_ops);
+	if (!ctl_entry) {
+		/* Without /proc/vpnhide_ctl userspace cannot configure the
+		 * target list, so the module would silently filter nothing —
+		 * fail loudly instead of pretending to work. */
+		pr_err(MODNAME ": proc_create(vpnhide_ctl) failed; aborting\n");
 		for (i = 0; i < ARRAY_SIZE(probes); i++)
 			if (probes[i].registered)
 				unregister_kretprobe(probes[i].krp);
 		return -ENOMEM;
 	}
-	debug_entry = proc_create("vpnhide_debug", 0600, NULL, &debug_proc_ops);
-	if (!debug_entry)
-		pr_warn(MODNAME
-			": proc_create(vpnhide_debug) failed; debug toggle unavailable\n");
 
-	pr_info(MODNAME ": loaded — write UIDs to /proc/vpnhide_targets\n");
+	pr_info(MODNAME ": loaded — write a config snapshot to /proc/vpnhide_ctl\n");
 	return 0;
 }
 
@@ -1418,10 +1422,8 @@ static void __exit vpnhide_exit(void)
 {
 	int i;
 
-	if (debug_entry)
-		proc_remove(debug_entry);
-	if (targets_entry)
-		proc_remove(targets_entry);
+	if (ctl_entry)
+		proc_remove(ctl_entry);
 
 	for (i = 0; i < ARRAY_SIZE(probes); i++) {
 		if (probes[i].registered) {
