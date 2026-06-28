@@ -34,9 +34,12 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TOML_PATH = REPO_ROOT / "data" / "hooks.toml"
 
+# Targets are only the protocol participants (§1.4): the kernel backends (C),
+# the Zygisk backend (Rust), and the app + system_server hook (Kotlin). NOT
+# lsposed/native — that Rust crate is the uniffi diagnostic-probe library; it
+# consumes iface_lists (VPN-name matching) but never the protocol/registry.
 OUT_KMOD = REPO_ROOT / "kmod" / "generated" / "hook_ids.h"
 OUT_ZYGISK = REPO_ROOT / "zygisk" / "src" / "generated" / "hook_ids.rs"
-OUT_LSP_NATIVE = REPO_ROOT / "lsposed" / "native" / "src" / "generated" / "hook_ids.rs"
 OUT_LSP_KT = (
     REPO_ROOT
     / "lsposed"
@@ -250,7 +253,6 @@ def main() -> None:
     outputs = {
         OUT_KMOD: emit_kmod(hooks, errs),
         OUT_ZYGISK: emit_rust(hooks, errs),
-        OUT_LSP_NATIVE: emit_rust(hooks, errs),
         OUT_LSP_KT: emit_kotlin(hooks, errs),
     }
     for path, text in outputs.items():
