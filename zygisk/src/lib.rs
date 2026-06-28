@@ -261,7 +261,8 @@ impl ZygiskModule for VpnHide {
         if is_target_uid(uid) {
             info!("pre_app_specialize: targeting uid {uid}");
             self.is_target.set(true);
-            self.report_status.set(package.as_deref() == Some(APP_PACKAGE));
+            self.report_status
+                .set(package.as_deref() == Some(APP_PACKAGE));
         } else {
             self.is_target.set(false);
             self.report_status.set(false);
