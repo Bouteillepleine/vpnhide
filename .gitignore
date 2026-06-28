@@ -46,3 +46,6 @@ kmod/shared/test_vpnhide_logic
 /tmp/
 /*.zip
 scripts/__pycache__/
+kmod/shared/test_protocol
+kmod/module-staging/
+kmod/kpm/module-staging/

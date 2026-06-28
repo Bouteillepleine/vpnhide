@@ -41,6 +41,7 @@
 #pragma GCC visibility pop
 
 #include "../generated/iface_lists.h"
+#include "../generated/hook_ids.h"
 #include "../shared/vpnhide_logic.h"
 #include "kver_offsets.h"
 
@@ -59,9 +60,17 @@ KPM_DESCRIPTION("Hide VPN interfaces from selected UIDs (KPM backend, WIP)");
 
 static const struct vpnhide_offsets *off; /* selected per running kver */
 
-static uint32_t target_uids[MAX_TARGET_UIDS];
-static int nr_target_uids;
+/* Live config (protocol §4.3). Each target carries a per-hook mask so the app
+ * can enable hooks individually; a hook fires only if its bit is set for the
+ * calling uid. */
+static struct vpnhide_target targets[MAX_TARGET_UIDS];
+static int nr_targets;
 static bool debug_enabled;
+
+/* status (protocol §4.3/§5.1): which hooks actually installed, and the dominant
+ * fault code. Filled at init, read back via ctl0 `status`. */
+static uint32_t installed_hooks;
+static uint32_t last_error;
 
 /* kernel functions resolved at init via kallsyms */
 static void *(*_proc_create_data)(const char *, uint16_t, void *, void *, void *);
@@ -81,18 +90,25 @@ static void (*_skb_trim)(void *, unsigned int);
 /*  Core helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-static int is_target_uid(void)
+/* The enabled-hook mask for the calling uid (0 if it is not a target). */
+static uint32_t target_mask(void)
 {
 	uid_t uid;
 	int i;
 
-	if (nr_target_uids <= 0)
+	if (nr_targets <= 0)
 		return 0;
 	uid = current_uid();
-	for (i = 0; i < nr_target_uids; i++)
-		if (target_uids[i] == uid)
-			return 1;
+	for (i = 0; i < nr_targets; i++)
+		if (targets[i].uid == uid)
+			return targets[i].hookmask;
 	return 0;
+}
+
+/* True if `hook_id` is enabled for the calling uid (per-hook gate, §4.3). */
+static int hook_active(uint32_t hook_id)
+{
+	return (target_mask() & (1u << hook_id)) != 0;
 }
 
 /* NUL-safe copy of a kernel iface name, then match via the generated rules. */
@@ -139,7 +155,7 @@ static void fib_route_after(hook_fargs2_t *fargs, void *udata)
 	unsigned long *countp;
 	unsigned long start = (unsigned long)fargs->local.data0;
 
-	if (!seq || !is_target_uid())
+	if (!seq || !hook_active(VPNHIDE_HOOK_FIB_ROUTE_SEQ_SHOW))
 		return;
 
 	buf = *(char **)((char *)seq + off->seqfile_buf);
@@ -157,7 +173,7 @@ static void ipv6_route_after(hook_fargs2_t *fargs, void *udata)
 	unsigned long *countp;
 	unsigned long start = (unsigned long)fargs->local.data0;
 
-	if (!seq || !is_target_uid())
+	if (!seq || !hook_active(VPNHIDE_HOOK_IPV6_ROUTE_SEQ_SHOW))
 		return;
 
 	buf = *(char **)((char *)seq + off->seqfile_buf);
@@ -180,7 +196,7 @@ static void rtnl_fill_before(hook_fargs12_t *fargs, void *udata)
 	void *dev = (void *)fargs->arg1;
 
 	fargs->local.data0 = 0; /* should_filter */
-	if (!is_target_uid() || !skb || !dev)
+	if (!hook_active(VPNHIDE_HOOK_RTNL_FILL_IFINFO) || !skb || !dev)
 		return;
 	if (!iface_is_vpn(netdev_name(dev)))
 		return;
@@ -237,7 +253,7 @@ static void dev_ioctl_after(hook_fargs5_t *fargs, void *udata)
 
 	if ((long)fargs->ret != 0 || !ifr)
 		return;
-	if (!is_target_uid() || !is_siocgif(cmd))
+	if (!hook_active(VPNHIDE_HOOK_DEV_IOCTL) || !is_siocgif(cmd))
 		return;
 
 	if (ptr_is_kernel(ifr)) {
@@ -312,7 +328,7 @@ static void sock_ioctl_after(hook_fargs3_t *fargs, void *udata)
 
 	if ((long)fargs->ret != 0 || !argp)
 		return;
-	if (cmd != VPNHIDE_SIOCGIFCONF || !is_target_uid())
+	if (cmd != VPNHIDE_SIOCGIFCONF || !hook_active(VPNHIDE_HOOK_SOCK_IOCTL))
 		return;
 	filter_ifconf(argp);
 }
@@ -337,13 +353,15 @@ static void *deref2(void *base, unsigned int off1, unsigned int off2)
 	return *(void **)((char *)p + off2);
 }
 
-/* Shared by both addr-fill hooks: stash skb + len if ifa's dev is VPN. */
-static void addr_fill_before(hook_fargs4_t *fargs, void *dev)
+/* Shared by both addr-fill hooks: stash skb + len if ifa's dev is VPN. The
+ * caller passes its own hook id so the per-hook gate (§4.3) is per-hook even
+ * though the body is shared. */
+static void addr_fill_before(hook_fargs4_t *fargs, void *dev, uint32_t hook_id)
 {
 	void *skb = (void *)fargs->arg0;
 
 	fargs->local.data0 = 0;
-	if (!is_target_uid() || !skb || !dev)
+	if (!hook_active(hook_id) || !skb || !dev)
 		return;
 	if (!iface_is_vpn(netdev_name(dev)))
 		return;
@@ -369,14 +387,14 @@ static void inet_fill_before(hook_fargs4_t *fargs, void *udata)
 {
 	void *dev = deref2((void *)fargs->arg1, off->in_ifaddr_ifa_dev,
 			   off->in_device_dev);
-	addr_fill_before(fargs, dev);
+	addr_fill_before(fargs, dev, VPNHIDE_HOOK_INET_FILL_IFADDR);
 }
 
 static void inet6_fill_before(hook_fargs4_t *fargs, void *udata)
 {
 	void *dev = deref2((void *)fargs->arg1, off->inet6_ifaddr_idev,
 			   off->inet6_dev_dev);
-	addr_fill_before(fargs, dev);
+	addr_fill_before(fargs, dev, VPNHIDE_HOOK_INET6_FILL_IFADDR);
 }
 
 /* ================================================================== */
@@ -430,7 +448,7 @@ static void fib_dump_before(hook_fargs12_t *fargs, void *udata)
 	void *fi, *dev;
 
 	fargs->local.data0 = 0;
-	if (!is_target_uid() || !skb || !p)
+	if (!hook_active(VPNHIDE_HOOK_FIB_DUMP_INFO) || !skb || !p)
 		return;
 	fi = off->fib_dump_fi_via_fri ? *(void **)p : p; /* fib_rt_info.fi @0 */
 	dev = dev_from_fib_info(fi);
@@ -489,7 +507,7 @@ static void rt6_fill_before(hook_fargs12_t *fargs, void *udata)
 	void *dev;
 
 	fargs->local.data0 = 0;
-	if (!is_target_uid() || !skb || !rt)
+	if (!hook_active(VPNHIDE_HOOK_RT6_FILL_NODE) || !skb || !rt)
 		return;
 	dev = dev_from_fib6_info(rt);
 	if (!dev || !iface_is_vpn(netdev_name(dev)))
@@ -528,7 +546,8 @@ static void fib_rule_before(hook_fargs8_t *fargs, void *udata)
 	int filter = 0;
 
 	fargs->local.data0 = 0;
-	if (!is_target_uid() || !skb || !rule || !off->fib_rule_table)
+	if (!hook_active(VPNHIDE_HOOK_FIB_NL_FILL_RULE) || !skb || !rule ||
+	    !off->fib_rule_table)
 		return;
 
 	iif = rule + off->fib_rule_iifname;
@@ -588,28 +607,19 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
  */
 
 /* ------------------------------------------------------------------ */
-/*  /proc/vpnhide_targets + /proc/vpnhide_debug                       */
+/*  Control plane                                                      */
 /* ------------------------------------------------------------------ */
 
-static long targets_write(void *file, const char __user *ubuf, unsigned long count,
-			  long *ppos)
-{
-	char buf[1024];
-	int n;
-
-	if (count == 0)
-		return 0;
-	if (count > sizeof(buf) - 1)
-		count = sizeof(buf) - 1;
-	if (_copy_from_user && _copy_from_user(buf, ubuf, count))
-		return -14; /* -EFAULT */
-	buf[count] = '\0';
-
-	n = vpnhide_parse_target_uids(buf, count, target_uids, MAX_TARGET_UIDS);
-	nr_target_uids = n;
-	vpnhide_dbg("loaded %d target UIDs\n", n);
-	return (long)count;
-}
+/*
+ * The KPM has no file or node: its control/stats channel is the KernelPatch
+ * `ctl0` supercall, carrying the §4 wire format (config in, stats/status out —
+ * see vpnhide_kpm_ctl0). A procfs mirror is intentionally NOT created: it would
+ * need the version-specific proc_ops/file_operations ABI guessed without real
+ * headers (the likely cause of the HyperOS-5.4 crash report), and ctl0 needs no
+ * such guessing.
+ *
+ * proc create/remove glue stub left below for the (deferred) optional mirror.
+ */
 
 /*
  * proc_create needs a `struct proc_ops` (>=5.6) or a `struct file_operations`
@@ -711,30 +721,54 @@ static int resolve_symbols(void)
 	return _skb_trim ? 0 : -1;
 }
 
-/* Parse a NUL-terminated list of target UIDs (newline/space separated, `#`
- * comments) into the live set. Used from KPM load args and the ctl0 control
- * channel — same parser as the .ko's /proc writer (shared/vpnhide_logic.h).
- * proc is a secondary path (TODO); args/ctl0 need no procfs ABI guessing. */
+/*
+ * Load-time / test target path: a bare newline/space-separated decimal UID list
+ * (KernelPatch load extra-args, e.g. sc_kpm_load(key, path, "10010 10020"), as
+ * the QEMU A/B harness uses). Each listed uid gets the FULL kernel hook mask —
+ * i.e. "enable everything for these uids". Per-hook control is the job of the
+ * runtime ctl0 `config` channel (vpnhide_parse_config); this path predates it
+ * and stays for headless bring-up where no superkey/ctl0 round-trip is wired.
+ */
 static void apply_targets(const char *s)
 {
+	unsigned int uids[MAX_TARGET_UIDS];
 	unsigned long n = 0;
+	int cnt, i;
 
 	if (!s)
 		return;
 	while (s[n])
 		n++;
-	nr_target_uids = vpnhide_parse_target_uids(s, n, target_uids,
-						   MAX_TARGET_UIDS);
-	vpnhide_dbg("loaded %d target UIDs\n", nr_target_uids);
+	cnt = vpnhide_parse_target_uids(s, n, uids, MAX_TARGET_UIDS);
+	for (i = 0; i < cnt; i++) {
+		targets[i].uid = uids[i];
+		targets[i].hookmask = VPNHIDE_KERNEL_HOOK_MASK;
+	}
+	nr_targets = cnt;
+	vpnhide_dbg("loaded %d target UIDs (all hooks)\n", cnt);
+}
+
+/* Resolve `name`, wrap it, and record the install in `installed_hooks` so the
+ * status channel (§4.3 `hooks`) reflects what actually took. */
+static void install_hook(const char *name, int argno, void *before, void *after,
+			 uint32_t hook_id)
+{
+	unsigned long fn = lookup_fn(name);
+
+	if (!fn)
+		return;
+	if (hook_wrap((void *)fn, argno, before, after, 0) == HOOK_NO_ERR)
+		installed_hooks |= (1u << hook_id);
 }
 
 static long vpnhide_kpm_init(const char *args, const char *event,
 			     void *__user reserved)
 {
-	unsigned long fn;
-
 	logki(MODNAME ": KPM init (event=%s) kver=0x%x\n", event ? event : "",
 	      (unsigned int)kver);
+
+	installed_hooks = 0;
+	last_error = VPNHIDE_ERR_OK;
 
 	/* `kver` is KernelPatch's running-kernel version (common.h), encoded
 	 * the same way as VPNHIDE_KVER. NULL table = unsupported → bail. */
@@ -748,12 +782,10 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 		return -1;
 	}
 
-	/* Targets can come at load time: sc_kpm_load(key, path, "10010 10020").
-	 * (proc + a runtime ctl0 path also feed the same set.) */
+	/* Targets can come at load time: sc_kpm_load(key, path, "10010 10020")
+	 * (decimal list, all hooks). The runtime ctl0 `config` channel feeds the
+	 * same set with per-hook masks. */
 	apply_targets(args);
-
-	/* TODO: create /proc/vpnhide_targets + /proc/vpnhide_debug using the
-	 * proc-ABI selected by off->proc_uses_proc_ops. */
 
 	/*
 	 * Install hooks. Each one is gated on the offset(s) it dereferences
@@ -761,75 +793,123 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 	 * partially-filled offset table is SAFE: a hook never runs with a
 	 * wrong/zero offset and panics. seq_file + ioctl hooks need only
 	 * stable offsets (seqfile_count, uapi ifreq) so they install whenever
-	 * the symbol exists. hook_wrap(func, argno, before, after, udata).
+	 * the symbol exists. install_hook records each into installed_hooks.
 	 */
 	if (off->seqfile_count) {
-		fn = lookup_fn("fib_route_seq_show");
-		if (fn)
-			hook_wrap((void *)fn, 2, (void *)fib_route_before,
-				  (void *)fib_route_after, 0);
-		fn = lookup_fn("ipv6_route_seq_show");
-		if (fn)
-			hook_wrap((void *)fn, 2, (void *)fib_route_before,
-				  (void *)ipv6_route_after, 0);
+		install_hook("fib_route_seq_show", 2, (void *)fib_route_before,
+			     (void *)fib_route_after,
+			     VPNHIDE_HOOK_FIB_ROUTE_SEQ_SHOW);
+		install_hook("ipv6_route_seq_show", 2, (void *)fib_route_before,
+			     (void *)ipv6_route_after,
+			     VPNHIDE_HOOK_IPV6_ROUTE_SEQ_SHOW);
 	}
+	install_hook("dev_ioctl", 5, 0, (void *)dev_ioctl_after,
+		     VPNHIDE_HOOK_DEV_IOCTL);
+	install_hook("sock_ioctl", 3, 0, (void *)sock_ioctl_after,
+		     VPNHIDE_HOOK_SOCK_IOCTL);
+	if (off->skb_len)
+		install_hook("rtnl_fill_ifinfo", 12, (void *)rtnl_fill_before,
+			     (void *)rtnl_fill_after,
+			     VPNHIDE_HOOK_RTNL_FILL_IFINFO);
+	if (off->in_ifaddr_ifa_dev)
+		install_hook("inet_fill_ifaddr", 3, (void *)inet_fill_before,
+			     (void *)addr_fill_after,
+			     VPNHIDE_HOOK_INET_FILL_IFADDR);
+	if (off->inet6_ifaddr_idev)
+		install_hook("inet6_fill_ifaddr", 3, (void *)inet6_fill_before,
+			     (void *)addr_fill_after,
+			     VPNHIDE_HOOK_INET6_FILL_IFADDR);
+	if (off->fib_dump_fi_arg)
+		install_hook("fib_dump_info", 11, (void *)fib_dump_before,
+			     (void *)fib_dump_after, VPNHIDE_HOOK_FIB_DUMP_INFO);
+	if (off->fib6_info_fib6_nh || off->rt6_via_dst)
+		install_hook("rt6_fill_node", 11, (void *)rt6_fill_before,
+			     (void *)rt6_fill_after, VPNHIDE_HOOK_RT6_FILL_NODE);
+	if (off->fib_rule_table)
+		install_hook("fib_nl_fill_rule", 7, (void *)fib_rule_before,
+			     (void *)fib_rule_after,
+			     VPNHIDE_HOOK_FIB_NL_FILL_RULE);
 
-	fn = lookup_fn("dev_ioctl");
-	if (fn)
-		hook_wrap((void *)fn, 5, 0, (void *)dev_ioctl_after, 0);
-	fn = lookup_fn("sock_ioctl");
-	if (fn)
-		hook_wrap((void *)fn, 3, 0, (void *)sock_ioctl_after, 0);
+	/* Healthy iff every kernel-owned hook installed; otherwise honestly
+	 * report partial — the `hooks` mask carries which ones (§5.1). A kver
+	 * with an incomplete offset table lands here by design. */
+	last_error = (installed_hooks == VPNHIDE_KERNEL_HOOK_MASK) ?
+			     VPNHIDE_ERR_OK :
+			     VPNHIDE_ERR_PARTIAL_HOOKS;
 
-	if (off->skb_len) {
-		fn = lookup_fn("rtnl_fill_ifinfo");
-		if (fn)
-			hook_wrap((void *)fn, 12, (void *)rtnl_fill_before,
-				  (void *)rtnl_fill_after, 0);
-	}
-	if (off->in_ifaddr_ifa_dev) {
-		fn = lookup_fn("inet_fill_ifaddr");
-		if (fn)
-			hook_wrap((void *)fn, 3, (void *)inet_fill_before,
-				  (void *)addr_fill_after, 0);
-	}
-	if (off->inet6_ifaddr_idev) {
-		fn = lookup_fn("inet6_fill_ifaddr");
-		if (fn)
-			hook_wrap((void *)fn, 3, (void *)inet6_fill_before,
-				  (void *)addr_fill_after, 0);
-	}
-	if (off->fib_dump_fi_arg) {
-		fn = lookup_fn("fib_dump_info");
-		if (fn)
-			hook_wrap((void *)fn, 11, (void *)fib_dump_before,
-				  (void *)fib_dump_after, 0);
-	}
-	if (off->fib6_info_fib6_nh || off->rt6_via_dst) {
-		fn = lookup_fn("rt6_fill_node");
-		if (fn)
-			hook_wrap((void *)fn, 11, (void *)rt6_fill_before,
-				  (void *)rt6_fill_after, 0);
-	}
-	if (off->fib_rule_table) {
-		fn = lookup_fn("fib_nl_fill_rule");
-		if (fn)
-			hook_wrap((void *)fn, 7, (void *)fib_rule_before,
-				  (void *)fib_rule_after, 0);
-	}
-
-	logki(MODNAME ": KPM hooks installed\n");
+	logki(MODNAME ": KPM hooks installed (mask=0x%x err=%u)\n",
+	      installed_hooks, last_error);
 	return 0;
 }
 
+/* Single fixed reply buffer for stats/status (§7.2 — no pagination). A few KiB
+ * holds stats for tens of uids; the reader passes a generous outlen and we
+ * truncate on a line boundary (clamp_to_line) if it ever overflows. */
+#define VPNHIDE_OUT_MAX 4096
+
+/*
+ * Runtime control/stats channel (protocol §7.1). KernelPatch forwards `args`
+ * in and `out_msg` (copy_to_user) out; the `long` return is a short code only,
+ * never surfaced as text. Dispatch on the header `kind`:
+ *   config → apply the snapshot (per-hook masks + debug), return target count.
+ *   stats  → serialise counters into out_msg.   (counters: TODO, see below)
+ *   status → serialise backend health into out_msg.
+ */
 static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 {
-	/* Runtime control via supercall: sc_kpm_control(key, "vpnhide", uids...).
-	 * Lets the test / app update targets without a reboot or proc write. */
-	(void)out_msg;
-	(void)outlen;
-	apply_targets(args);
-	return nr_target_uids;
+	unsigned long n_args = 0;
+	enum vpnhide_kind kind;
+
+	if (!args)
+		return -1;
+	while (args[n_args])
+		n_args++;
+	kind = vpnhide_peek_kind(args, n_args);
+
+	if (kind == VPNHIDE_KIND_CONFIG) {
+		int dbg = debug_enabled ? 1 : 0;
+		int n = vpnhide_parse_config(args, n_args, targets,
+					     MAX_TARGET_UIDS, &dbg);
+
+		if (n < 0)
+			return -1; /* rejected whole (bad header / version) */
+		nr_targets = n;
+		debug_enabled = dbg ? true : false;
+		vpnhide_dbg("ctl0 config: %d targets, debug=%d\n", n, dbg);
+		return n;
+	}
+
+	if (kind == VPNHIDE_KIND_STATS || kind == VPNHIDE_KIND_STATUS) {
+		char buf[VPNHIDE_OUT_MAX];
+		unsigned long full, n;
+
+		if (kind == VPNHIDE_KIND_STATS) {
+			/*
+			 * TODO(stats counters): maintain per-(uid,hook) u64
+			 * counters in the filter paths and serialise the
+			 * non-zero cells here. For now emit a valid empty
+			 * snapshot (header only) so the channel + format are
+			 * wired and the app can already read it.
+			 */
+			full = vpnhide_format_stats(buf, sizeof(buf), 0, 0);
+		} else {
+			struct vpnhide_status st;
+
+			st.backend = VPNHIDE_BACKEND_KPM;
+			st.kver = (unsigned int)kver;
+			st.hooks = installed_hooks;
+			st.error = last_error;
+			full = vpnhide_format_status(buf, sizeof(buf), &st);
+		}
+
+		n = vpnhide_clamp_to_line(buf, full,
+					  outlen > 0 ? (unsigned long)outlen : 0);
+		if (_copy_to_user && out_msg && n)
+			_copy_to_user(out_msg, buf, n);
+		return (long)n;
+	}
+
+	return -1; /* unknown kind */
 }
 
 static long vpnhide_kpm_exit(void *__user reserved)

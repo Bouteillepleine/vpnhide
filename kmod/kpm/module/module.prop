@@ -1,0 +1,6 @@
+id=vpnhide_kpm
+name=VPN Hide (KPM)
+version=v0.7.1
+versionCode=701
+author=okhsunrog
+description=Hides VPN interfaces from selected apps at the kernel level via a KernelPatch Module (KPM). Single cross-version binary for kernels the .ko backend can't serve (non-GKI / no headers / module signing). Loaded by the KernelPatch runtime. Manage targets via VPN Hide app.
