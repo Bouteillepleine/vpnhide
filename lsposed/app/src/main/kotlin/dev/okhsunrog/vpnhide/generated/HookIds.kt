@@ -38,12 +38,36 @@ internal object HookIds {
 
         // RTM_GETRULE — policy routing rules
         FIB_NL_FILL_RULE(9, "fib_nl_fill_rule", "RTM_GETRULE — policy routing rules"),
+
+        // LinkProperties parcel/result sanitization
+        LSPOSED_LINK_PROPERTIES(10, "lsposed_link_properties", "LinkProperties parcel/result sanitization"),
+
+        // NetworkCapabilities parcel/result sanitization
+        LSPOSED_NETWORK_CAPABILITIES(11, "lsposed_network_capabilities", "NetworkCapabilities parcel/result sanitization"),
+
+        // NetworkInfo parcel/result sanitization
+        LSPOSED_NETWORK_INFO(12, "lsposed_network_info", "NetworkInfo parcel/result sanitization"),
+
+        // Network handle replacement/filtering
+        LSPOSED_NETWORK(13, "lsposed_network", "Network handle replacement/filtering"),
+
+        // ConnectivityService synchronous result filtering
+        LSPOSED_CONNECTIVITY_RESULT(14, "lsposed_connectivity_result", "ConnectivityService synchronous result filtering"),
+
+        // ConnectivityService callback filtering
+        LSPOSED_CONNECTIVITY_CALLBACK(15, "lsposed_connectivity_callback", "ConnectivityService callback filtering"),
+
+        // ConnectivityService Network handle APIs
+        LSPOSED_CONNECTIVITY_NETWORK(16, "lsposed_connectivity_network", "ConnectivityService Network handle APIs"),
+
+        // PackageManager app-hiding filters
+        LSPOSED_PACKAGE_VISIBILITY(17, "lsposed_package_visibility", "PackageManager app-hiding filters"),
     }
 
     // Hooks owned by each backend: apply `mask and own`.
     const val KERNEL_HOOK_MASK = 0x3ff
     const val ZYGISK_HOOK_MASK = 0x0
-    const val LSPOSED_HOOK_MASK = 0x0
+    const val LSPOSED_HOOK_MASK = 0x3fc00
 
     /** status error codes (protocol §5.1). */
     enum class StatusError(
