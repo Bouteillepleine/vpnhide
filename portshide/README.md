@@ -15,9 +15,10 @@ iptables -A vpnhide_out -m owner --uid-owner <UID> -d 127.0.0.1 -p tcp -j REJECT
 iptables -A vpnhide_out -m owner --uid-owner <UID> -d 127.0.0.1 -p udp -j REJECT --reject-with icmp-port-unreachable
 ```
 
-…for every UID listed in `/data/adb/vpnhide_ports/observers.txt`,
-plus the same for `::1` via `ip6tables`. A jump from `OUTPUT` into the
-dedicated chain is inserted exactly once (`iptables -C` guarded).
+...for every UID whose package has `"ports": true` in
+`/data/system/vpnhide_config.json`, plus the same for `::1` via `ip6tables`.
+A jump from `OUTPUT` into the dedicated chain is inserted exactly once
+(`iptables -C` guarded).
 
 Observer apps receive `ECONNREFUSED` — indistinguishable from a real
 closed port. `netd`'s own chains are never touched; our chain lives
@@ -32,13 +33,11 @@ Hide app (it invokes `vpnhide_ports_apply.sh` via `su`).
 
 ## Configuration
 
-Managed by the VPN Hide app (Protection → Ports). Direct shell
-alternative:
+Managed by the VPN Hide app (Protection -> Ports). Direct shell alternative:
 
 ```
-# /data/adb/vpnhide_ports/observers.txt — one UID per line
-10451
-10422
+# Edit /data/system/vpnhide_config.json:
+# "com.example.app": { "java": false, "native": false, "appHiding": false, "ports": true }
 ```
 
 Then:

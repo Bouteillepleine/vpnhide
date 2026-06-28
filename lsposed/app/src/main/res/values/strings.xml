@@ -80,9 +80,9 @@
     <string name="badge_fail">FAIL</string>
     <string name="badge_info">INFO</string>
     <string name="banner_no_vpn">No active VPN detected. Turn on your VPN connection before running checks.</string>
-    <string name="banner_ready">VPN is active. This app is in the target list. Results below.</string>
-    <string name="banner_added_self">Added VPN Hide to the target list. Restart VPN Hide (force-stop and reopen) for native-level checks to take effect — no device reboot needed.</string>
-    <string name="banner_adding_self">Adding this app to target list&#8230;</string>
+    <string name="banner_ready">VPN is active. This app is in the protection config. Results below.</string>
+    <string name="banner_added_self">Added VPN Hide to the protection config. Restart VPN Hide (force-stop and reopen) for native-level checks to take effect — no device reboot needed.</string>
+    <string name="banner_adding_self">Adding this app to protection config&#8230;</string>
     <string name="banner_network_blocked">Network access is disabled for this app. ioctl checks (SIOCGIFFLAGS, SIOCGIFMTU, SIOCGIFCONF) cannot run without it. Enable in Settings → Apps → VPN Hide → Mobile data &amp; Wi-Fi.</string>
     <string name="section_native">Native level (kmod / zygisk)</string>
     <string name="section_java">Java API level (LSPosed)</string>
@@ -93,7 +93,7 @@
     <string name="dashboard_load_failed_message">VPN Hide could not collect the root state needed for this screen. Check your root manager if permission was interrupted, then tap Retry.</string>
     <string name="dashboard_refresh_failed_message">Refresh failed. Showing the previous dashboard data.</string>
     <string name="self_targets_error_title">Startup preparation failed</string>
-    <string name="self_targets_error_message">VPN Hide could not update its root target files. Check your root manager if permission was interrupted, then tap Retry.</string>
+    <string name="self_targets_error_message">VPN Hide could not update its root config. Check your root manager if permission was interrupted, then tap Retry.</string>
     <string name="targets_load_failed_title">Protection data unavailable</string>
     <string name="targets_load_failed_message">VPN Hide could not collect the root state needed for this tab. Check your root manager if permission was interrupted, then tap Retry.</string>
     <string name="dashboard_ports">Ports hiding module</string>
@@ -134,7 +134,7 @@
     <string name="dashboard_protection_unknown">Not checked</string>
     <string name="dashboard_protection_no_module">No module</string>
     <string name="dashboard_protection_hooks_inactive">Hooks inactive</string>
-    <string name="dashboard_needs_restart">VPN Hide was just added to its own target list. Restart VPN Hide (force-stop and reopen) to check protection — no device reboot needed.</string>
+    <string name="dashboard_needs_restart">VPN Hide was just added to its own protection config. Restart VPN Hide (force-stop and reopen) to check protection — no device reboot needed.</string>
     <string name="dashboard_no_vpn">No active VPN. Turn on VPN to check protection status.</string>
     <string name="vpn_off_prompt">No active VPN. Turn it on, then tap Retry to run the protection checks. Results are cached until VPN Hide is restarted — no need to re-run later in the same session.</string>
     <string name="vpn_off_retry">Retry</string>
@@ -152,7 +152,7 @@
     <string name="dashboard_issue_multiple_native">More than one native backend is installed. Only one can be active at a time (priority: kernel module, then KPM, then Zygisk); the others sit idle. Uninstall the ones you don\'t use to keep things clean.</string>
     <string name="dashboard_issue_debug_logging_on">Debug logging is enabled. VPN Hide is writing verbose lines to logcat that anyone with root can read. Turn it off in Diagnostics after you\'ve finished collecting a bug report.</string>
     <string name="dashboard_issue_selinux_permissive">SELinux is Permissive. Six detection vectors VPN Hide relies on the kernel to block (RTM_GETROUTE, /proc/net/{tcp,udp,dev,fib_trie}, /sys/class/net) are reachable to target apps. Run `setenforce 1` and investigate what disabled it.</string>
-    <string name="dashboard_issue_self_multi_profile">VPN Hide is installed in %1$d profiles. The main-profile copy is the one that matters — LSPosed hooks system_server, which runs in the main profile only, and the picker there already sees apps from every profile and applies filters to all of them. Extra copies in secondary profiles are redundant and race each other\'s Saves to the shared target files. Uninstall from work profile / Second Space / other secondary profiles.</string>
+    <string name="dashboard_issue_self_multi_profile">VPN Hide is installed in %1$d profiles. The main-profile copy is the one that matters — LSPosed hooks system_server, which runs in the main profile only, and the picker there already sees apps from every profile and applies filters to all of them. Extra copies in secondary profiles are redundant and race each other\'s Saves to the shared config. Uninstall from work profile / Second Space / other secondary profiles.</string>
     <string name="dashboard_issue_no_native">No native module installed. Install kmod or zygisk for full protection.</string>
     <string name="dashboard_issue_lsposed_not_installed">LSPosed/Vector is not installed. Install it and enable the VPN Hide module for System Framework.</string>
     <string name="dashboard_issue_reboot">LSPosed is configured correctly, but its hooks are not active yet. Reboot the device to activate them.</string>
@@ -255,4 +255,14 @@
     <string name="settings_haptics_sub">Vibrate on taps and toggles</string>
     <string name="settings_animations">Animations</string>
     <string name="settings_animations_sub">Springy transitions and shape morphing</string>
+    <string name="settings_security">Security</string>
+    <string name="settings_superkey_title">APatch SuperKey</string>
+    <string name="settings_superkey_saved">Saved for boot-time KPM activation.</string>
+    <string name="settings_superkey_not_saved">Not saved; APatch KPM needs in-app activation after boot.</string>
+    <string name="settings_superkey_placeholder">SuperKey</string>
+    <string name="settings_superkey_store">Store SuperKey</string>
+    <string name="settings_superkey_clear">Clear</string>
+    <string name="settings_superkey_stored">SuperKey stored.</string>
+    <string name="settings_superkey_cleared">SuperKey cleared.</string>
+    <string name="settings_superkey_failed">SuperKey update failed.</string>
 </resources>

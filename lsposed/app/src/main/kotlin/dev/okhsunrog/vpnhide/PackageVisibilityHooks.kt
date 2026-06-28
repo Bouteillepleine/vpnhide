@@ -9,7 +9,6 @@ import android.os.Process
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
-import java.io.File
 
 /**
  * Package-visibility policy — hide packages from selected callers.
@@ -35,20 +34,13 @@ import java.io.File
  * installd, LauncherApps, StatusBar, etc.
  */
 internal object PackageVisibilityHooks {
-    private const val HIDDEN_PKGS_FILE = "/data/system/vpnhide_hidden_pkgs.txt"
-    private const val OBSERVER_UIDS_FILE = "/data/system/vpnhide_observer_uids.txt"
     private const val IPM_BASE = "com.android.server.pm.IPackageManagerBase"
     private const val IPM_LEGACY = "com.android.server.pm.PackageManagerService"
     private const val PARCELED_LIST_SLICE = "android.content.pm.ParceledListSlice"
 
     @Volatile private var parceledListSliceClass: Class<*>? = null
 
-    @Volatile private var hiddenPackages: Set<String>? = null
-
-    @Volatile private var observerUids: Set<Int>? = null
-
     @Volatile private var fileObserver: FileObserver? = null
-    private val lock = Any()
 
     fun install(classLoader: ClassLoader) {
         val ipmClass =
@@ -109,69 +101,21 @@ internal object PackageVisibilityHooks {
         // LauncherApps, StatusBar, etc. all run under UID < 10000.
         if (uid < Process.FIRST_APPLICATION_UID) return null
         if (uid == Process.myUid()) return null
-        return if (loadObserverUids().contains(uid)) uid else null
+        val appId = SystemServerConfigCache.appId(uid)
+        return if (SystemServerConfigCache.load().observerAppIds.contains(appId)) uid else null
     }
 
-    private fun loadObserverUids(): Set<Int> {
-        observerUids?.let { return it }
-        synchronized(lock) {
-            observerUids?.let { return it }
-            val result = readUidFile(OBSERVER_UIDS_FILE)
-            observerUids = result
-            if (result.isNotEmpty()) {
-                HookLog.i("VpnHide/PV: loaded ${result.size} observer UIDs: $result")
-            }
-            return result
-        }
-    }
-
-    private fun loadHiddenPackages(): Set<String> {
-        hiddenPackages?.let { return it }
-        synchronized(lock) {
-            hiddenPackages?.let { return it }
-            val result = readLineFile(HIDDEN_PKGS_FILE)
-            hiddenPackages = result
-            if (result.isNotEmpty()) {
-                HookLog.i("VpnHide/PV: loaded ${result.size} hidden packages: $result")
-            }
-            return result
-        }
-    }
-
-    private fun readUidFile(path: String): Set<Int> =
-        try {
-            val f = File(path)
-            if (!f.exists()) emptySet() else parseConfigLines(f.readText()).mapNotNull { it.toIntOrNull() }.toSet()
-        } catch (t: Throwable) {
-            HookLog.e("VpnHide/PV: failed to read $path: ${t.message}")
-            emptySet()
-        }
-
-    private fun readLineFile(path: String): Set<String> =
-        try {
-            val f = File(path)
-            if (!f.exists()) emptySet() else parseConfigLines(f.readText()).toSet()
-        } catch (t: Throwable) {
-            HookLog.e("VpnHide/PV: failed to read $path: ${t.message}")
-            emptySet()
-        }
+    private fun loadHiddenPackages(): Set<String> = SystemServerConfigCache.load().hiddenPackages
 
     private fun watchConfigFiles() {
         fileObserver =
             watchSystemDataDir { path ->
-                when (path) {
-                    "vpnhide_hidden_pkgs.txt" -> {
-                        HookLog.i("VpnHide/PV: hidden_pkgs changed, invalidating")
-                        hiddenPackages = null
-                    }
-
-                    "vpnhide_observer_uids.txt" -> {
-                        HookLog.i("VpnHide/PV: observer_uids changed, invalidating")
-                        observerUids = null
-                    }
+                if (path == "vpnhide_config.json") {
+                    HookLog.i("VpnHide/PV: canonical config changed, invalidating")
+                    SystemServerConfigCache.invalidate()
                 }
             }
-        HookLog.i("VpnHide/PV: watching /data/system for config changes")
+        HookLog.i("VpnHide/PV: watching /data/system for canonical config changes")
     }
 
     // ------------------------------------------------------------------

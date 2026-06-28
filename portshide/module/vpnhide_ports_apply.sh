@@ -1,12 +1,12 @@
 #!/system/bin/sh
-# Reads /data/adb/vpnhide_ports/observers.txt (one package name per line)
-# and installs iptables REJECT rules that block each observer's UID from
-# reaching any port on 127.0.0.1 / ::1. Used for hiding locally-bound
-# VPN/proxy daemons from apps that probe via connect(127.0.0.1, PORT).
+# Reads /data/system/vpnhide_config.json and installs iptables REJECT rules
+# that block each app with `"ports": true` from reaching any port on
+# 127.0.0.1 / ::1. Used for hiding locally-bound VPN/proxy daemons from apps
+# that probe via connect(127.0.0.1, PORT).
 #
 # Package names are resolved to UIDs at apply time so reinstalls (which
 # rotate an app's UID) are picked up on the next boot or Save — a stale
-# UID never sticks. Same pattern as kmod's service.sh.
+# UID never sticks. Same pattern as native activators.
 #
 # Callable from service.sh at boot and from the VPN Hide app via su.
 # Idempotent: flushes our chain and rebuilds atomically via
@@ -17,25 +17,16 @@
 # can surface partial-apply, but the chain state is not transactional
 # across families.
 
-OBSERVERS_FILE="/data/adb/vpnhide_ports/observers.txt"
+CONFIG_FILE="/data/system/vpnhide_config.json"
+APP_PACKAGE="dev.okhsunrog.vpnhide"
 CHAIN4="vpnhide_out"
 CHAIN6="vpnhide_out6"
 
-# Wait for PackageManager so pm list packages -U works. Relevant at boot
-# (service.sh); at Save-time pm is already up, the first iteration wins.
-pm_ready=0
-for i in $(seq 1 30); do
-    if pm list packages >/dev/null 2>&1; then
-        pm_ready=1
-        break
-    fi
-    sleep 1
+# Wait without a global timeout at boot: user apps may be invisible to pm until
+# unlock, but the rules still need to apply later in the same boot.
+while ! pm list packages -U --user all 2>/dev/null | grep -q "^package:${APP_PACKAGE} "; do
+    sleep 5
 done
-
-if [ "$pm_ready" != 1 ]; then
-    log -t vpnhide_ports "pm never became ready after 30s; skipping apply"
-    exit 1
-fi
 
 # `--user all` emits comma-separated UIDs per package for apps present
 # in multiple profiles, e.g.
@@ -43,14 +34,18 @@ fi
 # so work-profile / secondary-user installs get blocked too.
 ALL_PACKAGES="$(pm list packages -U --user all 2>/dev/null)"
 
-# Read pkg names from observers.txt, resolve to UIDs, build newline-
-# separated UID list. Skip comments, blanks, unknown packages.
+# The app's canonical writer emits one app entry per line, so shell can derive
+# the ports role without a JSON parser. Unknown packages silently drop out.
+OBSERVER_PACKAGES=""
+if [ -f "$CONFIG_FILE" ]; then
+    OBSERVER_PACKAGES="$(sed -n 's/^[[:space:]]*"\([^"]*\)"[[:space:]]*:[[:space:]]*{.*"ports"[[:space:]]*:[[:space:]]*true.*}.*/\1/p' "$CONFIG_FILE" | sort -u)"
+fi
+
+# Resolve observer package names to UIDs and build a newline-separated UID list.
 UIDS=""
-if [ -f "$OBSERVERS_FILE" ]; then
-    while IFS= read -r line || [ -n "$line" ]; do
-        pkg="$(echo "$line" | tr -d '[:space:]')"
-        [ -z "$pkg" ] && continue
-        case "$pkg" in \#*) continue ;; esac
+if [ -n "$OBSERVER_PACKAGES" ]; then
+    while IFS= read -r pkg || [ -n "$pkg" ]; do
+        [ -n "$pkg" ] || continue
         # Exact match on $1 — grep would treat pkg dots as regex wildcards
         # and could mis-resolve e.g. "com.x.y" to "comXxXy" if such a package
         # existed. awk compares fields literally. `split($2, ids, ",")`
@@ -74,7 +69,9 @@ if [ -f "$OBSERVERS_FILE" ]; then
             if [ -z "$UIDS" ]; then UIDS="$uid"; else UIDS="${UIDS}
 ${uid}"; fi
         done
-    done < "$OBSERVERS_FILE"
+    done <<EOF
+$OBSERVER_PACKAGES
+EOF
 fi
 
 # Build an iptables-restore ruleset for a given chain + loopback destination.
@@ -84,7 +81,7 @@ fi
 # TODO(per-port ranges): today every observer UID is blocked from ALL localhost
 # ports (coarse, breaks apps that legitimately use 127.0.0.1 — Chromium dev/PWA).
 # iptables can scope this per app via `-m multiport --dports <range>` (or repeated
-# `--dport`), so observers.txt should grow optional per-UID port-range rules
+# `--dport`), so canonical JSON should grow optional per-app port-range rules
 # (start-end, tcp/udp) and this builder should emit a `--dports` match instead of
 # the blanket loopback REJECT. Keeps the backend-independent netfilter approach
 # (no kernel connect-hook); see the vpnhide_next fork's per-app PortRules for the

@@ -5,6 +5,7 @@ members = [
     "crates/protocol",
     "zygisk",
 ]
+exclude = ["lsposed/native"]
 
 [workspace.package]
 edition = "2024"

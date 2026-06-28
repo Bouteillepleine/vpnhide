@@ -3,15 +3,13 @@ package dev.okhsunrog.vpnhide
 import android.os.FileObserver
 import android.util.Log
 import de.robv.android.xposed.XposedBridge
-import java.io.File
 
 /**
  * Log wrapper gated by a filesystem flag set from the app. Used by LSPosed
  * hooks running inside `system_server`, where we don't have access to the
  * app's SharedPreferences.
  *
- * Source of truth is [SS_DEBUG_LOGGING_FILE] — the app rewrites it when
- * the user toggles the setting. We read it on [install] and via an
+ * Source of truth is the canonical JSON config. We read it on [install] and via an
  * inotify watcher so a flip takes effect without restarting system_server.
  *
  * The logcat sink makes Diagnostics → Debug logging visible through ordinary
@@ -32,22 +30,19 @@ internal object HookLog {
     fun install() {
         reload()
         if (watcher != null) return
-        // MODIFY is enabled here (unlike the UID / hidden-pkg watchers): this
-        // flag is a single byte, so a transient mid-write read is harmless and
-        // we'd rather react to an in-place `echo > file` immediately.
+        // MODIFY covers manual in-place edits; MOVED_TO/CLOSE_WRITE from
+        // watchSystemDataDir cover the app's atomic JSON replacement.
         watcher =
             watchSystemDataDir(extraEvents = FileObserver.MODIFY) { path ->
-                if (path == "vpnhide_debug_logging") reload()
+                if (path == "vpnhide_config.json") {
+                    SystemServerConfigCache.invalidate()
+                    reload()
+                }
             }
     }
 
     private fun reload() {
-        enabled =
-            try {
-                File(SS_DEBUG_LOGGING_FILE).readText().trim() == "1"
-            } catch (_: Throwable) {
-                false
-            }
+        enabled = SystemServerConfigCache.load().debug
     }
 
     fun i(msg: String) {

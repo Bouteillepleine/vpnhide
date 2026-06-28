@@ -3,25 +3,18 @@ package dev.okhsunrog.vpnhide
 import android.content.Context
 
 /**
- * Persisted "debug logging" preference and its propagation. Debug is now folded
- * into the control-config wire (`debug` line, docs/protocol.md §4.3), so the
- * kmod and Zygisk learn it from their config snapshot rather than from a private
- * debug node/file (those are gone). The sinks are:
+ * Persisted "debug logging" preference and its propagation. Debug is stored in
+ * the canonical JSON and folded into the native control-config wire by the
+ * activator, so every backend observes one source of truth. The sinks are:
  *
  *  - App Kotlin code → [VpnHideLog.enabled] (volatile).
- *  - system_server LSPosed hooks → [SS_DEBUG_LOGGING_FILE], the single canonical
- *    persistent flag. The hook ([HookLog]) inotify-watches it (a flip takes
- *    effect immediately for already-running apps), and the boot scripts read it
- *    as the source for the `debug` line they emit into each backend's config.
- *  - kmod (`/proc/vpnhide_ctl`) + Zygisk (module-dir config) → re-emitted via
- *    [ConfigChannels.reconcileCommand] with the new flag, so a running native
- *    backend picks it up without a Save (Zygisk takes effect on the target
- *    app's next restart, as targets always have).
+ *  - system_server LSPosed hooks → `/data/system/vpnhide_config.json`, watched
+ *    by [HookLog].
+ *  - native backends → [ConfigChannels.reconcileCommand], which runs the
+ *    installed activator after the JSON update.
  */
 private const val PREFS_NAME = "vpnhide_prefs"
 private const val KEY_DEBUG_LOGGING = "debug_logging"
-
-internal const val SS_DEBUG_LOGGING_FILE = "/data/system/vpnhide_debug_logging"
 
 /** Default is OFF — stealth-first matches the project's anti-detection stance. */
 internal fun isEnabledInPrefs(context: Context): Boolean =
@@ -62,24 +55,15 @@ internal fun applyDebugLoggingRuntime(enabled: Boolean) {
 }
 
 private fun writeDebugFlagFiles(enabled: Boolean) {
-    val value = if (enabled) "1" else "0"
     val parts = mutableListOf<String>()
 
-    // The single canonical persistent flag: /data/system, labelled
-    // system_data_file so system_server (and nothing else) can read it. The
-    // LSPosed hook watches it directly; the boot scripts read it as the source
-    // for each config's `debug` line. `chcon || true` so devices without chcon
-    // still land on a working file at the kernel-default label.
-    parts += "echo '$value' > $SS_DEBUG_LOGGING_FILE"
-    parts += "chmod 644 $SS_DEBUG_LOGGING_FILE 2>/dev/null"
-    parts += "chcon u:object_r:system_data_file:s0 $SS_DEBUG_LOGGING_FILE 2>/dev/null || true"
-
-    // Re-emit the runtime config with the new flag so a running kmod/Zygisk
-    // backend picks it up (debug is folded into the config, §4.3). Needs the
-    // current targets; if the snapshot isn't loaded yet, the flag file alone is
-    // written and the next reconcile/Save carries the flag into the channels.
+    // Re-emit the runtime config with the new flag so a running native backend
+    // picks it up. Needs the current targets; if the snapshot isn't loaded yet,
+    // the next startup reconcile or Save carries the flag into the channels.
     TargetsCache.snapshot.value?.let { snap ->
-        parts += ConfigChannels.reconcileCommand(snap, enabled)
+        val canonical = buildCanonicalConfigFromTargetsSnapshot(snap, debug = enabled)
+        parts += buildCanonicalConfigWriteCommand(canonical)
+        parts += ConfigChannels.reconcileCommand()
     }
     parts += "true"
 

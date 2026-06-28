@@ -75,7 +75,7 @@ DEFAULT_KMI = "android14-6.1"
 
 
 def stage_kmod_activator(repo_root: Path, staging: Path) -> None:
-    """Copy the kmod activator into the module zip when a binary is available."""
+    """Copy the kmod activator into the module zip."""
     env_path = os.environ.get("VPNHIDE_KMOD_ACTIVATOR")
     candidates = []
     if env_path:
@@ -84,10 +84,7 @@ def stage_kmod_activator(repo_root: Path, staging: Path) -> None:
 
     activator = next((p for p in candidates if p.is_file()), None)
     if activator is None:
-        activator = build_activator_bin(repo_root, "kmod", required=False)
-    if activator is None:
-        print("warning: kmod activator binary not staged")
-        return
+        activator = build_activator_bin(repo_root, "kmod")
 
     shutil.copy(activator, staging / "activator")
     (staging / "activator").chmod(0o755)
@@ -278,6 +275,7 @@ def run_container_mode(args: argparse.Namespace, repo_root: Path) -> int:
         return 2
 
     kmis = _select_kmis(args)
+    build_activator_bin(repo_root, "kmod")
     runtime, is_podman = find_runtime()
     print(f"Using {'podman' if is_podman else 'docker'} at {runtime}")
     for kmi in kmis:

@@ -30,6 +30,7 @@ internal val REQUIRED_ROOT_SNAPSHOT_SECTIONS =
         "kmod_module_dir",
         "zygisk_module_dir",
         "kpm_module_dir",
+        "canonical_config",
         "kmod_targets",
         "zygisk_targets",
         "kpm_targets",
@@ -204,6 +205,7 @@ internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): S
     }
     phase_target_files() {
       phase_start target_files
+      emit_file canonical_config $CANONICAL_CONFIG_FILE
       emit_file kmod_targets $KMOD_TARGETS
       emit_file zygisk_targets $ZYGISK_TARGETS
       emit_file kpm_targets $KPM_TARGETS

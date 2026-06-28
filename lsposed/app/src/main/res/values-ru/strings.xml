@@ -58,7 +58,7 @@
     <string name="dashboard_load_failed_message">VPN Hide не смог собрать root-состояние для этого экрана. Проверьте менеджер root, если разрешение было прервано, затем нажмите «Повторить».</string>
     <string name="dashboard_refresh_failed_message">Обновление не удалось. Показываются предыдущие данные обзора.</string>
     <string name="self_targets_error_title">Подготовка запуска не удалась</string>
-    <string name="self_targets_error_message">VPN Hide не смог обновить root-файлы целей. Проверьте менеджер root, если разрешение было прервано, затем нажмите «Повторить».</string>
+    <string name="self_targets_error_message">VPN Hide не смог обновить root-конфиг. Проверьте менеджер root, если разрешение было прервано, затем нажмите «Повторить».</string>
     <string name="targets_load_failed_title">Данные защиты недоступны</string>
     <string name="targets_load_failed_message">VPN Hide не смог собрать root-состояние для этой вкладки. Проверьте менеджер root, если разрешение было прервано, затем нажмите «Повторить».</string>
     <string name="dashboard_ports">Модуль скрытия портов</string>
@@ -99,7 +99,7 @@
     <string name="dashboard_protection_unknown">Не проверено</string>
     <string name="dashboard_protection_no_module">Нет модуля</string>
     <string name="dashboard_protection_hooks_inactive">Хуки неактивны</string>
-    <string name="dashboard_needs_restart">VPN Hide только что добавил себя в список целей. Перезапустите VPN Hide (force-stop и откройте заново) для проверки защиты — перезагрузка устройства не нужна.</string>
+    <string name="dashboard_needs_restart">VPN Hide только что добавил себя в конфиг защиты. Перезапустите VPN Hide (force-stop и откройте заново) для проверки защиты — перезагрузка устройства не нужна.</string>
     <string name="dashboard_no_vpn">VPN не активен. Включите VPN для проверки защиты.</string>
     <string name="vpn_off_prompt">VPN не активен. Включите его и нажмите «Повторить», чтобы запустить проверку защиты. Результаты кэшируются до перезапуска VPN Hide — повторно гонять в рамках сессии не нужно.</string>
     <string name="vpn_off_retry">Повторить</string>
@@ -117,7 +117,7 @@
     <string name="dashboard_issue_multiple_native">Установлено больше одного нативного бэкенда. Активным может быть только один (приоритет: модуль ядра, затем KPM, затем Zygisk), остальные простаивают. Удалите неиспользуемые, чтобы не захламлять систему.</string>
     <string name="dashboard_issue_debug_logging_on">Отладочные логи включены. VPN Hide пишет подробные строки в logcat, которые может прочитать любой с root-доступом. Выключите переключатель в Диагностике после сбора багрепорта.</string>
     <string name="dashboard_issue_selinux_permissive">SELinux в режиме Permissive. Шесть векторов детекции, которые VPN Hide рассчитывает на блокировку ядром (RTM_GETROUTE, /proc/net/{tcp,udp,dev,fib_trie}, /sys/class/net), стали доступны целевым приложениям. Выполните `setenforce 1` и разберитесь, что его переключило.</string>
-    <string name="dashboard_issue_self_multi_profile">VPN Hide установлен в %1$d профилях. Значимая копия — в основном профиле: LSPosed хукает system_server, а он запущен только в основном профиле; picker там уже видит приложения из всех профилей и применяет фильтры ко всем. Копии в дополнительных профилях избыточны и конкурируют за Save в общие файлы целей. Удалите VPN Hide из рабочего профиля / Second Space / других дополнительных профилей.</string>
+    <string name="dashboard_issue_self_multi_profile">VPN Hide установлен в %1$d профилях. Значимая копия — в основном профиле: LSPosed хукает system_server, а он запущен только в основном профиле; picker там уже видит приложения из всех профилей и применяет фильтры ко всем. Копии в дополнительных профилях избыточны и конкурируют за Save в общий конфиг. Удалите VPN Hide из рабочего профиля / Second Space / других дополнительных профилей.</string>
     <string name="dashboard_issue_no_native">Нативный модуль не установлен. Установите kmod или zygisk для полной защиты.</string>
     <string name="dashboard_issue_lsposed_not_installed">LSPosed/Vector не установлен. Установите его и включите модуль VPN Hide для System Framework.</string>
     <string name="dashboard_issue_reboot">LSPosed настроен правильно, но его хуки ещё не активны. Перезагрузите устройство, чтобы активировать их.</string>
@@ -212,4 +212,14 @@
     <string name="settings_haptics_sub">Вибрация при нажатиях и переключениях</string>
     <string name="settings_animations">Анимации</string>
     <string name="settings_animations_sub">Пружинные переходы и морфинг форм</string>
+    <string name="settings_security">Безопасность</string>
+    <string name="settings_superkey_title">APatch SuperKey</string>
+    <string name="settings_superkey_saved">Сохранён для активации KPM при загрузке.</string>
+    <string name="settings_superkey_not_saved">Не сохранён; APatch KPM нужно активировать из приложения после загрузки.</string>
+    <string name="settings_superkey_placeholder">SuperKey</string>
+    <string name="settings_superkey_store">Сохранить SuperKey</string>
+    <string name="settings_superkey_clear">Очистить</string>
+    <string name="settings_superkey_stored">SuperKey сохранён.</string>
+    <string name="settings_superkey_cleared">SuperKey удалён.</string>
+    <string name="settings_superkey_failed">Не удалось обновить SuperKey.</string>
 </resources>

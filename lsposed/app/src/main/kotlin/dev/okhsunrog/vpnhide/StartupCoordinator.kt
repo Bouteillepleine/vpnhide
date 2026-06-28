@@ -33,10 +33,9 @@ internal class StartupCoordinator(
     private val _selfTargetState = MutableStateFlow<StartupSelfTargetState>(StartupSelfTargetState.Preparing)
     val selfTargetState: StateFlow<StartupSelfTargetState> = _selfTargetState.asStateFlow()
 
-    // The runtime channels carry a `vpnhide 1 config` snapshot that can't be
-    // appended to, so they're (re-)written wholesale from the persistent target
-    // lists once the root snapshot is available — once per session is enough
-    // (Save / the debug toggle re-emit on their own afterwards).
+    // The runtime channels carry a `vpnhide 1 config` snapshot derived by the
+    // activator from canonical JSON. A once-per-session reconcile is enough
+    // (Save / the debug toggle re-run the activator on their own afterwards).
     private val reconcileStarted =
         java.util.concurrent.atomic
             .AtomicBoolean(false)

@@ -182,7 +182,45 @@ jobs:
         # and is reserved for ad-hoc local runs / future tag CI.
         run: cd lsposed && ./gradlew :app:detekt cpdCheck :app:lintDebug :app:testDebugUnitTest
 
+  kmod-activator:
+    needs: setup
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Mark workspace safe
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
+            target
+          key: cargo-${{ runner.os }}-kmod-activator-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-kmod-activator-
+
+      - name: Build kmod activator
+        run: cargo ndk -t arm64-v8a build --release -p vpnhide_activator --bin kmod
+
+      - name: Upload kmod activator
+        uses: actions/upload-artifact@v7
+        with:
+          name: kmod-activator
+          path: target/aarch64-linux-android/release/kmod
+          if-no-files-found: error
+
   kmod:
+    needs: kmod-activator
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -209,7 +247,15 @@ jobs:
       - name: Mark workspace safe
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      - name: Download kmod activator
+        uses: actions/download-artifact@v7
+        with:
+          name: kmod-activator
+          path: .artifacts/kmod-activator
+
       - name: Build and package kernel module
+        env:
+          VPNHIDE_KMOD_ACTIVATOR: ${{ github.workspace }}/.artifacts/kmod-activator/kmod
         run: python3 kmod/build.py --kmi $KMI --inside-container
 
       - name: Upload artifact

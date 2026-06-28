@@ -1020,7 +1020,7 @@ private suspend fun exportDebugZip(
                     "diagnostics.txt" to buildDiagnosticsText(checkResults),
                     "device_info.txt" to buildDeviceInfoText(context, selfNeedsRestart),
                     "modules.txt" to buildModuleInfoText(),
-                    "targets.txt" to buildTargetsText(),
+                    "config.txt" to buildTargetsText(),
                     "interfaces.txt" to buildInterfacesText(),
                     "proc_net.txt" to buildProcNetText(),
                     "logcat.txt" to captureDebugLogcat().ifEmpty { "(no logcat entries)" },
@@ -1173,14 +1173,8 @@ private fun buildTargetsText(): String =
         appendLine("=== /proc/vpnhide_ctl (live status + stats) ===")
         appendLine(suExec("cat $PROC_CTL 2>/dev/null").second.ifEmpty { "(empty)" })
         appendLine()
-        appendLine("=== kmod targets ===")
-        appendLine(suExec("cat $KMOD_TARGETS 2>/dev/null").second.ifEmpty { "(empty)" })
-        appendLine()
-        appendLine("=== zygisk targets ===")
-        appendLine(suExec("cat $ZYGISK_TARGETS 2>/dev/null").second.ifEmpty { "(empty)" })
-        appendLine()
-        appendLine("=== lsposed targets ===")
-        appendLine(suExec("cat $LSPOSED_TARGETS 2>/dev/null").second.ifEmpty { "(empty)" })
+        appendLine("=== canonical config ===")
+        appendLine(suExec("cat $CANONICAL_CONFIG_FILE 2>/dev/null").second.ifEmpty { "(empty)" })
     }
 
 private fun buildInterfacesText(): String =

@@ -40,4 +40,46 @@ class TargetsCacheTest {
         assertEquals(setOf("com.observer"), targets.observerNames)
         assertEquals(setOf("com.browser"), targets.portsObservers)
     }
+
+    @Test
+    fun `targets snapshot prefers canonical config over legacy files`() {
+        val rootSnapshot =
+            RootSnapshot(
+                sections =
+                    mapOf(
+                        "kmod_module_dir" to "1",
+                        "zygisk_module_dir" to "1",
+                        "kpm_module_dir" to "0",
+                        "ports_prop" to "version=1.2.3",
+                        "canonical_config" to
+                            """
+                            {
+                              "version": 1,
+                              "apps": {
+                                "com.java": { "java": true },
+                                "com.native": { "native": true },
+                                "com.observer": { "appHiding": true },
+                                "com.ports": { "ports": true },
+                                "com.hidden": { "hidden": true }
+                              }
+                            }
+                            """.trimIndent(),
+                        "kmod_targets" to "legacy.native\n",
+                        "zygisk_targets" to "",
+                        "lsposed_targets" to "legacy.java\n",
+                        "hidden_pkgs" to "legacy.hidden\n",
+                        "observer_uids" to "19999\n",
+                        "ports_observers" to "legacy.ports\n",
+                        "pm_packages" to "package:com.observer uid:10123,1010123\n",
+                    ),
+            )
+
+        val targets = parseTargetsSnapshot(rootSnapshot)
+
+        assertEquals(setOf("com.java"), targets.lsposedTargets)
+        assertEquals(setOf("com.native"), targets.nativeTargets)
+        assertEquals(setOf("com.hidden"), targets.hiddenPkgs)
+        assertEquals(setOf(10123, 1010123), targets.observerUids)
+        assertEquals(setOf("com.ports"), targets.portsObservers)
+    }
 }

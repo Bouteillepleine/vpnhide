@@ -1,10 +1,13 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
+use std::io::ErrorKind;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
 use serde::Deserialize;
 use vpnhide_protocol::Target;
@@ -15,10 +18,14 @@ pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 pub const CANONICAL_CONFIG: &str = "/data/system/vpnhide_config.json";
 pub const KMOD_CTL: &str = "/proc/vpnhide_ctl";
+pub const KMOD_MODULE_DIR: &str = "/data/adb/modules/vpnhide_kmod";
 pub const ZYGISK_RUNTIME_CONFIG: &str = "/data/adb/modules/vpnhide_zygisk/targets.txt";
 pub const KPM_MODULE_FILE: &str = "/data/adb/modules/vpnhide_kpm/vpnhide.kpm";
 pub const SUPERKEY_FILE: &str = "/data/adb/vpnhide/superkey";
+const APP_PACKAGE: &str = "dev.okhsunrog.vpnhide";
 const KPM_NAME: &str = "vpnhide";
+const MAX_NATIVE_TARGETS: usize = 64;
+const PM_READY_ATTEMPTS: u32 = 60;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -98,13 +105,8 @@ pub struct PackageUidMap {
 
 impl PackageUidMap {
     pub fn from_pm() -> Result<Self> {
-        let out = Command::new("pm")
-            .args(["list", "packages", "-U", "--user", "all"])
-            .output()?;
-        if !out.status.success() {
-            return Err(format!("pm list packages failed with status {}", out.status).into());
-        }
-        let stdout = String::from_utf8(out.stdout)?;
+        wait_for_pm_ready()?;
+        let stdout = pm_list_packages(&["list", "packages", "-U", "--user", "all"])?;
         Ok(parse_pm_packages(&stdout))
     }
 
@@ -149,6 +151,9 @@ pub fn parse_canonical(json: &str) -> Result<CanonicalConfig> {
 
 pub fn project_native(json: &str) -> Result<String> {
     let cfg = parse_canonical(json)?;
+    if !has_native_targets(&cfg) {
+        return Ok(format_config(cfg.debug, &[]));
+    }
     let resolver = PackageUidMap::from_pm()?;
     Ok(project_native_with_resolver(&cfg, &resolver))
 }
@@ -168,17 +173,24 @@ pub fn project_native_with_resolver(cfg: &CanonicalConfig, resolver: &PackageUid
     }
     let targets = by_uid
         .into_iter()
+        .take(MAX_NATIVE_TARGETS)
         .map(|(uid, hookmask)| Target { uid, hookmask })
         .collect::<Vec<_>>();
     format_config(cfg.debug, &targets)
 }
 
 pub fn read_canonical() -> Result<String> {
-    Ok(fs::read_to_string(CANONICAL_CONFIG)?)
+    match fs::read_to_string(CANONICAL_CONFIG) {
+        Ok(raw) => Ok(raw),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(empty_canonical_json().to_owned()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 pub fn activate_kmod() -> Result<()> {
     let wire = project_native(&read_canonical()?)?;
+    // /proc/vpnhide_ctl replaces the entire config per write(), so keep this
+    // bounded to MAX_NATIVE_TARGETS and deliver one complete snapshot.
     fs::write(KMOD_CTL, wire)?;
     Ok(())
 }
@@ -189,11 +201,57 @@ pub fn activate_zygisk() -> Result<()> {
 }
 
 pub fn activate_kpm() -> Result<()> {
+    if kmod_backend_present() {
+        return Err("kmod backend present; refusing to load/configure KPM".into());
+    }
     let wire = project_native(&read_canonical()?)?;
     let kpatch = find_kpatch().ok_or("kpatch CLI not found")?;
     let key = read_superkey().ok();
     ensure_kpm_loaded(&kpatch, key.as_deref())?;
     run_kpm_ctl0(&kpatch, key.as_deref(), &wire)
+}
+
+fn has_native_targets(cfg: &CanonicalConfig) -> bool {
+    cfg.apps.values().any(|app| app.native.hookmask().is_some())
+}
+
+fn empty_canonical_json() -> &'static str {
+    "{\"version\":1,\"debug\":false,\"apps\":{},\"settings\":{\"rememberSuperkey\":false}}\n"
+}
+
+fn wait_for_pm_ready() -> Result<()> {
+    for attempt in 0..PM_READY_ATTEMPTS {
+        if let Ok(stdout) = pm_list_packages(&["list", "packages", "-U"])
+            && pm_output_has_package(&stdout, APP_PACKAGE)
+        {
+            return Ok(());
+        }
+        if attempt + 1 != PM_READY_ATTEMPTS {
+            thread::sleep(Duration::from_secs(1));
+        }
+    }
+    Err(format!("PackageManager did not expose {APP_PACKAGE} within {PM_READY_ATTEMPTS}s").into())
+}
+
+fn pm_list_packages(args: &[&str]) -> Result<String> {
+    let out = Command::new("pm").args(args).output()?;
+    if !out.status.success() {
+        return Err(format!("pm list packages failed with status {}", out.status).into());
+    }
+    Ok(String::from_utf8(out.stdout)?)
+}
+
+fn pm_output_has_package(output: &str, package: &str) -> bool {
+    let expected = format!("package:{package}");
+    output
+        .lines()
+        .any(|line| line.split_whitespace().next() == Some(expected.as_str()))
+}
+
+fn kmod_backend_present() -> bool {
+    Path::new(KMOD_CTL).exists()
+        || (Path::new(KMOD_MODULE_DIR).is_dir()
+            && !Path::new(KMOD_MODULE_DIR).join("disable").exists())
 }
 
 pub fn write_atomic(path: &Path, content: &[u8], mode: u32) -> Result<()> {
@@ -333,6 +391,79 @@ mod tests {
              target 0x278b 0x3ff\n\
              target 0x27fa 0x40\n\
              target 0xf69cb 0x3ff\n",
+        );
+    }
+
+    #[test]
+    fn parses_shared_storage_fixture() {
+        let cfg =
+            parse_canonical(include_str!("../../../testdata/storage_config_v1.json")).unwrap();
+
+        assert!(cfg.debug);
+        assert!(cfg.settings.remember_superkey);
+        assert_eq!(
+            cfg.apps.get("com.example.bank").unwrap().native,
+            NativeSelection::Enabled(true),
+        );
+        assert_eq!(
+            cfg.apps.get("org.example.proxy").unwrap().native,
+            NativeSelection::Hooks(vec![
+                "fib_route_seq_show".to_owned(),
+                "sock_ioctl".to_owned()
+            ]),
+        );
+    }
+
+    #[test]
+    fn absent_canonical_projects_to_empty_config_without_pm() {
+        assert_eq!(
+            project_native(empty_canonical_json()).unwrap(),
+            "vpnhide 1 config\ndebug 0\n",
+        );
+    }
+
+    #[test]
+    fn pm_ready_check_matches_literal_package_token() {
+        assert!(pm_output_has_package(
+            "package:dev.okhsunrog.vpnhide uid:10123\n",
+            APP_PACKAGE,
+        ));
+        assert!(!pm_output_has_package(
+            "package:dev.okhsunrog.vpnhide.extra uid:10123\n",
+            APP_PACKAGE,
+        ));
+    }
+
+    #[test]
+    fn projection_is_bounded_to_backend_target_capacity() {
+        let apps = (0..70)
+            .map(|i| {
+                (
+                    format!("com.example.{i:02}"),
+                    AppConfig {
+                        native: NativeSelection::Enabled(true),
+                        ..AppConfig::default()
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let cfg = CanonicalConfig {
+            version: 1,
+            debug: false,
+            apps,
+            settings: Settings::default(),
+        };
+        let pm = (0..70)
+            .map(|i| format!("package:com.example.{i:02} uid:{}", 10_000 + i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let wire = project_native_with_resolver(&cfg, &parse_pm_packages(&pm));
+
+        assert_eq!(
+            wire.lines()
+                .filter(|line| line.starts_with("target "))
+                .count(),
+            64
         );
     }
 }

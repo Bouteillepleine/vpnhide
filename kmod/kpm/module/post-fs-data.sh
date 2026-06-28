@@ -7,8 +7,9 @@
 #
 # Runtime split (protocol §7.4):
 #   - KPatch-Next (Magisk / KSU), keyless (d05): load here, fully automatic.
-#   - APatch, superkey-required (c02): a boot script has NO superkey, so it
-#     cannot load — it records `awaiting_superkey` and the app does the load.
+#   - APatch, superkey-required (c02): post-fs-data has no superkey, so it
+#     records `awaiting_superkey`; service.sh can load later if the app saved
+#     /data/adb/vpnhide/superkey.
 #
 # Single-active guard (protocol §1.5): if the .ko backend is installed, do NOT
 # load the KPM. They wrap the same kernel functions and co-residence freezes
