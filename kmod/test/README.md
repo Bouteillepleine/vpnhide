@@ -20,6 +20,8 @@ Per kernel version, the harness validates:
 - all hooks **register**,
 - each detection vector is actually **filtered** for a target UID (A/B: a
   non-target sees the fabricated `vpn0`, a target does not),
+- non-VPN entries such as `eth0`, the main policy rule, and bionic
+  `getifaddrs()` non-vpn rows remain visible to the target UID,
 - **no kernel panic** across the whole hook set.
 
 Vectors exercised (`init.sh`):
@@ -27,7 +29,9 @@ Vectors exercised (`init.sh`):
 | Vector | Trigger | Hook |
 |---|---|---|
 | getifaddrs | `ip addr show` | `rtnl_fill_ifinfo` + `inet*_fill_ifaddr` |
+| bionic getifaddrs | `/gai` static NDK probe | `rtnl_fill_ifinfo` + `inet*_fill_ifaddr` |
 | SIOCGIFCONF | `ifconfig -a` | `sock_ioctl` |
+| dev ioctl by name | `ifconfig vpn0` | `dev_ioctl` |
 | /proc/net/route | `cat /proc/net/route` | `fib_route_seq_show` |
 | /proc/net/ipv6_route | `cat /proc/net/ipv6_route` | `ipv6_route_seq_show` |
 | netlink route dump v4 | `ip route show table all` | `fib_dump_info` |
@@ -55,7 +59,9 @@ kmod/test/run.sh android12-5.10
 `run.sh` exits 0 only if every vector passes and there was no panic. Artifacts
 (kernels, modules, the Alpine rootfs) are cached under `.cache/` (gitignored).
 `run.sh` honors `VPNHIDE_QEMU_IMAGE` / `VPNHIDE_QEMU_ROOTFS` / `VPNHIDE_QEMU_KO`
-to use prebuilt artifacts (CI) instead of the local cache.
+to use prebuilt artifacts (CI) instead of the local cache. It also honors
+`VPNHIDE_GAI_BIN` for a prebuilt static bionic `getifaddrs()` probe and
+`VPNHIDE_GAI_REQUIRED=1` to fail instead of silently skipping that native probe.
 
 Requirements: `docker` (for build-kernel.sh), `qemu-system-aarch64`, `cpio`,
 `curl`.

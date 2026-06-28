@@ -74,7 +74,8 @@ static uint32_t installed_hooks;
 static uint32_t last_error;
 
 /* kernel functions resolved at init via kallsyms */
-static void *(*_proc_create_data)(const char *, uint16_t, void *, void *, void *);
+static void *(*_proc_create_data)(const char *, uint16_t, void *, void *,
+				  void *);
 static void (*_remove_proc_entry)(const char *, void *);
 static int (*_single_open)(void *, void *, void *);
 static int (*_single_release)(void *, void *);
@@ -84,8 +85,11 @@ static unsigned long (*_copy_from_user)(void *, const void *, unsigned long);
 static unsigned long (*_copy_to_user)(void *, const void *, unsigned long);
 static void (*_skb_trim)(void *, unsigned int);
 
-#define vpnhide_dbg(fmt, ...) \
-	do { if (debug_enabled) logki(MODNAME ": " fmt, ##__VA_ARGS__); } while (0)
+#define vpnhide_dbg(fmt, ...)                                   \
+	do {                                                    \
+		if (debug_enabled)                              \
+			logki(MODNAME ": " fmt, ##__VA_ARGS__); \
+	} while (0)
 
 /* ------------------------------------------------------------------ */
 /*  Core helpers                                                      */
@@ -298,7 +302,7 @@ static void dev_ioctl_after(hook_fargs5_t *fargs, void *udata)
 
 static void filter_ifconf(void *uifc)
 {
-	char ifc[16];   /* struct ifconf snapshot: len@0 (int), req@8 (ptr) */
+	char ifc[16]; /* struct ifconf snapshot: len@0 (int), req@8 (ptr) */
 	char e[VPNHIDE_IFREQ_SZ];
 	char *req;
 	int len, n, i, dst = 0;
@@ -329,7 +333,8 @@ static void filter_ifconf(void *uifc)
 	if (dst != n) {
 		int newlen = dst * VPNHIDE_IFREQ_SZ;
 
-		_copy_to_user(uifc, &newlen, sizeof(newlen)); /* shrink ifc_len */
+		_copy_to_user(uifc, &newlen,
+			      sizeof(newlen)); /* shrink ifc_len */
 		vpnhide_dbg("sock_ioctl: ifconf %d -> %d\n", len, newlen);
 	}
 }
@@ -582,8 +587,9 @@ static void fib_rule_before(hook_fargs8_t *fargs, void *udata)
 	if (filter) {
 		fargs->local.data0 = 1;
 		fargs->local.data1 = (uint64_t)skb;
-		fargs->local.data2 = (uint64_t) *
-				     (unsigned int *)((char *)skb + off->skb_len);
+		fargs->local.data2 =
+			(uint64_t) *
+			(unsigned int *)((char *)skb + off->skb_len);
 	}
 }
 
@@ -720,11 +726,13 @@ static int resolve_symbols(void)
 	 * symbol only if the wrapper is absent. */
 	_copy_from_user = (void *)kallsyms_lookup_name("_copy_from_user");
 	if (!_copy_from_user)
-		_copy_from_user = (void *)kallsyms_lookup_name("__arch_copy_from_user");
+		_copy_from_user =
+			(void *)kallsyms_lookup_name("__arch_copy_from_user");
 
 	_copy_to_user = (void *)kallsyms_lookup_name("_copy_to_user");
 	if (!_copy_to_user)
-		_copy_to_user = (void *)kallsyms_lookup_name("__arch_copy_to_user");
+		_copy_to_user =
+			(void *)kallsyms_lookup_name("__arch_copy_to_user");
 
 	_skb_trim = (void *)kallsyms_lookup_name("__skb_trim");
 	if (!_skb_trim)
@@ -790,7 +798,8 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 	 * the same way as VPNHIDE_KVER. NULL table = unsupported → bail. */
 	off = vpnhide_select_offsets((unsigned int)kver);
 	if (!off) {
-		logki(MODNAME ": unsupported kernel version — refusing to install\n");
+		logki(MODNAME
+		      ": unsupported kernel version — refusing to install\n");
 		return -1; /* never guess offsets */
 	}
 	if (resolve_symbols() != 0) {
@@ -837,10 +846,12 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 			     VPNHIDE_HOOK_INET6_FILL_IFADDR);
 	if (off->fib_dump_fi_arg)
 		install_hook("fib_dump_info", 11, (void *)fib_dump_before,
-			     (void *)fib_dump_after, VPNHIDE_HOOK_FIB_DUMP_INFO);
+			     (void *)fib_dump_after,
+			     VPNHIDE_HOOK_FIB_DUMP_INFO);
 	if (off->fib6_info_fib6_nh || off->rt6_via_dst)
 		install_hook("rt6_fill_node", 11, (void *)rt6_fill_before,
-			     (void *)rt6_fill_after, VPNHIDE_HOOK_RT6_FILL_NODE);
+			     (void *)rt6_fill_after,
+			     VPNHIDE_HOOK_RT6_FILL_NODE);
 	if (off->fib_rule_table)
 		install_hook("fib_nl_fill_rule", 7, (void *)fib_rule_before,
 			     (void *)fib_rule_after,
@@ -867,7 +878,7 @@ static long vpnhide_kpm_init(const char *args, const char *event,
  * Runtime control/stats channel (protocol §7.1). KernelPatch forwards `args`
  * in and `out_msg` (copy_to_user) out; the `long` return is a short code only,
  * never surfaced as text. Dispatch on the header `kind`:
- *   config → apply the snapshot (per-hook masks + debug), return target count.
+ *   config → apply the snapshot (per-hook masks + debug), return 0.
  *   stats  → serialise counters into out_msg.   (counters: TODO, see below)
  *   status → serialise backend health into out_msg.
  */
@@ -894,7 +905,7 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 		debug_enabled = dbg ? true : false;
 		vpnhide_dbg("ctl0 config: %d targets, debug=%d active=0x%x\n",
 			    n, dbg, active_hook_mask);
-		return n;
+		return 0;
 	}
 
 	if (kind == VPNHIDE_KIND_STATS || kind == VPNHIDE_KIND_STATUS) {
@@ -920,8 +931,8 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 			full = vpnhide_format_status(buf, sizeof(buf), &st);
 		}
 
-		n = vpnhide_clamp_to_line(buf, full,
-					  outlen > 0 ? (unsigned long)outlen : 0);
+		n = vpnhide_clamp_to_line(
+			buf, full, outlen > 0 ? (unsigned long)outlen : 0);
 		if (_copy_to_user && out_msg && n)
 			_copy_to_user(out_msg, buf, n);
 		return (long)n;

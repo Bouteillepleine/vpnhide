@@ -60,23 +60,35 @@ class NativeBackendTest {
     // ── classifyMultiNative ──────────────────────────────────────────────
 
     @Test
-    fun `zero or one native installed is not an issue`() {
+    fun `zero or one native active is not an issue`() {
         assertEquals(MultiNativeSeverity.None, classifyMultiNative(false, false, false))
         assertEquals(MultiNativeSeverity.None, classifyMultiNative(true, false, false))
         assertEquals(MultiNativeSeverity.None, classifyMultiNative(false, true, false))
     }
 
     @Test
-    fun `ko plus kpm is an error (freeze pair)`() {
-        assertEquals(MultiNativeSeverity.Error, classifyMultiNative(kmodInstalled = true, kpmInstalled = true, zygiskInstalled = false))
-        // all three installed -> still Error because the kmod+kpm pair is present.
-        assertEquals(MultiNativeSeverity.Error, classifyMultiNative(kmodInstalled = true, kpmInstalled = true, zygiskInstalled = true))
+    fun `active ko plus active kpm is an error (freeze pair)`() {
+        assertEquals(MultiNativeSeverity.Error, classifyMultiNative(kmodActive = true, kpmActive = true, zygiskActive = false))
+        // all three active -> still Error because the kmod+kpm pair is present.
+        assertEquals(MultiNativeSeverity.Error, classifyMultiNative(kmodActive = true, kpmActive = true, zygiskActive = true))
     }
 
     @Test
-    fun `other multi-native combos are warnings`() {
-        assertEquals(MultiNativeSeverity.Warning, classifyMultiNative(kmodInstalled = true, kpmInstalled = false, zygiskInstalled = true))
-        assertEquals(MultiNativeSeverity.Warning, classifyMultiNative(kmodInstalled = false, kpmInstalled = true, zygiskInstalled = true))
+    fun `inactive ko plus active kpm is not an issue`() {
+        assertEquals(
+            MultiNativeSeverity.None,
+            classifyMultiNative(
+                kmodActive = moduleActive(installed(active = false)),
+                kpmActive = moduleActive(installed(active = true)),
+                zygiskActive = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `other multi-native active combos are warnings`() {
+        assertEquals(MultiNativeSeverity.Warning, classifyMultiNative(kmodActive = true, kpmActive = false, zygiskActive = true))
+        assertEquals(MultiNativeSeverity.Warning, classifyMultiNative(kmodActive = false, kpmActive = true, zygiskActive = true))
     }
 
     // ── detectKpmModule ──────────────────────────────────────────────────

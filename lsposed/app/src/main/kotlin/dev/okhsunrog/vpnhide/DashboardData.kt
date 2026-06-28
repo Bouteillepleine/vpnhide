@@ -134,20 +134,20 @@ internal fun selectNativeBackend(
 internal enum class MultiNativeSeverity { None, Warning, Error }
 
 /**
- * Severity of having more than one native backend *installed* (protocol §1.5:
- * only one may be active). The .ko + KPM pair is an ERROR because they wrap the
- * same kernel functions and co-residence can hard-freeze the kernel; any other
- * multi-install is a WARNING (merely redundant — the backstops pick one).
+ * Severity of having more than one native backend active at runtime (protocol
+ * §1.5). The .ko + KPM pair is an ERROR because they wrap the same kernel
+ * functions and co-residence can hard-freeze the kernel; any other active
+ * overlap is a WARNING (merely redundant — the backstops pick one).
  */
 internal fun classifyMultiNative(
-    kmodInstalled: Boolean,
-    kpmInstalled: Boolean,
-    zygiskInstalled: Boolean,
+    kmodActive: Boolean,
+    kpmActive: Boolean,
+    zygiskActive: Boolean,
 ): MultiNativeSeverity {
-    val count = listOf(kmodInstalled, kpmInstalled, zygiskInstalled).count { it }
+    val count = listOf(kmodActive, kpmActive, zygiskActive).count { it }
     return when {
         count <= 1 -> MultiNativeSeverity.None
-        kmodInstalled && kpmInstalled -> MultiNativeSeverity.Error
+        kmodActive && kpmActive -> MultiNativeSeverity.Error
         else -> MultiNativeSeverity.Warning
     }
 }
@@ -1275,15 +1275,14 @@ internal suspend fun loadDashboardState(
         )
     }
 
-    // W2: more than one native backend installed. Only one may be active
-    // (protocol §1.5). The .ko + KPM pair is an ERROR — they wrap the same
-    // kernel functions and co-residence can hard-freeze the kernel; any other
-    // combination is a WARNING (merely redundant, the backstops pick one).
+    // W2: more than one native backend active. Disabled / inactive modules may
+    // still have directories under /data/adb/modules; they are not a runtime
+    // freeze risk and must not trigger the .ko+KPM conflict banner.
     when (
         classifyMultiNative(
-            kmodInstalled = kmod is ModuleState.Installed,
-            kpmInstalled = kpm is ModuleState.Installed,
-            zygiskInstalled = zygisk is ModuleState.Installed,
+            kmodActive = moduleActive(kmod),
+            kpmActive = moduleActive(kpm),
+            zygiskActive = moduleActive(zygisk),
         )
     ) {
         MultiNativeSeverity.Error -> err(res.getString(R.string.dashboard_issue_native_conflict_kernel))

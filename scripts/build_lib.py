@@ -49,8 +49,18 @@ def get_build_version(repo_root: Path | None = None) -> str:
     if repo_root is None:
         repo_root = Path(__file__).resolve().parent.parent
 
+    repo_root = repo_root.resolve()
     result = subprocess.run(
-        ["git", "describe", "--tags", "--match", "v*", "--dirty"],
+        [
+            "git",
+            "-c",
+            f"safe.directory={repo_root}",
+            "describe",
+            "--tags",
+            "--match",
+            "v*",
+            "--dirty",
+        ],
         cwd=repo_root,
         capture_output=True,
         text=True,

@@ -22,7 +22,8 @@ static int match_vpn(const char *name)
 static void expect_str(const char *what, const char *got, const char *want)
 {
 	if (strcmp(got, want) != 0) {
-		fprintf(stderr, "FAIL %s:\n  got : %s\n  want: %s\n", what, got, want);
+		fprintf(stderr, "FAIL %s:\n  got : %s\n  want: %s\n", what, got,
+			want);
 		failures++;
 	}
 }
@@ -30,19 +31,17 @@ static void expect_str(const char *what, const char *got, const char *want)
 static void test_route_first_field(void)
 {
 	/* /proc/net/route: iface is the first tab-separated field. */
-	char buf[512] =
-		"Iface\tDestination\tGateway\n"
-		"wlan0\t00000000\t0101A8C0\n"
-		"tun0\t00000000\t010010AC\n"
-		"rmnet0\tFEFFFFFF\t00000000\n"
-		"wg0\t00000000\t00000000\n";
+	char buf[512] = "Iface\tDestination\tGateway\n"
+			"wlan0\t00000000\t0101A8C0\n"
+			"tun0\t00000000\t010010AC\n"
+			"rmnet0\tFEFFFFFF\t00000000\n"
+			"wg0\t00000000\t00000000\n";
 	unsigned long count = strlen(buf);
 	/* keep the header line (start=0) — matcher rejects "Iface". */
-	unsigned long n = vpnhide_compact_seq_lines(buf, 0, count,
-						    VPNHIDE_FIELD_FIRST, match_vpn);
+	unsigned long n = vpnhide_compact_seq_lines(
+		buf, 0, count, VPNHIDE_FIELD_FIRST, match_vpn);
 	buf[n] = '\0';
-	expect_str("route: tun0+wg0 removed",
-		   buf,
+	expect_str("route: tun0+wg0 removed", buf,
 		   "Iface\tDestination\tGateway\n"
 		   "wlan0\t00000000\t0101A8C0\n"
 		   "rmnet0\tFEFFFFFF\t00000000\n");
@@ -51,16 +50,14 @@ static void test_route_first_field(void)
 static void test_ipv6_route_last_field(void)
 {
 	/* /proc/net/ipv6_route: iface is the last whitespace field. */
-	char buf[512] =
-		"00000000000000000000000000000000 00 ... wlan0\n"
-		"fe800000000000000000000000000000 40 ... tun0\n"
-		"00000000000000000000000000000000 00 ... rmnet_data0\n";
+	char buf[512] = "00000000000000000000000000000000 00 ... wlan0\n"
+			"fe800000000000000000000000000000 40 ... tun0\n"
+			"00000000000000000000000000000000 00 ... rmnet_data0\n";
 	unsigned long count = strlen(buf);
-	unsigned long n = vpnhide_compact_seq_lines(buf, 0, count,
-						    VPNHIDE_FIELD_LAST, match_vpn);
+	unsigned long n = vpnhide_compact_seq_lines(
+		buf, 0, count, VPNHIDE_FIELD_LAST, match_vpn);
 	buf[n] = '\0';
-	expect_str("ipv6_route: tun0 removed",
-		   buf,
+	expect_str("ipv6_route: tun0 removed", buf,
 		   "00000000000000000000000000000000 00 ... wlan0\n"
 		   "00000000000000000000000000000000 00 ... rmnet_data0\n");
 }
@@ -72,11 +69,11 @@ static void test_start_offset_preserved(void)
 	char buf[256] = "tun9\tearlier-entry\nwlan0\tkeep\ntun0\tdrop\n";
 	unsigned long start = strlen("tun9\tearlier-entry\n");
 	unsigned long count = strlen(buf);
-	unsigned long n = vpnhide_compact_seq_lines(buf, start, count,
-						    VPNHIDE_FIELD_FIRST, match_vpn);
+	unsigned long n = vpnhide_compact_seq_lines(
+		buf, start, count, VPNHIDE_FIELD_FIRST, match_vpn);
 	buf[n] = '\0';
-	expect_str("start offset preserved",
-		   buf, "tun9\tearlier-entry\nwlan0\tkeep\n");
+	expect_str("start offset preserved", buf,
+		   "tun9\tearlier-entry\nwlan0\tkeep\n");
 }
 
 static void test_parse_uids(void)

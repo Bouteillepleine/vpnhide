@@ -53,9 +53,9 @@ ip rule add uidrange 0-0 table 199 2>/dev/null
 PASS=0
 FAIL=0
 
-# check <name> <shell-command> <grep-pattern>
+# check_hide <name> <shell-command> <grep-pattern>
 # Asserts: non-target (uid 5555) sees the pattern, target (uid 0) does not.
-check() {
+check_hide() {
 	_name=$1
 	_cmd=$2
 	_pat=$3
@@ -72,14 +72,81 @@ check() {
 	fi
 }
 
+check_keep() {
+	_name=$1
+	_cmd=$2
+	_pat=$3
+	set_target 5555
+	_nt=$(eval "$_cmd" 2>/dev/null | grep -c -- "$_pat")
+	set_target 0
+	_tg=$(eval "$_cmd" 2>/dev/null | grep -c -- "$_pat")
+	if [ "$_nt" -gt 0 ] && [ "$_tg" -gt 0 ]; then
+		echo "RESULT $_name=PASS (nontarget=$_nt target=$_tg)"
+		PASS=$((PASS + 1))
+	else
+		echo "RESULT $_name=FAIL (nontarget=$_nt target=$_tg)"
+		FAIL=$((FAIL + 1))
+	fi
+}
+
+gai_field() {
+	/gai 2>/dev/null | sed -n "s/^$1=//p" | head -1
+}
+
+check_gai() {
+	if [ ! -x /gai ]; then
+		echo "RESULT gai_getifaddrs=SKIP (no bionic getifaddrs probe available)"
+		echo "RESULT keep_gai_getifaddrs=SKIP (no bionic getifaddrs probe available)"
+		return
+	fi
+
+	set_target 5555
+	_nt_vpn=$(gai_field GAI_VPN0)
+	_nt_other=$(gai_field GAI_OTHER)
+	set_target 0
+	_tg_vpn=$(gai_field GAI_VPN0)
+	_tg_other=$(gai_field GAI_OTHER)
+	[ -n "$_nt_vpn" ] || _nt_vpn=-1
+	[ -n "$_nt_other" ] || _nt_other=-1
+	[ -n "$_tg_vpn" ] || _tg_vpn=-1
+	[ -n "$_tg_other" ] || _tg_other=-1
+
+	if [ "$_nt_vpn" -gt 0 ] && [ "$_tg_vpn" -eq 0 ]; then
+		echo "RESULT gai_getifaddrs=PASS (nontarget=$_nt_vpn target=$_tg_vpn)"
+		PASS=$((PASS + 1))
+	else
+		echo "RESULT gai_getifaddrs=FAIL (nontarget=$_nt_vpn target=$_tg_vpn)"
+		FAIL=$((FAIL + 1))
+	fi
+
+	if [ "$_nt_other" -gt 0 ] && [ "$_tg_other" -gt 0 ]; then
+		echo "RESULT keep_gai_getifaddrs=PASS (nontarget=$_nt_other target=$_tg_other)"
+		PASS=$((PASS + 1))
+	else
+		echo "RESULT keep_gai_getifaddrs=FAIL (nontarget=$_nt_other target=$_tg_other)"
+		FAIL=$((FAIL + 1))
+	fi
+}
+
 # vector -> hook it exercises
-check getifaddrs      "ip addr show"                 "vpn0"   # rtnl_fill_ifinfo + inet*_fill_ifaddr
-check siocgifconf     "ifconfig -a"                  "vpn0"   # sock_ioctl
-check proc_route_v4   "cat /proc/net/route"          "vpn0"   # fib_route_seq_show
-check proc_route_v6   "cat /proc/net/ipv6_route"     "vpn0"   # ipv6_route_seq_show
-check netlink_route4  "ip route show table all"      "vpn0"   # fib_dump_info
-check netlink_route6  "ip -6 route show table all"   "vpn0"   # rt6_fill_node
-check policy_rule     "ip rule show"                 "199"    # fib_nl_fill_rule
+check_hide getifaddrs      "ip addr show"                 "vpn0"   # rtnl_fill_ifinfo + inet*_fill_ifaddr
+check_hide siocgifconf     "ifconfig -a"                  "vpn0"   # sock_ioctl
+check_hide dev_ioctl       "ifconfig vpn0"                "vpn0"   # dev_ioctl
+check_hide proc_route_v4   "cat /proc/net/route"          "vpn0"   # fib_route_seq_show
+check_hide proc_route_v6   "cat /proc/net/ipv6_route"     "vpn0"   # ipv6_route_seq_show
+check_hide netlink_route4  "ip route show table all"      "vpn0"   # fib_dump_info
+check_hide netlink_route6  "ip -6 route show table all"   "vpn0"   # rt6_fill_node
+check_hide policy_rule     "ip rule show"                 "199"    # fib_nl_fill_rule
+check_gai
+
+# Non-VPN entries must survive target filtering. This catches over-trimming
+# regressions where a hook hides the whole dump instead of only vpn0 rows.
+check_keep keep_proc_route_v4   "cat /proc/net/route"     "^eth0"
+check_keep keep_getifaddrs      "ip addr show"            ": eth0:"
+check_keep keep_siocgifconf     "ifconfig -a"             "^eth0"
+check_keep keep_dev_ioctl       "ifconfig eth0"           "^eth0"
+check_keep keep_netlink_route4  "ip route show table all" "dev eth0"
+check_keep keep_policy_rule     "ip rule show"            "lookup main"
 
 PANIC=$(dmesg | grep -ci 'Unable to handle\|Internal error\|Oops\|BUG:\|Kernel panic')
 echo "PANIC=$PANIC"

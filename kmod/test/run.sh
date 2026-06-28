@@ -20,6 +20,7 @@ KDIR="$CACHE/$KMI"
 #   VPNHIDE_QEMU_IMAGE  - kernel Image (baked in the image)
 #   VPNHIDE_QEMU_KO     - module .ko   (from the kmod build artifact)
 #   VPNHIDE_QEMU_ROOTFS - Alpine minirootfs tarball (baked in the image)
+#   VPNHIDE_GAI_BIN     - optional prebuilt bionic getifaddrs probe
 IMAGE="${VPNHIDE_QEMU_IMAGE:-$KDIR/Image}"
 KO="${VPNHIDE_QEMU_KO:-$KDIR/vpnhide_kmod.ko}"
 
@@ -34,6 +35,29 @@ command -v qemu-system-aarch64 >/dev/null || { echo "ERROR: qemu-system-aarch64 
 mkdir -p "$CACHE"
 [ -f "$ALPINE_TAR" ] || { echo "[run] fetching Alpine minirootfs…"; curl -fsSL "$ALPINE_URL" -o "$ALPINE_TAR"; }
 
+# --- static getifaddrs probe (validates the addr-fill hooks) -----------------
+# Must be bionic, not glibc, because Android apps use bionic getifaddrs().
+GAI=""
+if [ -n "${VPNHIDE_GAI_BIN:-}" ] && [ -x "${VPNHIDE_GAI_BIN:-}" ]; then
+	GAI="$VPNHIDE_GAI_BIN"
+	echo "[run] getifaddrs probe: prebuilt bionic ($GAI)"
+else
+	GAI_CC="${VPNHIDE_GAI_CC:-$(find "$HOME/Android/Sdk/ndk" -type f -path '*/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android*-clang' 2>/dev/null | sort | tail -1 || true)}"
+	if [ -n "$GAI_CC" ] && [ -x "$GAI_CC" ]; then
+		GAI="$CACHE/gai"
+		"$GAI_CC" -static -O2 -o "$GAI" "$HERE/gai-probe.c" 2>/dev/null || GAI=""
+	fi
+	[ -n "$GAI" ] && echo "[run] getifaddrs probe built ($(basename "$GAI_CC"))" || \
+		echo "[run] no bionic toolchain/binary — skipping native getifaddrs probe (core vectors still run)"
+fi
+
+if [ -z "$GAI" ] && [ -n "${VPNHIDE_GAI_REQUIRED:-}" ]; then
+	echo "ERROR: getifaddrs probe is required here (VPNHIDE_GAI_REQUIRED set) but" \
+	     "unavailable — VPNHIDE_GAI_BIN='${VPNHIDE_GAI_BIN:-}' missing/not executable."
+	echo "       Refusing to pass with the addr-fill (inet*_fill_ifaddr) hook unchecked."
+	exit 2
+fi
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 RFS="$WORK/rootfs"
@@ -42,6 +66,7 @@ tar xzf "$ALPINE_TAR" -C "$RFS"
 cp "$KO" "$RFS/vpnhide_kmod.ko"
 cp "$HERE/init.sh" "$RFS/init"
 chmod +x "$RFS/init"
+[ -n "$GAI" ] && { cp "$GAI" "$RFS/gai"; chmod +x "$RFS/gai"; }
 ( cd "$RFS" && find . | cpio -o -H newc 2>/dev/null | gzip > "$WORK/initramfs.cpio.gz" )
 
 LOG="$WORK/serial.log"

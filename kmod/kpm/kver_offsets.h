@@ -171,7 +171,9 @@ static const struct vpnhide_offsets vpnhide_off_6_12 = {
 /* 5.10 (android12-5.10) — QEMU-validated 9/9. (5.15 has a different fib6_info
  * and gets its own table below.) */
 static const struct vpnhide_offsets vpnhide_off_5_x = {
-	.skb_len = 104,
+	.skb_len = 112, /* GKI 5.10 has CONFIG_NF_CONNTRACK=y: _nfct@104,
+			 * len@112. Reading 104 trims netlink dumps to garbage and
+			 * drops non-VPN rows alongside vpn0. */
 	.netdev_name = 0,
 	.seqfile_buf = 0,
 	.seqfile_count = 24,
@@ -212,7 +214,8 @@ static const struct vpnhide_offsets vpnhide_off_5_x = {
  * misread. Everything else (idev@168, fib_info 96/104/128, fib_dump via
  * fib_rt_info*@arg4, fib_rule) matches 5.10. */
 static const struct vpnhide_offsets vpnhide_off_5_15 = {
-	.skb_len = 104, /* GKI 5.15 head (validated); bump to 112 if conntrack on */
+	.skb_len = 112, /* GKI 5.15 has CONFIG_NF_CONNTRACK=y: _nfct@104,
+			 * len@112. Same rollback requirement as 5.10. */
 	.netdev_name = 0,
 	.seqfile_buf = 0,
 	.seqfile_count = 24,
@@ -254,7 +257,8 @@ static const struct vpnhide_offsets vpnhide_off_5_4 = {
 	.seqfile_count = 24,
 	.in_ifaddr_ifa_dev = 24, /* hash(16)+ifa_next(8) — same as 5.10 */
 	.in_device_dev = 0,
-	.inet6_ifaddr_idev = 168, /* rt_priority present + post-4.15 timer_list */
+	.inet6_ifaddr_idev =
+		168, /* rt_priority present + post-4.15 timer_list */
 	.inet6_dev_dev = 0,
 	.addr_fill_argno = 3,
 	/* fib_info identical to 5.10: fib_nhs@96, nh@104, fib_nh[]@128. */
@@ -284,13 +288,17 @@ static const struct vpnhide_offsets vpnhide_off_5_4 = {
  * struct fib6_info IPv6 route model (4.14 still uses rt6_info). procfs is
  * file_operations (<5.6). */
 static const struct vpnhide_offsets vpnhide_off_4_19 = {
-	.skb_len = 112, /* modern sk_buff head + _nfct (conntrack) -> len@112 */
+	/* XFRM + conntrack + bridge-netfilter fields put sk_buff.len at 128 on
+	 * the 4.19 image we validate with. A smaller value trims netlink dumps
+	 * back to a pointer field and can make getifaddrs() look completely empty. */
+	.skb_len = 128,
 	.netdev_name = 0,
 	.seqfile_buf = 0,
 	.seqfile_count = 24,
 	.in_ifaddr_ifa_dev = 24,
 	.in_device_dev = 0,
-	.inet6_ifaddr_idev = 168, /* rt_priority present, post-4.15 timer_list */
+	.inet6_ifaddr_idev =
+		168, /* rt_priority present, post-4.15 timer_list */
 	.inet6_dev_dev = 0,
 	.addr_fill_argno = 6,
 	/* fib_info: fib_nhs@80, rcu@88, fib_nh[]@104; fib_nh.nh_dev is first ->
@@ -322,13 +330,17 @@ static const struct vpnhide_offsets vpnhide_off_4_19 = {
  * embedded dst_entry (rt6_via_dst) rather than a fib6_nh walk. procfs is
  * file_operations (<5.6). */
 static const struct vpnhide_offsets vpnhide_off_4_x = {
-	.skb_len = 104, /* older sk_buff head -> len@104 even with conntrack */
+	/* XFRM + conntrack + bridge-netfilter fields put sk_buff.len at 128 on
+	 * the 4.14 images we validate with, including sunfish 4.14.302. */
+	.skb_len = 128,
 	.netdev_name = 0,
 	.seqfile_buf = 0,
 	.seqfile_count = 24,
-	.in_ifaddr_ifa_dev = 24, /* in_ifaddr: hash(16)+ifa_next(8) — same as 5.x */
+	.in_ifaddr_ifa_dev =
+		24, /* in_ifaddr: hash(16)+ifa_next(8) — same as 5.x */
 	.in_device_dev = 0,
-	.inet6_ifaddr_idev = 168, /* no rt_priority (-4) but timer_list has `data` (+8) -> 168 */
+	.inet6_ifaddr_idev =
+		168, /* no rt_priority (-4) but timer_list has `data` (+8) -> 168 */
 	.inet6_dev_dev = 0,
 	.addr_fill_argno = 6,
 	/* fib_info: fib_nhs@80, rcu@88, fib_nh[]@104 (fib_weight, if
@@ -360,7 +372,8 @@ static const struct vpnhide_offsets vpnhide_off_4_x = {
  * unsupported version — the caller MUST refuse to install hooks then
  * (kpm-spore does the same: unknown version → bail, never guess).
  */
-static inline const struct vpnhide_offsets *vpnhide_select_offsets(unsigned int kver)
+static inline const struct vpnhide_offsets *
+vpnhide_select_offsets(unsigned int kver)
 {
 	if (kver >= VPNHIDE_KVER(6, 12, 0))
 		return &vpnhide_off_6_12; /* 6.12: fib6_info gained gc_link */

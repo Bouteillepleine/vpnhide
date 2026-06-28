@@ -142,11 +142,15 @@ jobs:
             portshide/module/customize.sh portshide/module/service.sh \
             portshide/module/uninstall.sh \
             scripts/clean-device.sh scripts/update-json.sh \
-            kmod/test/run.sh kmod/test/build-kernel.sh kmod/test/init.sh
+            kmod/test/run.sh kmod/test/build-kernel.sh kmod/test/init.sh \
+            kmod/test/run-kpm.sh kmod/test/init-kpm.sh kmod/test/build-source-kernel.sh
 
       # C (kernel module)
       - name: clang-format
-        run: clang-format --dry-run --Werror kmod/vpnhide_kmod.c
+        run: |
+          git ls-files 'kmod/*.c' 'kmod/*.h' 'kmod/**/*.c' 'kmod/**/*.h' \
+            | grep -Ev '(^kmod/third_party/|^kmod/generated/|\.mod\.c$)' \
+            | xargs clang-format --dry-run --Werror
       - name: kmod iface-list test (host build)
         run: |
           cd kmod

@@ -31,8 +31,10 @@ typedef int (*vpnhide_match_fn)(const char *ifname);
 
 /* Which whitespace-delimited field carries the interface name. */
 enum vpnhide_iface_field {
-	VPNHIDE_FIELD_FIRST = 0, /* /proc/net/route        — first tab field   */
-	VPNHIDE_FIELD_LAST = 1,  /* /proc/net/ipv6_route    — last ws field      */
+	VPNHIDE_FIELD_FIRST =
+		0, /* /proc/net/route        — first tab field   */
+	VPNHIDE_FIELD_LAST =
+		1, /* /proc/net/ipv6_route    — last ws field      */
 };
 
 /*
@@ -52,7 +54,8 @@ enum vpnhide_iface_field {
  */
 static inline unsigned long
 vpnhide_compact_seq_lines(char *buf, unsigned long start, unsigned long count,
-			  enum vpnhide_iface_field field, vpnhide_match_fn match)
+			  enum vpnhide_iface_field field,
+			  vpnhide_match_fn match)
 {
 	unsigned long src = start;
 	unsigned long dst = start;
@@ -91,10 +94,9 @@ vpnhide_compact_seq_lines(char *buf, unsigned long start, unsigned long count,
 			unsigned long fs;
 			unsigned long j = 0;
 
-			while (fe > src && (buf[fe - 1] == '\n' ||
-					    buf[fe - 1] == '\r' ||
-					    buf[fe - 1] == ' ' ||
-					    buf[fe - 1] == '\t'))
+			while (fe > src &&
+			       (buf[fe - 1] == '\n' || buf[fe - 1] == '\r' ||
+				buf[fe - 1] == ' ' || buf[fe - 1] == '\t'))
 				fe--;
 			fs = fe;
 			while (fs > src && buf[fs - 1] != ' ' &&
@@ -118,7 +120,8 @@ vpnhide_compact_seq_lines(char *buf, unsigned long start, unsigned long count,
 		if (dst != src) {
 			unsigned long k;
 			for (k = 0; k < line_len; k++)
-				buf[dst + k] = buf[src + k]; /* dst<=src: safe */
+				buf[dst + k] =
+					buf[src + k]; /* dst<=src: safe */
 		}
 		dst += line_len;
 		src = line_end;
@@ -133,9 +136,8 @@ vpnhide_compact_seq_lines(char *buf, unsigned long start, unsigned long count,
  * Pure string work for the legacy decimal load-args path (KPM bring-up + host
  * tests). The protocol config channel uses vpnhide_parse_config instead.
  */
-static inline int
-vpnhide_parse_target_uids(const char *buf, unsigned long len,
-			  unsigned int *out, int max)
+static inline int vpnhide_parse_target_uids(const char *buf, unsigned long len,
+					    unsigned int *out, int max)
 {
 	unsigned long i = 0;
 	int n = 0;
@@ -286,7 +288,8 @@ static inline int vpnhide_line_significant(const char *b, unsigned long ls,
 
 	*ascii = 1;
 	for (p = ls; p < le; p++)
-		if (!vpnhide_is_ascii(b[p]) && b[p] != '\t') /* tab is a sep, §4.1 */
+		if (!vpnhide_is_ascii(b[p]) &&
+		    b[p] != '\t') /* tab is a sep, §4.1 */
 			*ascii = 0;
 	p = ls;
 	while (p < le && vpnhide_is_sep(b[p]))
@@ -364,8 +367,8 @@ static inline int vpnhide_tok_hex(const char *b, unsigned long ts,
 				  unsigned long long *out)
 {
 	unsigned long long v = 0;
-	unsigned long long max =
-		(bits >= 64) ? 0xffffffffffffffffULL : 0xffffffffULL;
+	unsigned long long max = (bits >= 64) ? 0xffffffffffffffffULL :
+						0xffffffffULL;
 	unsigned long p = ts;
 
 	if (te - ts < 3) /* need "0x" + at least one digit */
@@ -605,9 +608,9 @@ static inline void vpnhide_put_header(struct vpnhide_buf *b, const char *kind)
  * only non-zero cells. Returns the FULL length (may exceed cap — caller sizes
  * by its uid ceiling, or clamps with vpnhide_clamp_to_line for KPM out_msg).
  */
-static inline unsigned long vpnhide_format_stats(char *buf, unsigned long cap,
-						 const struct vpnhide_stat_entry *e,
-						 int n)
+static inline unsigned long
+vpnhide_format_stats(char *buf, unsigned long cap,
+		     const struct vpnhide_stat_entry *e, int n)
 {
 	struct vpnhide_buf b;
 	int idx = 0;
@@ -633,8 +636,9 @@ static inline unsigned long vpnhide_format_stats(char *buf, unsigned long cap,
 }
 
 /* Serialise a `status` snapshot into buf[cap]. Returns the FULL length. */
-static inline unsigned long vpnhide_format_status(char *buf, unsigned long cap,
-						  const struct vpnhide_status *s)
+static inline unsigned long
+vpnhide_format_status(char *buf, unsigned long cap,
+		      const struct vpnhide_status *s)
 {
 	struct vpnhide_buf b;
 

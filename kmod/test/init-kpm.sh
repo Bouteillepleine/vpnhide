@@ -40,17 +40,28 @@ ip -6 addr add fd00:9::1/64 dev vpn0 2>/dev/null
 ip -6 route add fd00:99::/64 dev vpn0 2>/dev/null
 ip rule add uidrange 0-0 table 199 2>/dev/null
 
-# Vectors covered by the wired hooks. Count vpn0 hits as seen by root.
-echo "VEC proc_route_v4=$(cat /proc/net/route 2>/dev/null | grep -c vpn0)"        # fib_route_seq_show
+# Vectors covered by the wired hooks. Count vpn0 hits as seen by root, then
+# count stable non-VPN entries so an over-trimmed empty dump fails loudly.
+echo "VEC proc_route_v4=$(grep -c vpn0 /proc/net/route 2>/dev/null)"        # fib_route_seq_show
+echo "VEC keep_proc_route_v4=$(grep -c '^eth0' /proc/net/route 2>/dev/null)"
 echo "VEC getifaddrs=$(ip addr show 2>/dev/null | grep -c 'vpn0')"                # rtnl_fill_ifinfo
-echo "VEC proc_route_v6=$(cat /proc/net/ipv6_route 2>/dev/null | grep -c vpn0)"   # ipv6_route_seq_show
+echo "VEC keep_getifaddrs=$(ip addr show 2>/dev/null | grep -c ': eth0:')"
+echo "VEC proc_route_v6=$(grep -c vpn0 /proc/net/ipv6_route 2>/dev/null)"   # ipv6_route_seq_show
 echo "VEC siocgifconf=$(ifconfig -a 2>/dev/null | grep -c vpn0)"                  # sock_ioctl
+echo "VEC keep_siocgifconf=$(ifconfig -a 2>/dev/null | grep -c '^eth0')"
 echo "VEC dev_ioctl=$(ifconfig vpn0 2>/dev/null | grep -c vpn0)"                  # dev_ioctl
+echo "VEC keep_dev_ioctl=$(ifconfig eth0 2>/dev/null | grep -c '^eth0')"
 echo "VEC netlink_route4=$(ip route show table all 2>/dev/null | grep -c vpn0)"     # fib_dump_info (#86)
+echo "VEC keep_netlink_route4=$(ip route show table all 2>/dev/null | grep -c 'dev eth0')"
 echo "VEC netlink_route6=$(ip -6 route show table all 2>/dev/null | grep -c vpn0)"  # rt6_fill_node
 echo "VEC policy_rule=$(ip rule show 2>/dev/null | grep -c 199)"                    # fib_nl_fill_rule
+echo "VEC keep_policy_rule=$(ip rule show 2>/dev/null | grep -c 'lookup main')"
 # Native getifaddrs() (RTM_GETLINK+RTM_GETADDR) — isolates inet*_fill_ifaddr.
-[ -x /gai ] && echo "VEC gai_getifaddrs=$(/gai 2>/dev/null | sed 's/.*=//')"        # inet*_fill_ifaddr
+if [ -x /gai ]; then
+	GAI_OUT=$(/gai 2>/dev/null)
+	echo "VEC gai_getifaddrs=$(printf '%s\n' "$GAI_OUT" | sed -n 's/^GAI_VPN0=//p' | head -1)"
+	echo "VEC keep_gai_getifaddrs=$(printf '%s\n' "$GAI_OUT" | sed -n 's/^GAI_OTHER=//p' | head -1)"
+fi
 
 PANIC=$(dmesg | grep -ci 'Unable to handle\|Internal error\|Oops\|BUG:\|Kernel panic')
 echo "PANIC=$PANIC"

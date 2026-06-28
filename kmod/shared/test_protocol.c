@@ -76,7 +76,8 @@ static int split_pipe(char *line, char *fields[])
 
 static void fail(const char *what, const char *got, const char *want)
 {
-	fprintf(stderr, "FAIL %s\n  got : <%s>\n  want: <%s>\n", what, got, want);
+	fprintf(stderr, "FAIL %s\n  got : <%s>\n  want: <%s>\n", what, got,
+		want);
 	failures++;
 }
 
@@ -118,10 +119,10 @@ static void run_kind(const char *raw_in, const char *expect)
 	char in[1024];
 	unsigned long len = decode(raw_in, in, sizeof(in));
 	enum vpnhide_kind k = vpnhide_peek_kind(in, len);
-	const char *got = k == VPNHIDE_KIND_CONFIG	 ? "CONFIG" :
-			  k == VPNHIDE_KIND_STATS	 ? "STATS" :
-			  k == VPNHIDE_KIND_STATUS	 ? "STATUS" :
-							   "INVALID";
+	const char *got = k == VPNHIDE_KIND_CONFIG ? "CONFIG" :
+			  k == VPNHIDE_KIND_STATS  ? "STATS" :
+			  k == VPNHIDE_KIND_STATUS ? "STATUS" :
+						     "INVALID";
 
 	checks++;
 	if (strcmp(got, expect) != 0)
@@ -260,14 +261,16 @@ int main(int argc, char **argv)
 		else if (strcmp(fields[0], "clamp") == 0 && nf >= 4)
 			run_clamp(fields[1], fields[2], fields[3]);
 		else
-			fprintf(stderr, "WARN unrecognised vector: %s\n", fields[0]);
+			fprintf(stderr, "WARN unrecognised vector: %s\n",
+				fields[0]);
 	}
 
 	free(line);
 	fclose(f);
 
 	if (failures) {
-		fprintf(stderr, "%d/%d protocol vector(s) failed\n", failures, checks);
+		fprintf(stderr, "%d/%d protocol vector(s) failed\n", failures,
+			checks);
 		return 1;
 	}
 	printf("all %d protocol vectors passed\n", checks);
