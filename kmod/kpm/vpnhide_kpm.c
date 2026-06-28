@@ -54,10 +54,6 @@ KPM_DESCRIPTION("Hide VPN interfaces from selected UIDs (KPM backend, WIP)");
 #define MODNAME "vpnhide"
 #define MAX_TARGET_UIDS 64
 
-#define VPNHIDE_ADDR_FILL_HOOK_MASK \
-	((1u << VPNHIDE_HOOK_INET_FILL_IFADDR) | \
-	 (1u << VPNHIDE_HOOK_INET6_FILL_IFADDR))
-
 /* ------------------------------------------------------------------ */
 /*  Resolved state                                                    */
 /* ------------------------------------------------------------------ */
@@ -75,7 +71,6 @@ static bool debug_enabled;
 /* status (protocol §4.3/§5.1): which hooks actually installed, and the dominant
  * fault code. Filled at init, read back via ctl0 `status`. */
 static uint32_t installed_hooks;
-static uint32_t install_hook_mask;
 static uint32_t last_error;
 
 /* kernel functions resolved at init via kallsyms */
@@ -104,19 +99,6 @@ static uint32_t compute_active_hook_mask(int count)
 	for (i = 0; i < count; i++)
 		mask |= targets[i].hookmask & VPNHIDE_KERNEL_HOOK_MASK;
 	return mask;
-}
-
-static uint32_t compute_install_hook_mask(void)
-{
-	/*
-	 * Pixel 4a / APatch on android-4.14 corrupts RTM_NEWADDR netlink
-	 * messages as soon as the inet*_fill_ifaddr KPM inline wrappers are
-	 * installed, even with zero targets. Keep the rest of the backend usable
-	 * and report the missing bits through the status hook mask.
-	 */
-	if ((unsigned int)kver < VERSION(4, 15, 0))
-		return VPNHIDE_KERNEL_HOOK_MASK & ~VPNHIDE_ADDR_FILL_HOOK_MASK;
-	return VPNHIDE_KERNEL_HOOK_MASK;
 }
 
 /* The enabled-hook mask for the calling uid (0 if it is not a target). */
@@ -788,8 +770,6 @@ static void install_hook(const char *name, int argno, void *before, void *after,
 {
 	unsigned long fn = lookup_fn(name);
 
-	if (!(install_hook_mask & (1u << hook_id)))
-		return;
 	if (!fn)
 		return;
 	if (hook_wrap((void *)fn, argno, before, after, 0) == HOOK_NO_ERR)
@@ -803,7 +783,6 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 	      (unsigned int)kver);
 
 	installed_hooks = 0;
-	install_hook_mask = compute_install_hook_mask();
 	last_error = VPNHIDE_ERR_OK;
 	active_hook_mask = 0;
 
@@ -849,12 +828,12 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 			     (void *)rtnl_fill_after,
 			     VPNHIDE_HOOK_RTNL_FILL_IFINFO);
 	if (off->in_ifaddr_ifa_dev)
-		install_hook("inet_fill_ifaddr", 3, (void *)inet_fill_before,
-			     (void *)addr_fill_after,
+		install_hook("inet_fill_ifaddr", off->addr_fill_argno,
+			     (void *)inet_fill_before, (void *)addr_fill_after,
 			     VPNHIDE_HOOK_INET_FILL_IFADDR);
 	if (off->inet6_ifaddr_idev)
-		install_hook("inet6_fill_ifaddr", 3, (void *)inet6_fill_before,
-			     (void *)addr_fill_after,
+		install_hook("inet6_fill_ifaddr", off->addr_fill_argno,
+			     (void *)inet6_fill_before, (void *)addr_fill_after,
 			     VPNHIDE_HOOK_INET6_FILL_IFADDR);
 	if (off->fib_dump_fi_arg)
 		install_hook("fib_dump_info", 11, (void *)fib_dump_before,
@@ -874,8 +853,8 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 			     VPNHIDE_ERR_OK :
 			     VPNHIDE_ERR_PARTIAL_HOOKS;
 
-	logki(MODNAME ": KPM hooks installed (mask=0x%x install=0x%x err=%u)\n",
-	      installed_hooks, install_hook_mask, last_error);
+	logki(MODNAME ": KPM hooks installed (mask=0x%x err=%u)\n",
+	      installed_hooks, last_error);
 	return 0;
 }
 

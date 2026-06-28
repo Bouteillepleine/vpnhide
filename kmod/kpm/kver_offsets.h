@@ -49,6 +49,11 @@ struct vpnhide_offsets {
 	unsigned int inet6_ifaddr_idev;
 	unsigned int inet6_dev_dev;
 
+	/* inet{,6}_fill_ifaddr ABI:
+	 *   4.x:  (skb, ifa, portid, seq, event, flags) => hook_wrap argno 6
+	 *   5.x+: (skb, ifa, fillargs)                  => hook_wrap argno 3 */
+	unsigned int addr_fill_argno;
+
 	/* IPv4 route dump (fib_dump_info): fib_rt_info.fi=0, fib_nh_common.nhc_dev=0
 	 * (constants). These three vary per version; for the legacy single-nexthop
 	 * route: dev = *(fi + fib_info_fib_nh + nhc_dev). fib_info_nh != 0 marks a
@@ -109,6 +114,7 @@ static const struct vpnhide_offsets vpnhide_off_6_1 = {
 	.in_device_dev = 0,
 	.inet6_ifaddr_idev = 168, /* same struct prefix as validated 5.10 */
 	.inet6_dev_dev = 0,
+	.addr_fill_argno = 3,
 	/* fib_info identical to 5.10: fib_nhs@96, nh@104, fib_nh[]@128. */
 	.fib_info_fib_nhs = 96,
 	.fib_info_nh = 104,
@@ -145,6 +151,7 @@ static const struct vpnhide_offsets vpnhide_off_6_12 = {
 	.in_device_dev = 0,
 	.inet6_ifaddr_idev = 168,
 	.inet6_dev_dev = 0,
+	.addr_fill_argno = 3,
 	.fib_info_fib_nhs = 96,
 	.fib_info_nh = 104,
 	.fib_info_fib_nh = 128,
@@ -175,6 +182,7 @@ static const struct vpnhide_offsets vpnhide_off_5_x = {
 	 * inet6_dev.dev@0. */
 	.inet6_ifaddr_idev = 168,
 	.inet6_dev_dev = 0,
+	.addr_fill_argno = 3,
 	/* android12-5.10 fib_info (LP64, no ifdefs before fib_nh[]): fib_nhs@96,
 	 * nh@104, fib_nh[]@128; nhc_dev is first in fib_nh -> +128. */
 	.fib_info_fib_nhs = 96,
@@ -212,6 +220,7 @@ static const struct vpnhide_offsets vpnhide_off_5_15 = {
 	.in_device_dev = 0,
 	.inet6_ifaddr_idev = 168,
 	.inet6_dev_dev = 0,
+	.addr_fill_argno = 3,
 	.fib_info_fib_nhs = 96,
 	.fib_info_nh = 104,
 	.fib_info_fib_nh = 128,
@@ -247,6 +256,7 @@ static const struct vpnhide_offsets vpnhide_off_5_4 = {
 	.in_device_dev = 0,
 	.inet6_ifaddr_idev = 168, /* rt_priority present + post-4.15 timer_list */
 	.inet6_dev_dev = 0,
+	.addr_fill_argno = 3,
 	/* fib_info identical to 5.10: fib_nhs@96, nh@104, fib_nh[]@128. */
 	.fib_info_fib_nhs = 96,
 	.fib_info_nh = 104,
@@ -282,6 +292,7 @@ static const struct vpnhide_offsets vpnhide_off_4_19 = {
 	.in_device_dev = 0,
 	.inet6_ifaddr_idev = 168, /* rt_priority present, post-4.15 timer_list */
 	.inet6_dev_dev = 0,
+	.addr_fill_argno = 6,
 	/* fib_info: fib_nhs@80, rcu@88, fib_nh[]@104; fib_nh.nh_dev is first ->
 	 * dev = *(fi+104). No nexthop objects (fib_info_nh = 0). */
 	.fib_info_fib_nhs = 80,
@@ -319,6 +330,7 @@ static const struct vpnhide_offsets vpnhide_off_4_x = {
 	.in_device_dev = 0,
 	.inet6_ifaddr_idev = 168, /* no rt_priority (-4) but timer_list has `data` (+8) -> 168 */
 	.inet6_dev_dev = 0,
+	.addr_fill_argno = 6,
 	/* fib_info: fib_nhs@80, rcu@88, fib_nh[]@104 (fib_weight, if
 	 * CONFIG_IP_ROUTE_MULTIPATH, fills the pad slot @84 so fib_nh stays @104);
 	 * fib_nh.nh_dev is first. No nexthop objects. */
