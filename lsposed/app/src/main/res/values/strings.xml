@@ -255,6 +255,17 @@
     <string name="settings_haptics_sub">Vibrate on taps and toggles</string>
     <string name="settings_animations">Animations</string>
     <string name="settings_animations_sub">Springy transitions and shape morphing</string>
+    <string name="settings_config_section">Configuration</string>
+    <string name="settings_config_backup_title">Config backup</string>
+    <string name="settings_config_backup_sub">Save or restore the canonical JSON config</string>
+    <string name="settings_config_export">Export JSON</string>
+    <string name="settings_config_import">Import JSON</string>
+    <string name="settings_config_import_note">Import replaces the current config and reapplies installed modules.</string>
+    <string name="settings_config_export_done">Config exported.</string>
+    <string name="settings_config_export_failed">Config export failed.</string>
+    <string name="settings_config_import_done">Config imported.</string>
+    <string name="settings_config_import_invalid">Import failed: invalid config JSON.</string>
+    <string name="settings_config_import_root_failed">Import failed: root config write failed.</string>
     <string name="settings_security">Security</string>
     <string name="settings_superkey_title">APatch SuperKey</string>
     <string name="settings_superkey_saved">Saved for boot-time KPM activation.</string>

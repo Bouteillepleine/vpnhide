@@ -105,6 +105,41 @@ class StorageConfigTest {
     }
 
     @Test
+    fun `import parser accepts canonical json and adds self target`() {
+        val cfg =
+            requireNotNull(
+                parseImportedCanonicalConfig(
+                    """
+                    {
+                      "version": 1,
+                      "debug": true,
+                      "apps": {
+                        "com.bank": { "java": true }
+                      },
+                      "settings": { "rememberSuperkey": true }
+                    }
+                    """.trimIndent(),
+                    selfPkg = "dev.okhsunrog.vpnhide",
+                ),
+            )
+
+        assertTrue(cfg.debug)
+        assertTrue(cfg.apps.getValue("com.bank").java)
+        assertEquals(CanonicalSettings(rememberSuperkey = true), cfg.settings)
+        assertEquals(
+            CanonicalApp(java = true, native = NativeRole.All, hidden = true),
+            cfg.apps.getValue("dev.okhsunrog.vpnhide"),
+        )
+    }
+
+    @Test
+    fun `import parser rejects invalid or unsupported json`() {
+        assertEquals(null, parseImportedCanonicalConfig("", "dev.okhsunrog.vpnhide"))
+        assertEquals(null, parseImportedCanonicalConfig("{not-json", "dev.okhsunrog.vpnhide"))
+        assertEquals(null, parseImportedCanonicalConfig("""{"version": 999, "apps": {}}""", "dev.okhsunrog.vpnhide"))
+    }
+
+    @Test
     fun `snapshot builder folds legacy roles into canonical config`() {
         val snapshot =
             TargetsSnapshot(

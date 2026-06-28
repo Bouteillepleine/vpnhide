@@ -92,11 +92,7 @@ fun AppPickerScreen(
             res.getString(R.string.selected_count, entries.count { it.anySelected })
         },
         buildSaveCommand = { entries, ctx ->
-            val javaPkgs = (entries.filter { it.java }.map { it.packageName } + ctx.selfPkg).distinct().sorted()
-            val nativePkgs = (entries.filter { it.native }.map { it.packageName } + ctx.selfPkg).distinct().sorted()
-            val observerPkgs = entries.filter { it.appHiding }.map { it.packageName }.sorted()
-            val portsPkgs = entries.filter { it.ports }.map { it.packageName }.sorted()
-            buildUnifiedSaveCommand(ctx, javaPkgs, nativePkgs, observerPkgs, portsPkgs)
+            buildUnifiedSaveCommand(ctx, entries.map(AppEntry::toRoleSelection))
         },
         successMessage = { entries, res ->
             res.getString(R.string.save_success, entries.count { it.anySelected })
@@ -140,25 +136,16 @@ fun AppPickerScreen(
  */
 private fun buildUnifiedSaveCommand(
     ctx: SaveContext,
-    javaPkgs: List<String>,
-    nativePkgs: List<String>,
-    observerPkgs: List<String>,
-    portsPkgs: List<String>,
+    selections: Collection<AppRoleSelection>,
 ): String {
     val parts = mutableListOf<String>()
 
-    val existingSnapshot = TargetsCache.snapshot.value
-    val existingHidden = existingSnapshot?.hiddenPkgs ?: emptySet()
-    val hiddenPkgs = resolveHiddenPackages(existingHidden, observerPkgs.toSet(), ctx.selfPkg)
     val canonical =
-        buildCanonicalConfig(
+        buildCanonicalConfigForAppPickerSave(
             debug = ctx.debug,
-            javaPkgs = javaPkgs,
-            nativePkgs = nativePkgs,
-            hiddenPkgs = hiddenPkgs,
-            observerPkgs = observerPkgs,
-            portsPkgs = portsPkgs,
-            existing = existingSnapshot?.canonicalConfig,
+            selfPkg = ctx.selfPkg,
+            selections = selections,
+            snapshot = TargetsCache.snapshot.value,
         )
     parts += buildCanonicalConfigWriteCommand(canonical)
 
@@ -168,6 +155,15 @@ private fun buildUnifiedSaveCommand(
 
     return parts.joinToString(" ; ")
 }
+
+private fun AppEntry.toRoleSelection(): AppRoleSelection =
+    AppRoleSelection(
+        packageName = packageName,
+        java = java,
+        native = native,
+        appHiding = appHiding,
+        ports = ports,
+    )
 
 @Composable
 private fun AppRow(

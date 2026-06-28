@@ -44,4 +44,117 @@ class AppPickerDataTest {
             resolveHiddenPackages(existing = setOf("com.z", "com.a", self), observers = emptySet(), selfPkg = self),
         )
     }
+
+    @Test
+    fun `save preserves selected apps missing from current picker list`() {
+        val snapshot =
+            snapshotWithCanonical(
+                "com.frozen" to CanonicalApp(java = true, native = NativeRole.All, appHiding = true, ports = true),
+            )
+
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections =
+                    listOf(
+                        AppRoleSelection(packageName = "com.visible", java = true),
+                    ),
+                snapshot = snapshot,
+            )
+
+        val frozen = cfg.apps.getValue("com.frozen")
+        assertEquals(true, frozen.java)
+        assertEquals(NativeRole.All, frozen.native)
+        assertEquals(true, frozen.appHiding)
+        assertEquals(true, frozen.ports)
+    }
+
+    @Test
+    fun `save can remove a visible app without dropping missing apps`() {
+        val snapshot =
+            snapshotWithCanonical(
+                "com.visible" to CanonicalApp(java = true, native = NativeRole.All, appHiding = true, ports = true),
+                "com.frozen" to CanonicalApp(java = true, native = NativeRole.All),
+            )
+
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections =
+                    listOf(
+                        AppRoleSelection(packageName = "com.visible"),
+                    ),
+                snapshot = snapshot,
+            )
+
+        assertEquals(false, cfg.apps.containsKey("com.visible"))
+        assertEquals(true, cfg.apps.getValue("com.frozen").java)
+        assertEquals(NativeRole.All, cfg.apps.getValue("com.frozen").native)
+    }
+
+    @Test
+    fun `save preserves custom native hooks for missing and still selected apps`() {
+        val customNative = NativeRole(enabled = true, hooks = listOf("sock_ioctl"))
+        val snapshot =
+            snapshotWithCanonical(
+                "com.visible" to CanonicalApp(native = customNative),
+                "com.frozen" to CanonicalApp(native = customNative),
+            )
+
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections =
+                    listOf(
+                        AppRoleSelection(packageName = "com.visible", native = true),
+                    ),
+                snapshot = snapshot,
+            )
+
+        assertEquals(customNative, cfg.apps.getValue("com.visible").native)
+        assertEquals(customNative, cfg.apps.getValue("com.frozen").native)
+    }
+
+    @Test
+    fun `observer role still wins over hidden for visible packages`() {
+        val snapshot =
+            snapshotWithCanonical(
+                "com.vpn" to CanonicalApp(hidden = true),
+            )
+
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections =
+                    listOf(
+                        AppRoleSelection(packageName = "com.vpn", appHiding = true),
+                    ),
+                snapshot = snapshot,
+            )
+
+        assertEquals(true, cfg.apps.getValue("com.vpn").appHiding)
+        assertEquals(false, cfg.apps.getValue("com.vpn").hidden)
+        assertEquals(true, cfg.apps.getValue(self).hidden)
+    }
+
+    private fun snapshotWithCanonical(vararg apps: Pair<String, CanonicalApp>): TargetsSnapshot =
+        TargetsSnapshot(
+            kmodModuleInstalled = true,
+            kpmModuleInstalled = false,
+            zygiskModuleInstalled = false,
+            portsModuleInstalled = true,
+            kmodTargets = emptySet(),
+            kpmTargets = emptySet(),
+            zygiskTargets = emptySet(),
+            lsposedTargets = emptySet(),
+            hiddenPkgs = emptySet(),
+            observerUids = emptySet(),
+            portsObservers = emptySet(),
+            uidToPkg = emptyMap(),
+            canonicalConfig = CanonicalConfig(apps = apps.toMap()),
+        )
 }

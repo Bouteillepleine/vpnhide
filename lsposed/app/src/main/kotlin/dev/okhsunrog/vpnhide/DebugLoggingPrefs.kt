@@ -31,14 +31,22 @@ internal fun setDebugLoggingEnabled(
     context: Context,
     enabled: Boolean,
 ) {
+    storeDebugLoggingPreference(context, enabled)
+    writeDebugFlagFiles(enabled)
+    RootSnapshotCache.invalidate()
+    DashboardCache.invalidate()
+}
+
+internal fun storeDebugLoggingPreference(
+    context: Context,
+    enabled: Boolean,
+) {
     context
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         .edit()
         .putBoolean(KEY_DEBUG_LOGGING, enabled)
         .apply()
-    applyDebugLoggingRuntime(enabled)
-    RootSnapshotCache.invalidate()
-    DashboardCache.invalidate()
+    VpnHideLog.enabled = enabled
 }
 
 /**
