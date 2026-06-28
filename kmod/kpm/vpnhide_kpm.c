@@ -221,7 +221,7 @@ static void rtnl_fill_before(hook_fargs12_t *fargs, void *udata)
 	fargs->local.data0 = 1; /* filter */
 	fargs->local.data1 = (uint64_t)skb;
 	fargs->local.data2 =
-		(uint64_t)*(unsigned int *)((char *)skb + off->skb_len);
+		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
 }
 
 static void rtnl_fill_after(hook_fargs12_t *fargs, void *udata)
@@ -386,7 +386,7 @@ static void addr_fill_before(hook_fargs4_t *fargs, void *dev, uint32_t hook_id)
 	fargs->local.data0 = 1;
 	fargs->local.data1 = (uint64_t)skb;
 	fargs->local.data2 =
-		(uint64_t)*(unsigned int *)((char *)skb + off->skb_len);
+		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
 }
 
 static void addr_fill_after(hook_fargs4_t *fargs, void *udata)
@@ -476,7 +476,7 @@ static void fib_dump_before(hook_fargs12_t *fargs, void *udata)
 	fargs->local.data0 = 1;
 	fargs->local.data1 = (uint64_t)skb;
 	fargs->local.data2 =
-		(uint64_t)*(unsigned int *)((char *)skb + off->skb_len);
+		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
 }
 
 static void fib_dump_after(hook_fargs12_t *fargs, void *udata)
@@ -534,7 +534,7 @@ static void rt6_fill_before(hook_fargs12_t *fargs, void *udata)
 	fargs->local.data0 = 1;
 	fargs->local.data1 = (uint64_t)skb;
 	fargs->local.data2 =
-		(uint64_t)*(unsigned int *)((char *)skb + off->skb_len);
+		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
 }
 
 static void rt6_fill_after(hook_fargs12_t *fargs, void *udata)
@@ -588,7 +588,8 @@ static void fib_rule_before(hook_fargs8_t *fargs, void *udata)
 		fargs->local.data0 = 1;
 		fargs->local.data1 = (uint64_t)skb;
 		fargs->local.data2 =
-			(uint64_t)*(unsigned int *)((char *)skb + off->skb_len);
+			(uint64_t) *
+			(unsigned int *)((char *)skb + off->skb_len);
 	}
 }
 
