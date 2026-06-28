@@ -42,11 +42,11 @@ ip rule add uidrange 0-0 table 199 2>/dev/null
 
 # Vectors covered by the wired hooks. Count vpn0 hits as seen by root, then
 # count stable non-VPN entries so an over-trimmed empty dump fails loudly.
-echo "VEC proc_route_v4=$(cat /proc/net/route 2>/dev/null | grep -c vpn0)"        # fib_route_seq_show
-echo "VEC keep_proc_route_v4=$(cat /proc/net/route 2>/dev/null | grep -c '^eth0')"
+echo "VEC proc_route_v4=$(grep -c vpn0 /proc/net/route 2>/dev/null)"        # fib_route_seq_show
+echo "VEC keep_proc_route_v4=$(grep -c '^eth0' /proc/net/route 2>/dev/null)"
 echo "VEC getifaddrs=$(ip addr show 2>/dev/null | grep -c 'vpn0')"                # rtnl_fill_ifinfo
 echo "VEC keep_getifaddrs=$(ip addr show 2>/dev/null | grep -c ': eth0:')"
-echo "VEC proc_route_v6=$(cat /proc/net/ipv6_route 2>/dev/null | grep -c vpn0)"   # ipv6_route_seq_show
+echo "VEC proc_route_v6=$(grep -c vpn0 /proc/net/ipv6_route 2>/dev/null)"   # ipv6_route_seq_show
 echo "VEC siocgifconf=$(ifconfig -a 2>/dev/null | grep -c vpn0)"                  # sock_ioctl
 echo "VEC keep_siocgifconf=$(ifconfig -a 2>/dev/null | grep -c '^eth0')"
 echo "VEC dev_ioctl=$(ifconfig vpn0 2>/dev/null | grep -c vpn0)"                  # dev_ioctl

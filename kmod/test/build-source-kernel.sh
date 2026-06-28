@@ -67,7 +67,9 @@ case "$VER" in
 	if [ ! -d "$SRC" ]; then
 		echo "[legacy] cloning AOSP common android11-5.4 @ $AOSP_SHA…"
 		git clone --depth=1 -b android11-5.4 "$AOSP" "$SRC"
-		git -C "$SRC" fetch --depth=1 origin "$AOSP_SHA" && git -C "$SRC" checkout -q "$AOSP_SHA" || true
+		if git -C "$SRC" fetch --depth=1 origin "$AOSP_SHA"; then
+			git -C "$SRC" checkout -q "$AOSP_SHA" || true
+		fi
 	fi
 	;;
 *)
