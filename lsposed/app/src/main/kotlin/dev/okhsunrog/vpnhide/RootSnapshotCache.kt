@@ -25,11 +25,15 @@ internal val REQUIRED_ROOT_SNAPSHOT_SECTIONS =
     setOf(
         "kmod_prop",
         "zygisk_prop",
+        "kpm_prop",
         "ports_prop",
         "kmod_module_dir",
         "zygisk_module_dir",
+        "kpm_module_dir",
         "kmod_targets",
         "zygisk_targets",
+        "kpm_targets",
+        "kpm_load_status",
         "lsposed_targets",
         "hidden_pkgs",
         "observer_uids",
@@ -191,15 +195,18 @@ internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): S
       phase_start module_props
       emit_file kmod_prop $KMOD_MODULE_DIR/module.prop
       emit_file zygisk_prop $ZYGISK_MODULE_DIR/module.prop
+      emit_file kpm_prop $KPM_MODULE_DIR/module.prop
       emit_file ports_prop $PORTS_MODULE_DIR/module.prop
       emit_eval kmod_module_dir '[ -d $KMOD_MODULE_DIR ] && echo 1 || echo 0'
       emit_eval zygisk_module_dir '[ -d $ZYGISK_MODULE_DIR ] && echo 1 || echo 0'
+      emit_eval kpm_module_dir '[ -d $KPM_MODULE_DIR ] && echo 1 || echo 0'
       phase_end
     }
     phase_target_files() {
       phase_start target_files
       emit_file kmod_targets $KMOD_TARGETS
       emit_file zygisk_targets $ZYGISK_TARGETS
+      emit_file kpm_targets $KPM_TARGETS
       emit_file lsposed_targets $LSPOSED_TARGETS
       emit_file hidden_pkgs $SS_HIDDEN_PKGS_FILE
       emit_file observer_uids $SS_OBSERVER_UIDS_FILE
@@ -211,6 +218,7 @@ internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): S
       emit_file current_boot_id /proc/sys/kernel/random/boot_id
       emit_file kmod_load_status $KMOD_LOAD_STATUS_FILE
       emit_file kmod_load_dmesg $KMOD_LOAD_DMESG_FILE
+      emit_file kpm_load_status $KPM_LOAD_STATUS_FILE
       phase_end
     }
     phase_runtime_status_files() {

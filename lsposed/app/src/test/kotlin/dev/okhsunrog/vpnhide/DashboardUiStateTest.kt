@@ -121,12 +121,14 @@ class DashboardUiStateTest {
                 ports = ModuleState.NotInstalled,
             )
 
+        // Native layer counts once (kmod active); +LSPosed = 2 of the 3 layers.
         assertEquals(2, activeModuleCount(state))
-        assertEquals("2/4", moduleSummaryText(state))
+        assertEquals("2/3", moduleSummaryText(state))
     }
 
     private fun dashboardState(
         kmod: ModuleState = ModuleState.NotInstalled,
+        kpm: ModuleState = ModuleState.NotInstalled,
         zygisk: ModuleState = ModuleState.NotInstalled,
         lsposed: LsposedState = LsposedState.NotInstalled,
         ports: ModuleState = ModuleState.NotInstalled,
@@ -135,9 +137,11 @@ class DashboardUiStateTest {
     ): DashboardState =
         DashboardState(
             kmod = kmod,
+            kpm = kpm,
             zygisk = zygisk,
             lsposed = lsposed,
             ports = ports,
+            nativeBackend = selectNativeBackend(kmod, kpm, zygisk),
             nativeInstallRecommendation = null,
             kmodLoadStatus = null,
             protection = protection,

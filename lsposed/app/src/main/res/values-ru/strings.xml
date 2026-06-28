@@ -31,9 +31,9 @@
     <string name="filter_show_system">Показать системные приложения</string>
     <string name="filter_russian_only">Только российские</string>
     <string name="apps_help_title">Как это работает</string>
-    <string name="apps_hint_toggles">Нажимайте L, K, Z для переключения отдельных уровней защиты (LSPosed, модуль ядра, Zygisk). Нажмите на строку, чтобы переключить все уровни сразу.</string>
-    <string name="apps_hint_restart_target">После Save: L (LSPosed) и K (модуль ядра) применяются к целевому приложению мгновенно — рестарт не нужен. Z (Zygisk) внедряется при форке процесса, поэтому для любого только что переключённого целевого приложения с Z (включением или выключением) нужен force-stop + повторный запуск, чтобы изменение для него вступило в силу.</string>
-    <string name="apps_hint_zygisk">Банковские и платёжные приложения обнаруживают Zygisk-хуки и при включённом Z крашатся или отказываются работать. Держите Z выключенным для таких приложений и полагайтесь на модуль ядра + LSPosed.</string>
+    <string name="apps_hint_roles">Нажмите чип, чтобы переключить роль для приложения, или нажмите на строку — переключатся все сразу. J = LSPosed (скрытие на уровне Java). N = нативный бэкенд (скрытие на уровне ядра через kmod/KPM или Zygisk). A = скрытие приложений (это приложение видит очищенный список пакетов). P = блокировать этому приложению доступ к localhost-портам. N и P показываются только когда установлен нативный бэкенд / модуль портов.</string>
+    <string name="apps_hint_restart_target">После Save: J (LSPosed) и нативный бэкенд на уровне ядра (kmod/KPM) применяются к цели мгновенно — рестарт не нужен. Если ваш нативный бэкенд — Zygisk, или вы изменили P (порты), целевое приложение нужно force-stop\'нуть и открыть заново, чтобы изменение для него вступило в силу.</string>
+    <string name="apps_hint_zygisk">Если ваш нативный бэкенд — Zygisk, банковские и платёжные приложения могут обнаружить его внутрипроцессные хуки и крашиться при включённом N — держите N выключенным для таких приложений и полагайтесь на J (LSPosed). Бэкенды kmod и KPM работают в пространстве ядра и невидимы для таких проверок.</string>
 
     <!-- App hiding -->
     <string name="hiding_help_title">Как работает скрытие приложений</string>
@@ -61,10 +61,14 @@
     <string name="self_targets_error_message">VPN Hide не смог обновить root-файлы целей. Проверьте менеджер root, если разрешение было прервано, затем нажмите «Повторить».</string>
     <string name="targets_load_failed_title">Данные защиты недоступны</string>
     <string name="targets_load_failed_message">VPN Hide не смог собрать root-состояние для этой вкладки. Проверьте менеджер root, если разрешение было прервано, затем нажмите «Повторить».</string>
-    <string name="dashboard_kmod">Модуль ядра</string>
-    <string name="dashboard_zygisk">VPN Hide Zygisk модуль</string>
-    <string name="dashboard_lsposed_module">VPN Hide LSPosed-хук</string>
     <string name="dashboard_ports">Модуль скрытия портов</string>
+    <string name="dashboard_java_backend">Java-бэкенд</string>
+    <string name="dashboard_native_backend">Нативный бэкенд</string>
+    <string name="dashboard_backend_lsposed">LSPosed</string>
+    <string name="dashboard_backend_kmod">Kmod</string>
+    <string name="dashboard_backend_kpm">KPM</string>
+    <string name="dashboard_backend_zygisk">Zygisk</string>
+    <string name="dashboard_backend_line">%1$s · %2$s</string>
     <string name="dashboard_not_installed">Не установлен</string>
     <string name="dashboard_installed_inactive">Установлен, неактивен</string>
     <string name="dashboard_installed_restart_app">Установлен, перезапустите VPN Hide</string>
@@ -109,7 +113,8 @@
     <string name="dashboard_issues">Ошибки (%d)</string>
     <string name="dashboard_warnings">Предупреждения (%d)</string>
     <string name="dashboard_issue_kmod_capable_but_zygisk">Ваше ядро поддерживает модуль ядра — он работает в пространстве ядра и невидим для анти-тампер проверок. Zygisk тоже работает, но его хуки обнаруживаются банковскими и платёжными приложениями, так что Z для них придётся вручную держать выключенным. Установите %1$s и удалите Zygisk-модуль.</string>
-    <string name="dashboard_issue_both_native_active">Модуль ядра и Zygisk активны одновременно — оба закрывают одни и те же native-пути. Kmod невидим для анти-тампер-детекции, Zygisk — нет, поэтому при добавлении каждого банковского или платёжного приложения в таргеты Z для него придётся отдельно выключать. Удалите Zygisk-модуль, чтобы не держать это в уме — kmod сохранит покрытие.</string>
+    <string name="dashboard_issue_native_conflict_kernel">Модуль ядра (.ko) и KPM установлены одновременно. Они хукают одни и те же функции ядра, и работа обоих может намертво подвесить устройство. Оставьте только один — удалите либо модуль ядра, либо KPM.</string>
+    <string name="dashboard_issue_multiple_native">Установлено больше одного нативного бэкенда. Активным может быть только один (приоритет: модуль ядра, затем KPM, затем Zygisk), остальные простаивают. Удалите неиспользуемые, чтобы не захламлять систему.</string>
     <string name="dashboard_issue_debug_logging_on">Отладочные логи включены. VPN Hide пишет подробные строки в logcat, которые может прочитать любой с root-доступом. Выключите переключатель в Диагностике после сбора багрепорта.</string>
     <string name="dashboard_issue_selinux_permissive">SELinux в режиме Permissive. Шесть векторов детекции, которые VPN Hide рассчитывает на блокировку ядром (RTM_GETROUTE, /proc/net/{tcp,udp,dev,fib_trie}, /sys/class/net), стали доступны целевым приложениям. Выполните `setenforce 1` и разберитесь, что его переключило.</string>
     <string name="dashboard_issue_self_multi_profile">VPN Hide установлен в %1$d профилях. Значимая копия — в основном профиле: LSPosed хукает system_server, а он запущен только в основном профиле; picker там уже видит приложения из всех профилей и применяет фильтры ко всем. Копии в дополнительных профилях избыточны и конкурируют за Save в общие файлы целей. Удалите VPN Hide из рабочего профиля / Second Space / других дополнительных профилей.</string>
@@ -133,6 +138,9 @@
     <string name="dashboard_issue_update_ports">Версия модуля скрытия портов %1$s старее версии приложения %2$s. Откройте KernelSU/Magisk → Модули для обновления.</string>
     <string name="dashboard_issue_update_app_for_ports">Версия модуля скрытия портов %1$s новее версии приложения %2$s. Обновите приложение VPN Hide.</string>
     <string name="dashboard_issue_ports_version_mismatch">Несоответствие версий модуля скрытия портов: модуль %1$s, приложение %2$s. Откройте KernelSU/Magisk → Модули для обновления.</string>
+    <string name="dashboard_issue_update_kpm">Версия KPM %1$s старее версии приложения %2$s. Откройте KernelSU/Magisk → Модули для обновления.</string>
+    <string name="dashboard_issue_update_app_for_kpm">Версия KPM %1$s новее версии приложения %2$s. Обновите приложение VPN Hide.</string>
+    <string name="dashboard_issue_kpm_version_mismatch">Несоответствие версий KPM: модуль %1$s, приложение %2$s. Откройте KernelSU/Magisk → Модули для обновления.</string>
     <string name="dashboard_running_version">Версия запущенного модуля: %s</string>
 
     <!-- kmod variant / load diagnostics -->

@@ -124,6 +124,7 @@ internal fun buildEnsureSelfInTargetsCommand(selfPkg: String): String =
             """.trimIndent(),
         )
         append("; ensure_line $KMOD_TARGETS /data/adb/vpnhide_kmod 644 0 1")
+        append("; ensure_line $KPM_TARGETS /data/adb/vpnhide_kpm 644 0 1")
         append("; ensure_line $ZYGISK_TARGETS /data/adb/vpnhide_zygisk 644 0 1")
         append("; if [ -d $ZYGISK_MODULE_DIR ]; then cp $ZYGISK_TARGETS $ZYGISK_MODULE_TARGETS 2>&1 || echo zygisk_cp_failed; fi")
         append("; mkdir -p /data/adb/vpnhide_lsposed")

@@ -145,11 +145,13 @@ fun DashboardScreen(
         // Module status cards — one grouped block (byIndex corners).
         SectionHeader(stringResource(R.string.dashboard_modules))
         Spacer(Modifier.height(8.dp))
+        // Two layers + ports: the always-on Java backend (LSPosed) and the one
+        // active native backend (kmod / KPM / Zygisk, §1.5), then the separate
+        // ports feature.
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            LsposedCard(s.lsposed, index = 0, count = 4)
-            ModuleCard(stringResource(R.string.dashboard_kmod), "K", s.kmod, index = 1, count = 4)
-            ModuleCard(stringResource(R.string.dashboard_zygisk), "Z", s.zygisk, selfNeedsRestart, index = 2, count = 4)
-            ModuleCard(stringResource(R.string.dashboard_ports), "P", s.ports, index = 3, count = 4)
+            JavaBackendCard(s.lsposed, index = 0, count = 3)
+            NativeBackendCard(s.nativeBackend, selfNeedsRestart, index = 1, count = 3)
+            ModuleCard(stringResource(R.string.dashboard_ports), "P", s.ports, index = 2, count = 3)
         }
         s.nativeInstallRecommendation?.let { recommendation ->
             Spacer(Modifier.height(8.dp))
@@ -474,9 +476,10 @@ private fun HeroMetric(
 
 @Composable
 private fun moduleSummaryAccent(state: DashboardState): Color {
-    val nativeActive = moduleActive(state.kmod) || moduleActive(state.zygisk)
+    val nativeActive = moduleActive(state.nativeBackend.state)
+    val nativeBroken = (state.nativeBackend.state as? ModuleState.Installed)?.brokenReason != null
     return when {
-        (state.kmod as? ModuleState.Installed)?.brokenReason != null -> StatusColors.errorAccent
+        nativeBroken -> StatusColors.errorAccent
         state.lsposed is LsposedState.Active && nativeActive -> StatusColors.successDot
         activeModuleCount(state) > 0 -> StatusColors.warningAccent
         else -> StatusColors.errorAccent
@@ -575,6 +578,57 @@ private fun javaSummaryAccent(protection: ProtectionCheck): Color =
         }
     }
 
+private data class InstalledVisual(
+    val subtitle: String,
+    val accentColor: Color,
+    val accentContainerColor: Color,
+)
+
+/**
+ * Status subtitle + colors for an installed flashable module. Shared by the
+ * Ports card and the Native-backend card so the broken / active / inactive
+ * logic lives in one place (keeps the cards in sync and CPD quiet).
+ */
+@Composable
+private fun installedVisual(
+    state: ModuleState.Installed,
+    selfNeedsRestart: Boolean,
+): InstalledVisual {
+    val active = state.active
+    val broken = state.brokenReason
+    val brokenSubtitleRes =
+        when (broken) {
+            KmodBrokenReason.WrongVariant -> R.string.dashboard_kmod_broken_wrong_variant
+            KmodBrokenReason.UnsupportedKernel -> R.string.dashboard_kmod_broken_unsupported_kernel
+            KmodBrokenReason.MissingKprobes -> R.string.dashboard_kmod_broken_no_kprobes
+            KmodBrokenReason.UnknownVariantInactive -> R.string.dashboard_kmod_broken_unknown_variant
+            KmodBrokenReason.AmbiguousLoadFailed -> R.string.dashboard_kmod_broken_ambiguous
+            KmodBrokenReason.SignatureEnforced -> R.string.dashboard_kmod_broken_signature_enforced
+            null -> null
+        }
+    return InstalledVisual(
+        subtitle =
+            when {
+                brokenSubtitleRes != null -> stringResource(brokenSubtitleRes)
+                active -> stringResource(R.string.dashboard_active_targets, state.targetCount)
+                selfNeedsRestart -> stringResource(R.string.dashboard_installed_restart_app)
+                else -> stringResource(R.string.dashboard_installed_inactive)
+            },
+        accentColor =
+            when {
+                broken != null -> StatusColors.errorDot
+                active -> StatusColors.successDot
+                else -> StatusColors.warningAccent
+            },
+        accentContainerColor =
+            when {
+                broken != null -> StatusColors.errorContainer()
+                active -> StatusColors.successContainer()
+                else -> StatusColors.warningContainer()
+            },
+    )
+}
+
 @Composable
 private fun ModuleCard(
     name: String,
@@ -599,116 +653,131 @@ private fun ModuleCard(
         }
 
         is ModuleState.Installed -> {
-            val active = state.active
-            val broken = state.brokenReason
-            val brokenSubtitleRes =
-                when (broken) {
-                    KmodBrokenReason.WrongVariant -> R.string.dashboard_kmod_broken_wrong_variant
-                    KmodBrokenReason.UnsupportedKernel -> R.string.dashboard_kmod_broken_unsupported_kernel
-                    KmodBrokenReason.MissingKprobes -> R.string.dashboard_kmod_broken_no_kprobes
-                    KmodBrokenReason.UnknownVariantInactive -> R.string.dashboard_kmod_broken_unknown_variant
-                    KmodBrokenReason.AmbiguousLoadFailed -> R.string.dashboard_kmod_broken_ambiguous
-                    KmodBrokenReason.SignatureEnforced -> R.string.dashboard_kmod_broken_signature_enforced
-                    null -> null
-                }
+            val v = installedVisual(state, selfNeedsRestart)
             ModuleCardShell(
                 name = name,
                 badgeText = badgeText,
                 index = index,
                 count = count,
                 version = state.version,
-                subtitle =
-                    when {
-                        brokenSubtitleRes != null -> stringResource(brokenSubtitleRes)
-                        active -> stringResource(R.string.dashboard_active_targets, state.targetCount)
-                        selfNeedsRestart -> stringResource(R.string.dashboard_installed_restart_app)
-                        else -> stringResource(R.string.dashboard_installed_inactive)
-                    },
-                accentColor =
-                    when {
-                        broken != null -> StatusColors.errorDot
-                        active -> StatusColors.successDot
-                        else -> StatusColors.warningAccent
-                    },
-                accentContainerColor =
-                    when {
-                        broken != null -> StatusColors.errorContainer()
-                        active -> StatusColors.successContainer()
-                        else -> StatusColors.warningContainer()
-                    },
+                subtitle = v.subtitle,
+                accentColor = v.accentColor,
+                accentContainerColor = v.accentContainerColor,
             )
         }
     }
 }
 
+/** The always-on Java backend (LSPosed). Badge "J"; subtitle is "LSPosed · …". */
 @Composable
-private fun LsposedCard(
+private fun JavaBackendCard(
     state: LsposedState,
     index: Int = -1,
     count: Int = 1,
 ) {
-    val moduleName = stringResource(R.string.dashboard_lsposed_module)
+    val name = stringResource(R.string.dashboard_java_backend)
+    val lsposed = stringResource(R.string.dashboard_backend_lsposed)
     val installedVersion = BuildConfig.VERSION_NAME
-    when (state) {
-        is LsposedState.NotInstalled -> {
-            ModuleCardShell(
-                name = moduleName,
-                badgeText = "L",
-                index = index,
-                count = count,
-                version = installedVersion,
-                subtitle = stringResource(R.string.dashboard_not_installed),
-                accentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                accentContainerColor = AppColors.neutralAccentContainer,
-            )
-        }
+    val (status, accentColor, accentContainerColor) =
+        when (state) {
+            is LsposedState.NotInstalled -> {
+                Triple(
+                    stringResource(R.string.dashboard_not_installed),
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                    AppColors.neutralAccentContainer,
+                )
+            }
 
-        is LsposedState.InstalledInactive -> {
-            ModuleCardShell(
-                name = moduleName,
-                badgeText = "L",
-                index = index,
-                count = count,
-                version = installedVersion,
-                subtitle = stringResource(R.string.dashboard_installed_inactive),
-                accentColor = StatusColors.warningAccent,
-                accentContainerColor = StatusColors.warningContainer(),
-            )
-        }
+            is LsposedState.InstalledInactive -> {
+                Triple(
+                    stringResource(R.string.dashboard_installed_inactive),
+                    StatusColors.warningAccent,
+                    StatusColors.warningContainer(),
+                )
+            }
 
-        is LsposedState.NeedsReboot -> {
-            ModuleCardShell(
-                name = moduleName,
-                badgeText = "L",
-                index = index,
-                count = count,
-                version = installedVersion,
-                subtitle = stringResource(R.string.dashboard_reboot_needed),
-                accentColor = StatusColors.warningAccent,
-                accentContainerColor = StatusColors.warningContainer(),
-            )
-        }
+            is LsposedState.NeedsReboot -> {
+                Triple(
+                    stringResource(R.string.dashboard_reboot_needed),
+                    StatusColors.warningAccent,
+                    StatusColors.warningContainer(),
+                )
+            }
 
-        is LsposedState.Active -> {
-            val subtitle =
-                stringResource(R.string.dashboard_active_targets, state.targetCount) +
-                    if (state.version != null) {
-                        "\n" + stringResource(R.string.dashboard_running_version, state.version)
-                    } else {
-                        ""
-                    }
-            ModuleCardShell(
-                name = moduleName,
-                badgeText = "L",
-                index = index,
-                count = count,
-                version = installedVersion,
-                subtitle = subtitle,
-                accentColor = StatusColors.successDot,
-                accentContainerColor = StatusColors.successContainer(),
-            )
+            is LsposedState.Active -> {
+                Triple(
+                    stringResource(R.string.dashboard_active_targets, state.targetCount),
+                    StatusColors.successDot,
+                    StatusColors.successContainer(),
+                )
+            }
         }
+    val base = stringResource(R.string.dashboard_backend_line, lsposed, status)
+    val subtitle =
+        if (state is LsposedState.Active && state.version != null) {
+            base + "\n" + stringResource(R.string.dashboard_running_version, state.version)
+        } else {
+            base
+        }
+    ModuleCardShell(
+        name = name,
+        badgeText = "J",
+        index = index,
+        count = count,
+        version = installedVersion,
+        subtitle = subtitle,
+        accentColor = accentColor,
+        accentContainerColor = accentContainerColor,
+    )
+}
+
+/**
+ * The one active native backend (kmod / KPM / Zygisk, §1.5). Badge "N";
+ * subtitle is "<backend> · <status>", or "Not installed" when none of the three
+ * is present. The restart-app hint only applies to Zygisk (the kernel backends
+ * need a reboot, not an app restart).
+ */
+@Composable
+private fun NativeBackendCard(
+    selection: NativeBackendSelection,
+    selfNeedsRestart: Boolean,
+    index: Int = -1,
+    count: Int = 1,
+) {
+    val name = stringResource(R.string.dashboard_native_backend)
+    val state = selection.state
+    if (selection.id == null || state !is ModuleState.Installed) {
+        ModuleCardShell(
+            name = name,
+            badgeText = "N",
+            index = index,
+            count = count,
+            version = null,
+            subtitle = stringResource(R.string.dashboard_not_installed),
+            accentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+            accentContainerColor = AppColors.neutralAccentContainer,
+        )
+        return
     }
+    val backendName =
+        stringResource(
+            when (selection.id) {
+                NativeBackendId.Kmod -> R.string.dashboard_backend_kmod
+                NativeBackendId.Kpm -> R.string.dashboard_backend_kpm
+                NativeBackendId.Zygisk -> R.string.dashboard_backend_zygisk
+            },
+        )
+    val v = installedVisual(state, selfNeedsRestart && selection.id == NativeBackendId.Zygisk)
+    ModuleCardShell(
+        name = name,
+        badgeText = "N",
+        index = index,
+        count = count,
+        version = state.version,
+        subtitle = stringResource(R.string.dashboard_backend_line, backendName, v.subtitle),
+        accentColor = v.accentColor,
+        accentContainerColor = v.accentContainerColor,
+    )
 }
 
 @Composable

@@ -28,6 +28,14 @@ internal const val KMOD_LOAD_DMESG_FILE = "/data/adb/vpnhide_kmod/load_dmesg"
 internal const val ZYGISK_MODULE_DIR = "/data/adb/modules/vpnhide_zygisk"
 internal const val ZYGISK_STATUS_FILE_NAME = "vpnhide_zygisk_active"
 
+// KPM (KernelPatch Module) backend — the third native backend. Like the .ko it
+// keeps a persistent targets list + a boot-written load_status (the KPM has no
+// /proc node; its runtime channel is the kpatch ctl0 supercall, so the app
+// reads load_status for liveness instead of a proc marker).
+internal const val KPM_TARGETS = "/data/adb/vpnhide_kpm/targets.txt"
+internal const val KPM_MODULE_DIR = "/data/adb/modules/vpnhide_kpm"
+internal const val KPM_LOAD_STATUS_FILE = "/data/adb/vpnhide_kpm/load_status"
+
 /** Default cap on a single su invocation. Most root commands here finish
  *  in milliseconds; this only fires if the su binary is genuinely stuck
  *  (e.g. waiting on a GUI prompt that the user dismissed). */
