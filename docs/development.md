@@ -12,7 +12,7 @@ How to build vpnhide from source.
   rustup target add aarch64-linux-android
   cargo install cargo-ndk
   ```
-- **`podman` or `docker`** — only for building the kernel module via DDK images. See [kmod/BUILDING.md](../kmod/BUILDING.md).
+- **`docker` or `podman`** — only for building the kernel module via DDK images. Docker is preferred when both are installed, matching CI and device-test workflows. See [kmod/BUILDING.md](../kmod/BUILDING.md).
 - **`zip`** — packaging module zips.
 - **`adb`** — installing builds on a device.
 
@@ -79,7 +79,7 @@ cd lsposed && ./gradlew :app:assembleRelease
 # → vpnhide-kmod-<kmi>.zip at the repo root
 ```
 
-The script auto-spawns the `ghcr.io/ylarod/ddk-min:<kmi>-<TAG>` container via podman/docker (same image CI uses). For local kernel-source builds via `direnv` and the GKI matrix details, see [kmod/BUILDING.md](../kmod/BUILDING.md).
+The script auto-spawns the `ghcr.io/ylarod/ddk-min:<kmi>-<TAG>` container via Docker or podman (same image CI uses; Docker is preferred when both are installed). For local kernel-source builds via `direnv` and the GKI matrix details, see [kmod/BUILDING.md](../kmod/BUILDING.md).
 
 ## Install on device
 

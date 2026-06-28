@@ -84,8 +84,11 @@ jobs:
           build-args: KMI=${{ matrix.kmi }}
           push: true
           tags: ${{ steps.img.outputs.image }}
+          # Keep reading any existing per-KMI GHA cache entries while they
+          # expire, but do not export new ones. The kernel-build layers are
+          # huge and recent runs spent minutes exporting cache with little
+          # practical reuse.
           cache-from: type=gha,scope=ddk-qemu-${{ matrix.kmi }}
-          cache-to: type=gha,mode=max,scope=ddk-qemu-${{ matrix.kmi }}
 
   # One lightweight image with the 3 from-source legacy kernels (4.14/4.19/5.4)
   # for the KPM harness. Not a matrix — a single image with all three Images,
@@ -124,5 +127,6 @@ jobs:
           file: .github/docker/kpm-qemu-legacy/Dockerfile
           push: true
           tags: ${{ steps.img.outputs.image }}
+          # Same tradeoff as the per-KMI images: import old cache if present,
+          # skip the expensive export path.
           cache-from: type=gha,scope=kpm-qemu-legacy
-          cache-to: type=gha,mode=max,scope=kpm-qemu-legacy

@@ -48,7 +48,7 @@ These short files cover everything specific to this repo. Skipping them leads to
 
 Single-command builds for both CI and local — the same scripts run in both places.
 
-- **kmod**: `./kmod/build.py --kmi <kmi>` (or `--all`). Auto-spawns the DDK podman/docker container if you're not already inside it; CI passes `--inside-container` to skip the spawn. The DDK image tag is `DDK_IMAGE_TAG` in `kmod/build.py` — `.github/workflows/ci.yml` mirrors it, bump both together.
+- **kmod**: `./kmod/build.py --kmi <kmi>` (or `--all`). Auto-spawns the DDK Docker/podman container if you're not already inside it; CI passes `--inside-container` to skip the spawn. The DDK image tag is `DDK_IMAGE_TAG` in `kmod/build.py` — `.github/workflows/ci.yml` mirrors it, bump both together.
 - **zygisk**: `cd zygisk && ./build.py` — host-side cargo-ndk build, same script in CI image.
 - **lsposed APK**: `cd lsposed && ./gradlew :app:assembleRelease`.
 
