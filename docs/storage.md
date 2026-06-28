@@ -158,7 +158,7 @@ crates/
     src/lib.rs              # shared core: JSON schema (serde), pkg→uid resolution
                             #   (`pm`), project_native(json) -> String
     src/bin/kmod.rs         #   project_native(json) → write("/proc/vpnhide_ctl")
-    src/bin/kpm.rs          #   project_native(json) → `kpatch [key] kpm ctl0`
+    src/bin/kpm.rs          #   project_native(json) → APatch supercall / KPatch-Next `kpatch`
     src/bin/zygisk.rs       #   project_native(json) → write_atomic(module_dir file)
     src/bin/ports.rs        #   project_ports(json) → iptables-restore/ip6tables-restore
 ```
@@ -377,9 +377,9 @@ IPC for the native backends. This document supersedes its statements about the
 - **LSPosed does not consume the wire** — it reads the canonical JSON directly
   (§3). protocol.md's "LSPosed parses its config profile from its file" / the
   LSPosed rows in its channel + profile tables are superseded here.
-- **APatch boot is configurable** when the superkey is persisted (§6) — protocol.md
-  §7.4's "a boot script has no superkey, so it cannot configure" describes only the
-  no-persistence default.
+- **APatch boot is configurable** when the superkey is persisted (§6); without
+  it, boot records `awaiting_superkey` and activation resumes after the app
+  supplies the key.
 - **The app does not hand-build per-channel configs** — the activator does
   (§4). The serialiser is the Rust `protocol` crate, shared with the Zygisk `.so`.
 

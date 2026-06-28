@@ -1,4 +1,4 @@
-# vpnhide — KPM backend (KernelPatch Module) · **WIP skeleton**
+# vpnhide — KPM backend (KernelPatch Module)
 
 A third native backend alongside the kretprobe `.ko`. Same job — hide VPN
 interfaces from selected UIDs at the kernel level — for the kernels the
@@ -71,21 +71,29 @@ legwork and tested on-device — credit due):
 ## Build
 
 A KPM is a relocatable object built with clang against the KernelPatch
-header tree — **no kernel source needed**:
+header tree — **no kernel source needed**. The default build uses the pinned
+`kmod/third_party/KernelPatch` submodule:
 
 ```sh
-git clone --depth 1 https://github.com/bmax121/KernelPatch
-make -C kmod kpm KP_DIR=$PWD/KernelPatch
+git submodule update --init kmod/third_party/KernelPatch
+make -C kmod kpm
 ```
 
-This **works today** — `vpnhide.kpm` builds against `bmax121/KernelPatch`
-and emits a valid KPM ELF (`.kpm.info` / `.kpm.init` / `.kpm.ctl0` /
-`.kpm.exit` sections, metadata populated). See `../Makefile` (`kpm*`
-targets). Include dirs mirror KernelPatch's own `kpms/*/Makefile`.
+To test against a different KernelPatch checkout, override `KP_DIR`:
 
-**TODO**: vendor the KernelPatch headers as a submodule / `third_party/`
-drop + a `build.py` KPM path, so CI builds the `.kpm` reproducibly (like
-`zygisk/third_party/`). Building != working — see Status.
+```sh
+make -C kmod kpm KP_DIR=/path/to/KernelPatch
+```
+
+The flashable module zip is built by:
+
+```sh
+python3 kmod/kpm/build.py
+```
+
+That script builds the Android `kpm` activator, builds `vpnhide.kpm`, stages
+`kmod/kpm/module/`, stamps `module.prop`, and writes `vpnhide-kpm.zip` at the
+repo root. CI uses the same submodule-backed build.
 
 ## Deploy
 
@@ -97,7 +105,9 @@ everywhere (target the upstream `kpm.h` ABI).
 
 Supported runtimes — pick whichever matches the device's root:
 
-- **APatch** — KernelPatch is built in; `.kpm` loads directly.
+- **APatch** — KernelPatch is built in; the flashable zip installs as an
+  APatch/APM module, and the vpnhide activator loads/configures `vpnhide.kpm`
+  through direct KernelPatch supercalls with the saved APatch SuperKey.
 - **KernelSU-Next** — flash **KPatch-Next** (one module, no switch to APatch).
 - **Magisk or stock KernelSU** — flash the standalone
   [KPatch-Next-Module](https://github.com/KernelSU-Next/KPatch-Next-Module).
@@ -108,11 +118,10 @@ Supported runtimes — pick whichever matches the device's root:
   the kernel is still patched, it's just automated. (Conflicts with APatch,
   which already ships KernelPatch.)
 
-Persistence: a one-shot runtime `sc_kpm_load` is **lost on reboot**. Either
-**embed** the `.kpm` in the patched `boot.img`, or — the easy path on the
-runtimes above — drop `vpnhide.kpm` into `/data/adb/kp-next/kpm/` and let
-their boot service reload it every boot (same shape as the `.ko`'s `insmod`
-from `post-fs-data.sh`).
+Persistence: a one-shot runtime `sc_kpm_load` is **lost on reboot**. The
+vpnhide KPM module therefore ships `vpnhide.kpm` plus boot scripts: KPatch-Next
+loads via its runtime `kpatch` CLI, while APatch defers to the activator and
+uses the saved SuperKey when present.
 
 Targeting / control plane: our target-UID set is delivered via the module's
 own `KPM_CTL0` supercall + load-args (the shape the QEMU harness exercises) —
@@ -159,6 +168,12 @@ bootloop**, where the `.ko`'s kretprobe would just fail to register. So:
       `fib_rule`); a static `getifaddrs()` probe (`gai-probe.c`) proves the
       address path is closed (target getifaddrs vpn0: 3 → 0).
 - [x] Runtime kver offset table (`kver_offsets.h`) — **6.12 + 6.6 + 6.1 + 5.15 + 5.10 + 5.4 + 4.19 + 4.14, all full + QEMU-validated 9/9** (the complete Android kernel range, 8→16)
+- [x] KernelPatch submodule under `kmod/third_party/KernelPatch`; `make kpm`
+      works without an external checkout, and `KP_DIR=...` remains available
+      for local experiments.
+- [x] `kmod/kpm/build.py` packages the cross-version flashable KPM module zip.
+- [x] CI KPM gates build the `.kpm` against the submodule and run the GKI +
+      legacy QEMU KPM harnesses.
 - [x] **6.12 (android16-6.12) — full parity, QEMU-validated 9/9** on a DDK GKI
       Image. Two version-specific changes vs 6.1: (a) `struct fib6_info` gained
       `gc_link` → `fib6_nh[]`@192; (b) the big **`struct net_device`
@@ -210,7 +225,6 @@ bootloop**, where the `.ko`'s kretprobe would just fail to register. So:
         the plain name (exact match wins first); this just hardens gcc kernels.
 - [ ] proc_ops vs file_operations mock per kver (the HyperOS-5.4 crash class) — A/B currently uses load-args, so proc isn't on the critical path
 - [ ] Confirm offsets on the closed-kernel targets with soranerai & cyberc3dr (real devices)
-- [ ] `build.py` KPM path + wire `run-kpm.sh` into CI (qemu-image job)
 - [ ] Wire the `.ko` to `../shared/vpnhide_logic.h` (mechanical; gate on a local `.ko` harness run)
 
 ## Credits

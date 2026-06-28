@@ -279,13 +279,14 @@ post-fs-data:
   KPM post-fs-data
     -> refuse if .ko module is installed+enabled
     -> keyless KPatch-Next: load vpnhide.kpm
-    -> APatch without saved key: write awaiting_superkey
+    -> APatch: defer to service activator; without saved key, write awaiting_superkey
 
 service:
   kmod / KPM / Zygisk service.sh
     -> start that module's activator with --boot-wait in the background
     -> activator waits for PackageManager to expose dev.okhsunrog.vpnhide
     -> kmod activator also waits for /proc/vpnhide_ctl
+    -> KPM activator uses saved APatch SuperKey when present
     -> activator reads canonical JSON and writes exactly one native channel
   ports service.sh
     -> start background waiter

@@ -435,13 +435,14 @@ The config parser is *already* shared with `.ko` (`apply_targets` →
 only the transport differs and `out_msg`/`outlen` (currently `(void)`) become the
 read-back channel for `stats` and `status`.
 
-**Confirmed on-device (OPEN-5):** the KernelPatch CLI **does forward `out_msg` to
-stdout** — a probe build that wrote a marker into `out_msg` and returned its
-length printed the marker via `kpatch <key> kpm ctl0 vpnhide stats` (Pixel 8 Pro,
-KSU-Next, runtime `d05`). The `long` return is **not** printed by the CLI (a
-target-arg call that left `out_msg` untouched produced no stdout). So: **data
-flows out only through `out_msg`/`copy_to_user`; the return value is reserved for
-short codes** (bytes written, or a negative kind/error code), never for payload.
+**Confirmed on-device (OPEN-5):** the KPatch-Next `kpatch` CLI **does forward
+`out_msg` to stdout** — a probe build that wrote a marker into `out_msg` and
+returned its length printed the marker via `kpatch kpm ctl0 vpnhide stats`
+(Pixel 8 Pro, KSU-Next, runtime `d05`). The `long` return is **not** printed by
+the CLI (a target-arg call that left `out_msg` untouched produced no stdout).
+So: **data flows out only through `out_msg`/`copy_to_user`; the return value is
+reserved for short codes** (bytes written, or a negative kind/error code), never
+for payload.
 
 ### 7.1 Dispatch
 
@@ -488,17 +489,17 @@ and have the parser truncate honestly at that ceiling (already the case for
 
 ### 7.3 Delivery
 
-Via the KernelPatch KPM ctl0 supercall. KPatch-Next exposes this through the
-`kpatch` CLI subcommand **`kpm ctl0`**:
+Via the KernelPatch KPM ctl0 supercall. KPatch-Next exposes this through its
+keyless runtime `kpatch` CLI subcommand **`kpm ctl0`**:
 
 ```
-<cli> <superkey> kpm ctl0 vpnhide "<payload>"
+kpatch kpm ctl0 vpnhide "<payload>"
 ```
 
 Write (multi-line payload as one argv argument):
 
 ```
-kpatch <superkey> kpm ctl0 vpnhide "vpnhide 1 config
+kpatch kpm ctl0 vpnhide "vpnhide 1 config
 debug 0
 target 0x27fa 0x3ff
 target 0x2947 0x004"
@@ -507,8 +508,8 @@ target 0x2947 0x004"
 Read (response on stdout — `out_msg`, §7.1):
 
 ```
-kpatch <superkey> kpm ctl0 vpnhide "vpnhide 1 stats"
-kpatch <superkey> kpm ctl0 vpnhide "vpnhide 1 status"
+kpatch kpm ctl0 vpnhide "vpnhide 1 stats"
+kpatch kpm ctl0 vpnhide "vpnhide 1 status"
 ```
 
 **The userspace entry must match the running KernelPatch runtime.** The `.kpm`
@@ -521,7 +522,9 @@ dispatch on those low bits, but the calling conventions differ:
   APatch's `0x1158` marker. APatch's public `apd` CLI manages APM ZIP modules
   only; it does **not** expose `kpm load/ctl0`. APatch's own app controls KPMs
   through native JNI `sc_kpm_*` calls, so the vpnhide activator does the same
-  directly.
+  directly. The activator probes `SUPERCALL_HELLO` before load/control, so a
+  missing KernelPatch runtime or stale SuperKey fails before a stray original
+  syscall can run.
 - **KPatch-Next:** syscall number `45`, arg0 is `NULL`, command word uses the
   `0x2026` marker, and the kernel side gates calls by root UID rather than a
   SuperKey. Use the runtime's own `kpatch kpm ...` CLI. With the standalone
@@ -538,29 +541,24 @@ external CLI argv; the activator calls the supercall from its own process.
 
 The `.kpm` ships as a **thin flashable module** (Magisk/KSU format; APatch reads
 it too). The module delivers the binary and a boot script; the actual KPM-load
-mechanism is delegated to the runtime. The two runtimes split sharply on whether
-boot can configure it, because of the superkey boundary (`sc_kpm_load` /
-`sc_kpm_control` require the **real superkey**, with no "su"-as-key shortcut that
-the su-management supercalls allow):
+mechanism is delegated to the activator and runtime. KPatch-Next is keyless;
+APatch can also activate at boot when the user has opted into persisting the
+SuperKey under `/data/adb/vpnhide/superkey` (root-only DE storage):
 
 - **KPatch-Next (Magisk / KSU), `d05`, keyless — the recommended path.** The boot
   script does everything itself: detect the runtime, enforce single-active (skip
   KPM if the `.ko` is loaded, §1.5), `kpatch kpm load vpnhide.kpm`, then apply the
   persisted config snapshot via `kpatch kpm ctl0`. Fully automatic, no user
   interaction. This is what we recommend users run.
-- **APatch, `c02`, superkey-required.** **By default** a boot script has no
-  superkey, so it **cannot** load or configure the KPM: it writes a status flag
-  (`awaiting_superkey`) and activation happens after the key is available.
-  **Superseded by [storage.md](storage.md) §6:** an opt-in flag persists the key
-  root-only at `/data/adb/vpnhide/superkey` (DE storage, boot-readable), which
-  lets the boot activator load/configure APatch at boot via direct supercalls —
-  parity with keyless KPatch-Next. The persisted key is a plain file (the boot
-  binary can't reach Android Keystore) and is safe under this threat model
-  (root-only, never unprivileged-readable).
+- **APatch, `c02`, SuperKey-required.** If the user enabled
+  `rememberSuperkey`, the app persists the key root-only at
+  `/data/adb/vpnhide/superkey`, and the boot activator loads/configures APatch
+  via direct supercalls after the `SUPERCALL_HELLO` probe. Without that saved
+  key, boot writes `awaiting_superkey`; activation resumes after the app supplies
+  the key.
 
-This keeps the smooth, zero-interaction KPM story on the recommended Magisk/KSU +
-KPatch-Next combo, and contains all the superkey friction in the APatch branch,
-which most users will not use.
+This keeps KPatch-Next fully automatic, while APatch is automatic only when the
+user explicitly stores the root-only SuperKey for boot.
 
 ---
 
@@ -678,13 +676,12 @@ Recorded so they are not re-litigated.
   observable by an adversary. The persistent `/data` files keep their names.
   Debug folds in here too (OPEN-6), so `/proc/vpnhide_debug` goes away. (KPM has
   no node either way — supercall read.)
-- **OPEN-5 — KPM CLI. RESOLVED (on-device).** Subcommand is `kpm ctl0 <name>
-  <payload>` (identical on APatch `c02` and KPatch-Next `d05`), and the CLI **does
-  forward `out_msg` to stdout** — so no extra root binary is needed for read-back;
-  the same call carries config in and stats/status out (§7.1/§7.3). Two residual
-  constraints captured in §7.3: (a) the CLI binary must match the running runtime
-  (the `.kpm` is cross-version, the supercall ABI is not); (b) APatch is
-  superkey-based (key in argv), KPatch-Next `d05` is keyless.
+- **OPEN-5 — KPM userspace transport. RESOLVED (on-device).** KPatch-Next
+  exposes `kpm ctl0 <name> <payload>` through its keyless `kpatch` CLI, and the
+  CLI **does forward `out_msg` to stdout** — so no extra root binary is needed
+  for read-back there. APatch does not expose `kpm load/ctl0` through `apd`; the
+  activator calls the runtime-specific supercalls directly with the saved
+  SuperKey. The `.kpm` is cross-version, but the userspace transport is not.
 - **OPEN-6 — `debug` placement. RESOLVED: folded into the config snapshot.**
   `debug <flag>` is the one global (non-`target`) config record (§4.3). Today
   each backend has its own `debug_logging` file (and the `.ko` a
