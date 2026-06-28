@@ -54,6 +54,10 @@ KPM_DESCRIPTION("Hide VPN interfaces from selected UIDs (KPM backend, WIP)");
 #define MODNAME "vpnhide"
 #define MAX_TARGET_UIDS 64
 
+#define VPNHIDE_ADDR_FILL_HOOK_MASK \
+	((1u << VPNHIDE_HOOK_INET_FILL_IFADDR) | \
+	 (1u << VPNHIDE_HOOK_INET6_FILL_IFADDR))
+
 /* ------------------------------------------------------------------ */
 /*  Resolved state                                                    */
 /* ------------------------------------------------------------------ */
@@ -65,11 +69,13 @@ static const struct vpnhide_offsets *off; /* selected per running kver */
  * calling uid. */
 static struct vpnhide_target targets[MAX_TARGET_UIDS];
 static int nr_targets;
+static uint32_t active_hook_mask;
 static bool debug_enabled;
 
 /* status (protocol §4.3/§5.1): which hooks actually installed, and the dominant
  * fault code. Filled at init, read back via ctl0 `status`. */
 static uint32_t installed_hooks;
+static uint32_t install_hook_mask;
 static uint32_t last_error;
 
 /* kernel functions resolved at init via kallsyms */
@@ -90,6 +96,29 @@ static void (*_skb_trim)(void *, unsigned int);
 /*  Core helpers                                                      */
 /* ------------------------------------------------------------------ */
 
+static uint32_t compute_active_hook_mask(int count)
+{
+	uint32_t mask = 0;
+	int i;
+
+	for (i = 0; i < count; i++)
+		mask |= targets[i].hookmask & VPNHIDE_KERNEL_HOOK_MASK;
+	return mask;
+}
+
+static uint32_t compute_install_hook_mask(void)
+{
+	/*
+	 * Pixel 4a / APatch on android-4.14 corrupts RTM_NEWADDR netlink
+	 * messages as soon as the inet*_fill_ifaddr KPM inline wrappers are
+	 * installed, even with zero targets. Keep the rest of the backend usable
+	 * and report the missing bits through the status hook mask.
+	 */
+	if ((unsigned int)kver < VERSION(4, 15, 0))
+		return VPNHIDE_KERNEL_HOOK_MASK & ~VPNHIDE_ADDR_FILL_HOOK_MASK;
+	return VPNHIDE_KERNEL_HOOK_MASK;
+}
+
 /* The enabled-hook mask for the calling uid (0 if it is not a target). */
 static uint32_t target_mask(void)
 {
@@ -108,6 +137,8 @@ static uint32_t target_mask(void)
 /* True if `hook_id` is enabled for the calling uid (per-hook gate, §4.3). */
 static int hook_active(uint32_t hook_id)
 {
+	if (!(active_hook_mask & (1u << hook_id)))
+		return 0;
 	return (target_mask() & (1u << hook_id)) != 0;
 }
 
@@ -745,7 +776,9 @@ static void apply_targets(const char *s)
 		targets[i].hookmask = VPNHIDE_KERNEL_HOOK_MASK;
 	}
 	nr_targets = cnt;
-	vpnhide_dbg("loaded %d target UIDs (all hooks)\n", cnt);
+	active_hook_mask = compute_active_hook_mask(cnt);
+	vpnhide_dbg("loaded %d target UIDs (active hooks=0x%x)\n", cnt,
+		    active_hook_mask);
 }
 
 /* Resolve `name`, wrap it, and record the install in `installed_hooks` so the
@@ -755,6 +788,8 @@ static void install_hook(const char *name, int argno, void *before, void *after,
 {
 	unsigned long fn = lookup_fn(name);
 
+	if (!(install_hook_mask & (1u << hook_id)))
+		return;
 	if (!fn)
 		return;
 	if (hook_wrap((void *)fn, argno, before, after, 0) == HOOK_NO_ERR)
@@ -768,7 +803,9 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 	      (unsigned int)kver);
 
 	installed_hooks = 0;
+	install_hook_mask = compute_install_hook_mask();
 	last_error = VPNHIDE_ERR_OK;
+	active_hook_mask = 0;
 
 	/* `kver` is KernelPatch's running-kernel version (common.h), encoded
 	 * the same way as VPNHIDE_KVER. NULL table = unsupported → bail. */
@@ -837,8 +874,8 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 			     VPNHIDE_ERR_OK :
 			     VPNHIDE_ERR_PARTIAL_HOOKS;
 
-	logki(MODNAME ": KPM hooks installed (mask=0x%x err=%u)\n",
-	      installed_hooks, last_error);
+	logki(MODNAME ": KPM hooks installed (mask=0x%x install=0x%x err=%u)\n",
+	      installed_hooks, install_hook_mask, last_error);
 	return 0;
 }
 
@@ -874,8 +911,10 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 		if (n < 0)
 			return -1; /* rejected whole (bad header / version) */
 		nr_targets = n;
+		active_hook_mask = compute_active_hook_mask(n);
 		debug_enabled = dbg ? true : false;
-		vpnhide_dbg("ctl0 config: %d targets, debug=%d\n", n, dbg);
+		vpnhide_dbg("ctl0 config: %d targets, debug=%d active=0x%x\n",
+			    n, dbg, active_hook_mask);
 		return n;
 	}
 

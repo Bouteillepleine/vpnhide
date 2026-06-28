@@ -1,5 +1,6 @@
 import java.io.FileInputStream
 import java.util.Properties
+import org.gradle.api.tasks.Exec
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -39,6 +40,12 @@ tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
 tasks.withType<io.gitlab.arturbosch.detekt.DetektCreateBaselineTask>().configureEach {
     exclude("**/generated/**")
     jvmTarget = "17"
+}
+
+tasks.register<Exec>("ktlintCheck") {
+    group = "verification"
+    description = "Runs ktlint on app Kotlin sources."
+    commandLine("ktlint", "${projectDir}/src/**/*.kt")
 }
 
 cargo {

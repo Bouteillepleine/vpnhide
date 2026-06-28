@@ -266,10 +266,7 @@ private fun StringBuilder.appendJsonString(value: String) {
 }
 
 internal fun buildCanonicalConfigWriteCommand(config: CanonicalConfig): String =
-    (
-        listOf(buildAtomicRawWriteCommand(CANONICAL_CONFIG_FILE, canonicalConfigJson(config))) +
-            systemDataFilePermsParts(CANONICAL_CONFIG_FILE, "640")
-    ).joinToString(" ; ")
+    buildAtomicSystemDataRawWriteCommand(CANONICAL_CONFIG_FILE, canonicalConfigJson(config), "640")
 
 internal fun buildSuperkeyWriteCommand(superkey: String): String =
     listOf(
