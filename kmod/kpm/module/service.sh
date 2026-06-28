@@ -9,9 +9,15 @@
 # config is applied by the app, not here (post-fs-data.sh set awaiting_superkey).
 
 KPM_TARGETS="/data/adb/vpnhide_kpm/targets.txt"
-KPM_DEBUG_LOGGING="/data/adb/vpnhide_kpm/debug_logging"
 LSPOSED_TARGETS="/data/adb/vpnhide_lsposed/targets.txt"
 SS_UIDS_FILE="/data/system/vpnhide_uids.txt"
+# Canonical persistent debug-logging flag (the one the app writes); folded into
+# the `debug` line of every config we emit (§4.3), same as the .ko/zygisk
+# scripts. Absent ⇒ off. The KPM has no separate debug file.
+SS_DEBUG_LOGGING="/data/system/vpnhide_debug_logging"
+
+DBG="$(cat "$SS_DEBUG_LOGGING" 2>/dev/null)"
+[ "$DBG" = 1 ] || DBG=0
 
 # Full kernel-owned hook mask (data/hooks.toml: ids 0..9). Per-hook control is
 # an app feature; the boot path enables all hooks for each target.
@@ -80,10 +86,7 @@ ${expanded}"; fi
 build_config() {
     local uid_list="$1"
     printf 'vpnhide 1 config\n'
-    if [ -f "$KPM_DEBUG_LOGGING" ]; then
-        d="$(tr -dc '01' < "$KPM_DEBUG_LOGGING" 2>/dev/null | cut -c1)"
-        [ -n "$d" ] && printf 'debug %s\n' "$d"
-    fi
+    printf 'debug %s\n' "$DBG"
     [ -z "$uid_list" ] && return
     echo "$uid_list" | while IFS= read -r uid; do
         [ -z "$uid" ] && continue
@@ -113,15 +116,10 @@ fi
 mkdir -p /data/adb/vpnhide_lsposed 2>/dev/null
 if [ -f "$LSPOSED_TARGETS" ]; then
     LSPOSED_UIDS="$(resolve_uids "$LSPOSED_TARGETS")"
-    if [ -n "$LSPOSED_UIDS" ]; then
-        echo "$LSPOSED_UIDS" > "$SS_UIDS_FILE"
-        count="$(echo "$LSPOSED_UIDS" | wc -l)"
-        log -t vpnhide "lsposed: wrote $count UIDs to $SS_UIDS_FILE"
-    else
-        echo > "$SS_UIDS_FILE"
-        log -t vpnhide "lsposed: no UIDs resolved"
-    fi
+    printf '%s\n' "$(build_config "$LSPOSED_UIDS")" > "$SS_UIDS_FILE"
     chmod 640 "$SS_UIDS_FILE"
     chown root:system "$SS_UIDS_FILE"
     chcon u:object_r:system_data_file:s0 "$SS_UIDS_FILE" 2>/dev/null
+    count="$(printf '%s\n' "$LSPOSED_UIDS" | grep -c .)"
+    log -t vpnhide "lsposed: wrote config for $count UIDs to $SS_UIDS_FILE"
 fi
