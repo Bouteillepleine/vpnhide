@@ -33,6 +33,7 @@ sanitize() {
 write_status() {
     {
         printf 'timestamp=%s\n' "$(date +%s 2>/dev/null)"
+        printf 'boot_id=%s\n' "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
         printf 'uname_r=%s\n' "$(uname -r 2>/dev/null)"
         printf 'runtime=%s\n' "$1"
         printf 'loaded=%s\n' "$2"
