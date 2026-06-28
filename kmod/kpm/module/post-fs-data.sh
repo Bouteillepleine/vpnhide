@@ -8,7 +8,8 @@
 # Runtime split (protocol §7.4):
 #   - KPatch-Next (Magisk / KSU), keyless (d05): load here, fully automatic.
 #   - APatch, superkey-required (c02): post-fs-data has no superkey, so it
-#     records `awaiting_superkey`; service.sh can load later if the app saved
+#     records `awaiting_superkey`; service.sh can load/configure later through
+#     the activator's direct supercall path if the app saved
 #     /data/adb/vpnhide/superkey.
 #
 # Single-active guard (protocol §1.5): if the .ko backend is installed, do NOT
@@ -40,10 +41,15 @@ write_status() {
     chmod 0644 "$STATUS_FILE" 2>/dev/null
 }
 
-# Locate the KernelPatch CLI (`kpatch`). Normally on PATH for boot scripts;
-# fall back to the manager bin dirs.
+# Locate the KernelPatch-Next CLI (`kpatch`). Normally on PATH for boot scripts;
+# fall back to the KernelSU-Next bin dir.
 find_kpatch() {
-    for c in kpatch /data/adb/ksu/bin/kpatch /data/adb/ap/bin/kpatch; do
+    for c in \
+        kpatch \
+        /data/adb/ksu/bin/kpatch \
+        /data/adb/modules/KPatch-Next/bin/kpatch \
+        /data/adb/modules/kpatch-next/bin/kpatch
+    do
         if command -v "$c" >/dev/null 2>&1; then echo "$c"; return 0; fi
         [ -x "$c" ] && { echo "$c"; return 0; }
     done
@@ -63,18 +69,18 @@ if [ ! -f "$KPM" ]; then
     exit 1
 fi
 
+# --- APatch (c02): superkey-required, service activator owns load/config ------
+if [ -d /data/adb/ap ]; then
+    log -t vpnhide "kpm: APatch runtime — deferring load to service activator (superkey)"
+    write_status apatch 0 awaiting_superkey
+    exit 0
+fi
+
 KPATCH="$(find_kpatch)" || {
     log -t vpnhide "kpm: kpatch CLI not found — cannot load"
     write_status unknown 0 "kpatch CLI not found"
     exit 1
 }
-
-# --- APatch (c02): superkey-required, defer to the app ----------------------
-if [ -d /data/adb/ap ]; then
-    log -t vpnhide "kpm: APatch runtime — deferring load to app (superkey)"
-    write_status apatch 0 awaiting_superkey
-    exit 0
-fi
 
 # --- KPatch-Next (Magisk / KSU): keyless, load now --------------------------
 # Keyless: the superkey argument is omitted (protocol §7.3).

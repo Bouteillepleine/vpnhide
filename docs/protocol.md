@@ -488,9 +488,8 @@ and have the parser truncate honestly at that ceiling (already the case for
 
 ### 7.3 Delivery
 
-Via the KernelPatch CLI. The subcommand is **`kpm ctl0`** (confirmed identical on
-both runtimes: bmax121 `c02` shipped by APatch, and the KPatch-Next fork `d05`
-under Magisk/KSU):
+Via the KernelPatch KPM ctl0 supercall. KPatch-Next exposes this through the
+`kpatch` CLI subcommand **`kpm ctl0`**:
 
 ```
 <cli> <superkey> kpm ctl0 vpnhide "<payload>"
@@ -512,19 +511,28 @@ kpatch <superkey> kpm ctl0 vpnhide "vpnhide 1 stats"
 kpatch <superkey> kpm ctl0 vpnhide "vpnhide 1 status"
 ```
 
-**The CLI binary must match the running KernelPatch runtime.** The `.kpm` module
-itself is cross-version (it loaded and ran on both `c02` and `d05`), but the
-CLI↔kernel supercall ABI is **not** portable: the `d05` `kpatch` produced no
-response against a `c02` kernel on-device. So the app must invoke the manager's
-*own* tool — APatch's `kpatch`/`apd` for `c02`, KPatch-Next's `kpatch` for `d05`
-— not a single bundled binary. (APatch is `c02` + superkey; KPatch-Next `d05` is
-keyless, so the `<superkey>` argument is empty/omitted there — OPEN-5.)
+**The userspace entry must match the running KernelPatch runtime.** The `.kpm`
+module itself is cross-version (it loaded and ran on both `c02` and `d05`), but
+the userspace ABI is **not** portable. The low 16-bit KPM command ids are the
+same (`load=0x1020`, `ctl0=0x1022`, `list=0x1031`), and both runtimes currently
+dispatch on those low bits, but the calling conventions differ:
 
-Caveats from CLI/shell delivery: shell-quote the payload (single quotes; the
-format contains no `'`); under APatch the `<superkey>` is visible in argv
-(`/proc/<pid>/cmdline`) for the duration of the call — do not log such commands,
-and if argv exposure of the key is in scope, prefer a small root binary that
-takes the key off-argv. (KPatch-Next `d05` is keyless — no key in argv.)
+- **APatch:** syscall number `45`, arg0 is the real SuperKey, command word uses
+  APatch's `0x1158` marker. APatch's public `apd` CLI manages APM ZIP modules
+  only; it does **not** expose `kpm load/ctl0`. APatch's own app controls KPMs
+  through native JNI `sc_kpm_*` calls, so the vpnhide activator does the same
+  directly.
+- **KPatch-Next:** syscall number `45`, arg0 is `NULL`, command word uses the
+  `0x2026` marker, and the kernel side gates calls by root UID rather than a
+  SuperKey. Use the runtime's own `kpatch kpm ...` CLI. With the standalone
+  KPatch-Next-Module that binary lives under
+  `/data/adb/modules/KPatch-Next/bin/kpatch`.
+
+Do not ship one generic `kpatch` binary for both runtimes.
+
+Caveats from CLI/shell delivery on KPatch-Next: shell-quote the payload (single
+quotes; the format contains no `'`). APatch does not pass the key through an
+external CLI argv; the activator calls the supercall from its own process.
 
 ### 7.4 Distribution & boot integration
 
@@ -542,11 +550,10 @@ the su-management supercalls allow):
   interaction. This is what we recommend users run.
 - **APatch, `c02`, superkey-required.** **By default** a boot script has no
   superkey, so it **cannot** load or configure the KPM: it writes a status flag
-  (`awaiting_superkey`) and activation happens **in the app** (the user enters the
-  superkey, the app runs `kpatch <key> kpm load` + `ctl0`), with the key held
-  session-only in memory. **Superseded by [storage.md](storage.md) §6:** an opt-in
-  flag persists the key root-only at `/data/adb/vpnhide/superkey` (DE storage,
-  boot-readable), which lets the boot activator configure APatch at boot too —
+  (`awaiting_superkey`) and activation happens after the key is available.
+  **Superseded by [storage.md](storage.md) §6:** an opt-in flag persists the key
+  root-only at `/data/adb/vpnhide/superkey` (DE storage, boot-readable), which
+  lets the boot activator load/configure APatch at boot via direct supercalls —
   parity with keyless KPatch-Next. The persisted key is a plain file (the boot
   binary can't reach Android Keystore) and is safe under this threat model
   (root-only, never unprivileged-readable).

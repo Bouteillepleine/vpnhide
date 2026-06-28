@@ -186,7 +186,7 @@ crates/
 | Backend | Channel | Kind | Note |
 |---|---|---|---|
 | kmod | `/proc/vpnhide_ctl` | proc node | write = config (kernel parses to memory); read = status+stats |
-| KPM | `kpatch kpm ctl0` | supercall | no file; config in via arg, stats/status out via `out_msg` |
+| KPM | KPM ctl0 supercall | supercall | APatch direct supercall or KPatch-Next runtime `kpatch kpm ctl0`; no file |
 | Zygisk | file in its module dir | file | the `.so` reads it via the `get_module_dir()` fd |
 
 Why Zygisk needs a file in its module dir even though there is one canonical: the
@@ -281,19 +281,17 @@ Magisk/KSU is **keyless**; this whole section is **APatch-only**.)
       reads modules from there pre-unlock), and root-only. So the boot activator
       (root) **can** read it before unlock.
 - **What it unlocks: APatch boot activation.** With the key on disk, the `kpm`
-  activator reads it at boot and runs `kpatch <key> kpm ctl0` — so APatch reaches
-  **parity with keyless KPatch-Next** (protection active after a reboot, no app
-  open needed). Without the flag, APatch is configured only after the user opens the
-  app and enters the key (KPM boot stays unconfigured until then).
+  activator reads it at boot and uses APatch's KernelPatch supercall ABI directly
+  to load/configure the KPM — so APatch reaches **parity with keyless KPatch-Next**
+  (protection active after a reboot, no app open needed). Without the flag, APatch
+  cannot be configured at boot because the KPM supercalls require the real key.
 - **Plain file, not Keystore.** The boot activator is a Rust binary, not an Android
   app, so it cannot call Android Keystore (a framework/binder API). Keystore-wrapping
   could protect the *app-time* use only, not the boot path. So the boot-usable copy
   is a plain file; FBE DE-encryption protects it at rest on a powered-off device.
 - **Threat-model fit:** readable by **root only** (trusted in this project's model),
-  never by unprivileged apps or non-root `adb` (§7). `argv` exposure of the key when
-  invoking `kpatch <key> …` is fine — modern `/proc` (`hidepid`) blocks unprivileged
-  apps from reading another process's `cmdline`; only root sees it. So no separate
-  "key off argv" helper (protocol.md §7.3) is needed for this model.
+  never by unprivileged apps or non-root `adb` (§7). The APatch activator calls the
+  supercall directly, so the key is not passed through an external `kpatch` argv.
 
 ---
 
@@ -344,7 +342,7 @@ optional.
 |---|---|---|
 | `/data/system/vpnhide_config.json` | **the** canonical config (managed, exported) | persistent |
 | `/proc/vpnhide_ctl` | kmod runtime channel (node, not a file) | per-boot, in-kernel |
-| `kpatch kpm ctl0` | KPM runtime channel (supercall, no file) | per-boot, in-kernel |
+| KPM ctl0 supercall | KPM runtime channel (supercall, no file) | per-boot, in-kernel |
 | `/data/adb/modules/vpnhide_zygisk/<cfg>` | Zygisk runtime channel (derived copy) | regenerated |
 | `/data/system/vpnhide_hook_active` | LSPosed status (hook → dashboard) | per-boot |
 | `/data/adb/vpnhide/superkey` | APatch superkey (optional, flag-gated) | persistent, root-only |

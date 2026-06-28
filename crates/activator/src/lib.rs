@@ -1,13 +1,16 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::error::Error;
+use std::ffi::CString;
 use std::fs;
 use std::io::ErrorKind;
 use std::io::Write;
+use std::os::raw::{c_char, c_long, c_void};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::Stdio;
+use std::ptr;
 use std::thread;
 use std::time::Duration;
 
@@ -24,12 +27,25 @@ pub const KMOD_MODULE_DIR: &str = "/data/adb/modules/vpnhide_kmod";
 pub const ZYGISK_RUNTIME_CONFIG: &str = "/data/adb/modules/vpnhide_zygisk/targets.txt";
 pub const KPM_MODULE_FILE: &str = "/data/adb/modules/vpnhide_kpm/vpnhide.kpm";
 pub const SUPERKEY_FILE: &str = "/data/adb/vpnhide/superkey";
+const APATCH_DIR: &str = "/data/adb/ap";
 const APP_PACKAGE: &str = "dev.okhsunrog.vpnhide";
 const KPM_NAME: &str = "vpnhide";
 const PORTS_CHAIN4: &str = "vpnhide_out";
 const PORTS_CHAIN6: &str = "vpnhide_out6";
 const MAX_NATIVE_TARGETS: usize = 64;
 const PM_READY_ATTEMPTS: u32 = 60;
+const APATCH_SUPERCALL_NR: c_long = 45;
+const APATCH_SUPERCALL_VERSION_CODE: c_long = 0x000d00;
+const APATCH_SUPERCALL_MAGIC: c_long = 0x1158;
+const SUPERCALL_HELLO: c_long = 0x1000;
+const SUPERCALL_HELLO_MAGIC: c_long = 0x11581158;
+const SUPERCALL_KPM_LOAD: c_long = 0x1020;
+const SUPERCALL_KPM_CONTROL: c_long = 0x1022;
+const SUPERCALL_KPM_LIST: c_long = 0x1031;
+
+unsafe extern "C" {
+    fn syscall(num: c_long, ...) -> c_long;
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PmReadyWait {
@@ -293,10 +309,9 @@ fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Resu
     if skip_kpm_for_kmod_conflict(conflict_is_error)? {
         return Ok(());
     }
-    let kpatch = find_kpatch().ok_or("kpatch CLI not found")?;
-    let key = read_superkey().ok();
-    ensure_kpm_loaded(&kpatch, key.as_deref())?;
-    run_kpm_ctl0(&kpatch, key.as_deref(), &wire)
+    let client = KpmClient::detect()?;
+    client.ensure_loaded()?;
+    client.ctl0(&wire)
 }
 
 pub fn activate_ports() -> Result<()> {
@@ -412,7 +427,8 @@ fn find_kpatch() -> Option<PathBuf> {
     [
         "kpatch",
         "/data/adb/ksu/bin/kpatch",
-        "/data/adb/ap/bin/kpatch",
+        "/data/adb/modules/KPatch-Next/bin/kpatch",
+        "/data/adb/modules/kpatch-next/bin/kpatch",
     ]
     .into_iter()
     .find_map(|candidate| {
@@ -439,28 +455,90 @@ fn read_superkey() -> Result<String> {
     }
 }
 
-fn ensure_kpm_loaded(kpatch: &Path, key: Option<&str>) -> Result<()> {
-    if kpm_list_contains(kpatch, key)? {
-        return Ok(());
+enum KpmClient {
+    KpatchCli { path: PathBuf },
+    ApatchSupercall { key: String },
+}
+
+impl KpmClient {
+    fn detect() -> Result<Self> {
+        if Path::new(APATCH_DIR).is_dir() {
+            let key = read_superkey()
+                .map_err(|e| format!("APatch KPM requires saved superkey at {SUPERKEY_FILE}: {e}"));
+            let key = key?;
+            apatch_hello(&key)?;
+            return Ok(Self::ApatchSupercall { key });
+        }
+        let path = find_kpatch().ok_or("kpatch CLI not found")?;
+        kpatch_hello(&path)?;
+        Ok(Self::KpatchCli { path })
     }
-    if !Path::new(KPM_MODULE_FILE).is_file() {
-        return Err(format!("{KPM_MODULE_FILE} not found").into());
+
+    fn ensure_loaded(&self) -> Result<()> {
+        if self.list_contains()? {
+            return Ok(());
+        }
+        if !Path::new(KPM_MODULE_FILE).is_file() {
+            return Err(format!("{KPM_MODULE_FILE} not found").into());
+        }
+        self.load()?;
+        if self.list_contains()? {
+            Ok(())
+        } else {
+            Err("kpm load returned success but vpnhide is not listed".into())
+        }
     }
-    let mut cmd = kpatch_command(kpatch, key);
-    cmd.args(["kpm", "load", KPM_MODULE_FILE]);
-    let out = cmd.output()?;
-    if !out.status.success() {
-        return Err(format!("kpm load failed with status {}", out.status).into());
+
+    fn list_contains(&self) -> Result<bool> {
+        match self {
+            Self::KpatchCli { path } => kpatch_kpm_list_contains(path),
+            Self::ApatchSupercall { key } => {
+                let list = apatch_kpm_list(key)?;
+                Ok(list.split_whitespace().any(|token| token == KPM_NAME))
+            }
+        }
     }
-    if kpm_list_contains(kpatch, key)? {
-        Ok(())
-    } else {
-        Err("kpm load returned success but vpnhide is not listed".into())
+
+    fn load(&self) -> Result<()> {
+        match self {
+            Self::KpatchCli { path } => {
+                let mut cmd = Command::new(path);
+                cmd.args(["kpm", "load", KPM_MODULE_FILE]);
+                let out = cmd.output()?;
+                if out.status.success() {
+                    Ok(())
+                } else {
+                    Err(format!("kpm load failed with status {}", out.status).into())
+                }
+            }
+            Self::ApatchSupercall { key } => {
+                let path = CString::new(KPM_MODULE_FILE)?;
+                let key = CString::new(key.as_str())?;
+                let rc = unsafe {
+                    syscall(
+                        APATCH_SUPERCALL_NR,
+                        key.as_ptr(),
+                        supercall_cmd(SUPERCALL_KPM_LOAD),
+                        path.as_ptr(),
+                        ptr::null::<c_char>(),
+                        ptr::null_mut::<c_void>(),
+                    )
+                };
+                supercall_ok(rc, "kpm load")
+            }
+        }
+    }
+
+    fn ctl0(&self, wire: &str) -> Result<()> {
+        match self {
+            Self::KpatchCli { path } => run_kpatch_kpm_ctl0(path, wire),
+            Self::ApatchSupercall { key } => apatch_kpm_ctl0(key, wire),
+        }
     }
 }
 
-fn kpm_list_contains(kpatch: &Path, key: Option<&str>) -> Result<bool> {
-    let mut cmd = kpatch_command(kpatch, key);
+fn kpatch_kpm_list_contains(kpatch: &Path) -> Result<bool> {
+    let mut cmd = Command::new(kpatch);
     cmd.args(["kpm", "list"]);
     let out = cmd.output()?;
     if !out.status.success() {
@@ -470,8 +548,23 @@ fn kpm_list_contains(kpatch: &Path, key: Option<&str>) -> Result<bool> {
     Ok(stdout.split_whitespace().any(|token| token == KPM_NAME))
 }
 
-fn run_kpm_ctl0(kpatch: &Path, key: Option<&str>, wire: &str) -> Result<()> {
-    let mut cmd = kpatch_command(kpatch, key);
+fn kpatch_hello(kpatch: &Path) -> Result<()> {
+    let mut cmd = Command::new(kpatch);
+    cmd.arg("hello");
+    let out = cmd.output()?;
+    if out.status.success() && !String::from_utf8_lossy(&out.stdout).trim().is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "KernelPatch inactive or kpatch hello failed with status {}",
+            out.status
+        )
+        .into())
+    }
+}
+
+fn run_kpatch_kpm_ctl0(kpatch: &Path, wire: &str) -> Result<()> {
+    let mut cmd = Command::new(kpatch);
     cmd.args(["kpm", "ctl0", KPM_NAME, wire]);
     let out = cmd.output()?;
     if out.status.success() {
@@ -481,12 +574,68 @@ fn run_kpm_ctl0(kpatch: &Path, key: Option<&str>, wire: &str) -> Result<()> {
     }
 }
 
-fn kpatch_command(kpatch: &Path, key: Option<&str>) -> Command {
-    let mut cmd = Command::new(kpatch);
-    if let Some(key) = key {
-        cmd.arg(key);
+fn apatch_hello(key: &str) -> Result<()> {
+    let key = CString::new(key)?;
+    let rc = unsafe {
+        syscall(
+            APATCH_SUPERCALL_NR,
+            key.as_ptr(),
+            supercall_cmd(SUPERCALL_HELLO),
+        )
+    };
+    if rc == SUPERCALL_HELLO_MAGIC {
+        Ok(())
+    } else {
+        Err(format!("KernelPatch inactive or bad APatch SuperKey (hello rc={rc})").into())
     }
-    cmd
+}
+
+fn apatch_kpm_list(key: &str) -> Result<String> {
+    let key = CString::new(key)?;
+    let mut buf = [0u8; 4096];
+    let rc = unsafe {
+        syscall(
+            APATCH_SUPERCALL_NR,
+            key.as_ptr(),
+            supercall_cmd(SUPERCALL_KPM_LIST),
+            buf.as_mut_ptr().cast::<c_char>(),
+            buf.len() as c_long,
+        )
+    };
+    supercall_ok(rc, "kpm list")?;
+    let len = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+    Ok(String::from_utf8_lossy(&buf[..len]).into_owned())
+}
+
+fn apatch_kpm_ctl0(key: &str, wire: &str) -> Result<()> {
+    let key = CString::new(key)?;
+    let name = CString::new(KPM_NAME)?;
+    let wire = CString::new(wire)?;
+    let mut out = [0u8; 4096];
+    let rc = unsafe {
+        syscall(
+            APATCH_SUPERCALL_NR,
+            key.as_ptr(),
+            supercall_cmd(SUPERCALL_KPM_CONTROL),
+            name.as_ptr(),
+            wire.as_ptr(),
+            out.as_mut_ptr().cast::<c_char>(),
+            out.len() as c_long,
+        )
+    };
+    supercall_ok(rc, "kpm ctl0")
+}
+
+fn supercall_cmd(cmd: c_long) -> c_long {
+    (APATCH_SUPERCALL_VERSION_CODE << 32) | (APATCH_SUPERCALL_MAGIC << 16) | (cmd & 0xffff)
+}
+
+fn supercall_ok(rc: c_long, op: &str) -> Result<()> {
+    if rc >= 0 {
+        Ok(())
+    } else {
+        Err(format!("{op} supercall failed with rc={rc}").into())
+    }
 }
 
 fn build_ports_ruleset(
@@ -703,6 +852,19 @@ mod tests {
             "package:dev.okhsunrog.vpnhide.extra uid:10123\n",
             APP_PACKAGE,
         ));
+    }
+
+    #[test]
+    fn apatch_supercall_command_keeps_kpm_command_in_low_bits() {
+        assert_eq!(
+            supercall_cmd(SUPERCALL_KPM_CONTROL),
+            (APATCH_SUPERCALL_VERSION_CODE << 32)
+                | (APATCH_SUPERCALL_MAGIC << 16)
+                | SUPERCALL_KPM_CONTROL,
+        );
+        assert_eq!(supercall_cmd(SUPERCALL_KPM_CONTROL) & 0xffff, 0x1022);
+        assert_eq!(supercall_cmd(SUPERCALL_HELLO) & 0xffff, 0x1000);
+        assert_eq!(SUPERCALL_HELLO_MAGIC, 0x11581158);
     }
 
     #[test]

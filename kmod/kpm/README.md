@@ -119,7 +119,8 @@ own `KPM_CTL0` supercall + load-args (the shape the QEMU harness exercises) —
 this is independent of KPatch-Next's generic `package_config` →
 `kpatch exclude_set <uid>` mechanism. The app stores package roles in
 `/data/system/vpnhide_config.json`; the KPM activator resolves that canonical
-config and pushes the same text wire through `kpatch kpm ctl0`.
+config and pushes the same text wire through APatch direct supercalls or
+KPatch-Next `kpatch kpm ctl0`.
 
 ## Safety — read before testing on a device
 

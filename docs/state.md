@@ -78,13 +78,14 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 
 - `module.prop`: module metadata.
 - `post-fs-data.sh`: loads KPM automatically on keyless KPatch-Next; on APatch
-  records `awaiting_superkey` unless the later service activator has a saved key.
+  records `awaiting_superkey` and leaves saved-key load/config to service.
 - `service.sh`: starts `activator --boot-wait` in the background.
 - `uninstall.sh`: removes KPM-specific persistent status and legacy targets
   under `/data/adb/vpnhide_kpm/`.
 - `activator`: Rust bin that refuses to run when the `.ko` backend is present,
   reads optional `/data/adb/vpnhide/superkey`, loads/configures KPM through
-  `kpatch kpm load` + `kpatch kpm ctl0`.
+  APatch direct supercalls or KPatch-Next `kpatch kpm load` + `kpatch kpm ctl0`
+  (including the standalone KPatch-Next-Module CLI path).
 - `vpnhide.kpm`: KernelPatch module binary.
 
 ### `/data/adb/modules/vpnhide_zygisk/`
@@ -171,11 +172,13 @@ Created by the `.ko` backend at module init. Mode `0600`, root-only.
 The state is in-kernel and per-boot. The proc write replaces the whole config,
 so activator delivers one bounded snapshot.
 
-### KPM `kpatch kpm ctl0`
+### KPM Supercall Channel
 
 No file or proc node. The KPM activator sends the same `vpnhide 1 config` text
-wire through `kpatch [superkey] kpm ctl0 vpnhide "<payload>"`. Status/stats use
-the same ctl0 request/response channel.
+wire through the KernelPatch KPM ctl0 supercall. On APatch it invokes the
+supercall directly with the saved SuperKey; on KPatch-Next it uses
+`kpatch kpm ctl0` from the runtime's own CLI. Status/stats use the same ctl0
+request/response channel.
 
 ### Zygisk Module-Dir `targets.txt`
 
