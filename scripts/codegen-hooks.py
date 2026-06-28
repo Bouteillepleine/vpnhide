@@ -82,15 +82,23 @@ class Err:
         self.note: str = raw.get("note", "")
 
 
-def load() -> tuple[list[Hook], list[Err]]:
+class Backend:
+    def __init__(self, raw: dict[str, Any]) -> None:
+        self.id: int = raw["id"]
+        self.name: str = raw["name"]
+        self.note: str = raw.get("note", "")
+
+
+def load() -> tuple[list[Hook], list[Err], list[Backend]]:
     with TOML_PATH.open("rb") as fh:
         data = tomllib.load(fh)
     hooks = [Hook(h) for h in data.get("hook", [])]
     errs = [Err(e) for e in data.get("error", [])]
+    backends = [Backend(b) for b in data.get("backend", [])]
 
     # ids must be dense, append-only, and 0-based — anything else is a bug
     # that would silently shift the global id space.
-    for label, items in (("hook", hooks), ("error", errs)):
+    for label, items in (("hook", hooks), ("error", errs), ("backend", backends)):
         ids = [it.id for it in items]
         if ids != list(range(len(ids))):
             sys.exit(f"error: {label} ids must be 0..N-1 with no gaps, got {ids}")
@@ -100,7 +108,7 @@ def load() -> tuple[list[Hook], list[Err]]:
     for h in hooks:
         if h.backend not in KNOWN_BACKENDS:
             sys.exit(f"error: hook {h.name!r} has unknown backend {h.backend!r}")
-    return hooks, errs
+    return hooks, errs, backends
 
 
 def backend_mask(hooks: list[Hook], backend: str) -> int:
@@ -127,7 +135,7 @@ def pascal(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def emit_kmod(hooks: list[Hook], errs: list[Err]) -> str:
+def emit_kmod(hooks: list[Hook], errs: list[Err], backends: list[Backend]) -> str:
     L: list[str] = [f"/* {GENERATED_HEADER_LINE} */"]
     L.append("#ifndef VPNHIDE_GENERATED_HOOK_IDS_H")
     L.append("#define VPNHIDE_GENERATED_HOOK_IDS_H")
@@ -148,6 +156,11 @@ def emit_kmod(hooks: list[Hook], errs: list[Err]) -> str:
     for e in errs:
         L.append(f"#define {f'VPNHIDE_ERR_{upper(e.name)}':<{ewidth}} {e.id}")
     L.append("")
+    L.append("/* backend ids (protocol §4.3 `status backend <id>`). */")
+    bwidth = max(len(f"VPNHIDE_BACKEND_{upper(b.name)}") for b in backends)
+    for b in backends:
+        L.append(f"#define {f'VPNHIDE_BACKEND_{upper(b.name)}':<{bwidth}} {b.id}")
+    L.append("")
     L.append("/* Hook name for an id (labeling / debug). Inline so the header stays")
     L.append("   self-contained and an unused table never warns. */")
     L.append("static inline const char *vpnhide_hook_name(int id)")
@@ -164,7 +177,7 @@ def emit_kmod(hooks: list[Hook], errs: list[Err]) -> str:
     return "\n".join(L)
 
 
-def emit_rust(hooks: list[Hook], errs: list[Err]) -> str:
+def emit_rust(hooks: list[Hook], errs: list[Err], backends: list[Backend]) -> str:
     L: list[str] = [f"// {GENERATED_HEADER_LINE}", "", "#![allow(dead_code)]", ""]
     L.append("/// Global hook id space (data/hooks.toml). bit N == hook id N.")
     L.append("#[repr(u32)]")
@@ -192,6 +205,16 @@ def emit_rust(hooks: list[Hook], errs: list[Err]) -> str:
         L.append(f"    {pascal(e.name)} = {e.id},")
     L.append("}")
     L.append("")
+    L.append("/// backend ids (protocol §4.3 `status backend <id>`).")
+    L.append("#[repr(u32)]")
+    L.append("#[derive(Copy, Clone, Eq, PartialEq, Debug)]")
+    L.append("pub enum Backend {")
+    for b in backends:
+        if b.note:
+            L.append(f"    /// {b.note}")
+        L.append(f"    {pascal(b.name)} = {b.id},")
+    L.append("}")
+    L.append("")
     # One name per line so the output is rustfmt-clean (CI runs `cargo fmt
     # --check`); rustfmt wraps an over-width array into exactly this shape.
     L.append(f"pub const HOOK_NAMES: [&str; {len(hooks)}] = [")
@@ -202,7 +225,7 @@ def emit_rust(hooks: list[Hook], errs: list[Err]) -> str:
     return "\n".join(L)
 
 
-def emit_kotlin(hooks: list[Hook], errs: list[Err]) -> str:
+def emit_kotlin(hooks: list[Hook], errs: list[Err], backends: list[Backend]) -> str:
     # Shaped to match `ktlint --format` (lsposed's quality gate): multiline
     # class signatures with trailing comma, a blank line between commented enum
     # entries, no trailing `;`. Keep this in sync if the ktlint style changes.
@@ -238,6 +261,18 @@ def emit_kotlin(hooks: list[Hook], errs: list[Err]) -> str:
             L.append(f"        // {e.note}")
         L.append(f"        {upper(e.name)}({e.id}),")
     L.append("    }")
+    L.append("")
+    L.append("    /** backend ids (protocol §4.3 `status backend <id>`). */")
+    L.append("    enum class Backend(")
+    L.append("        val id: Int,")
+    L.append("    ) {")
+    for i, b in enumerate(backends):
+        if i:
+            L.append("")
+        if b.note:
+            L.append(f"        // {b.note}")
+        L.append(f"        {upper(b.name)}({b.id}),")
+    L.append("    }")
     L.append("}")
     L.append("")
     return "\n".join(L)
@@ -249,11 +284,11 @@ def emit_kotlin(hooks: list[Hook], errs: list[Err]) -> str:
 
 
 def main() -> None:
-    hooks, errs = load()
+    hooks, errs, backends = load()
     outputs = {
-        OUT_KMOD: emit_kmod(hooks, errs),
-        OUT_ZYGISK: emit_rust(hooks, errs),
-        OUT_LSP_KT: emit_kotlin(hooks, errs),
+        OUT_KMOD: emit_kmod(hooks, errs, backends),
+        OUT_ZYGISK: emit_rust(hooks, errs, backends),
+        OUT_LSP_KT: emit_kotlin(hooks, errs, backends),
     }
     for path, text in outputs.items():
         path.parent.mkdir(parents=True, exist_ok=True)

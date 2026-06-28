@@ -27,6 +27,12 @@
 #define VPNHIDE_ERR_SYMBOL_RESOLUTION_FAILED 3
 #define VPNHIDE_ERR_PARTIAL_HOOKS            4
 
+/* backend ids (protocol §4.3 `status backend <id>`). */
+#define VPNHIDE_BACKEND_KMOD    0
+#define VPNHIDE_BACKEND_KPM     1
+#define VPNHIDE_BACKEND_ZYGISK  2
+#define VPNHIDE_BACKEND_LSPOSED 3
+
 /* Hook name for an id (labeling / debug). Inline so the header stays
    self-contained and an unused table never warns. */
 static inline const char *vpnhide_hook_name(int id)

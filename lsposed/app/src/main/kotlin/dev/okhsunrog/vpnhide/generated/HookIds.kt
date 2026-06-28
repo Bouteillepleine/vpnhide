@@ -63,4 +63,21 @@ internal object HookIds {
         // installed, but some owned hooks did not resolve (see the hooks mask)
         PARTIAL_HOOKS(4),
     }
+
+    /** backend ids (protocol §4.3 `status backend <id>`). */
+    enum class Backend(
+        val id: Int,
+    ) {
+        // .ko kretprobe backend
+        KMOD(0),
+
+        // KernelPatch Module backend
+        KPM(1),
+
+        // Zygisk libc-hook backend
+        ZYGISK(2),
+
+        // LSPosed Java-hook backend (system_server)
+        LSPOSED(3),
+    }
 }

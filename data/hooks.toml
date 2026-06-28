@@ -81,6 +81,31 @@ note = "RTM_GETRULE — policy routing rules"
 # --- zygisk libc hooks and lsposed Java hooks take the next free ids as they
 # --- are wired into the protocol; appended here then (kept here as the record).
 
+# --- backend ids (protocol §4.3 `status backend <id>`) ----------------------
+# Which backend answered a `status` read. Distinct from the hook `backend`
+# field above (.ko and KPM both own "kernel" hooks but are separate backends).
+# APPEND-ONLY, same as hook/error ids.
+
+[[backend]]
+id = 0
+name = "kmod"
+note = ".ko kretprobe backend"
+
+[[backend]]
+id = 1
+name = "kpm"
+note = "KernelPatch Module backend"
+
+[[backend]]
+id = 2
+name = "zygisk"
+note = "Zygisk libc-hook backend"
+
+[[backend]]
+id = 3
+name = "lsposed"
+note = "LSPosed Java-hook backend (system_server)"
+
 # --- status error codes (protocol §5.1) -------------------------------------
 # A single dominant fault code returned in a `status` payload's `error` field.
 

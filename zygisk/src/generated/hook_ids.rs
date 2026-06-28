@@ -51,6 +51,20 @@ pub enum StatusError {
     PartialHooks = 4,
 }
 
+/// backend ids (protocol §4.3 `status backend <id>`).
+#[repr(u32)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum Backend {
+    /// .ko kretprobe backend
+    Kmod = 0,
+    /// KernelPatch Module backend
+    Kpm = 1,
+    /// Zygisk libc-hook backend
+    Zygisk = 2,
+    /// LSPosed Java-hook backend (system_server)
+    Lsposed = 3,
+}
+
 pub const HOOK_NAMES: [&str; 10] = [
     "fib_route_seq_show",
     "ipv6_route_seq_show",
