@@ -161,6 +161,39 @@ class AppPickerDataTest {
     }
 
     @Test
+    fun `native hook selection returns empty list when no hooks are selected`() {
+        assertEquals(
+            emptyList<String>(),
+            resolveNativeHookSelection(
+                hookNames = listOf("dev_ioctl", "sock_ioctl"),
+                selectedHookNames = emptySet(),
+            ),
+        )
+    }
+
+    @Test
+    fun `native hook selection returns null when all hooks are selected`() {
+        assertEquals(
+            null,
+            resolveNativeHookSelection(
+                hookNames = listOf("dev_ioctl", "sock_ioctl"),
+                selectedHookNames = setOf("sock_ioctl", "dev_ioctl"),
+            ),
+        )
+    }
+
+    @Test
+    fun `native hook selection keeps registry order for partial selections`() {
+        assertEquals(
+            listOf("dev_ioctl", "sock_ioctl"),
+            resolveNativeHookSelection(
+                hookNames = listOf("inet_ioctl", "dev_ioctl", "sock_ioctl"),
+                selectedHookNames = setOf("sock_ioctl", "dev_ioctl"),
+            ),
+        )
+    }
+
+    @Test
     fun `observer role still wins over hidden for visible packages`() {
         val snapshot =
             snapshotWithCanonical(

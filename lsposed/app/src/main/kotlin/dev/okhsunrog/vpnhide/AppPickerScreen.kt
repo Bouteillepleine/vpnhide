@@ -333,14 +333,7 @@ private fun NativeHooksDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    val ordered = hookNames.filter { it in selected }
-                    onSave(
-                        when {
-                            ordered.isEmpty() -> emptyList()
-                            ordered.size == hookNames.size -> null
-                            else -> ordered
-                        },
-                    )
+                    onSave(resolveNativeHookSelection(hookNames, selected))
                 },
             ) {
                 Text(stringResource(R.string.btn_save))

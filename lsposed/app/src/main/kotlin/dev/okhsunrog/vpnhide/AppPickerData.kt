@@ -49,6 +49,18 @@ internal data class AppRoleSelection(
     val ports: Boolean = false,
 )
 
+internal fun resolveNativeHookSelection(
+    hookNames: List<String>,
+    selectedHookNames: Set<String>,
+): List<String>? {
+    val ordered = hookNames.filter { it in selectedHookNames }
+    return when {
+        ordered.isEmpty() -> emptyList()
+        ordered.size == hookNames.size -> null
+        else -> ordered
+    }
+}
+
 internal fun buildCanonicalConfigForAppPickerSave(
     debug: Boolean,
     selfPkg: String,
