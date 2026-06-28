@@ -212,7 +212,8 @@ static const struct vpnhide_offsets vpnhide_off_5_x = {
  * misread. Everything else (idev@168, fib_info 96/104/128, fib_dump via
  * fib_rt_info*@arg4, fib_rule) matches 5.10. */
 static const struct vpnhide_offsets vpnhide_off_5_15 = {
-	.skb_len = 104, /* GKI 5.15 head (validated); bump to 112 if conntrack on */
+	.skb_len =
+		104, /* GKI 5.15 head (validated); bump to 112 if conntrack on */
 	.netdev_name = 0,
 	.seqfile_buf = 0,
 	.seqfile_count = 24,
@@ -254,7 +255,8 @@ static const struct vpnhide_offsets vpnhide_off_5_4 = {
 	.seqfile_count = 24,
 	.in_ifaddr_ifa_dev = 24, /* hash(16)+ifa_next(8) — same as 5.10 */
 	.in_device_dev = 0,
-	.inet6_ifaddr_idev = 168, /* rt_priority present + post-4.15 timer_list */
+	.inet6_ifaddr_idev =
+		168, /* rt_priority present + post-4.15 timer_list */
 	.inet6_dev_dev = 0,
 	.addr_fill_argno = 3,
 	/* fib_info identical to 5.10: fib_nhs@96, nh@104, fib_nh[]@128. */
@@ -293,7 +295,8 @@ static const struct vpnhide_offsets vpnhide_off_4_19 = {
 	.seqfile_count = 24,
 	.in_ifaddr_ifa_dev = 24,
 	.in_device_dev = 0,
-	.inet6_ifaddr_idev = 168, /* rt_priority present, post-4.15 timer_list */
+	.inet6_ifaddr_idev =
+		168, /* rt_priority present, post-4.15 timer_list */
 	.inet6_dev_dev = 0,
 	.addr_fill_argno = 6,
 	/* fib_info: fib_nhs@80, rcu@88, fib_nh[]@104; fib_nh.nh_dev is first ->
@@ -331,9 +334,11 @@ static const struct vpnhide_offsets vpnhide_off_4_x = {
 	.netdev_name = 0,
 	.seqfile_buf = 0,
 	.seqfile_count = 24,
-	.in_ifaddr_ifa_dev = 24, /* in_ifaddr: hash(16)+ifa_next(8) — same as 5.x */
+	.in_ifaddr_ifa_dev =
+		24, /* in_ifaddr: hash(16)+ifa_next(8) — same as 5.x */
 	.in_device_dev = 0,
-	.inet6_ifaddr_idev = 168, /* no rt_priority (-4) but timer_list has `data` (+8) -> 168 */
+	.inet6_ifaddr_idev =
+		168, /* no rt_priority (-4) but timer_list has `data` (+8) -> 168 */
 	.inet6_dev_dev = 0,
 	.addr_fill_argno = 6,
 	/* fib_info: fib_nhs@80, rcu@88, fib_nh[]@104 (fib_weight, if
@@ -365,7 +370,8 @@ static const struct vpnhide_offsets vpnhide_off_4_x = {
  * unsupported version — the caller MUST refuse to install hooks then
  * (kpm-spore does the same: unknown version → bail, never guess).
  */
-static inline const struct vpnhide_offsets *vpnhide_select_offsets(unsigned int kver)
+static inline const struct vpnhide_offsets *
+vpnhide_select_offsets(unsigned int kver)
 {
 	if (kver >= VPNHIDE_KVER(6, 12, 0))
 		return &vpnhide_off_6_12; /* 6.12: fib6_info gained gc_link */
