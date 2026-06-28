@@ -148,6 +148,17 @@ jobs:
           cd kmod
           gcc -O2 -Wall -Werror -o /tmp/test_iface_lists test_iface_lists.c
           /tmp/test_iface_lists
+      # Shared backend-agnostic logic + the control/stats protocol parser /
+      # serialiser. The protocol harness runs the language-independent golden
+      # vectors (kmod/shared/protocol_vectors.tsv) — the C side of the
+      # cross-language parity check (docs/protocol.md §8).
+      - name: shared-logic + protocol host tests
+        run: |
+          cd kmod/shared
+          gcc -O2 -Wall -Wextra -Werror -I.. -o /tmp/test_vpnhide_logic test_vpnhide_logic.c
+          /tmp/test_vpnhide_logic
+          gcc -O2 -Wall -Wextra -Werror -I.. -o /tmp/test_protocol test_protocol.c
+          /tmp/test_protocol protocol_vectors.tsv
 
       # Kotlin
       # ktlint = formatting/style; detekt = complexity/length/dead-code/bug

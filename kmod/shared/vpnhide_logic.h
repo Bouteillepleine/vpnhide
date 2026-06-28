@@ -174,4 +174,510 @@ vpnhide_parse_target_uids(const char *buf, unsigned long len,
 	return n;
 }
 
+/* ====================================================================== */
+/*  Control & stats protocol (docs/protocol.md) — wire parse + serialise  */
+/*                                                                        */
+/*  Freestanding, shared VERBATIM by the `.ko` and the KPM (the two       */
+/*  native kernel backends). The app (Kotlin) and Zygisk (Rust) carry the */
+/*  same grammar in their own languages; parity is held by golden vectors */
+/*  + differential tests (protocol §8), NOT by shared code. This file is  */
+/*  the C side of that parity — keep it byte-faithful to the spec, and pin */
+/*  every change with a vector in shared/protocol_vectors.tsv.            */
+/*                                                                        */
+/*  Roles (protocol §1.4): a kernel backend PARSES config and EMITS       */
+/*  stats/status. So C implements vpnhide_parse_config + vpnhide_format_* */
+/*  only; the app side (parse stats/status, serialise config) lives in    */
+/*  Kotlin. peek_kind + clamp_to_line serve the KPM ctl0 transport (§7).  */
+/* ====================================================================== */
+
+/* Wire version this implementation speaks (header line, §4.2). */
+#define VPNHIDE_PROTO_VERSION 1
+
+/* Self-documenting banner a read endpoint prepends to its snapshot (§OPEN-7).
+ * It is a `#` comment line, ignored by every parser (§4.1), so it costs
+ * nothing structurally and lets an agent learn the replace-whole semantics
+ * from a single `cat`. Prepended at the read site, never by format_*  — the
+ * golden vectors test the bare format. */
+#define VPNHIDE_READ_BANNER \
+	"# vpnhide v1 — a WRITE replaces ENTIRE state; this read is status+stats\n"
+
+enum vpnhide_kind {
+	VPNHIDE_KIND_INVALID = -1,
+	VPNHIDE_KIND_CONFIG = 0,
+	VPNHIDE_KIND_STATS = 1,
+	VPNHIDE_KIND_STATUS = 2,
+};
+
+/* one `target <uid> <hookmask>` config record (§4.3) */
+struct vpnhide_target {
+	unsigned int uid;
+	unsigned int hookmask;
+};
+
+/* one sparse `<hook_id>:<count>` stats cell for a given uid (§4.3). The
+ * producer groups consecutive entries by uid; format_stats emits one line per
+ * uid run. count is u64 cumulative-since-load (OPEN-3). */
+struct vpnhide_stat_entry {
+	unsigned int uid;
+	unsigned int hook_id;
+	unsigned long long count;
+};
+
+/* a `status` snapshot (§4.3): backend id, kernel version, installed-hook mask,
+ * dominant error code. All hex on the wire. */
+struct vpnhide_status {
+	unsigned int backend;
+	unsigned int kver;
+	unsigned int hooks;
+	unsigned int error;
+};
+
+/* --- lexical helpers (§4.1) ------------------------------------------- */
+
+static inline int vpnhide_is_sep(char c)
+{
+	return c == ' ' || c == '\t';
+}
+
+static inline int vpnhide_is_ascii(char c)
+{
+	unsigned char u = (unsigned char)c;
+
+	return u >= 0x20 && u <= 0x7e;
+}
+
+/*
+ * Carve the next line out of [*i, len). On success returns 1 and sets
+ * [*ls,*le) to the line content with a trailing CR stripped (CRLF → LF, §4.1),
+ * advancing *i to the start of the following line. Returns 0 at end of buffer.
+ */
+static inline int vpnhide_next_line(const char *b, unsigned long len,
+				    unsigned long *i, unsigned long *ls,
+				    unsigned long *le)
+{
+	unsigned long s, e;
+
+	if (*i >= len)
+		return 0;
+	s = *i;
+	e = s;
+	while (e < len && b[e] != '\n')
+		e++;
+	*i = (e < len) ? e + 1 : len;
+	if (e > s && b[e - 1] == '\r')
+		e--;
+	*ls = s;
+	*le = e;
+	return 1;
+}
+
+/*
+ * Classify a line [ls,le): returns 1 if it is significant (carries a token and
+ * is not a `#` comment), setting *cs to the first non-whitespace offset. Blank
+ * and comment lines return 0. *ascii is set to 0 if any byte is non-ASCII
+ * (§4.1: such a line is rejected by the caller).
+ */
+static inline int vpnhide_line_significant(const char *b, unsigned long ls,
+					   unsigned long le, unsigned long *cs,
+					   int *ascii)
+{
+	unsigned long p;
+
+	*ascii = 1;
+	for (p = ls; p < le; p++)
+		if (!vpnhide_is_ascii(b[p]) && b[p] != '\t') /* tab is a sep, §4.1 */
+			*ascii = 0;
+	p = ls;
+	while (p < le && vpnhide_is_sep(b[p]))
+		p++;
+	*cs = p;
+	if (p >= le)
+		return 0; /* blank */
+	if (b[p] == '#')
+		return 0; /* comment */
+	return 1;
+}
+
+/*
+ * Next whitespace-delimited token within [*i, end). Returns 1 and sets
+ * [*ts,*te); advances *i past the token. Runs of separators collapse to one
+ * (§4.1). Returns 0 when no token remains.
+ */
+static inline int vpnhide_next_token(const char *b, unsigned long *i,
+				     unsigned long end, unsigned long *ts,
+				     unsigned long *te)
+{
+	unsigned long p = *i;
+
+	while (p < end && vpnhide_is_sep(b[p]))
+		p++;
+	if (p >= end) {
+		*i = p;
+		return 0;
+	}
+	*ts = p;
+	while (p < end && !vpnhide_is_sep(b[p]))
+		p++;
+	*te = p;
+	*i = p;
+	return 1;
+}
+
+/* True if token [ts,te) equals the NUL-terminated literal `lit`. */
+static inline int vpnhide_tok_eq(const char *b, unsigned long ts,
+				 unsigned long te, const char *lit)
+{
+	unsigned long p = ts;
+
+	while (p < te && *lit && b[p] == *lit) {
+		p++;
+		lit++;
+	}
+	return p == te && *lit == '\0';
+}
+
+/* Parse a bare decimal token (the header version only, §4.2). 1 on success. */
+static inline int vpnhide_tok_decimal(const char *b, unsigned long ts,
+				      unsigned long te, unsigned long *out)
+{
+	unsigned long v = 0, p;
+
+	if (ts >= te)
+		return 0;
+	for (p = ts; p < te; p++) {
+		if (b[p] < '0' || b[p] > '9')
+			return 0;
+		v = v * 10u + (unsigned long)(b[p] - '0');
+	}
+	*out = v;
+	return 1;
+}
+
+/*
+ * Parse the one numeric primitive (§4.4): `0x` (mandatory) + >=1 hex digit,
+ * any case on read. `bits` is the field width (32 or 64); a value that
+ * overflows it → reject (return 0), never wrap or saturate. 1 on success.
+ */
+static inline int vpnhide_tok_hex(const char *b, unsigned long ts,
+				  unsigned long te, int bits,
+				  unsigned long long *out)
+{
+	unsigned long long v = 0;
+	unsigned long long max =
+		(bits >= 64) ? 0xffffffffffffffffULL : 0xffffffffULL;
+	unsigned long p = ts;
+
+	if (te - ts < 3) /* need "0x" + at least one digit */
+		return 0;
+	if (b[p] != '0')
+		return 0;
+	p++;
+	if (b[p] != 'x' && b[p] != 'X')
+		return 0;
+	p++;
+	for (; p < te; p++) {
+		unsigned int d;
+		char c = b[p];
+
+		if (c >= '0' && c <= '9')
+			d = (unsigned int)(c - '0');
+		else if (c >= 'a' && c <= 'f')
+			d = (unsigned int)(c - 'a' + 10);
+		else if (c >= 'A' && c <= 'F')
+			d = (unsigned int)(c - 'A' + 10);
+		else
+			return 0;
+		if (v > (max - d) / 16ULL) /* width overflow */
+			return 0;
+		v = v * 16ULL + d;
+	}
+	*out = v;
+	return 1;
+}
+
+/* --- header (§4.2) --------------------------------------------------- */
+
+/*
+ * Parse the mandatory header line. Returns the kind, and (if `next` is given)
+ * sets *next to the offset of the first record line. Rejects the whole payload
+ * (VPNHIDE_KIND_INVALID) when the header is missing/malformed or its version
+ * is newer than this reader knows (§3 version fuse).
+ */
+static inline enum vpnhide_kind
+vpnhide_parse_header(const char *b, unsigned long len, unsigned long *next)
+{
+	unsigned long i = 0, ls, le, cs, p, ts, te, ver;
+	int ascii;
+
+	while (vpnhide_next_line(b, len, &i, &ls, &le)) {
+		if (!vpnhide_line_significant(b, ls, le, &cs, &ascii)) {
+			if (next)
+				*next = i;
+			continue;
+		}
+		/* first significant line == the mandatory header */
+		if (next)
+			*next = i;
+		if (!ascii)
+			return VPNHIDE_KIND_INVALID;
+		p = cs;
+		if (!vpnhide_next_token(b, &p, le, &ts, &te) ||
+		    !vpnhide_tok_eq(b, ts, te, "vpnhide"))
+			return VPNHIDE_KIND_INVALID;
+		if (!vpnhide_next_token(b, &p, le, &ts, &te) ||
+		    !vpnhide_tok_decimal(b, ts, te, &ver) ||
+		    ver > VPNHIDE_PROTO_VERSION)
+			return VPNHIDE_KIND_INVALID;
+		if (!vpnhide_next_token(b, &p, le, &ts, &te))
+			return VPNHIDE_KIND_INVALID;
+		if (vpnhide_tok_eq(b, ts, te, "config"))
+			return VPNHIDE_KIND_CONFIG;
+		if (vpnhide_tok_eq(b, ts, te, "stats"))
+			return VPNHIDE_KIND_STATS;
+		if (vpnhide_tok_eq(b, ts, te, "status"))
+			return VPNHIDE_KIND_STATUS;
+		return VPNHIDE_KIND_INVALID;
+	}
+	if (next)
+		*next = i;
+	return VPNHIDE_KIND_INVALID; /* no significant line ⇒ no header */
+}
+
+/* Cheap kind sniff for transport dispatch (KPM ctl0, §7.1). */
+static inline enum vpnhide_kind vpnhide_peek_kind(const char *b,
+						  unsigned long len)
+{
+	return vpnhide_parse_header(b, len, 0);
+}
+
+/* --- config parse (§4.3) --------------------------------------------- */
+
+/* Insert/overwrite a target; duplicate uid ⇒ last wins (§4.3). A full set
+ * drops the overflow (honest truncation at the caller's ceiling, §7.2). */
+static inline void vpnhide_target_set(struct vpnhide_target *out, int *n,
+				      int max, unsigned int uid,
+				      unsigned int hookmask)
+{
+	int k;
+
+	for (k = 0; k < *n; k++) {
+		if (out[k].uid == uid) {
+			out[k].hookmask = hookmask;
+			return;
+		}
+	}
+	if (*n < max) {
+		out[*n].uid = uid;
+		out[*n].hookmask = hookmask;
+		(*n)++;
+	}
+}
+
+/*
+ * Parse a `config` payload into out[] (capacity `max`). Returns the target
+ * count, or -1 if the payload is rejected whole (bad/missing header, version
+ * too new, or a non-config kind). *debug receives 0/1 if a `debug` line is
+ * present, and is left UNCHANGED otherwise (the caller seeds it with the live
+ * value so "absent ⇒ unchanged-from-default", §4.3). Unknown keywords and
+ * malformed numeric lines are skipped, not fatal (§4.5).
+ */
+static inline int vpnhide_parse_config(const char *b, unsigned long len,
+				       struct vpnhide_target *out, int max,
+				       int *debug)
+{
+	unsigned long i, ls, le, cs, p, ts, te;
+	int ascii, n = 0;
+	enum vpnhide_kind k = vpnhide_parse_header(b, len, &i);
+
+	if (k != VPNHIDE_KIND_CONFIG)
+		return -1;
+
+	while (vpnhide_next_line(b, len, &i, &ls, &le)) {
+		if (!vpnhide_line_significant(b, ls, le, &cs, &ascii) || !ascii)
+			continue;
+		p = cs;
+		if (!vpnhide_next_token(b, &p, le, &ts, &te))
+			continue;
+		if (vpnhide_tok_eq(b, ts, te, "debug")) {
+			if (!vpnhide_next_token(b, &p, le, &ts, &te))
+				continue;
+			if (vpnhide_tok_eq(b, ts, te, "0")) {
+				if (debug)
+					*debug = 0;
+			} else if (vpnhide_tok_eq(b, ts, te, "1")) {
+				if (debug)
+					*debug = 1;
+			}
+			/* any other flag value ⇒ malformed, skip */
+		} else if (vpnhide_tok_eq(b, ts, te, "target")) {
+			unsigned long long uid, hm;
+
+			if (!vpnhide_next_token(b, &p, le, &ts, &te) ||
+			    !vpnhide_tok_hex(b, ts, te, 32, &uid))
+				continue;
+			if (!vpnhide_next_token(b, &p, le, &ts, &te) ||
+			    !vpnhide_tok_hex(b, ts, te, 32, &hm))
+				continue;
+			vpnhide_target_set(out, &n, max, (unsigned int)uid,
+					   (unsigned int)hm);
+		}
+		/* unknown first token ⇒ skip the line (§4.5) */
+	}
+	return n;
+}
+
+/* --- serialise (§4.3/§4.4) ------------------------------------------- */
+
+/*
+ * Bounded output cursor. `len` always counts the FULL intended length
+ * (snprintf semantics) so the caller can detect overflow as len > cap; bytes
+ * are only ever written while within cap, so it can never overrun `p`.
+ */
+struct vpnhide_buf {
+	char *p;
+	unsigned long cap;
+	unsigned long len;
+};
+
+static inline void vpnhide_putc(struct vpnhide_buf *b, char c)
+{
+	if (b->len < b->cap)
+		b->p[b->len] = c;
+	b->len++;
+}
+
+static inline void vpnhide_puts(struct vpnhide_buf *b, const char *s)
+{
+	while (*s)
+		vpnhide_putc(b, *s++);
+}
+
+static inline void vpnhide_put_dec(struct vpnhide_buf *b, unsigned long long v)
+{
+	char tmp[24];
+	int n = 0;
+
+	if (v == 0) {
+		vpnhide_putc(b, '0');
+		return;
+	}
+	while (v) {
+		tmp[n++] = (char)('0' + (int)(v % 10ULL));
+		v /= 10ULL;
+	}
+	while (n)
+		vpnhide_putc(b, tmp[--n]);
+}
+
+/* Always lowercase out (§4.4: liberal-in / strict-out). */
+static inline void vpnhide_put_hex(struct vpnhide_buf *b, unsigned long long v)
+{
+	static const char hexd[] = "0123456789abcdef";
+	char tmp[16];
+	int n = 0;
+
+	vpnhide_puts(b, "0x");
+	if (v == 0) {
+		vpnhide_putc(b, '0');
+		return;
+	}
+	while (v) {
+		tmp[n++] = hexd[(int)(v & 0xfULL)];
+		v >>= 4;
+	}
+	while (n)
+		vpnhide_putc(b, tmp[--n]);
+}
+
+static inline void vpnhide_put_header(struct vpnhide_buf *b, const char *kind)
+{
+	vpnhide_puts(b, "vpnhide ");
+	vpnhide_put_dec(b, VPNHIDE_PROTO_VERSION);
+	vpnhide_putc(b, ' ');
+	vpnhide_puts(b, kind);
+	vpnhide_putc(b, '\n');
+}
+
+/*
+ * Serialise a `stats` snapshot into buf[cap]. `e[0..n)` is grouped by uid
+ * (consecutive entries with the same uid share one line); the producer emits
+ * only non-zero cells. Returns the FULL length (may exceed cap — caller sizes
+ * by its uid ceiling, or clamps with vpnhide_clamp_to_line for KPM out_msg).
+ */
+static inline unsigned long vpnhide_format_stats(char *buf, unsigned long cap,
+						 const struct vpnhide_stat_entry *e,
+						 int n)
+{
+	struct vpnhide_buf b;
+	int idx = 0;
+
+	b.p = buf;
+	b.cap = cap;
+	b.len = 0;
+	vpnhide_put_header(&b, "stats");
+	while (idx < n) {
+		unsigned int uid = e[idx].uid;
+
+		vpnhide_put_hex(&b, uid);
+		while (idx < n && e[idx].uid == uid) {
+			vpnhide_putc(&b, ' ');
+			vpnhide_put_hex(&b, e[idx].hook_id);
+			vpnhide_putc(&b, ':');
+			vpnhide_put_hex(&b, e[idx].count);
+			idx++;
+		}
+		vpnhide_putc(&b, '\n');
+	}
+	return b.len;
+}
+
+/* Serialise a `status` snapshot into buf[cap]. Returns the FULL length. */
+static inline unsigned long vpnhide_format_status(char *buf, unsigned long cap,
+						  const struct vpnhide_status *s)
+{
+	struct vpnhide_buf b;
+
+	b.p = buf;
+	b.cap = cap;
+	b.len = 0;
+	vpnhide_put_header(&b, "status");
+	vpnhide_puts(&b, "backend ");
+	vpnhide_put_hex(&b, s->backend);
+	vpnhide_putc(&b, '\n');
+	vpnhide_puts(&b, "kver ");
+	vpnhide_put_hex(&b, s->kver);
+	vpnhide_putc(&b, '\n');
+	vpnhide_puts(&b, "hooks ");
+	vpnhide_put_hex(&b, s->hooks);
+	vpnhide_putc(&b, '\n');
+	vpnhide_puts(&b, "error ");
+	vpnhide_put_hex(&b, s->error);
+	vpnhide_putc(&b, '\n');
+	return b.len;
+}
+
+/*
+ * Clamp a fully-serialised snapshot (length `full_len`) to `outlen` bytes on a
+ * LINE boundary, for the KPM single-buffer transport (§7.2). If the whole
+ * snapshot fits, returns full_len unchanged — it ends in `\n`, signalling a
+ * COMPLETE read. Otherwise returns the length of the largest run of complete
+ * lines that fits, MINUS its trailing `\n`: the absent newline is the
+ * truncation signal the reader checks, and no record is ever cut mid-line.
+ */
+static inline unsigned long vpnhide_clamp_to_line(const char *buf,
+						  unsigned long full_len,
+						  unsigned long outlen)
+{
+	unsigned long p;
+
+	if (full_len <= outlen)
+		return full_len;
+	p = outlen;
+	while (p > 0 && buf[p - 1] != '\n')
+		p--;
+	/* p sits just past the last newline within outlen (or 0). Drop that
+	 * newline so the truncated read is recognisable by its missing \n. */
+	return p ? p - 1 : 0;
+}
+
 #endif /* VPNHIDE_SHARED_LOGIC_H */
