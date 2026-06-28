@@ -14,7 +14,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-from build_lib import get_build_version, make_zip  # type: ignore[import-not-found]
+from build_lib import (  # type: ignore[import-not-found]
+    build_activator_bin,
+    get_build_version,
+    make_zip,
+)
 
 
 def main() -> int:
@@ -28,6 +32,9 @@ def main() -> int:
     if staging.exists():
         shutil.rmtree(staging)
     shutil.copytree(script_dir / "module", staging)
+
+    activator = build_activator_bin(script_dir.parent, "ports")
+    shutil.copy2(activator, staging / "activator")
 
     # Get build version
     build_version = get_build_version(script_dir.parent)

@@ -257,8 +257,8 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     }
 
     // Start the app-scoped caches as soon as the self-target preparation
-    // is resolved. Keep that preparation first: it mutates the target files
-    // and determines whether this app process needs a restart, so Dashboard
+    // is resolved. Keep that preparation first: it migrates/updates canonical
+    // config and determines whether this app process needs a restart, so Dashboard
     // must not derive protection state from a stale answer. Protection still
     // prewarms during splash, but without racing the self-target root shell.
     LaunchedEffect(selfNeedsRestart) {

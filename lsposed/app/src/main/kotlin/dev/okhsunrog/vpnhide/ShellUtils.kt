@@ -10,34 +10,38 @@ import java.util.concurrent.atomic.AtomicReference
 
 private const val TAG = "VpnHide"
 
+// Legacy storage files retained as read-only migration inputs when canonical
+// JSON is absent. New writes go to CANONICAL_CONFIG_FILE only.
+// TODO(storage-migration): remove these shims after a few public releases once
+// upgraded devices have had a chance to fold old files into canonical JSON.
 internal const val KMOD_TARGETS = "/data/adb/vpnhide_kmod/targets.txt"
 internal const val ZYGISK_TARGETS = "/data/adb/vpnhide_zygisk/targets.txt"
-internal const val ZYGISK_MODULE_TARGETS = "/data/adb/modules/vpnhide_zygisk/targets.txt"
 internal const val LSPOSED_TARGETS = "/data/adb/vpnhide_lsposed/targets.txt"
 
 // The kmod's folded control+stats node (docs/protocol.md §OPEN-4): a write is a
 // `vpnhide 1 config` snapshot, a read returns status+stats. Replaces the old
 // /proc/vpnhide_targets (decimal UID list) + /proc/vpnhide_debug nodes.
 internal const val PROC_CTL = "/proc/vpnhide_ctl"
-internal const val SS_UIDS_FILE = "/data/system/vpnhide_uids.txt"
 internal const val SS_HIDDEN_PKGS_FILE = "/data/system/vpnhide_hidden_pkgs.txt"
 internal const val SS_OBSERVER_UIDS_FILE = "/data/system/vpnhide_observer_uids.txt"
 internal const val PORTS_OBSERVERS_FILE = "/data/adb/vpnhide_ports/observers.txt"
-internal const val PORTS_APPLY_SCRIPT = "/data/adb/modules/vpnhide_ports/vpnhide_ports_apply.sh"
 internal const val PORTS_MODULE_DIR = "/data/adb/modules/vpnhide_ports"
+internal const val PORTS_ACTIVATOR = "$PORTS_MODULE_DIR/activator"
 internal const val KMOD_MODULE_DIR = "/data/adb/modules/vpnhide_kmod"
 internal const val KMOD_LOAD_STATUS_FILE = "/data/adb/vpnhide_kmod/load_status"
 internal const val KMOD_LOAD_DMESG_FILE = "/data/adb/vpnhide_kmod/load_dmesg"
 internal const val ZYGISK_MODULE_DIR = "/data/adb/modules/vpnhide_zygisk"
 internal const val ZYGISK_STATUS_FILE_NAME = "vpnhide_zygisk_active"
 
-// KPM (KernelPatch Module) backend — the third native backend. Like the .ko it
-// keeps a persistent targets list + a boot-written load_status (the KPM has no
-// /proc node; its runtime channel is the kpatch ctl0 supercall, so the app
-// reads load_status for liveness instead of a proc marker).
+// KPM (KernelPatch Module) backend — the third native backend. The KPM has no
+// /proc node; its runtime channel is the kpatch ctl0 supercall, so the app reads
+// load_status for liveness instead of a proc marker.
 internal const val KPM_TARGETS = "/data/adb/vpnhide_kpm/targets.txt"
 internal const val KPM_MODULE_DIR = "/data/adb/modules/vpnhide_kpm"
 internal const val KPM_LOAD_STATUS_FILE = "/data/adb/vpnhide_kpm/load_status"
+internal const val KMOD_ACTIVATOR = "$KMOD_MODULE_DIR/activator"
+internal const val KPM_ACTIVATOR = "$KPM_MODULE_DIR/activator"
+internal const val ZYGISK_ACTIVATOR = "$ZYGISK_MODULE_DIR/activator"
 
 /** Default cap on a single su invocation. Most root commands here finish
  *  in milliseconds; this only fires if the su binary is genuinely stuck
@@ -253,7 +257,7 @@ internal fun cleanupStaleZygiskStatus(
 }
 
 /**
- * Ensure the VPN Hide app itself is in all 3 target lists + resolve UIDs.
+ * Ensure the VPN Hide app itself is in the canonical target config.
  * Returns true if self had to be added to any list (= hooks may not be
  * applied to the current process, restart needed for zygisk).
  * Called once at app startup; result is shared with all screens.
@@ -262,47 +266,91 @@ internal fun ensureSelfInTargets(
     selfPkg: String,
     timeoutSec: Long = SELF_TARGETS_TIMEOUT_SEC,
 ): SelfTargetPreparation {
-    val (exitCode, out) = suExec(buildEnsureSelfInTargetsCommand(selfPkg), timeoutSec = timeoutSec)
-    if (exitCode != 0) {
-        VpnHideLog.w(TAG, "ensureSelfInTargets: batch failed (exit=$exitCode): ${out.trim()}")
-        return SelfTargetPreparation(
-            rootAvailable = false,
-            selfNeedsRestart = false,
-            currentBootId = null,
-            error = "exit=$exitCode",
-        )
+    val (sections, loadError) = loadStartupRootSections(timeoutSec)
+    if (sections == null) return selfTargetPreparationFailure(loadError ?: "snapshot load failed")
+    val update = buildCanonicalSelfUpdate(sections, selfPkg)
+    if (update.writeRequired) {
+        writeStartupCanonical(update.canonical, timeoutSec)?.let { return selfTargetPreparationFailure(it) }
+        RootSnapshotCache.invalidate()
     }
-    val added = out.lineSequence().any { it.trim() == "ADDED=1" }
-    val pmPackages = extractSelfTargetPmPackages(out)
-    val currentBootId =
-        out
-            .lineSequence()
-            .firstNotNullOfOrNull { line ->
-                line.trim().removePrefix("BOOT_ID=").takeIf { it != line.trim() && it.isNotBlank() }
-            }
-    out
-        .lineSequence()
-        .map { it.trim() }
-        .filter { it.startsWith("added:") || it == "zygisk_cp_failed" }
-        .forEach { VpnHideLog.i(TAG, "ensureSelfInTargets: $it") }
-    VpnHideLog.d(TAG, "ensureSelfInTargets: done, added=$added")
+    cleanupLegacyConfigInputs(timeoutSec)
+    val pmPackages = sections["pm_packages"]?.trimEnd()?.takeIf { it.isNotBlank() }
+    val currentBootId = sections["current_boot_id"]?.trim()?.takeIf { it.isNotBlank() }
+    VpnHideLog.d(TAG, "ensureSelfInTargets: done, selfNeedsRestart=${update.selfNeedsRestart}")
     return SelfTargetPreparation(
         rootAvailable = true,
-        selfNeedsRestart = added,
+        selfNeedsRestart = update.selfNeedsRestart,
         currentBootId = currentBootId,
         pmPackages = pmPackages,
     )
 }
 
-internal fun extractSelfTargetPmPackages(output: String): String? {
-    val lines = mutableListOf<String>()
-    var inSection = false
-    output.lineSequence().forEach { line ->
-        when (line.trim()) {
-            SELF_PM_PACKAGES_BEGIN -> inSection = true
-            SELF_PM_PACKAGES_END -> inSection = false
-            else -> if (inSection) lines += line
-        }
+private data class CanonicalSelfUpdate(
+    val canonical: CanonicalConfig,
+    val selfNeedsRestart: Boolean,
+    val writeRequired: Boolean,
+)
+
+private fun loadStartupRootSections(timeoutSec: Long): Pair<Map<String, String>?, String?> {
+    val (exitCode, out) = suExec(buildRootShellSnapshotCommand(includePmPackages = true), timeoutSec = timeoutSec)
+    if (exitCode != 0) {
+        VpnHideLog.w(TAG, "ensureSelfInTargets: root snapshot failed (exit=$exitCode): ${out.trim()}")
+        return null to "exit=$exitCode"
     }
-    return lines.joinToString("\n").trimEnd().takeIf { it.isNotBlank() }
+    return try {
+        parseRootShellSnapshot(out).also(::validateRootSnapshotSections) to null
+    } catch (e: Exception) {
+        VpnHideLog.w(TAG, "ensureSelfInTargets: snapshot parse failed: ${e.message}")
+        null to (e.message ?: "snapshot parse failed")
+    }
 }
+
+private fun buildCanonicalSelfUpdate(
+    sections: Map<String, String>,
+    selfPkg: String,
+): CanonicalSelfUpdate {
+    val targets = parseTargetsSnapshot(RootSnapshot(sections))
+    val legacyDebug = sections["debug_logging"]?.trim() == "1"
+    val baseCanonical =
+        targets.canonicalConfig
+            ?: buildCanonicalConfigFromTargetsSnapshot(targets, debug = legacyDebug)
+    val previousSelf = baseCanonical.apps[selfPkg]
+    val selfNeedsRestart = previousSelf == null || !previousSelf.java || !previousSelf.native.enabled
+    val updatedCanonical = canonicalConfigWithSelfTarget(baseCanonical, selfPkg)
+    return CanonicalSelfUpdate(
+        canonical = updatedCanonical,
+        selfNeedsRestart = selfNeedsRestart,
+        writeRequired = targets.canonicalConfig == null || updatedCanonical != baseCanonical,
+    )
+}
+
+private fun writeStartupCanonical(
+    canonical: CanonicalConfig,
+    timeoutSec: Long,
+): String? {
+    val command =
+        listOf(
+            buildCanonicalConfigWriteCommand(canonical),
+            ConfigChannels.reconcileCommand(),
+            "if [ -x $PORTS_ACTIVATOR ]; then $PORTS_ACTIVATOR; fi",
+        ).joinToString(" ; ")
+    val (exit, out) = suExec(command, timeoutSec = timeoutSec)
+    if (exit == 0) return null
+    VpnHideLog.w(TAG, "ensureSelfInTargets: canonical write failed (exit=$exit): ${out.trim()}")
+    return "canonical write exit=$exit"
+}
+
+private fun cleanupLegacyConfigInputs(timeoutSec: Long) {
+    val (exit, out) = suExec(buildLegacyConfigCleanupCommand(), timeoutSec = timeoutSec)
+    if (exit != 0) {
+        VpnHideLog.w(TAG, "legacy config cleanup failed (exit=$exit): ${out.trim()}")
+    }
+}
+
+private fun selfTargetPreparationFailure(error: String): SelfTargetPreparation =
+    SelfTargetPreparation(
+        rootAvailable = false,
+        selfNeedsRestart = false,
+        currentBootId = null,
+        error = error,
+    )

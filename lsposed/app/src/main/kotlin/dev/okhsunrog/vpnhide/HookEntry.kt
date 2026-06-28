@@ -63,10 +63,9 @@ class HookEntry : IXposedHookLoadPackage {
         return if (uid == SYSTEM_UID) currentCallbackUid.get() ?: uid else uid
     }
 
-    private fun isTargetCallerOrUid(uid: Int? = null): Boolean {
-        val targets = loadTargetUids()
-        return targets.contains(effectiveCallerUid()) || (uid != null && targets.contains(uid))
-    }
+    private fun isTargetCallerOrUid(uid: Int? = null): Boolean =
+        SystemServerConfigCache.isTargetUid(effectiveCallerUid()) ||
+            (uid != null && SystemServerConfigCache.isTargetUid(uid))
 
     private fun rememberConnectivityService(instance: Any?) {
         if (instance != null) connectivityServiceInstance = instance
@@ -425,11 +424,9 @@ class HookEntry : IXposedHookLoadPackage {
     //  system_server hooks — per-UID Binder filtering
     // ==================================================================
 
-    private val targetUidCache = SystemServerTargetUidCache()
+    @Volatile private var canonicalConfigFileObserver: android.os.FileObserver? = null
 
-    @Volatile private var targetUidsFileObserver: android.os.FileObserver? = null
-
-    private fun loadTargetUids(): Set<Int> = targetUidCache.load()
+    private fun isTargetUid(uid: Int): Boolean = SystemServerConfigCache.isTargetUid(uid)
 
     // Smoke-check at install time: every private AOSP field/ctor we touch
     // by reflection in the writeToParcel hooks. Returns the keys that
@@ -475,7 +472,7 @@ class HookEntry : IXposedHookLoadPackage {
         }
         tryHook("Network.writeToParcel") { hookNetworkWriteToParcel() }
 
-        tryHook("FileObserver") { watchTargetUidsFile() }
+        tryHook("FileObserver") { watchCanonicalConfigFile() }
         return brokenFields
     }
 
@@ -553,8 +550,7 @@ class HookEntry : IXposedHookLoadPackage {
             statusFile.writeText(sb.toString())
             // Don't expose this file to untrusted apps — anti-tamper SDKs
             // scan /data/system/ for known marker filenames. The VPN Hide
-            // app reads it via root (`suExec("cat ...")`), see
-            // DashboardData.kt — same pattern as vpnhide_uids.txt.
+            // app reads it via root (`suExec("cat ...")`), see DashboardData.kt.
             HookLog.i(
                 "VpnHide: wrote hook status file (version=$version, boot_id=$bootId, " +
                     "sdk=$sdk, broken=${brokenFields.size})",
@@ -565,17 +561,17 @@ class HookEntry : IXposedHookLoadPackage {
     }
 
     /**
-     * Watch /data/system/vpnhide_uids.txt for changes via inotify.
-     * When modified (e.g. by the VPN Hide app), invalidate the
-     * cached UID set so the next writeToParcel call re-reads it.
+     * Watch the canonical config for changes via inotify. The cache also
+     * fingerprints `/data/system/packages.list` periodically, so package
+     * reinstall UID/appId changes are picked up without PackageManager calls.
      */
-    private fun watchTargetUidsFile() {
-        val filename = "vpnhide_uids.txt"
-        targetUidsFileObserver =
+    private fun watchCanonicalConfigFile() {
+        val filename = "vpnhide_config.json"
+        canonicalConfigFileObserver =
             watchSystemDataDir { path ->
                 if (path == filename) {
-                    HookLog.i("VpnHide: $filename changed, invalidating UID cache")
-                    targetUidCache.invalidate()
+                    HookLog.i("VpnHide: $filename changed, invalidating config cache")
+                    SystemServerConfigCache.invalidate()
                 }
             }
         HookLog.i("VpnHide: watching /data/system for $filename changes (inotify)")
@@ -599,8 +595,7 @@ class HookEntry : IXposedHookLoadPackage {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     if (writingCopy.get() == true) return
                     val callerUid = effectiveCallerUid()
-                    val targets = loadTargetUids()
-                    val isTarget = targets.contains(callerUid)
+                    val isTarget = isTargetUid(callerUid)
                     val nc = param.thisObject as NetworkCapabilities
                     val hasVpn = nc.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
                     // Per-request diagnostic line. Gated by the debug-logging
@@ -686,7 +681,7 @@ class HookEntry : IXposedHookLoadPackage {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     if (writingCopy.get() == true) return
                     val callerUid = effectiveCallerUid()
-                    val isTarget = loadTargetUids().contains(callerUid)
+                    val isTarget = isTargetUid(callerUid)
                     val ni = param.thisObject as NetworkInfo
                     val type = XposedHelpers.getIntField(ni, "mNetworkType")
                     val isVpn = type == ConnectivityManager.TYPE_VPN
@@ -733,7 +728,7 @@ class HookEntry : IXposedHookLoadPackage {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     if (writingCopy.get() == true) return
                     val callerUid = effectiveCallerUid()
-                    val isTarget = loadTargetUids().contains(callerUid)
+                    val isTarget = isTargetUid(callerUid)
                     val lp = param.thisObject as LinkProperties
                     val ifname = XposedHelpers.getObjectField(lp, "mIfaceName") as? String
                     HookLog.i("VpnHide-LP: uid=$callerUid target=$isTarget ifname=$ifname")
@@ -859,7 +854,7 @@ class HookEntry : IXposedHookLoadPackage {
                     val nri = param.args.firstOrNull() ?: return
                     rememberConnectivityService(param.thisObject)
                     val uid = extractRecipientUid(nri)
-                    if (uid < 0 || !loadTargetUids().contains(uid)) return
+                    if (uid < 0 || !isTargetUid(uid)) return
 
                     val request = extractNetworkRequest(nri)
                     if (request != null && request.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {

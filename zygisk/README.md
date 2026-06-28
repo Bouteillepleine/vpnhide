@@ -23,7 +23,7 @@ PLT hooks patch the caller library's procedure linkage table. At `post_app_speci
 
 ### Flow
 
-1. **`pre_app_specialize`** -- runs in the already-forked child, before the kernel drops it to the app's UID and SELinux context (still has zygote privileges at this point). Reads `args.nice_name`, checks against `/data/adb/vpnhide_zygisk/targets.txt`. Non-targeted apps get `DlCloseModuleLibrary` (zero cost after unload). See `src/lib.rs`'s top-level doc block for the full Zygisk lifecycle and why every Rust `static` is fresh per app launch.
+1. **`pre_app_specialize`** -- runs in the already-forked child, before the kernel drops it to the app's UID and SELinux context (still has zygote privileges at this point). Reads `args.nice_name`, checks against the module-dir `targets.txt` runtime wire generated from `/data/system/vpnhide_config.json` by the activator. Non-targeted apps get `DlCloseModuleLibrary` (zero cost after unload). See `src/lib.rs`'s top-level doc block for the full Zygisk lifecycle and why every Rust `static` is fresh per app launch.
 2. **`post_app_specialize`** -- on targeted processes only: `shadowhook_init`, install five inline hooks (`ioctl`, `getifaddrs`, `openat`, `recvmsg`, `recv`), then scrub maps. `recv` is hooked separately because bionic's `recv()` is `b recvfrom` (tail-call) — patching `recvfrom`'s prologue would break `recv`.
 
 ### Thread-local guard
@@ -107,7 +107,7 @@ cargo ndk -t arm64-v8a build --release \
 3. Reboot.
 4. Pick target apps:
    - **VPN Hide app (recommended):** open the VPN Hide app (the [lsposed](../lsposed/) APK). Lists all installed apps with icons, search, and checkboxes. Works on both KernelSU and Magisk.
-   - **Shell:** edit `/data/adb/vpnhide_zygisk/targets.txt` directly (one package name per line, `#` for comments). A base package name `com.example.app` also matches subprocesses like `com.example.app:background`.
+   - **Shell:** edit `/data/system/vpnhide_config.json`, then run `/data/adb/modules/vpnhide_zygisk/activator` as root to regenerate the module-dir runtime config.
 5. Force-stop target apps: `adb shell am force-stop <pkg>`
 6. Verify: `adb logcat | grep vpnhide-zygisk`
 

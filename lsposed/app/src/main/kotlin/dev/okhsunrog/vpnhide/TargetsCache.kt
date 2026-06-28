@@ -17,8 +17,8 @@ import kotlinx.coroutines.flow.StateFlow
  * tab switches render immediately from memory.
  *
  * Invalidated when:
- * - The user taps Save on any Protection screen (target files have
- *   just been overwritten — need a fresh read next time).
+ * - The user taps Save on Protection (canonical config has just been
+ *   overwritten — need a fresh read next time).
  * - The user taps the top-bar Refresh button on Protection.
  */
 internal data class TargetsSnapshot(
@@ -34,6 +34,7 @@ internal data class TargetsSnapshot(
     val observerUids: Set<Int>,
     val portsObservers: Set<String>,
     val uidToPkg: Map<Int, String>,
+    val canonicalConfig: CanonicalConfig?,
 ) {
     /** True if any native backend is installed (kmod / KPM / Zygisk). The
      * picker's "N" toggle is meaningful only when at least one is present. */
@@ -107,16 +108,44 @@ internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
     fun nonEmptyLines(raw: String?): Set<String> = raw?.let { parseConfigLines(it).toSet() } ?: emptySet()
 
     val portsInstalled = sections["ports_prop"]?.isNotBlank() == true
-    val observerUids = nonEmptyLines(sections["observer_uids"]).mapNotNull { it.toIntOrNull() }.toSet()
+    val canonical = runCatching { parseCanonicalConfig(sections["canonical_config"].orEmpty()) }.getOrNull()
 
     // With `--user all`, multi-profile packages report comma-separated
     // UIDs: `package:com.android.chrome uid:10187,1010187`. Each UID
     // becomes its own entry in the reverse map so observer lookups
     // from any profile resolve back to the same package name.
     val uidToPkg = mutableMapOf<Int, String>()
-    parsePackageUidMap(sections["pm_packages"].orEmpty()).forEach { (pkg, uids) ->
+    val pkgToUids = parsePackageUidMap(sections["pm_packages"].orEmpty())
+    pkgToUids.forEach { (pkg, uids) ->
         uids.forEach { uidToPkg[it] = pkg }
     }
+
+    fun uidsFor(pkgs: Set<String>): Set<Int> = pkgs.flatMap { pkgToUids[it].orEmpty() }.toSet()
+
+    if (canonical != null) {
+        val javaTargets = canonical.apps.filterValues { it.java }.keys
+        val nativeTargets = canonical.apps.filterValues { it.native.enabled }.keys
+        val observerNames = canonical.apps.filterValues { it.appHiding }.keys
+        val hiddenPkgs = canonical.apps.filterValues { it.hidden }.keys
+        val portsObservers = canonical.apps.filterValues { it.ports }.keys
+        return TargetsSnapshot(
+            kmodModuleInstalled = sections["kmod_module_dir"]?.trim() == "1",
+            kpmModuleInstalled = sections["kpm_module_dir"]?.trim() == "1",
+            zygiskModuleInstalled = sections["zygisk_module_dir"]?.trim() == "1",
+            portsModuleInstalled = portsInstalled,
+            kmodTargets = nativeTargets,
+            kpmTargets = nativeTargets,
+            zygiskTargets = nativeTargets,
+            lsposedTargets = javaTargets,
+            hiddenPkgs = hiddenPkgs,
+            observerUids = uidsFor(observerNames),
+            portsObservers = portsObservers,
+            uidToPkg = uidToPkg,
+            canonicalConfig = canonical,
+        )
+    }
+
+    val observerUids = nonEmptyLines(sections["observer_uids"]).mapNotNull { it.toIntOrNull() }.toSet()
 
     return TargetsSnapshot(
         kmodModuleInstalled = sections["kmod_module_dir"]?.trim() == "1",
@@ -131,5 +160,6 @@ internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
         observerUids = observerUids,
         portsObservers = nonEmptyLines(sections["ports_observers"]),
         uidToPkg = uidToPkg,
+        canonicalConfig = null,
     )
 }

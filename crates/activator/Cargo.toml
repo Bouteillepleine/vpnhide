@@ -1,0 +1,31 @@
+[package]
+name = "vpnhide_activator"
+version = "0.7.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Project vpnhide canonical JSON storage into native backend wire channels."
+
+[lib]
+name = "vpnhide_activator"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+vpnhide_protocol = { path = "../protocol" }
+
+[[bin]]
+name = "kmod"
+path = "src/bin/kmod.rs"
+
+[[bin]]
+name = "kpm"
+path = "src/bin/kpm.rs"
+
+[[bin]]
+name = "zygisk"
+path = "src/bin/zygisk.rs"
+
+[[bin]]
+name = "ports"
+path = "src/bin/ports.rs"

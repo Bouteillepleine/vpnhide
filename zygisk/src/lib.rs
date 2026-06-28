@@ -76,13 +76,13 @@
 mod filter;
 mod generated;
 mod hooks;
-mod protocol;
 mod shadowhook;
 
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::sync::Once;
 
 use log::{debug, error, info};
+use vpnhide_protocol as protocol;
 use zygisk_api::ZygiskModule;
 use zygisk_api::api::ZygiskApi;
 use zygisk_api::api::v2::{AppSpecializeArgs, V2, ZygiskOption};

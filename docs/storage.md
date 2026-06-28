@@ -8,9 +8,9 @@ defines the single on-disk source of truth those bytes are derived from.
 > **Status.** This is the **target** design. The current code (the control-protocol
 > migration, PR #164) is an interim step: it puts the text protocol on *every*
 > backend with per-backend text files. This document is where that converges —
-> one JSON canonical + an activator that derives the wire for the native
-> backends, with LSPosed reading the JSON directly. Sections below note where the
-> current code differs.
+> one JSON canonical + activators that derive runtime state for the native and
+> ports backends, with LSPosed reading the JSON directly. Sections below note
+> where the current code differs.
 
 ---
 
@@ -20,8 +20,8 @@ Two formats, by role — not one format stretched over everything:
 
 - **On disk = JSON.** A single canonical "desired state" file. Package-keyed (so it
   survives reinstalls), rich (roles, per-hook selection, debug, app settings),
-  trivially import/export-able. Read by the app (Kotlin) and the LSPosed hook
-  (Kotlin) and the activator (Rust).
+  trivially import/export-able. Read by the app (Kotlin), the LSPosed hook
+  (Kotlin), and the Rust activators.
 - **Runtime IPC = the text protocol** ([protocol.md](protocol.md), v1 frozen).
   uid-keyed, hand-parsed, kernel-safe. The runtime wire for the **native**
   backends only (kmod / KPM / Zygisk): config in, stats/status out.
@@ -139,11 +139,13 @@ warns/errors and asks the user to remove the extra otherwise). So the activator
 never writes "all three": it writes the **one** channel of the one installed native
 backend.
 
-### 4.1 The activator — a Rust workspace, three thin bins
+### 4.1 The activator — a Rust workspace, thin bins
 
 The projection is *identical* for all three native backends (take the `native`-role
 packages → resolve to UIDs → emit a `vpnhide 1 config` snapshot); only the
-**delivery sink** differs. So: one shared core, three thin per-target front-ends.
+**delivery sink** differs. Ports use the same canonical parser and package→UID
+resolver, but project `ports: true` roles into iptables rules instead of the text
+wire. So: one shared core, thin per-target front-ends.
 
 ```
 crates/
@@ -156,29 +158,35 @@ crates/
     src/lib.rs              # shared core: JSON schema (serde), pkg→uid resolution
                             #   (`pm`), project_native(json) -> String
     src/bin/kmod.rs         #   project_native(json) → write("/proc/vpnhide_ctl")
-    src/bin/kpm.rs          #   project_native(json) → `kpatch [key] kpm ctl0`
+    src/bin/kpm.rs          #   project_native(json) → APatch supercall / KPatch-Next `kpatch`
     src/bin/zygisk.rs       #   project_native(json) → write_atomic(module_dir file)
+    src/bin/ports.rs        #   project_ports(json) → iptables-restore/ip6tables-restore
 ```
 
 - **Why a workspace, not feature-flags or one crate with `src/bin/`+cdylib:**
   `cdylib` and `bin` are different crate-types; feature-flags don't select artifact
   type. A single crate that is *both* a cdylib and a bin risks pulling `serde` into
   the injected `.so`. The workspace keeps the `.so`'s dependency tree lean (protocol
-  only) while the activator (a normal executable) freely uses `serde`. The three
+  only) while the activator (a normal executable) freely uses `serde`. The
   **activators are executables**, so they fit `src/bin/` perfectly over a shared
   `src/lib.rs`.
 - **Each native module ships only its own activator bin** (kmod module → `kmod`,
   KPM module → `kpm`, Zygisk module → `zygisk`). Each does exactly its one channel,
   no detection, no runtime branching.
-- **When it runs:** at boot from that module's `service.sh`, and on Save from the
-  app (`su <path>/activator`). It reads the canonical, resolves, writes its channel.
+- **The ports module ships `ports`**, which reads the same canonical JSON but applies
+  iptables state instead of writing the native text protocol.
+- **When it runs:** at boot from that module's `service.sh` as
+  `activator --boot-wait`, and on Save from the app (`su <path>/activator`).
+  Boot mode waits indefinitely for PackageManager readiness; Save mode keeps a
+  bounded wait so the UI cannot hang forever. Then it reads the canonical,
+  resolves, and writes its channel.
 
-### 4.2 The three channels
+### 4.2 The native channels
 
 | Backend | Channel | Kind | Note |
 |---|---|---|---|
 | kmod | `/proc/vpnhide_ctl` | proc node | write = config (kernel parses to memory); read = status+stats |
-| KPM | `kpatch kpm ctl0` | supercall | no file; config in via arg, stats/status out via `out_msg` |
+| KPM | KPM ctl0 supercall | supercall | APatch direct supercall or KPatch-Next runtime `kpatch kpm ctl0`; no file |
 | Zygisk | file in its module dir | file | the `.so` reads it via the `get_module_dir()` fd |
 
 Why Zygisk needs a file in its module dir even though there is one canonical: the
@@ -273,19 +281,17 @@ Magisk/KSU is **keyless**; this whole section is **APatch-only**.)
       reads modules from there pre-unlock), and root-only. So the boot activator
       (root) **can** read it before unlock.
 - **What it unlocks: APatch boot activation.** With the key on disk, the `kpm`
-  activator reads it at boot and runs `kpatch <key> kpm ctl0` — so APatch reaches
-  **parity with keyless KPatch-Next** (protection active after a reboot, no app
-  open needed). Without the flag, APatch is configured only after the user opens the
-  app and enters the key (KPM boot stays unconfigured until then).
+  activator reads it at boot and uses APatch's KernelPatch supercall ABI directly
+  to load/configure the KPM — so APatch reaches **parity with keyless KPatch-Next**
+  (protection active after a reboot, no app open needed). Without the flag, APatch
+  cannot be configured at boot because the KPM supercalls require the real key.
 - **Plain file, not Keystore.** The boot activator is a Rust binary, not an Android
   app, so it cannot call Android Keystore (a framework/binder API). Keystore-wrapping
   could protect the *app-time* use only, not the boot path. So the boot-usable copy
   is a plain file; FBE DE-encryption protects it at rest on a powered-off device.
 - **Threat-model fit:** readable by **root only** (trusted in this project's model),
-  never by unprivileged apps or non-root `adb` (§7). `argv` exposure of the key when
-  invoking `kpatch <key> …` is fine — modern `/proc` (`hidepid`) blocks unprivileged
-  apps from reading another process's `cmdline`; only root sees it. So no separate
-  "key off argv" helper (protocol.md §7.3) is needed for this model.
+  never by unprivileged apps or non-root `adb` (§7). The APatch activator calls the
+  supercall directly, so the key is not passed through an external `kpatch` argv.
 
 ---
 
@@ -336,7 +342,7 @@ optional.
 |---|---|---|
 | `/data/system/vpnhide_config.json` | **the** canonical config (managed, exported) | persistent |
 | `/proc/vpnhide_ctl` | kmod runtime channel (node, not a file) | per-boot, in-kernel |
-| `kpatch kpm ctl0` | KPM runtime channel (supercall, no file) | per-boot, in-kernel |
+| KPM ctl0 supercall | KPM runtime channel (supercall, no file) | per-boot, in-kernel |
 | `/data/adb/modules/vpnhide_zygisk/<cfg>` | Zygisk runtime channel (derived copy) | regenerated |
 | `/data/system/vpnhide_hook_active` | LSPosed status (hook → dashboard) | per-boot |
 | `/data/adb/vpnhide/superkey` | APatch superkey (optional, flag-gated) | persistent, root-only |
@@ -355,8 +361,10 @@ Removed vs. the pre-redesign layout:
 On first run after the upgrade, if `/data/system/vpnhide_config.json` is absent, the
 app builds it **once** from whatever old per-backend text files exist (package
 lists, observers, hidden, debug flag), writes the canonical, then runs the
-activator. After that the old files are unused (and can be removed). The canonical is
-the single source from then on.
+activator. After that the old files are unused; app startup removes the retired
+legacy inputs best-effort once canonical JSON exists. The canonical is the single
+source from then on. Keep the legacy read paths for a few public releases as a
+migration shim, then remove them.
 
 ---
 
@@ -369,9 +377,9 @@ IPC for the native backends. This document supersedes its statements about the
 - **LSPosed does not consume the wire** — it reads the canonical JSON directly
   (§3). protocol.md's "LSPosed parses its config profile from its file" / the
   LSPosed rows in its channel + profile tables are superseded here.
-- **APatch boot is configurable** when the superkey is persisted (§6) — protocol.md
-  §7.4's "a boot script has no superkey, so it cannot configure" describes only the
-  no-persistence default.
+- **APatch boot is configurable** when the superkey is persisted (§6); without
+  it, boot records `awaiting_superkey` and activation resumes after the app
+  supplies the key.
 - **The app does not hand-build per-channel configs** — the activator does
   (§4). The serialiser is the Rust `protocol` crate, shared with the Zygisk `.so`.
 

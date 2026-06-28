@@ -96,11 +96,7 @@ fun AppPickerScreen(
             val nativePkgs = (entries.filter { it.native }.map { it.packageName } + ctx.selfPkg).distinct().sorted()
             val observerPkgs = entries.filter { it.appHiding }.map { it.packageName }.sorted()
             val portsPkgs = entries.filter { it.ports }.map { it.packageName }.sorted()
-            // Resolved UIDs for the runtime config channels (entries carry their
-            // all-profile UIDs; self is added explicitly — it's never a row).
-            val javaUids = (entries.filter { it.java }.flatMap { it.userIds } + ctx.selfUids).distinct()
-            val nativeUids = (entries.filter { it.native }.flatMap { it.userIds } + ctx.selfUids).distinct()
-            buildUnifiedSaveCommand(ctx, javaPkgs, nativePkgs, javaUids, nativeUids, observerPkgs, portsPkgs)
+            buildUnifiedSaveCommand(ctx, javaPkgs, nativePkgs, observerPkgs, portsPkgs)
         },
         successMessage = { entries, res ->
             res.getString(R.string.save_success, entries.count { it.anySelected })
@@ -137,85 +133,41 @@ fun AppPickerScreen(
 }
 
 /**
- * Build the single root command that persists every role at once. Two layers,
- * kept apart (protocol §1.2):
- *
- *  - **Persistent PACKAGE lists** (the per-backend `targets.txt`) — survive reinstall, feed
- *    the picker + boot re-resolution. One per backend; NOT the wire protocol.
- *  - **Runtime CONFIG channels** — the resolved-UID `vpnhide 1 config` wire,
- *    serialised once via [ConfigChannels]: the Java set to the LSPosed channel,
- *    the native set fanned to every installed native backend (only the active
- *    one acts, §1.5; the KPM boot-applies from its package list — live ctl0
- *    push is a TODO).
- *  - **App-hiding** (observer UID file + hidden-package file) and **Ports**
- *    (observers + apply script) stay NON-protocol, written as before.
+ * Build the single root command that persists every role at once. The canonical
+ * JSON is the single persistent source of truth. Native backends are updated by
+ * running the installed activator; LSPosed reads the JSON directly; the ports
+ * activator derives its observer set from the same JSON.
  */
 private fun buildUnifiedSaveCommand(
     ctx: SaveContext,
     javaPkgs: List<String>,
     nativePkgs: List<String>,
-    javaUids: List<Int>,
-    nativeUids: List<Int>,
     observerPkgs: List<String>,
     portsPkgs: List<String>,
 ): String {
-    val header = ctx.header
     val parts = mutableListOf<String>()
 
-    // --- Persistent PACKAGE lists ---
-    parts += "mkdir -p /data/adb/vpnhide_lsposed"
-    parts += "${buildConfigWriteCommand(LSPOSED_TARGETS, header, javaPkgs)} && chmod 644 $LSPOSED_TARGETS"
-    parts +=
-        "if [ -d /data/adb/vpnhide_kmod ]; then ${buildConfigWriteCommand(KMOD_TARGETS, header, nativePkgs)} && chmod 644 $KMOD_TARGETS; fi"
-    parts +=
-        "if [ -d /data/adb/vpnhide_zygisk ]; then ${buildConfigWriteCommand(
-            ZYGISK_TARGETS,
-            header,
-            nativePkgs,
-        )} && chmod 644 $ZYGISK_TARGETS; fi"
-    parts +=
-        "if [ -d /data/adb/vpnhide_kpm ]; then ${buildConfigWriteCommand(KPM_TARGETS, header, nativePkgs)} && chmod 644 $KPM_TARGETS; fi"
-
-    // --- Runtime CONFIG channels (the `vpnhide 1 config` wire) ---
-    parts += ConfigChannels.javaWriteParts(ctx.debug, javaUids)
-    parts += ConfigChannels.nativeWriteParts(ctx.debug, nativeUids)
-
-    // --- App hiding: observers (A) + hidden packages (auto-detected, stub) ---
-    val existingHidden = TargetsCache.snapshot.value?.hiddenPkgs ?: emptySet()
+    val existingSnapshot = TargetsCache.snapshot.value
+    val existingHidden = existingSnapshot?.hiddenPkgs ?: emptySet()
     val hiddenPkgs = resolveHiddenPackages(existingHidden, observerPkgs.toSet(), ctx.selfPkg)
-    parts += appHidingSaveParts(header, hiddenPkgs, observerPkgs)
+    val canonical =
+        buildCanonicalConfig(
+            debug = ctx.debug,
+            javaPkgs = javaPkgs,
+            nativePkgs = nativePkgs,
+            hiddenPkgs = hiddenPkgs,
+            observerPkgs = observerPkgs,
+            portsPkgs = portsPkgs,
+            existing = existingSnapshot?.canonicalConfig,
+        )
+    parts += buildCanonicalConfigWriteCommand(canonical)
 
-    // --- Ports (only when the module is installed) ---
-    parts +=
-        "if [ -d $PORTS_MODULE_DIR ]; then mkdir -p /data/adb/vpnhide_ports && " +
-        "${buildConfigWriteCommand(PORTS_OBSERVERS_FILE, header, portsPkgs)} && " +
-        "chmod 644 $PORTS_OBSERVERS_FILE && sh $PORTS_APPLY_SCRIPT; fi"
+    parts += ConfigChannels.nativeWriteParts()
+
+    parts += "if [ -x $PORTS_ACTIVATOR ]; then $PORTS_ACTIVATOR; fi"
 
     return parts.joinToString(" ; ")
 }
-
-/**
- * Hidden-package file (auto-detected set) + observer (A) UID file. Both live at
- * 0640 root:system so system_server reads them and untrusted apps get EACCES.
- * Hidden vs observer are mutually exclusive (enforced by [resolveHiddenPackages]).
- */
-private fun appHidingSaveParts(
-    header: String,
-    hiddenPkgs: List<String>,
-    observerPkgs: List<String>,
-): List<String> =
-    buildList {
-        add(buildConfigWriteCommand(SS_HIDDEN_PKGS_FILE, header, hiddenPkgs))
-        addAll(systemDataFilePermsParts(SS_HIDDEN_PKGS_FILE, "640"))
-        add(
-            if (observerPkgs.isNotEmpty()) {
-                buildUidResolverCommand(observerPkgs, SS_OBSERVER_UIDS_FILE)
-            } else {
-                "echo > $SS_OBSERVER_UIDS_FILE 2>/dev/null"
-            },
-        )
-        addAll(systemDataFilePermsParts(SS_OBSERVER_UIDS_FILE, "640"))
-    }
 
 @Composable
 private fun AppRow(

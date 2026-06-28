@@ -1041,13 +1041,19 @@ internal suspend fun loadDashboardState(
     VpnHideLog.i(TAG, "=== Loading dashboard state ===")
     StartupTrace.mark("dashboard_derive_start")
     val shellSnapshot = rootSnapshot.sections
+    val targetsSnapshot = parseTargetsSnapshot(rootSnapshot)
+
+    fun countPackages(pkgs: Set<String>): Int = pkgs.count { it != selfPkg }
+
+    fun ModuleState.withTargetCount(count: Int): ModuleState = if (this is ModuleState.Installed) copy(targetCount = count) else this
 
     // ── Module detection ──
     // Each module's state comes from a pure detector (unit-tested). kmod's
     // brokenReason is layered on below, once the kernel recommendation and
     // load status are known (classifyKmodProblem).
     val currentBootId = shellSnapshot["current_boot_id"].orEmpty()
-    val kmodRaw = detectKmodModule(shellSnapshot, selfPkg)
+    val nativeTargetCount = countPackages(targetsSnapshot.nativeTargets)
+    val kmodRaw = detectKmodModule(shellSnapshot, selfPkg).withTargetCount(nativeTargetCount)
     val zygiskStatusRaw =
         try {
             File(context.filesDir, ZYGISK_STATUS_FILE_NAME).takeIf { it.isFile }?.readText().orEmpty()
@@ -1055,9 +1061,9 @@ internal suspend fun loadDashboardState(
             VpnHideLog.w(TAG, "failed to read zygisk status heartbeat: ${e.message}")
             ""
         }
-    val zygisk = detectZygiskModule(shellSnapshot, zygiskStatusRaw, selfPkg, currentBootId)
-    val kpm = detectKpmModule(shellSnapshot, selfPkg, currentBootId)
-    val ports = detectPortsModule(shellSnapshot, selfPkg)
+    val zygisk = detectZygiskModule(shellSnapshot, zygiskStatusRaw, selfPkg, currentBootId).withTargetCount(nativeTargetCount)
+    val kpm = detectKpmModule(shellSnapshot, selfPkg, currentBootId).withTargetCount(nativeTargetCount)
+    val ports = detectPortsModule(shellSnapshot, selfPkg).withTargetCount(countPackages(targetsSnapshot.portsObservers))
     val kmodTargetCount = (kmodRaw as? ModuleState.Installed)?.targetCount ?: 0
     val kpmTargetCount = (kpm as? ModuleState.Installed)?.targetCount ?: 0
     val zygiskTargetCount = (zygisk as? ModuleState.Installed)?.targetCount ?: 0
@@ -1119,7 +1125,7 @@ internal suspend fun loadDashboardState(
     val hookVersion = hookProps["version"]
     val hookBootId = hookProps["boot_id"]
     val hooksActiveThisBoot = hookBootId != null && hookBootId == currentBootId.trim()
-    val lsposedTargetCount = countTargets(shellSnapshot["lsposed_targets"].orEmpty(), selfPkg)
+    val lsposedTargetCount = countPackages(targetsSnapshot.lsposedTargets)
     val lsposedFramework = detectLsposedFramework(shellSnapshot)
     val lsposedConfig =
         if (hooksActiveThisBoot) {
@@ -1289,8 +1295,10 @@ internal suspend fun loadDashboardState(
     // to logcat that a forensic reader with root can see. The flag file is
     // written by the Diagnostics → Debug logging toggle; absent file ⇒
     // default off ⇒ no warning.
-    val debugEnabledRaw = shellSnapshot["debug_logging"].orEmpty()
-    if (debugEnabledRaw.trim() == "1") {
+    val debugEnabled =
+        targetsSnapshot.canonicalConfig?.debug
+            ?: (shellSnapshot["debug_logging"].orEmpty().trim() == "1")
+    if (debugEnabled) {
         warn(res.getString(R.string.dashboard_issue_debug_logging_on))
     }
 
@@ -1304,10 +1312,10 @@ internal suspend fun loadDashboardState(
 
     // W5: VPN Hide installed in more than one user profile (work profile,
     // MIUI Second Space, etc.). Each instance can write to the shared
-    // target files, but each one's app picker only sees apps from its own
-    // profile (PackageManager.getInstalledApplications is per-user). A
-    // Save from a profile that doesn't see all the targets would silently
-    // drop them. Recommend uninstalling everywhere except the main profile.
+    // canonical config, but each one's app picker only sees apps from its own
+    // profile (PackageManager.getInstalledApplications is per-user). A Save
+    // from a profile that doesn't see all the targets would silently drop them.
+    // Recommend uninstalling everywhere except the main profile.
     val selfUidCount =
         parsePackageUidMap(shellSnapshot["pm_packages"].orEmpty())[selfPkg]
             ?.distinct()

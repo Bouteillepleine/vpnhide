@@ -72,9 +72,10 @@ jobs:
           path: |
             /usr/local/cargo/registry
             /usr/local/cargo/git
+            target
             zygisk/target
             lsposed/native/target
-          key: cargo-${{ runner.os }}-lint-${{ hashFiles('zygisk/Cargo.lock', 'lsposed/native/Cargo.lock') }}
+          key: cargo-${{ runner.os }}-lint-${{ hashFiles('Cargo.lock', 'lsposed/native/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-lint-
 
       # Gradle cache (deps + configuration cache + wrapper). cache-read-only
@@ -99,17 +100,19 @@ jobs:
       # Rust
       - name: rustfmt
         run: |
-          cd zygisk && cargo fmt --check
-          cd ../lsposed/native && cargo fmt --check
+          cargo fmt --check
+          cd lsposed/native && cargo fmt --check
+      - name: clippy (protocol + activator)
+        run: cargo clippy -p vpnhide_protocol -p vpnhide_activator --all-targets -- -D warnings
       # `--tests` so generated test modules are also linted
       # (catches `bool_assert_comparison`-style regressions in
       # codegen output).
       - name: clippy (zygisk)
-        run: cd zygisk && cargo ndk -t arm64-v8a clippy --tests -- -D warnings
+        run: cargo ndk -t arm64-v8a clippy -p vpnhide_zygisk --tests -- -D warnings
       - name: clippy (lsposed native)
         run: cd lsposed/native && cargo ndk -t arm64-v8a clippy --tests -- -D warnings
-      - name: cargo test (zygisk)
-        run: cd zygisk && cargo test
+      - name: cargo test (workspace)
+        run: cargo test -p vpnhide_protocol -p vpnhide_activator -p vpnhide_zygisk
       - name: cargo test (lsposed native)
         run: cd lsposed/native && cargo test
 
@@ -133,11 +136,11 @@ jobs:
             apt-get update -qq && apt-get install -y --no-install-recommends shellcheck >/dev/null
           fi
           shellcheck -x -e SC2034,SC3043 \
-            kmod/module/customize.sh kmod/module/post-fs-data.sh kmod/module/service.sh \
-            kmod/kpm/module/customize.sh kmod/kpm/module/post-fs-data.sh kmod/kpm/module/service.sh \
-            zygisk/module/customize.sh zygisk/module/service.sh \
+            kmod/module/customize.sh kmod/module/post-fs-data.sh kmod/module/service.sh kmod/module/uninstall.sh \
+            kmod/kpm/module/customize.sh kmod/kpm/module/post-fs-data.sh kmod/kpm/module/service.sh kmod/kpm/module/uninstall.sh \
+            zygisk/module/customize.sh zygisk/module/service.sh zygisk/module/uninstall.sh \
             portshide/module/customize.sh portshide/module/service.sh \
-            portshide/module/uninstall.sh portshide/module/vpnhide_ports_apply.sh \
+            portshide/module/uninstall.sh \
             scripts/clean-device.sh scripts/update-json.sh \
             kmod/test/run.sh kmod/test/build-kernel.sh kmod/test/init.sh
 
@@ -179,7 +182,45 @@ jobs:
         # and is reserved for ad-hoc local runs / future tag CI.
         run: cd lsposed && ./gradlew :app:detekt cpdCheck :app:lintDebug :app:testDebugUnitTest
 
+  kmod-activator:
+    needs: setup
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Mark workspace safe
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
+            target
+          key: cargo-${{ runner.os }}-kmod-activator-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-kmod-activator-
+
+      - name: Build kmod activator
+        run: cargo ndk -t arm64-v8a build --release -p vpnhide_activator --bin kmod
+
+      - name: Upload kmod activator
+        uses: actions/upload-artifact@v7
+        with:
+          name: kmod-activator
+          path: target/aarch64-linux-android/release/kmod
+          if-no-files-found: error
+
   kmod:
+    needs: kmod-activator
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -206,7 +247,15 @@ jobs:
       - name: Mark workspace safe
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      - name: Download kmod activator
+        uses: actions/download-artifact@v7
+        with:
+          name: kmod-activator
+          path: .artifacts/kmod-activator
+
       - name: Build and package kernel module
+        env:
+          VPNHIDE_KMOD_ACTIVATOR: ${{ github.workspace }}/.artifacts/kmod-activator/kmod
         run: python3 kmod/build.py --kmi $KMI --inside-container
 
       - name: Upload artifact
@@ -417,7 +466,7 @@ jobs:
             /usr/local/cargo/registry
             /usr/local/cargo/git
             zygisk/target
-          key: cargo-${{ runner.os }}-${{ hashFiles('zygisk/Cargo.lock') }}
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
 
       - name: Build module zip
@@ -523,11 +572,30 @@ jobs:
           if-no-files-found: error
 
   portshide:
+    needs: setup
     runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - name: Mark workspace safe
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
+            target
+          key: cargo-${{ runner.os }}-portshide-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-portshide-
 
       - name: Package ports module zip
         env:

@@ -94,15 +94,12 @@ internal data class MergeResult<T : TargetEntry>(
 
 /**
  * Everything a Save needs beyond the row entries themselves. The scaffold
- * resolves [selfUids] (the VPN Hide app's own UID(s), always a target) and the
- * current [debug] flag once, so [buildSaveCommand] can serialise the `vpnhide 1
- * config` snapshots in-process (debug is folded into config, §4.3).
+ * supplies the self package (always a hidden Java/native target) and current
+ * debug flag; UID resolution happens in the native activator.
  */
 internal data class SaveContext(
     val selfPkg: String,
-    val selfUids: List<Int>,
     val debug: Boolean,
-    val header: String,
 )
 
 /**
@@ -304,17 +301,9 @@ internal fun <T : TargetEntry> TargetPickerScreen(
 
     if (saving) {
         LaunchedEffect(Unit) {
-            val header = resources.getString(R.string.save_header_comment)
             val entries = allApps
             val selfPkg = context.packageName
-            // Self is always a target but is never a row (the picker filters it
-            // out). Pull its resolved UID(s) from the cached app list (all
-            // profiles, from `pm list packages -U -f --user all`); fall back to
-            // this process's UID if the list isn't loaded yet.
-            val selfUids =
-                cachedApps?.firstOrNull { it.packageName == selfPkg }?.userIds
-                    ?: listOf(android.os.Process.myUid())
-            val ctx = SaveContext(selfPkg, selfUids, isEnabledInPrefs(context), header)
+            val ctx = SaveContext(selfPkg, isEnabledInPrefs(context))
             try {
                 val (exitCode, _) =
                     suExecAsync(buildSaveCommand(entries, ctx))

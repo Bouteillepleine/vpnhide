@@ -111,4 +111,15 @@ class NativeBackendTest {
         val state = detectKpmModule(sections, selfPkg = "self", currentBootId = "boot-1") as ModuleState.Installed
         assertEquals(false, state.active)
     }
+
+    @Test
+    fun `kpm inactive when load status has no boot id`() {
+        val sections =
+            mapOf(
+                "kpm_prop" to "id=vpnhide_kpm\nversion=v1.0\n",
+                "kpm_load_status" to "loaded=1\ndetail=configured\n",
+            )
+        val state = detectKpmModule(sections, selfPkg = "self", currentBootId = "boot-1") as ModuleState.Installed
+        assertEquals(false, state.active)
+    }
 }

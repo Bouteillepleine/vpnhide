@@ -74,6 +74,8 @@ class RootSnapshotCacheTest {
         assertTrue(command.contains("pm list packages -U --user all"))
         assertTrue(command.contains("grep -H . /sys/class/net/*/operstate"))
         assertTrue(command.contains("probe_ok=1"))
+        assertTrue(command.contains("iptables -C OUTPUT -j vpnhide_out"))
+        assertTrue(command.contains("ip6tables -C OUTPUT -j vpnhide_out6"))
         assertFalse(command.contains("while IFS= read"))
         assertFalse(command.contains("base64"))
         assertFalse(command.contains("date +%s%3N"))

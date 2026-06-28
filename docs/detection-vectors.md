@@ -42,8 +42,8 @@ Coverage comes from three vpnhide components plus the platform. They differ in
 | Layer | Where it runs | Selects targets by | Sees | Bypassable by raw syscalls? |
 |---|---|---|---|---|
 | **kmod** | Linux kernel (kretprobes) | **UID** (`/proc/vpnhide_ctl`) | Everything below libc — the syscall/skb/seq_file source | **No** — filters at the source regardless of how userspace calls |
-| **zygisk** | target process, inline `libc` hooks (shadowhook) | **package** (`targets.txt`, per-fork) | Only calls routed through the hooked `libc` symbols | **Yes** — a direct `svc #0` / unhooked libc entry slips past |
-| **lsposed** | `system_server`, Binder hooks (Vector framework) | **UID** (`/data/system/vpnhide_uids.txt`) | Java/framework Binder results *before* serialization to the app | N/A — the data is built in another process; the app only gets the sanitized parcel |
+| **zygisk** | target process, inline `libc` hooks (shadowhook) | **package** (canonical JSON -> module-dir runtime wire, per-fork) | Only calls routed through the hooked `libc` symbols | **Yes** — a direct `svc #0` / unhooked libc entry slips past |
+| **lsposed** | `system_server`, Binder hooks (Vector framework) | **package/appId** (`vpnhide_config.json` + `/data/system/packages.list`) | Java/framework Binder results *before* serialization to the app | N/A — the data is built in another process; the app only gets the sanitized parcel |
 | **SELinux** | platform policy | domain (`untrusted_app`) | n/a — it *denies* access rather than filtering | n/a — a denial is a denial |
 
 Key consequences:
@@ -184,8 +184,8 @@ summary:
 ### 3E. Package visibility — "is the VPN-manager app installed?"
 
 lsposed-only, in `PackageVisibilityHooks.kt`, filtering `IPackageManagerBase`
-results for *observer* UIDs (`/data/system/vpnhide_observer_uids.txt`) against a
-hidden-package set (`/data/system/vpnhide_hidden_pkgs.txt`):
+results for observer appIds derived from canonical JSON against the hidden
+package set in the same canonical JSON:
 
 - enumeration: `getInstalledPackages`, `getInstalledApplications`
 - resolution: `queryIntent{Activities,Services,Receivers,ContentProviders}`, `resolveIntent`, `resolveService`

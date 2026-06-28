@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "debug": true,
+  "apps": {
+    "com.example.bank": { "java": true, "native": true, "appHiding": false, "ports": false },
+    "dev.okhsunrog.vpnhide": { "java": true, "native": true, "appHiding": false, "ports": false, "hidden": true },
+    "org.example.proxy": { "java": true, "native": ["fib_route_seq_show", "sock_ioctl"], "appHiding": true, "ports": true }
+  },
+  "settings": {
+    "rememberSuperkey": true
+  }
+}
+

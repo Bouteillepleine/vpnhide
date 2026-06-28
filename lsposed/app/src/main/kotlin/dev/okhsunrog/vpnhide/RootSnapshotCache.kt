@@ -30,6 +30,7 @@ internal val REQUIRED_ROOT_SNAPSHOT_SECTIONS =
         "kmod_module_dir",
         "zygisk_module_dir",
         "kpm_module_dir",
+        "canonical_config",
         "kmod_targets",
         "zygisk_targets",
         "kpm_targets",
@@ -204,6 +205,9 @@ internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): S
     }
     phase_target_files() {
       phase_start target_files
+      emit_file canonical_config $CANONICAL_CONFIG_FILE
+      # Migration shim: the legacy files below are read only when canonical JSON
+      # is absent. Remove after a few public releases with the ShellUtils consts.
       emit_file kmod_targets $KMOD_TARGETS
       emit_file zygisk_targets $ZYGISK_TARGETS
       emit_file kpm_targets $KPM_TARGETS
@@ -237,7 +241,13 @@ internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): S
     }
     phase_ports_chain() {
       phase_start shell_probe_ports_chain
-      emit_eval ports_chain 'iptables -L vpnhide_out -n >/dev/null 2>/dev/null && echo 1 || echo 0'
+      emit_eval ports_chain '
+        iptables -L vpnhide_out -n >/dev/null 2>&1 &&
+        iptables -C OUTPUT -j vpnhide_out >/dev/null 2>&1 &&
+        ip6tables -L vpnhide_out6 -n >/dev/null 2>&1 &&
+        ip6tables -C OUTPUT -j vpnhide_out6 >/dev/null 2>&1 &&
+        echo 1 || echo 0
+      '
       phase_end
     }
     phase_lsposed_framework() {
