@@ -1350,14 +1350,20 @@ struct kretprobe_reg {
 static struct kretprobe_reg probes[] = {
 	{ &dev_ioctl_krp, "dev_ioctl", VPNHIDE_HOOK_DEV_IOCTL, false },
 	{ &sock_ioctl_krp, "sock_ioctl", VPNHIDE_HOOK_SOCK_IOCTL, false },
-	{ &rtnl_fill_krp, "rtnl_fill_ifinfo", VPNHIDE_HOOK_RTNL_FILL_IFINFO, false },
-	{ &inet6_fill_krp, "inet6_fill_ifaddr", VPNHIDE_HOOK_INET6_FILL_IFADDR, false },
-	{ &inet_fill_krp, "inet_fill_ifaddr", VPNHIDE_HOOK_INET_FILL_IFADDR, false },
-	{ &fib_route_krp, "fib_route_seq_show", VPNHIDE_HOOK_FIB_ROUTE_SEQ_SHOW, false },
-	{ &ipv6_route_krp, "ipv6_route_seq_show", VPNHIDE_HOOK_IPV6_ROUTE_SEQ_SHOW, false },
+	{ &rtnl_fill_krp, "rtnl_fill_ifinfo", VPNHIDE_HOOK_RTNL_FILL_IFINFO,
+	  false },
+	{ &inet6_fill_krp, "inet6_fill_ifaddr", VPNHIDE_HOOK_INET6_FILL_IFADDR,
+	  false },
+	{ &inet_fill_krp, "inet_fill_ifaddr", VPNHIDE_HOOK_INET_FILL_IFADDR,
+	  false },
+	{ &fib_route_krp, "fib_route_seq_show", VPNHIDE_HOOK_FIB_ROUTE_SEQ_SHOW,
+	  false },
+	{ &ipv6_route_krp, "ipv6_route_seq_show",
+	  VPNHIDE_HOOK_IPV6_ROUTE_SEQ_SHOW, false },
 	{ &fib_dump_krp, "fib_dump_info", VPNHIDE_HOOK_FIB_DUMP_INFO, false },
 	{ &rt6_fill_krp, "rt6_fill_node", VPNHIDE_HOOK_RT6_FILL_NODE, false },
-	{ &fib_rule_fill_krp, "fib_nl_fill_rule", VPNHIDE_HOOK_FIB_NL_FILL_RULE, false },
+	{ &fib_rule_fill_krp, "fib_nl_fill_rule", VPNHIDE_HOOK_FIB_NL_FILL_RULE,
+	  false },
 };
 
 /* Bitset of hooks that actually registered — the `status` hooks mask (§4.3). */
@@ -1414,7 +1420,8 @@ static int __init vpnhide_init(void)
 		return -ENOMEM;
 	}
 
-	pr_info(MODNAME ": loaded — write a config snapshot to /proc/vpnhide_ctl\n");
+	pr_info(MODNAME
+		": loaded — write a config snapshot to /proc/vpnhide_ctl\n");
 	return 0;
 }
 
