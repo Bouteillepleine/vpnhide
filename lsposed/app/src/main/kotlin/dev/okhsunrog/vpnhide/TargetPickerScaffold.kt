@@ -93,6 +93,19 @@ internal data class MergeResult<T : TargetEntry>(
 )
 
 /**
+ * Everything a Save needs beyond the row entries themselves. The scaffold
+ * resolves [selfUids] (the VPN Hide app's own UID(s), always a target) and the
+ * current [debug] flag once, so [buildSaveCommand] can serialise the `vpnhide 1
+ * config` snapshots in-process (debug is folded into config, §4.3).
+ */
+internal data class SaveContext(
+    val selfPkg: String,
+    val selfUids: List<Int>,
+    val debug: Boolean,
+    val header: String,
+)
+
+/**
  * Shared scaffold for the three Protection picker screens. Owns all the
  * machinery they had copy-pasted: the cached-apps / targets subscription,
  * the dirty-guarded merge, search+system+russian filtering, the alphabetical
@@ -121,7 +134,7 @@ internal fun <T : TargetEntry> TargetPickerScreen(
     help: @Composable () -> Unit,
     merge: (apps: List<AppSummary>, targets: TargetsSnapshot, selfPkg: String) -> MergeResult<T>,
     countText: (entries: List<T>, resources: Resources) -> String,
-    buildSaveCommand: (entries: List<T>, selfPkg: String, header: String) -> String,
+    buildSaveCommand: (entries: List<T>, ctx: SaveContext) -> String,
     successMessage: (entries: List<T>, resources: Resources) -> String,
     moduleMissing: (TargetsSnapshot) -> Boolean = { false },
     moduleMissingContent: @Composable (Modifier) -> Unit = {},
@@ -293,9 +306,18 @@ internal fun <T : TargetEntry> TargetPickerScreen(
         LaunchedEffect(Unit) {
             val header = resources.getString(R.string.save_header_comment)
             val entries = allApps
+            val selfPkg = context.packageName
+            // Self is always a target but is never a row (the picker filters it
+            // out). Pull its resolved UID(s) from the cached app list (all
+            // profiles, from `pm list packages -U -f --user all`); fall back to
+            // this process's UID if the list isn't loaded yet.
+            val selfUids =
+                cachedApps?.firstOrNull { it.packageName == selfPkg }?.userIds
+                    ?: listOf(android.os.Process.myUid())
+            val ctx = SaveContext(selfPkg, selfUids, isEnabledInPrefs(context), header)
             try {
                 val (exitCode, _) =
-                    suExecAsync(buildSaveCommand(entries, context.packageName, header))
+                    suExecAsync(buildSaveCommand(entries, ctx))
                 when (exitCode) {
                     0 -> {
                         snackMessage = successMessage(entries, resources)

@@ -28,9 +28,18 @@ internal class StartupCoordinator(
     private val cleanupZygiskStatus: (Context, String?) -> Unit = ::cleanupStaleZygiskStatus,
     private val seedRootSnapshotPackages: (String?) -> Unit = RootSnapshotCache::seedPmPackages,
     private val markStartupEvent: (String) -> Unit = StartupTrace::mark,
+    private val reconcileRuntimeConfig: (RootSnapshot) -> Unit = { runRuntimeConfigReconcile(appContext, it) },
 ) {
     private val _selfTargetState = MutableStateFlow<StartupSelfTargetState>(StartupSelfTargetState.Preparing)
     val selfTargetState: StateFlow<StartupSelfTargetState> = _selfTargetState.asStateFlow()
+
+    // The runtime channels carry a `vpnhide 1 config` snapshot that can't be
+    // appended to, so they're (re-)written wholesale from the persistent target
+    // lists once the root snapshot is available — once per session is enough
+    // (Save / the debug toggle re-emit on their own afterwards).
+    private val reconcileStarted =
+        java.util.concurrent.atomic
+            .AtomicBoolean(false)
 
     suspend fun prepareSelfTargets() {
         _selfTargetState.value = StartupSelfTargetState.Preparing
@@ -76,6 +85,9 @@ internal class StartupCoordinator(
     ) {
         if (selfNeedsRestart != null && rootSnapshot != null) {
             TargetsCache.ensureLoaded(scope, appContext)
+            if (reconcileStarted.compareAndSet(false, true)) {
+                scope.launch(Dispatchers.IO) { reconcileRuntimeConfig(rootSnapshot) }
+            }
         }
     }
 

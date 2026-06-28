@@ -1170,8 +1170,8 @@ private fun buildModuleInfoText(): String =
 
 private fun buildTargetsText(): String =
     buildString {
-        appendLine("=== /proc/vpnhide_targets (live UIDs) ===")
-        appendLine(suExec("cat /proc/vpnhide_targets 2>/dev/null").second.ifEmpty { "(empty)" })
+        appendLine("=== /proc/vpnhide_ctl (live status + stats) ===")
+        appendLine(suExec("cat $PROC_CTL 2>/dev/null").second.ifEmpty { "(empty)" })
         appendLine()
         appendLine("=== kmod targets ===")
         appendLine(suExec("cat $KMOD_TARGETS 2>/dev/null").second.ifEmpty { "(empty)" })

@@ -577,7 +577,7 @@ internal sealed interface KmodProblemKind {
  * ambiguous-load-failed (one of two valid candidates failed this boot), and
  * finally a generic insmod failure when we have stderr to show.
  *
- * An active kmod (`/proc/vpnhide_targets` present) is empirical proof the
+ * An active kmod (`/proc/vpnhide_ctl` present) is empirical proof the
  * install works, so every check except the activity-independent kprobes probe
  * is gated on `!active`.
  *

@@ -1,16 +1,37 @@
 #!/system/bin/sh
-# Resolves package names → UIDs for kmod and lsposed at boot.
-# kmod targets → /proc/vpnhide_targets
-# lsposed targets → /data/system/vpnhide_uids.txt
+# Resolves package names → UIDs at boot and writes a `vpnhide 1 config` snapshot
+# (docs/protocol.md) to each runtime channel — the same wire every backend
+# speaks. kmod config → /proc/vpnhide_ctl, lsposed config → vpnhide_uids.txt.
 
 KMOD_TARGETS="/data/adb/vpnhide_kmod/targets.txt"
 LSPOSED_TARGETS="/data/adb/vpnhide_lsposed/targets.txt"
-PROC_TARGETS="/proc/vpnhide_targets"
+PROC_CTL="/proc/vpnhide_ctl"
 SS_UIDS_FILE="/data/system/vpnhide_uids.txt"
+# Canonical persistent debug-logging flag; folded into the `debug` line of every
+# config we emit (§4.3). Absent ⇒ off (stealth-first default).
+SS_DEBUG_LOGGING="/data/system/vpnhide_debug_logging"
+
+DBG="$(cat "$SS_DEBUG_LOGGING" 2>/dev/null)"
+[ "$DBG" = 1 ] || DBG=0
+
+# Emit a `vpnhide 1 config` snapshot to stdout for a newline-separated UID list:
+# the header, the folded debug flag, and one `target <uid> 0x3ff` line per UID
+# (0x3ff = the full kernel hook mask). The whole snapshot must reach a backend
+# in ONE write (the /proc node parses per write), so callers capture this in a
+# variable and write it with a single redirect.
+emit_config() {
+    _uids="$1"
+    printf 'vpnhide 1 config\n'
+    printf 'debug %s\n' "$DBG"
+    [ -n "$_uids" ] && printf '%s\n' "$_uids" | while IFS= read -r u; do
+        [ -z "$u" ] && continue
+        printf 'target 0x%x 0x3ff\n' "$u"
+    done
+}
 
 # Wait for the proc entry (kernel module must be loaded)
 for i in 1 2 3 4 5 6 7 8 9 10; do
-    [ -f "$PROC_TARGETS" ] && break
+    [ -e "$PROC_CTL" ] && break
     sleep 1
 done
 
@@ -28,8 +49,8 @@ for i in $(seq 1 60); do
     sleep 1
 done
 
-if [ ! -f "$PROC_TARGETS" ]; then
-    log -t vpnhide "kernel module not loaded, skipping kmod UID resolution"
+if [ ! -e "$PROC_CTL" ]; then
+    log -t vpnhide "kernel module not loaded, skipping kmod config"
 fi
 
 # Migration: if lsposed targets don't exist yet, seed from kmod targets
@@ -76,19 +97,16 @@ ${expanded}"; fi
     [ -n "$uids" ] && echo "$uids"
 }
 
-# Resolve kmod targets → /proc/vpnhide_targets
-if [ -f "$PROC_TARGETS" ] && [ -f "$KMOD_TARGETS" ]; then
+# Resolve kmod targets → config snapshot → /proc/vpnhide_ctl (one write).
+if [ -e "$PROC_CTL" ] && [ -f "$KMOD_TARGETS" ]; then
     KMOD_UIDS="$(resolve_uids "$KMOD_TARGETS")"
-    if [ -n "$KMOD_UIDS" ]; then
-        echo "$KMOD_UIDS" > "$PROC_TARGETS"
-        count="$(echo "$KMOD_UIDS" | wc -l)"
-        log -t vpnhide "kmod: loaded $count target UIDs"
-    else
-        log -t vpnhide "kmod: no UIDs resolved"
-    fi
+    KMOD_CFG="$(emit_config "$KMOD_UIDS")"
+    printf '%s\n' "$KMOD_CFG" > "$PROC_CTL"
+    count="$(printf '%s\n' "$KMOD_UIDS" | grep -c .)"
+    log -t vpnhide "kmod: applied config for $count target UIDs (debug=$DBG)"
 fi
 
-# Resolve lsposed targets → /data/system/vpnhide_uids.txt
+# Resolve lsposed targets → config snapshot → /data/system/vpnhide_uids.txt
 # Create persist dir if needed (for first-time installs)
 mkdir -p /data/adb/vpnhide_lsposed 2>/dev/null
 # Mode 0640 + group=system: system_server (UID 1000, in group `system`)
@@ -97,19 +115,12 @@ mkdir -p /data/adb/vpnhide_lsposed 2>/dev/null
 # 0775 traversable by untrusted, so any o+r file is enumerable + readable.
 if [ -f "$LSPOSED_TARGETS" ]; then
     LSPOSED_UIDS="$(resolve_uids "$LSPOSED_TARGETS")"
-    if [ -n "$LSPOSED_UIDS" ]; then
-        echo "$LSPOSED_UIDS" > "$SS_UIDS_FILE"
-        chmod 640 "$SS_UIDS_FILE"
-        chown root:system "$SS_UIDS_FILE"
-        chcon u:object_r:system_data_file:s0 "$SS_UIDS_FILE" 2>/dev/null
-        count="$(echo "$LSPOSED_UIDS" | wc -l)"
-        log -t vpnhide "lsposed: wrote $count UIDs to $SS_UIDS_FILE"
-    else
-        echo > "$SS_UIDS_FILE"
-        chmod 640 "$SS_UIDS_FILE"
-        chown root:system "$SS_UIDS_FILE"
-        log -t vpnhide "lsposed: no UIDs resolved"
-    fi
+    printf '%s\n' "$(emit_config "$LSPOSED_UIDS")" > "$SS_UIDS_FILE"
+    chmod 640 "$SS_UIDS_FILE"
+    chown root:system "$SS_UIDS_FILE"
+    chcon u:object_r:system_data_file:s0 "$SS_UIDS_FILE" 2>/dev/null
+    count="$(printf '%s\n' "$LSPOSED_UIDS" | grep -c .)"
+    log -t vpnhide "lsposed: wrote config for $count UIDs to $SS_UIDS_FILE"
 fi
 
 # Migrate pre-PR files written by older versions with mode 0644: any
@@ -125,14 +136,7 @@ for f in "$SS_UIDS_FILE" \
     fi
 done
 
-# Re-seed /proc/vpnhide_debug from the persistent toggle flag the app
-# maintains. /proc/vpnhide_debug is per-boot in-kernel state — without
-# this re-seed, a user with "Debug logging" turned ON would silently
-# get OFF after every reboot until they re-opened the app (which is
-# what triggers the in-app re-propagation in MainActivity.onCreate).
-# Same model as targets.txt → /proc/vpnhide_targets above: persistent
-# file is canonical, /proc gets reseeded each boot.
-SS_DEBUG_LOGGING="/data/system/vpnhide_debug_logging"
-if [ -e /proc/vpnhide_debug ] && [ -f "$SS_DEBUG_LOGGING" ]; then
-    cat "$SS_DEBUG_LOGGING" > /proc/vpnhide_debug 2>/dev/null
-fi
+# The kmod debug flag is no longer a separate /proc node — it is the `debug`
+# line of the config snapshot written to /proc/vpnhide_ctl above (folded per
+# docs/protocol.md §4.3), sourced from $SS_DEBUG_LOGGING at the top of this
+# script. So there is nothing extra to re-seed here.
