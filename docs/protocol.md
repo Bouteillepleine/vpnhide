@@ -6,15 +6,14 @@ This document is the **arbiter**: when two implementations disagree, this file
 decides who is wrong. Every implementation (C / Rust / Kotlin) and every test
 vector references it.
 
-Status: design spec, being implemented on `feat/control-protocol`. Resolved so
-far: OPEN-3 (`u64` cumulative counters), OPEN-5 (KPM CLI, on-device), OPEN-6
-(`debug` folded into the config snapshot). A third `kind = status` (backend
-health + errors, §4.3/§5.1) and a backend-selection model — one always-on Java
+Status: `version 1` **frozen** — all seven OPEN items (§10) are resolved.
+Being implemented on `feat/control-protocol`. Key shape: one always-on Java
 (LSPosed) layer + exactly one active native backend, priority `kmod > KPM >
-Zygisk` (§1.5) — were added after device testing surfaced the `.ko`↔KPM
-mutual-exclusion. UID is the key on every channel incl. Zygisk (§4.3). Remaining
-**OPEN**: 1 (`0x` prefix), 2 (`key=value`), 4 (`.ko` stats node), 7 (in-band
-header) — decided before freezing `version 1`.
+Zygisk` (§1.5); three `kind`s — `config` (in), `stats` + `status` (out, §4.3);
+UID is the key on every channel incl. Zygisk; `u64` cumulative counters; `debug`
+folded into config; the `.ko` channel is one folded node `/proc/vpnhide_ctl`
+(write=config, read=status+stats); KPM uses the `kpm ctl0` supercall (§7).
+Threat model: an **unprivileged** app — root-level detection is out of scope.
 
 ---
 
@@ -640,25 +639,27 @@ Recorded so they are not re-litigated.
 
 ## 10. Open decisions (resolve before freezing version 1)
 
-- **OPEN-1 — `0x` prefix.** Spec'd as mandatory on data fields. Alternative: drop
-  it and make it *forbidden* (never optional). Keeping it is a visual/parse anchor
-  at ~zero parser cost; dropping it shortens tokens. Either is fine; "optional" is
-  not.
-- **OPEN-2 — agent self-description level.** Records are keyword-named
-  (`target …`), which is reasonably self-describing for an LLM reading raw. A
-  stronger form is `key=value` (`uid=0x27fa hooks=0x3ff`), which is harder to
-  misread and survives shell quoting equally, at a few extra bytes and a
-  `split_once('=')`. Decide if positional-after-keyword is enough or `key=value`
-  is worth it.
+- **OPEN-1 — `0x` prefix. RESOLVED: mandatory on data fields.** It is a
+  visual/parse anchor at ~zero cost, and "mandatory" (not "optional") removes the
+  two-spellings-of-one-number drift seam.
+- **OPEN-2 — agent self-description level. RESOLVED: positional-after-keyword.**
+  `target <uid> <hookmask>` — the keyword names the record, fields are positional.
+  `key=value` buys marginal readability for extra bytes and a second split; the
+  keyword already self-describes for an agent reading raw.
 - **OPEN-3 — stats counter type. RESOLVED: `u64` cumulative-since-load.** Reads
   are non-destructive (no reset-on-read race between two readers), it never
   wraps in practice, and deltas are the app's job — which suits the pull model
   (§2). `count` is therefore a `u64` hex value; kernel counters are per-CPU `u64`.
-- **OPEN-4 — `.ko` stats node.** Fold stats read into the existing
-  `/proc/vpnhide_targets` node (`.proc_read` returns state+stats, `.proc_write`
-  takes config) to add zero new detection nodes, vs a separate
-  `/proc/vpnhide_stats`. Folding is stealthier; separate is a cleaner one-way
-  grammar per node. (KPM has no node either way — supercall read.)
+- **OPEN-4 — `.ko` stats node. RESOLVED: one folded node, renamed
+  `/proc/vpnhide_ctl`.** `.proc_write` takes the config snapshot, `.proc_read`
+  returns status+stats — one node, no new ones. Renamed from `vpnhide_targets`
+  for **semantic accuracy** (it is now a control channel, not just targets), NOT
+  for stealth: the node is `0600` root-only and the threat model is an
+  *unprivileged* app (root-level detection is explicitly out of scope — you cannot
+  defend a device whose owner gives root to a VPN-detector), so the name is never
+  observable by an adversary. The persistent `/data` files keep their names.
+  Debug folds in here too (OPEN-6), so `/proc/vpnhide_debug` goes away. (KPM has
+  no node either way — supercall read.)
 - **OPEN-5 — KPM CLI. RESOLVED (on-device).** Subcommand is `kpm ctl0 <name>
   <payload>` (identical on APatch `c02` and KPatch-Next `d05`), and the CLI **does
   forward `out_msg` to stdout** — so no extra root binary is needed for read-back;
@@ -672,7 +673,9 @@ Recorded so they are not re-litigated.
   `/proc/vpnhide_debug` node); folding it into the config snapshot removes those
   per-backend files/nodes (less enumerable surface), makes it atomic with the
   rest of config, and needs one parse instead of a second channel.
-- **OPEN-7 — self-documenting read.** Have the read side return a one-line spec
-  header (`# vpnhide v1 config — WRITE REPLACES ENTIRE STATE …`) plus current
-  state, so the agent learns the grammar in-band from a `cat`. Cheap; pairs with
-  snapshot semantics as a safety rail against partial writes.
+- **OPEN-7 — self-documenting read. RESOLVED: yes, emit an in-band header.** The
+  read side prepends a one-line `#` comment (`# vpnhide v1 — WRITE REPLACES ENTIRE
+  STATE …`) before the current state. It is a comment line (ignored by parsers,
+  §4.1), so it costs nothing structurally and lets an agent learn the grammar +
+  the replace-whole semantics from a single `cat` (§2). All seven OPEN items are
+  now resolved; `version 1` is frozen.
