@@ -186,15 +186,8 @@ private fun buildUnifiedSaveCommand(
 
     // --- App hiding: observers (A) + hidden packages (auto-detected, stub) ---
     val existingHidden = TargetsCache.snapshot.value?.hiddenPkgs ?: emptySet()
-    val hiddenPkgs = autoDetectHiddenPackages(existingHidden, selfPkg)
-    parts += buildConfigWriteCommand(SS_HIDDEN_PKGS_FILE, header, hiddenPkgs)
-    parts += systemDataFilePermsParts(SS_HIDDEN_PKGS_FILE, "640")
-    if (observerPkgs.isNotEmpty()) {
-        parts += buildUidResolverCommand(observerPkgs, SS_OBSERVER_UIDS_FILE)
-    } else {
-        parts += "echo > $SS_OBSERVER_UIDS_FILE 2>/dev/null"
-    }
-    parts += systemDataFilePermsParts(SS_OBSERVER_UIDS_FILE, "640")
+    val hiddenPkgs = resolveHiddenPackages(existingHidden, observerPkgs.toSet(), selfPkg)
+    parts += appHidingSaveParts(header, hiddenPkgs, observerPkgs)
 
     // --- Ports (only when the module is installed) ---
     parts +=
@@ -206,15 +199,27 @@ private fun buildUnifiedSaveCommand(
 }
 
 /**
- * Which packages are hidden from observer (A) apps. Real auto-detection of
- * sensitive packages is a follow-up; for now this preserves the existing
- * hidden set (so no one loses a prior config) and always includes self, which
- * is managed invisibly and never shown in the UI.
+ * Hidden-package file (auto-detected set) + observer (A) UID file. Both live at
+ * 0640 root:system so system_server reads them and untrusted apps get EACCES.
+ * Hidden vs observer are mutually exclusive (enforced by [resolveHiddenPackages]).
  */
-private fun autoDetectHiddenPackages(
-    existing: Set<String>,
-    selfPkg: String,
-): List<String> = (existing + selfPkg).distinct().sorted()
+private fun appHidingSaveParts(
+    header: String,
+    hiddenPkgs: List<String>,
+    observerPkgs: List<String>,
+): List<String> =
+    buildList {
+        add(buildConfigWriteCommand(SS_HIDDEN_PKGS_FILE, header, hiddenPkgs))
+        addAll(systemDataFilePermsParts(SS_HIDDEN_PKGS_FILE, "640"))
+        add(
+            if (observerPkgs.isNotEmpty()) {
+                buildUidResolverCommand(observerPkgs, SS_OBSERVER_UIDS_FILE)
+            } else {
+                "echo > $SS_OBSERVER_UIDS_FILE 2>/dev/null"
+            },
+        )
+        addAll(systemDataFilePermsParts(SS_OBSERVER_UIDS_FILE, "640"))
+    }
 
 @Composable
 private fun AppRow(
