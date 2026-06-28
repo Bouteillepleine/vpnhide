@@ -75,6 +75,7 @@
 mod filter;
 mod generated;
 mod hooks;
+mod protocol;
 mod shadowhook;
 
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
