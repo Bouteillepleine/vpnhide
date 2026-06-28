@@ -32,9 +32,10 @@
 //!    `/data/adb/modules/<id>` via `get_module_dir()` — usable now,
 //!    closed by SELinux later.
 //! 5. **`pre_app_specialize`** — last call before the kernel transitions
-//!    the process to the app's UID and SELinux context. `args.nice_name`
-//!    tells us which package this fork is for. We decide here whether
-//!    to install hooks; for non-targets we set `DlCloseModuleLibrary`.
+//!    the process to the app's UID and SELinux context. `args.uid` holds the
+//!    UID this fork will become; we match it against the config's target UIDs
+//!    to decide whether to install hooks. For non-targets we set
+//!    `DlCloseModuleLibrary`.
 //! 6. The kernel/zygote applies app specialisation: setuid to the app's
 //!    UID, switch SELinux context, install seccomp filter, drop caps.
 //! 7. **`post_app_specialize`** — runs as the app, before the app's
@@ -50,11 +51,11 @@
 //! Because the `.so` is `dlopen`ed afresh in every child, **every Rust
 //! `static` is reset to its initial state on every app launch**. Concretely:
 //!
-//!   * `static CACHED_TARGETS: OnceLock<…>` re-initialises in every
-//!     forked child. `targets.txt` is read on every app launch — so a
-//!     force-stop + restart of a target app picks up edits to the file
-//!     immediately. There is no zygote-side cache to invalidate; live-
-//!     reload is automatic by virtue of the lifecycle.
+//!   * `static CACHED_CONFIG: OnceLock<…>` re-initialises in every
+//!     forked child. `targets.txt` (a `vpnhide 1 config` snapshot) is read on
+//!     every app launch — so a force-stop + restart of a target app picks up
+//!     edits to the file immediately. There is no zygote-side cache to
+//!     invalidate; live-reload is automatic by virtue of the lifecycle.
 //!   * Saved-original libc pointers (`REAL_IOCTL` etc.) are also fresh
 //!     per child, which is fine because we only ever set them inside
 //!     `install_hooks()` from `post_app_specialize`.
@@ -97,23 +98,20 @@ use crate::hooks::{
 const LOG_TAG: &str = "vpnhide-zygisk";
 const APP_PACKAGE: &str = "dev.okhsunrog.vpnhide";
 const APP_STATUS_FILE: &str = "/data/user/0/dev.okhsunrog.vpnhide/files/vpnhide_zygisk_active";
-/// Path to the user's allowlist. Lives OUTSIDE the module directory so
-/// it survives module updates (KSU/Magisk wipe `/data/adb/modules/<id>/`
-/// on every install). `customize.sh` is responsible for creating the
-/// directory and migrating the legacy in-module file on first run.
-/// Targets filename within the module directory.
+/// Config-snapshot filename within the module directory. Carries a
+/// `vpnhide 1 config` payload (docs/protocol.md): the target UIDs this module
+/// hides for, plus the folded `debug` flag — the same wire format every
+/// backend speaks. Package→UID resolution is the producer's job (the app on
+/// Save, the boot script at boot). Read once per app launch via the module
+/// dir-fd.
 const TARGETS_FILENAME: &str = "targets.txt";
-/// Runtime debug-logging flag file. Written by the VPN Hide app when
-/// the user toggles the setting. Absent or not "1" ⇒ logging is off —
-/// stealth-first default matches the rest of the project.
-const DEBUG_LOGGING_FILENAME: &str = "debug_logging";
 
 /// Initialize `android_logger` exactly once. Cheap to call from every
 /// forked process — subsequent calls are no-ops. The compile-time log
 /// filter is controlled by the `log` crate's `release_max_level_*`
 /// Cargo feature (see our `Cargo.toml`); anything below that level is
 /// monomorphized away to a no-op. Runtime level is then narrowed by
-/// [apply_debug_logging_flag] so the user's toggle silences logcat.
+/// [set_log_level] so the user's toggle silences logcat.
 fn init_logger() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
@@ -125,30 +123,14 @@ fn init_logger() {
     });
 }
 
-/// Read the debug-logging flag file from the module dir fd and drop
-/// the global `log` filter to `Off` unless the flag is set to `1`.
-/// Any read error is treated as "disabled": if the file doesn't exist
-/// yet (fresh install, flag never toggled), we shouldn't leak logs.
-fn apply_debug_logging_flag(dir_fd: std::os::fd::RawFd) {
-    use std::io::Read;
-    use std::os::fd::FromRawFd;
-    let enabled = (|| -> Option<bool> {
-        let filename = std::ffi::CString::new(DEBUG_LOGGING_FILENAME).ok()?;
-        let fd =
-            unsafe { libc::openat(dir_fd, filename.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
-        if fd < 0 {
-            return None;
-        }
-        let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
-        let mut content = String::new();
-        file.read_to_string(&mut content).ok()?;
-        Some(content.trim() == "1")
-    })()
-    .unwrap_or(false);
-    // Leave errors on even when the user disables logging — the handful of
-    // `error!` calls (hook-install failures, status-file write failures)
-    // fire at most once per process and are the only signal we have if
-    // things go wrong. Same principle as HookLog.e on the Kotlin side.
+/// Narrow the global `log` filter to the user's debug-logging choice. The flag
+/// is now folded into the config snapshot (`debug` line, §4.3) rather than a
+/// separate file — `on_load` reads it from the same `targets.txt` it reads the
+/// target UIDs from. Errors stay on even when disabled: the handful of
+/// `error!` calls (hook-install failures, status-file write failures) fire at
+/// most once per process and are the only signal we have if things go wrong.
+/// Same principle as HookLog.e on the Kotlin side.
+fn set_log_level(enabled: bool) {
     let level = if enabled {
         log::LevelFilter::Trace
     } else {
@@ -173,36 +155,38 @@ pub struct VpnHide {
 // Single-threaded access by construction.
 unsafe impl Sync for VpnHide {}
 
-/// Cached targets, loaded once per process via Zygisk's module dir fd.
+/// The parsed control config this module acts on, cached once per process via
+/// Zygisk's module dir fd.
 ///
 /// **Lifetime is per app launch, not per zygote boot.** The `.so` is
-/// `dlopen`ed fresh in every forked child, so this `OnceLock` starts
-/// empty and gets initialised by `on_load` on every app launch. That
-/// means edits to `targets.txt` are picked up on the next force-stop +
-/// restart — no zygote restart, no reboot needed. See the lifecycle
-/// block at the top of this file for the full reasoning.
-static CACHED_TARGETS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-
-fn parse_targets(content: &str) -> Vec<String> {
-    content
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                None
-            } else {
-                Some(line.to_string())
-            }
-        })
-        .collect()
+/// `dlopen`ed fresh in every forked child, so this `OnceLock` starts empty and
+/// gets initialised by `on_load` on every app launch. That means edits to
+/// `targets.txt` are picked up on the next force-stop + restart — no zygote
+/// restart, no reboot needed. See the lifecycle block at the top of this file.
+///
+/// `target_uids` is the set of UIDs to hide for (protocol §4.3 — UID is the
+/// key on every channel, including Zygisk); `debug` is the folded debug flag.
+/// Zygisk owns no registry hook bits yet, so it acts on target *presence* and
+/// ignores the per-hook mask (protocol §6 note).
+struct ZygiskConfig {
+    target_uids: Vec<u32>,
+    debug: bool,
 }
 
-/// Read targets.txt via the module directory fd provided by Zygisk.
-/// This fd is opened by Zygisk with root privileges, bypassing SELinux
-/// restrictions that block direct file access on Magisk.
-fn load_targets_from_dir_fd(dir_fd: std::os::fd::RawFd) -> Vec<String> {
+static CACHED_CONFIG: std::sync::OnceLock<ZygiskConfig> = std::sync::OnceLock::new();
+
+/// Read + parse the `vpnhide 1 config` snapshot from targets.txt via the module
+/// directory fd Zygisk provides. This fd is opened by Zygisk with root
+/// privileges, bypassing the SELinux restrictions that block direct file
+/// access on Magisk. A missing/unreadable/invalid file fails closed: no
+/// targets, logging off.
+fn load_config_from_dir_fd(dir_fd: std::os::fd::RawFd) -> ZygiskConfig {
     use std::io::Read;
     use std::os::fd::FromRawFd;
+    let empty = ZygiskConfig {
+        target_uids: Vec::new(),
+        debug: false,
+    };
     let filename = std::ffi::CString::new(TARGETS_FILENAME).unwrap();
     let fd = unsafe { libc::openat(dir_fd, filename.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
     if fd < 0 {
@@ -210,15 +194,26 @@ fn load_targets_from_dir_fd(dir_fd: std::os::fd::RawFd) -> Vec<String> {
             "can't open {TARGETS_FILENAME} via module dir fd: {}",
             std::io::Error::last_os_error()
         );
-        return Vec::new();
+        return empty;
     }
     let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
-    let mut content = String::new();
-    if let Err(e) = file.read_to_string(&mut content) {
+    let mut content = Vec::new();
+    if let Err(e) = file.read_to_end(&mut content) {
         log::warn!("can't read {TARGETS_FILENAME}: {e}");
-        return Vec::new();
+        return empty;
     }
-    parse_targets(&content)
+    match protocol::parse_config(&content) {
+        Some(cfg) => ZygiskConfig {
+            target_uids: cfg.targets.iter().map(|t| t.uid).collect(),
+            debug: cfg.debug.unwrap_or(false),
+        },
+        None => {
+            // Rejected whole — bad/missing header, or a version newer than
+            // this build knows (§3 version fuse). Fail closed.
+            log::warn!("{TARGETS_FILENAME}: not a valid config snapshot; ignoring");
+            empty
+        }
+    }
 }
 
 impl ZygiskModule for VpnHide {
@@ -238,14 +233,14 @@ impl ZygiskModule for VpnHide {
         //      child inherits our open fd unless we close it here.
         // Either way the fd needs to die before pre_app_specialize returns.
         let dir_fd = unsafe { OwnedFd::from_raw_fd(api.get_module_dir()) };
-        // Apply the user's debug-logging preference before anything below
-        // gets a chance to log. Default is Off, so silence is the no-config
-        // behavior even on a fresh install where the flag file is absent.
-        apply_debug_logging_flag(dir_fd.as_raw_fd());
-        CACHED_TARGETS.get_or_init(|| load_targets_from_dir_fd(dir_fd.as_raw_fd()));
+        let cfg = CACHED_CONFIG.get_or_init(|| load_config_from_dir_fd(dir_fd.as_raw_fd()));
+        // Debug is folded into the config snapshot now (§4.3); apply it before
+        // anything below logs. Default Off ⇒ silence on a fresh/empty install.
+        set_log_level(cfg.debug);
         debug!(
-            "on_load: {} targets cached",
-            CACHED_TARGETS.get().map_or(0, |v| v.len())
+            "on_load: {} target uids cached, debug={}",
+            cfg.target_uids.len(),
+            cfg.debug
         );
         // dir_fd drops here → closed before any app fork.
     }
@@ -256,18 +251,21 @@ impl ZygiskModule for VpnHide {
         env: JNIEnv<'a>,
         args: &'a mut AppSpecializeArgs<'_>,
     ) {
+        // UID is the targeting key (protocol §4.3). args.uid already holds the
+        // UID this child will become, and one UID covers every process of a
+        // multi-process app — so no package/sub-process name matching needed.
+        let uid = *args.uid as u32;
+        // nice_name is still read, but only to recognise the VPN Hide app
+        // itself for the status heartbeat — an identity check, not targeting.
         let package = read_jstring(&env, args.nice_name);
-        match package.as_deref() {
-            Some(p) if is_targeted(p) => {
-                info!("pre_app_specialize: targeting {p}");
-                self.is_target.set(true);
-                self.report_status.set(p == APP_PACKAGE);
-            }
-            _ => {
-                self.is_target.set(false);
-                self.report_status.set(false);
-                mark_cleanup(&mut api);
-            }
+        if is_target_uid(uid) {
+            info!("pre_app_specialize: targeting uid {uid}");
+            self.is_target.set(true);
+            self.report_status.set(package.as_deref() == Some(APP_PACKAGE));
+        } else {
+            self.is_target.set(false);
+            self.report_status.set(false);
+            mark_cleanup(&mut api);
         }
     }
 
@@ -553,30 +551,19 @@ fn scrub_shadowhook_maps() {
     }
 }
 
-/// Is this package on our allowlist?
+/// Is this UID one of our targets? (protocol §4.3 — UID is the key on every
+/// channel, including Zygisk.)
 ///
-/// Called from `pre_app_specialize`, which runs on the zygote side BEFORE
-/// the uid drop and SELinux context transition, so `/data/adb/modules/...`
-/// is still readable here.
-///
-/// An entry matches if the target file contains either the exact package
-/// name (e.g. `com.example.app`) or the process base name that is the
-/// package of a multi-process app (e.g. `com.example.app:background` is
-/// matched by an entry for `com.example.app`). This means a single line
-/// per app in `targets.txt` covers all of its subprocesses.
+/// Called from `pre_app_specialize`, which runs on the zygote side BEFORE the
+/// uid drop, so `args.uid` already holds the UID this child will become. One
+/// UID covers every process of a multi-process app, so this needs no
+/// sub-process name handling (the old package-name path did).
 #[inline(never)]
-fn is_targeted(package: &str) -> bool {
-    let targets = match CACHED_TARGETS.get() {
-        Some(t) => t,
-        None => return false,
-    };
-
-    let base_package = match package.split_once(':') {
-        Some((base, _)) => base,
-        None => package,
-    };
-
-    targets.iter().any(|t| t == package || t == base_package)
+fn is_target_uid(uid: u32) -> bool {
+    match CACHED_CONFIG.get() {
+        Some(cfg) => cfg.target_uids.contains(&uid),
+        None => false,
+    }
 }
 
 /// Decode a `JString` (as stored in `AppSpecializeArgs::nice_name`) into

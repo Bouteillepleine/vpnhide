@@ -71,7 +71,18 @@ internal class SystemServerTargetUidCache(
             if (!file.exists()) {
                 emptySet()
             } else {
-                parseConfigLines(file.readText()).mapNotNull { it.toIntOrNull() }.toSet()
+                // The file is a `vpnhide 1 config` snapshot (docs/protocol.md):
+                // the LSPosed channel speaks the same wire as every other
+                // backend. We act on target *presence* (UID is the key, §4.3);
+                // LSPosed owns no registry hook bits yet, so the per-hook mask
+                // is ignored (§6 note). An invalid/old-format file parses to
+                // null ⇒ no targets, rewritten on the next boot or Save.
+                Protocol
+                    .parseConfig(file.readText())
+                    ?.targets
+                    ?.map { it.uid.toInt() }
+                    ?.toSet()
+                    ?: emptySet()
             }
         } catch (t: Throwable) {
             HookLog.e("VpnHide: failed to read UIDs: ${t.message}")
