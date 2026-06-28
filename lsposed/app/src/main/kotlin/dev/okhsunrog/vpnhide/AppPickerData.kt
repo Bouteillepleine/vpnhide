@@ -118,6 +118,38 @@ internal fun applyAutoHiddenPackages(
     )
 }
 
+internal fun manualHiddenPackages(
+    config: CanonicalConfig,
+    selfPkg: String,
+): Set<String> = config.apps.filterValues { it.hidden }.keys - config.settings.autoHiddenPackages - selfPkg
+
+internal fun updateManualHiddenPackages(
+    config: CanonicalConfig,
+    selfPkg: String,
+    visiblePackages: Set<String>,
+    selectedManualHiddenPackages: Set<String>,
+    signals: Collection<AppAutoHideSignal>,
+): CanonicalConfig {
+    val observerPkgs = config.apps.filterValues { it.appHiding }.keys
+    val existingManualHidden = manualHiddenPackages(config, selfPkg)
+    val nextManualHidden = (existingManualHidden - visiblePackages) + selectedManualHiddenPackages
+    val manualConfig =
+        buildCanonicalConfig(
+            debug = config.debug,
+            javaPkgs = config.apps.filterValues { it.java }.keys,
+            nativePkgs = config.apps.filterValues { it.native.enabled }.keys,
+            hiddenPkgs = resolveHiddenPackages(nextManualHidden, observerPkgs, selfPkg),
+            observerPkgs = observerPkgs,
+            portsPkgs = config.apps.filterValues { it.ports }.keys,
+            existing = config,
+        )
+    return applyAutoHiddenPackages(
+        config = manualConfig,
+        selfPkg = selfPkg,
+        signals = signals,
+    )
+}
+
 private fun canonicalBaseForSave(
     debug: Boolean,
     snapshot: TargetsSnapshot?,

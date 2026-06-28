@@ -3,15 +3,19 @@ package dev.okhsunrog.vpnhide
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -27,7 +31,10 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.RoundedCorner
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Vibration
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -47,9 +54,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.okhsunrog.vpnhide.settings.CornerStyle
@@ -535,11 +544,15 @@ private fun AutoHideSettingsSection() {
     val scope = rememberCoroutineScope()
     val targets by TargetsCache.snapshot.collectAsState()
     val apps by AppListCache.apps.collectAsState()
+    val userNames by AppListCache.userNames.collectAsState()
     var saving by remember { mutableStateOf<AutoHideSetting?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
+    var manualDialogOpen by remember { mutableStateOf(false) }
     val savedMessage = stringResource(R.string.settings_auto_hide_saved)
     val failedMessage = stringResource(R.string.settings_auto_hide_failed)
-    val settings = targets?.canonicalConfig?.settings ?: CanonicalSettings()
+    val canonical = targets?.let(::buildCanonicalConfigFromTargetsSnapshot)
+    val settings = canonical?.settings ?: CanonicalSettings()
+    val manualHidden = canonical?.let { manualHiddenPackages(it, context.packageName) }.orEmpty()
     val canWrite = targets != null && apps != null && saving == null
 
     fun updateSetting(
@@ -559,6 +572,21 @@ private fun AutoHideSettingsSection() {
         }
     }
 
+    fun updateManualHidden(selectedPackages: Set<String>) {
+        saving = AutoHideSetting.ManualHidden
+        status = null
+        val appSignals = apps.orEmpty()
+        scope.launch {
+            val exit = withContext(Dispatchers.IO) { writeManualHiddenApps(context, appSignals, selectedPackages) }
+            saving = null
+            status = if (exit == 0) savedMessage else failedMessage
+            if (exit == 0) {
+                manualDialogOpen = false
+                TargetsCache.refreshAfterSave(scope, context)
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
         TargetsCache.ensureLoaded(scope, context)
         AppListCache.ensureLoaded(scope, context)
@@ -571,7 +599,7 @@ private fun AutoHideSettingsSection() {
             subtitle = stringResource(R.string.settings_auto_hide_vpn_services_sub),
             icon = Icons.Default.VpnKey,
             index = 0,
-            count = 2,
+            count = 3,
             checked = settings.autoHideVpnServices,
             enabled = canWrite,
             onCheckedChange = { enabled ->
@@ -583,12 +611,21 @@ private fun AutoHideSettingsSection() {
             subtitle = stringResource(R.string.settings_auto_hide_vpn_name_sub),
             icon = Icons.Default.TextFields,
             index = 1,
-            count = 2,
+            count = 3,
             checked = settings.autoHideVpnName,
             enabled = canWrite,
             onCheckedChange = { enabled ->
                 updateSetting(AutoHideSetting.VpnName) { it.copy(autoHideVpnName = enabled) }
             },
+        )
+        PreferenceRow(
+            title = stringResource(R.string.settings_manual_hidden_apps),
+            subtitle = stringResource(R.string.settings_manual_hidden_apps_sub, manualHidden.size),
+            icon = Icons.Default.VisibilityOff,
+            index = 2,
+            count = 3,
+            enabled = canWrite,
+            onClick = { manualDialogOpen = true },
         )
         status?.let {
             Text(
@@ -599,11 +636,23 @@ private fun AutoHideSettingsSection() {
             )
         }
     }
+
+    if (manualDialogOpen) {
+        ManualHiddenAppsDialog(
+            apps = apps.orEmpty(),
+            userNames = userNames,
+            initialSelected = manualHidden,
+            saving = saving == AutoHideSetting.ManualHidden,
+            onDismiss = { if (saving != AutoHideSetting.ManualHidden) manualDialogOpen = false },
+            onSave = ::updateManualHidden,
+        )
+    }
 }
 
 private enum class AutoHideSetting {
     VpnService,
     VpnName,
+    ManualHidden,
 }
 
 private fun writeAutoHideSetting(
@@ -619,6 +668,137 @@ private fun writeAutoHideSetting(
         applyAutoHiddenPackages(
             config = base.copy(settings = transform(base.settings)),
             selfPkg = context.packageName,
+            signals = apps.map(AppSummary::toAutoHideSignal),
+        )
+    val cmd =
+        listOf(
+            buildCanonicalConfigWriteCommand(canonical),
+            ConfigChannels.reconcileCommand(),
+        ).joinToString(" && ")
+    val (exit, _) = suExec(cmd)
+    if (exit == 0) {
+        RootSnapshotCache.invalidate()
+        DashboardCache.invalidate()
+    }
+    return exit
+}
+
+@Composable
+private fun ManualHiddenAppsDialog(
+    apps: List<AppSummary>,
+    userNames: Map<Int, String>,
+    initialSelected: Set<String>,
+    saving: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (Set<String>) -> Unit,
+) {
+    var selected by remember(initialSelected) { mutableStateOf(initialSelected) }
+    var query by remember { mutableStateOf("") }
+    val filteredApps =
+        remember(apps, query, selected) {
+            val q = query.trim().lowercase()
+            apps
+                .filter { app ->
+                    q.isEmpty() ||
+                        app.label.lowercase().contains(q) ||
+                        app.packageName.lowercase().contains(q)
+                }.sortedWith(compareByDescending<AppSummary> { it.packageName in selected }.thenBy { it.label.lowercase() })
+        }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.settings_manual_hidden_apps)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text(stringResource(R.string.search_placeholder)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                    items(filteredApps, key = { it.packageName }) { app ->
+                        val checked = app.packageName in selected
+                        ManualHiddenAppRow(
+                            app = app,
+                            userNames = userNames,
+                            checked = checked,
+                            onCheckedChange = { enabled ->
+                                selected =
+                                    if (enabled) {
+                                        selected + app.packageName
+                                    } else {
+                                        selected - app.packageName
+                                    }
+                            },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(selected) }, enabled = !saving) {
+                Text(stringResource(R.string.btn_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !saving) {
+                Text(stringResource(R.string.btn_cancel))
+            }
+        },
+    )
+}
+
+@Composable
+private fun ManualHiddenAppRow(
+    app: AppSummary,
+    userNames: Map<Int, String>,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable { onCheckedChange(!checked) }
+                .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = labelWithUsers(app.label, app.userIds, userNames),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = app.packageName,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+private fun writeManualHiddenApps(
+    context: android.content.Context,
+    apps: List<AppSummary>,
+    selectedManualHiddenPackages: Set<String>,
+): Int {
+    val snapshot = TargetsCache.snapshot.value
+    val base =
+        snapshot?.let(::buildCanonicalConfigFromTargetsSnapshot)
+            ?: CanonicalConfig(debug = isEnabledInPrefs(context))
+    val canonical =
+        updateManualHiddenPackages(
+            config = base,
+            selfPkg = context.packageName,
+            visiblePackages = apps.mapTo(mutableSetOf()) { it.packageName },
+            selectedManualHiddenPackages = selectedManualHiddenPackages,
             signals = apps.map(AppSummary::toAutoHideSignal),
         )
     val cmd =

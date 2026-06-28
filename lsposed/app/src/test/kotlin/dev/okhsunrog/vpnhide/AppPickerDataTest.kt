@@ -246,6 +246,78 @@ class AppPickerDataTest {
         assertEquals(false, looksLikeVpnAppName("Proxy Client"))
     }
 
+    @Test
+    fun `manual hidden update replaces visible manual apps and preserves missing ones`() {
+        val config =
+            CanonicalConfig(
+                apps =
+                    mapOf(
+                        "com.visible.old" to CanonicalApp(hidden = true),
+                        "com.missing.manual" to CanonicalApp(hidden = true),
+                        "com.keep.role" to CanonicalApp(java = true),
+                    ),
+            )
+
+        val updated =
+            updateManualHiddenPackages(
+                config = config,
+                selfPkg = self,
+                visiblePackages = setOf("com.visible.old", "com.visible.new", "com.keep.role"),
+                selectedManualHiddenPackages = setOf("com.visible.new"),
+                signals = emptyList(),
+            )
+
+        assertEquals(false, updated.apps.containsKey("com.visible.old"))
+        assertEquals(true, updated.apps.getValue("com.visible.new").hidden)
+        assertEquals(true, updated.apps.getValue("com.missing.manual").hidden)
+        assertEquals(true, updated.apps.getValue("com.keep.role").java)
+    }
+
+    @Test
+    fun `manual hidden update does not keep previous auto hidden as manual`() {
+        val config =
+            CanonicalConfig(
+                apps =
+                    mapOf(
+                        "com.auto.hidden" to CanonicalApp(hidden = true),
+                    ),
+                settings = CanonicalSettings(autoHiddenPackages = setOf("com.auto.hidden")),
+            )
+
+        val updated =
+            updateManualHiddenPackages(
+                config = config,
+                selfPkg = self,
+                visiblePackages = setOf("com.auto.hidden"),
+                selectedManualHiddenPackages = emptySet(),
+                signals = emptyList(),
+            )
+
+        assertEquals(false, updated.apps.containsKey("com.auto.hidden"))
+        assertEquals(emptySet<String>(), manualHiddenPackages(updated, self))
+    }
+
+    @Test
+    fun `manual hidden update keeps current auto hidden matches`() {
+        val config =
+            CanonicalConfig(
+                settings = CanonicalSettings(autoHiddenPackages = setOf("com.auto.hidden")),
+            )
+
+        val updated =
+            updateManualHiddenPackages(
+                config = config,
+                selfPkg = self,
+                visiblePackages = setOf("com.auto.hidden"),
+                selectedManualHiddenPackages = emptySet(),
+                signals = listOf(AppAutoHideSignal(packageName = "com.auto.hidden", declaresVpnService = true)),
+            )
+
+        assertEquals(true, updated.apps.getValue("com.auto.hidden").hidden)
+        assertEquals(setOf("com.auto.hidden"), updated.settings.autoHiddenPackages)
+        assertEquals(emptySet<String>(), manualHiddenPackages(updated, self))
+    }
+
     private fun snapshotWithCanonical(
         vararg apps: Pair<String, CanonicalApp>,
         settings: CanonicalSettings = CanonicalSettings(),
