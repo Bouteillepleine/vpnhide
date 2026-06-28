@@ -1,9 +1,13 @@
 package dev.okhsunrog.vpnhide
 
+import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
+import android.net.VpnService
+import android.os.Build
 import android.os.Process
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -11,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 /**
  * Common per-installed-app fields used by every Protection screen
@@ -23,7 +28,18 @@ internal data class AppSummary(
     val icon: Drawable?,
     val isSystem: Boolean,
     val userIds: List<Int> = emptyList(),
+    val declaresVpnService: Boolean = false,
+    val nameContainsVpn: Boolean = false,
 )
+
+internal fun AppSummary.toAutoHideSignal(): AppAutoHideSignal =
+    AppAutoHideSignal(
+        packageName = packageName,
+        declaresVpnService = declaresVpnService,
+        nameContainsVpn = nameContainsVpn,
+    )
+
+internal fun looksLikeVpnAppName(label: String): Boolean = label.uppercase(Locale.ROOT).contains("VPN")
 
 /**
  * Append a profile list to an app label so users can tell that
@@ -96,6 +112,7 @@ internal object AppListCache : StateCache<List<AppSummary>>(
         val appContext = requireNotNull(appContext) { "AppListCache.load before ensureLoaded/refresh" }
         return withContext(Dispatchers.IO) {
             val pm = appContext.packageManager
+            val vpnServicePkgs = queryVpnServiceProviders(pm)
             val (packages, users) = loadPackagesAndUsersViaRoot()
             _userNames.value = users
             if (packages.isNotEmpty()) {
@@ -120,13 +137,16 @@ internal object AppListCache : StateCache<List<AppSummary>>(
                             } else {
                                 !meta.apkPath.startsWith("/data/app/")
                             }
+                        val label = effectiveInfo?.loadLabel(pm)?.toString() ?: pkg
 
                         AppSummary(
                             packageName = pkg,
-                            label = effectiveInfo?.loadLabel(pm)?.toString() ?: pkg,
+                            label = label,
                             icon = effectiveInfo?.let { runCatching { pm.getApplicationIcon(it) }.getOrNull() },
                             isSystem = isSystem,
                             userIds = meta.userIds,
+                            declaresVpnService = pkg in vpnServicePkgs,
+                            nameContainsVpn = !isSystem && looksLikeVpnAppName(label),
                         )
                     }.sortedBy { it.label.lowercase() }
             } else {
@@ -134,16 +154,38 @@ internal object AppListCache : StateCache<List<AppSummary>>(
                 pm
                     .getInstalledApplications(0)
                     .map { info ->
+                        val label = info.loadLabel(pm).toString()
+                        val isSystem = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0
                         AppSummary(
                             packageName = info.packageName,
-                            label = info.loadLabel(pm).toString(),
+                            label = label,
                             icon = runCatching { pm.getApplicationIcon(info) }.getOrNull(),
-                            isSystem = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
+                            isSystem = isSystem,
                             userIds = listOf(Process.myUid() / 100000),
+                            declaresVpnService = info.packageName in vpnServicePkgs,
+                            nameContainsVpn = !isSystem && looksLikeVpnAppName(label),
                         )
                     }.sortedBy { it.label.lowercase() }
             }
         }
+    }
+
+    private fun queryVpnServiceProviders(pm: PackageManager): Set<String> {
+        val intent = Intent(VpnService.SERVICE_INTERFACE)
+        val resolveInfos =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.queryIntentServices(intent, PackageManager.ResolveInfoFlags.of(0L))
+            } else {
+                @Suppress("DEPRECATION")
+                pm.queryIntentServices(intent, 0)
+            }
+        return resolveInfos
+            .asSequence()
+            .mapNotNull { resolveInfo ->
+                val serviceInfo = resolveInfo.serviceInfo ?: return@mapNotNull null
+                if (serviceInfo.permission != Manifest.permission.BIND_VPN_SERVICE) return@mapNotNull null
+                serviceInfo.packageName?.takeIf { it.isNotBlank() }
+            }.toSet()
     }
 
     private data class PkgMeta(

@@ -15,6 +15,9 @@ internal data class CanonicalConfig(
 
 internal data class CanonicalSettings(
     val rememberSuperkey: Boolean = false,
+    val autoHideVpnServices: Boolean = true,
+    val autoHideVpnName: Boolean = false,
+    val autoHiddenPackages: Set<String> = emptySet(),
 )
 
 internal data class CanonicalApp(
@@ -53,11 +56,22 @@ internal fun parseCanonicalConfig(raw: String): CanonicalConfig? {
             .orEmpty()
             .filterValues { it.hasAnyRole }
     val settingsJson = root.optJSONObject("settings")
+    val defaultSettings = CanonicalSettings()
     return CanonicalConfig(
         version = version,
         debug = root.optBoolean("debug", false),
         apps = apps,
-        settings = CanonicalSettings(rememberSuperkey = settingsJson?.optBoolean("rememberSuperkey", false) == true),
+        settings =
+            CanonicalSettings(
+                rememberSuperkey = settingsJson?.optBoolean("rememberSuperkey", defaultSettings.rememberSuperkey) == true,
+                autoHideVpnServices =
+                    settingsJson?.optBoolean("autoHideVpnServices", defaultSettings.autoHideVpnServices)
+                        ?: defaultSettings.autoHideVpnServices,
+                autoHideVpnName =
+                    settingsJson?.optBoolean("autoHideVpnName", defaultSettings.autoHideVpnName)
+                        ?: defaultSettings.autoHideVpnName,
+                autoHiddenPackages = parseStringSet(settingsJson?.optJSONArray("autoHiddenPackages")),
+            ),
     )
 }
 
@@ -89,6 +103,11 @@ private fun parseNativeRole(value: Any?): NativeRole =
             NativeRole.Disabled
         }
     }
+
+private fun parseStringSet(value: JSONArray?): Set<String> =
+    (0 until (value?.length() ?: 0))
+        .mapNotNull { idx -> value?.optString(idx)?.takeIf { it.isNotBlank() } }
+        .toSortedSet()
 
 internal fun buildCanonicalConfig(
     debug: Boolean,
@@ -188,7 +207,19 @@ internal fun canonicalConfigJson(config: CanonicalConfig): String =
         append("  \"settings\": {\n")
         append("    \"rememberSuperkey\": ")
         append(config.settings.rememberSuperkey)
-        append('\n')
+        append(",\n")
+        append("    \"autoHideVpnServices\": ")
+        append(config.settings.autoHideVpnServices)
+        append(",\n")
+        append("    \"autoHideVpnName\": ")
+        append(config.settings.autoHideVpnName)
+        append(",\n")
+        append("    \"autoHiddenPackages\": [")
+        config.settings.autoHiddenPackages.toSortedSet().forEachIndexed { index, pkg ->
+            if (index != 0) append(", ")
+            appendJsonString(pkg)
+        }
+        append("]\n")
         append("  }\n")
         append("}\n")
     }

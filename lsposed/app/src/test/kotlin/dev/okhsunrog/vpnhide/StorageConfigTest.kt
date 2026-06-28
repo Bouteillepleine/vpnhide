@@ -19,16 +19,55 @@ class StorageConfigTest {
                         "com.bank": { "java": true, "native": ["sock_ioctl"], "appHiding": false, "ports": true },
                         "dev.okhsunrog.vpnhide": { "hidden": true }
                       },
-                      "settings": { "rememberSuperkey": true }
+                      "settings": {
+                        "rememberSuperkey": true,
+                        "autoHideVpnServices": false,
+                        "autoHideVpnName": true,
+                        "autoHiddenPackages": ["com.vpn.client"]
+                      }
                     }
                     """.trimIndent(),
                 ),
             )
 
         assertTrue(cfg.debug)
-        assertEquals(CanonicalSettings(rememberSuperkey = true), cfg.settings)
+        assertEquals(
+            CanonicalSettings(
+                rememberSuperkey = true,
+                autoHideVpnServices = false,
+                autoHideVpnName = true,
+                autoHiddenPackages = setOf("com.vpn.client"),
+            ),
+            cfg.settings,
+        )
         assertEquals(NativeRole(enabled = true, hooks = listOf("sock_ioctl")), cfg.apps.getValue("com.bank").native)
         assertTrue(cfg.apps.getValue("dev.okhsunrog.vpnhide").hidden)
+    }
+
+    @Test
+    fun `canonical config defaults new auto hide settings for old json`() {
+        val cfg =
+            requireNotNull(
+                parseCanonicalConfig(
+                    """
+                    {
+                      "version": 1,
+                      "apps": {},
+                      "settings": { "rememberSuperkey": true }
+                    }
+                    """.trimIndent(),
+                ),
+            )
+
+        assertEquals(
+            CanonicalSettings(
+                rememberSuperkey = true,
+                autoHideVpnServices = true,
+                autoHideVpnName = false,
+                autoHiddenPackages = emptySet(),
+            ),
+            cfg.settings,
+        )
     }
 
     @Test

@@ -223,6 +223,13 @@
     <string name="settings_config_import_done">Конфиг импортирован.</string>
     <string name="settings_config_import_invalid">Импорт не удался: некорректный JSON-конфиг.</string>
     <string name="settings_config_import_root_failed">Импорт не удался: не получилось записать root-конфиг.</string>
+    <string name="settings_advanced_protection">Расширенная защита</string>
+    <string name="settings_auto_hide_vpn_services">Автоматически скрывать VPN-приложения</string>
+    <string name="settings_auto_hide_vpn_services_sub">Скрывать от целей app hiding установленные приложения, которые объявляют Android VpnService.</string>
+    <string name="settings_auto_hide_vpn_name">Также искать «VPN» в названиях</string>
+    <string name="settings_auto_hide_vpn_name_sub">Шумная эвристика для клонов и переименованных VPN-клиентов. По умолчанию выключена.</string>
+    <string name="settings_auto_hide_saved">Настройки app hiding сохранены.</string>
+    <string name="settings_auto_hide_failed">Не удалось обновить настройки app hiding.</string>
     <string name="settings_security">Безопасность</string>
     <string name="settings_superkey_title">APatch SuperKey</string>
     <string name="settings_superkey_saved">Сохранён для активации KPM при загрузке.</string>

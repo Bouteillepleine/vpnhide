@@ -25,7 +25,9 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.RoundedCorner
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Vibration
+import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -190,6 +192,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
+            AutoHideSettingsSection()
             ConfigBackupSection()
             SuperkeySettingsSection()
         }
@@ -524,6 +527,106 @@ private fun importConfigFromUri(
     RootSnapshotCache.invalidate()
     DashboardCache.invalidate()
     return ConfigImportResult.Success
+}
+
+@Composable
+private fun AutoHideSettingsSection() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val targets by TargetsCache.snapshot.collectAsState()
+    val apps by AppListCache.apps.collectAsState()
+    var saving by remember { mutableStateOf<AutoHideSetting?>(null) }
+    var status by remember { mutableStateOf<String?>(null) }
+    val savedMessage = stringResource(R.string.settings_auto_hide_saved)
+    val failedMessage = stringResource(R.string.settings_auto_hide_failed)
+    val settings = targets?.canonicalConfig?.settings ?: CanonicalSettings()
+    val canWrite = targets != null && apps != null && saving == null
+
+    fun updateSetting(
+        setting: AutoHideSetting,
+        transform: (CanonicalSettings) -> CanonicalSettings,
+    ) {
+        saving = setting
+        status = null
+        val appSignals = apps.orEmpty()
+        scope.launch {
+            val exit = withContext(Dispatchers.IO) { writeAutoHideSetting(context, appSignals, transform) }
+            saving = null
+            status = if (exit == 0) savedMessage else failedMessage
+            if (exit == 0) {
+                TargetsCache.refreshAfterSave(scope, context)
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        TargetsCache.ensureLoaded(scope, context)
+        AppListCache.ensureLoaded(scope, context)
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        SettingsSectionHeader(stringResource(R.string.settings_advanced_protection))
+        PreferenceRowSwitch(
+            title = stringResource(R.string.settings_auto_hide_vpn_services),
+            subtitle = stringResource(R.string.settings_auto_hide_vpn_services_sub),
+            icon = Icons.Default.VpnKey,
+            index = 0,
+            count = 2,
+            checked = settings.autoHideVpnServices,
+            enabled = canWrite,
+            onCheckedChange = { enabled ->
+                updateSetting(AutoHideSetting.VpnService) { it.copy(autoHideVpnServices = enabled) }
+            },
+        )
+        PreferenceRowSwitch(
+            title = stringResource(R.string.settings_auto_hide_vpn_name),
+            subtitle = stringResource(R.string.settings_auto_hide_vpn_name_sub),
+            icon = Icons.Default.TextFields,
+            index = 1,
+            count = 2,
+            checked = settings.autoHideVpnName,
+            enabled = canWrite,
+            onCheckedChange = { enabled ->
+                updateSetting(AutoHideSetting.VpnName) { it.copy(autoHideVpnName = enabled) }
+            },
+        )
+        status?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp),
+            )
+        }
+    }
+}
+
+private enum class AutoHideSetting {
+    VpnService,
+    VpnName,
+}
+
+private fun writeAutoHideSetting(
+    context: android.content.Context,
+    apps: List<AppSummary>,
+    transform: (CanonicalSettings) -> CanonicalSettings,
+): Int {
+    val snapshot = TargetsCache.snapshot.value
+    val base =
+        snapshot?.let(::buildCanonicalConfigFromTargetsSnapshot)
+            ?: CanonicalConfig(debug = isEnabledInPrefs(context))
+    val canonical =
+        applyAutoHiddenPackages(
+            config = base.copy(settings = transform(base.settings)),
+            selfPkg = context.packageName,
+            signals = apps.map(AppSummary::toAutoHideSignal),
+        )
+    val (exit, _) = suExec(buildCanonicalConfigWriteCommand(canonical))
+    if (exit == 0) {
+        RootSnapshotCache.invalidate()
+        DashboardCache.invalidate()
+    }
+    return exit
 }
 
 @Composable

@@ -31,6 +31,8 @@ data class AppEntry(
     val native: Boolean = false,
     val appHiding: Boolean = false,
     val ports: Boolean = false,
+    val declaresVpnService: Boolean = false,
+    val nameContainsVpn: Boolean = false,
 ) : TargetEntry {
     override val anySelected get() = java || native || appHiding || ports
 }
@@ -70,6 +72,14 @@ fun AppPickerScreen(
         merge = { apps, t, selfPkg ->
             val nativeTargets = t.nativeTargets
             val observers = t.observerNames
+            val autoHideSignals = apps.map(AppSummary::toAutoHideSignal)
+            val baseCanonical = t.canonicalConfig ?: buildCanonicalConfigFromTargetsSnapshot(t)
+            val autoApplied =
+                applyAutoHiddenPackages(
+                    config = baseCanonical,
+                    selfPkg = selfPkg,
+                    signals = autoHideSignals,
+                )
             MergeResult(
                 apps
                     .filter { it.packageName != selfPkg }
@@ -84,15 +94,22 @@ fun AppPickerScreen(
                             native = app.packageName in nativeTargets,
                             appHiding = app.packageName in observers,
                             ports = app.packageName in t.portsObservers,
+                            declaresVpnService = app.declaresVpnService,
+                            nameContainsVpn = app.nameContainsVpn,
                         )
                     },
+                resaveNeeded = autoApplied != baseCanonical,
             )
         },
         countText = { entries, res ->
             res.getString(R.string.selected_count, entries.count { it.anySelected })
         },
         buildSaveCommand = { entries, ctx ->
-            buildUnifiedSaveCommand(ctx, entries.map(AppEntry::toRoleSelection))
+            buildUnifiedSaveCommand(
+                ctx = ctx,
+                selections = entries.map(AppEntry::toRoleSelection),
+                autoHideSignals = entries.map(AppEntry::toAutoHideSignal),
+            )
         },
         successMessage = { entries, res ->
             res.getString(R.string.save_success, entries.count { it.anySelected })
@@ -137,6 +154,7 @@ fun AppPickerScreen(
 private fun buildUnifiedSaveCommand(
     ctx: SaveContext,
     selections: Collection<AppRoleSelection>,
+    autoHideSignals: Collection<AppAutoHideSignal>,
 ): String {
     val parts = mutableListOf<String>()
 
@@ -146,6 +164,7 @@ private fun buildUnifiedSaveCommand(
             selfPkg = ctx.selfPkg,
             selections = selections,
             snapshot = TargetsCache.snapshot.value,
+            autoHideSignals = autoHideSignals,
         )
     parts += buildCanonicalConfigWriteCommand(canonical)
 
@@ -163,6 +182,13 @@ private fun AppEntry.toRoleSelection(): AppRoleSelection =
         native = native,
         appHiding = appHiding,
         ports = ports,
+    )
+
+private fun AppEntry.toAutoHideSignal(): AppAutoHideSignal =
+    AppAutoHideSignal(
+        packageName = packageName,
+        declaresVpnService = declaresVpnService,
+        nameContainsVpn = nameContainsVpn,
     )
 
 @Composable
