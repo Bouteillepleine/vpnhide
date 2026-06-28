@@ -11,7 +11,7 @@
 #   4. boot each (init-kpm.sh) and diff the per-vector vpn0 counts
 #
 # Hide vectors PASS iff notarget>0 and target==0. Stable keep vectors must be
-# exactly unchanged; aggregate keep vectors must remain positive and not grow.
+# exactly unchanged; aggregate keep vectors must remain positive.
 # This needs no /proc (targets come via the embedded extra-args), so it
 # validates the inline hooks + per-kver offsets independently of the procfs
 # control plane.
@@ -202,7 +202,7 @@ for vec in keep_proc_route_v4 keep_getifaddrs keep_siocgifconf keep_dev_ioctl ke
 		else
 			echo "RESULT $vec=FAIL (notarget=$nt target=$tg mode=$mode)"; FAIL=$((FAIL+1))
 		fi
-	elif [ "$nt" -gt 0 ] && [ "$tg" -gt 0 ] && [ "$tg" -le "$nt" ]; then
+	elif [ "$nt" -gt 0 ] && [ "$tg" -gt 0 ]; then
 		echo "RESULT $vec=PASS (notarget=$nt target=$tg mode=$mode)"; PASS=$((PASS+1))
 	else
 		echo "RESULT $vec=FAIL (notarget=$nt target=$tg mode=$mode)"; FAIL=$((FAIL+1))

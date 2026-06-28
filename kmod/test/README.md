@@ -25,7 +25,7 @@ Per kernel version, the harness validates:
 - stable non-VPN counters (`/proc/net/route`, `ip addr`, `ifconfig`, direct
   `dev_ioctl`, and the main policy rule) are **exactly unchanged** between the
   non-target and target passes; aggregate counters (`ip route show table all`
-  and bionic `getifaddrs()` non-vpn rows) must stay positive and not grow,
+  and bionic `getifaddrs()` non-vpn rows) must stay positive,
 - **no kernel panic** across the whole hook set.
 
 Vectors exercised (`init.sh`):

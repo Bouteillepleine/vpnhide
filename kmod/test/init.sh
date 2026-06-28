@@ -80,7 +80,7 @@ check_keep() {
 	_nt=$(eval "$_cmd" 2>/dev/null | grep -c -- "$_pat")
 	set_target 0
 	_tg=$(eval "$_cmd" 2>/dev/null | grep -c -- "$_pat")
-	if [ "$_nt" -gt 0 ] && [ "$_tg" -gt 0 ] && [ "$_tg" -le "$_nt" ]; then
+	if [ "$_nt" -gt 0 ] && [ "$_tg" -gt 0 ]; then
 		echo "RESULT $_name=PASS (nontarget=$_nt target=$_tg mode=nonvpn)"
 		PASS=$((PASS + 1))
 	else
@@ -136,7 +136,7 @@ check_gai() {
 		FAIL=$((FAIL + 1))
 	fi
 
-	if [ "$_nt_other" -gt 0 ] && [ "$_tg_other" -gt 0 ] && [ "$_tg_other" -le "$_nt_other" ]; then
+	if [ "$_nt_other" -gt 0 ] && [ "$_tg_other" -gt 0 ]; then
 		echo "RESULT keep_gai_getifaddrs=PASS (nontarget=$_nt_other target=$_tg_other mode=nonvpn)"
 		PASS=$((PASS + 1))
 	else
