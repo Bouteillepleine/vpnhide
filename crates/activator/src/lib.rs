@@ -35,16 +35,24 @@ const PORTS_CHAIN6: &str = "vpnhide_out6";
 const MAX_NATIVE_TARGETS: usize = 64;
 const PM_READY_ATTEMPTS: u32 = 60;
 const APATCH_SUPERCALL_NR: c_long = 45;
-const APATCH_SUPERCALL_VERSION_CODE: c_long = 0x000d00;
+const APATCH_SUPERCALL_DEFAULT_VERSION_CODE: c_long = 0x000d00;
 const APATCH_SUPERCALL_MAGIC: c_long = 0x1158;
 const SUPERCALL_HELLO: c_long = 0x1000;
 const SUPERCALL_HELLO_MAGIC: c_long = 0x11581158;
 const SUPERCALL_KPM_LOAD: c_long = 0x1020;
 const SUPERCALL_KPM_CONTROL: c_long = 0x1022;
 const SUPERCALL_KPM_LIST: c_long = 0x1031;
+const APATCH_SUPERCALL_VERSION_FALLBACKS: &[c_long] =
+    &[0x000c02, 0x000c01, 0x000c00, 0x000b01, 0x000b00, 0x000a05];
 
 unsafe extern "C" {
     fn syscall(num: c_long, ...) -> c_long;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ApatchCommandStyle {
+    Versioned(c_long),
+    Raw,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -456,8 +464,13 @@ fn read_superkey() -> Result<String> {
 }
 
 enum KpmClient {
-    KpatchCli { path: PathBuf },
-    ApatchSupercall { key: String },
+    KpatchCli {
+        path: PathBuf,
+    },
+    ApatchSupercall {
+        key: String,
+        style: ApatchCommandStyle,
+    },
 }
 
 impl KpmClient {
@@ -466,8 +479,8 @@ impl KpmClient {
             let key = read_superkey()
                 .map_err(|e| format!("APatch KPM requires saved superkey at {SUPERKEY_FILE}: {e}"));
             let key = key?;
-            apatch_hello(&key)?;
-            return Ok(Self::ApatchSupercall { key });
+            let style = apatch_probe(&key)?;
+            return Ok(Self::ApatchSupercall { key, style });
         }
         let path = find_kpatch().ok_or("kpatch CLI not found")?;
         kpatch_hello(&path)?;
@@ -492,8 +505,8 @@ impl KpmClient {
     fn list_contains(&self) -> Result<bool> {
         match self {
             Self::KpatchCli { path } => kpatch_kpm_list_contains(path),
-            Self::ApatchSupercall { key } => {
-                let list = apatch_kpm_list(key)?;
+            Self::ApatchSupercall { key, style } => {
+                let list = apatch_kpm_list(key, *style)?;
                 Ok(list.split_whitespace().any(|token| token == KPM_NAME))
             }
         }
@@ -511,14 +524,14 @@ impl KpmClient {
                     Err(format!("kpm load failed with status {}", out.status).into())
                 }
             }
-            Self::ApatchSupercall { key } => {
+            Self::ApatchSupercall { key, style } => {
                 let path = CString::new(KPM_MODULE_FILE)?;
                 let key = CString::new(key.as_str())?;
                 let rc = unsafe {
                     syscall(
                         APATCH_SUPERCALL_NR,
                         key.as_ptr(),
-                        supercall_cmd(SUPERCALL_KPM_LOAD),
+                        supercall_cmd(*style, SUPERCALL_KPM_LOAD),
                         path.as_ptr(),
                         ptr::null::<c_char>(),
                         ptr::null_mut::<c_void>(),
@@ -532,7 +545,7 @@ impl KpmClient {
     fn ctl0(&self, wire: &str) -> Result<()> {
         match self {
             Self::KpatchCli { path } => run_kpatch_kpm_ctl0(path, wire),
-            Self::ApatchSupercall { key } => apatch_kpm_ctl0(key, wire),
+            Self::ApatchSupercall { key, style } => apatch_kpm_ctl0(key, *style, wire),
         }
     }
 }
@@ -574,30 +587,43 @@ fn run_kpatch_kpm_ctl0(kpatch: &Path, wire: &str) -> Result<()> {
     }
 }
 
-fn apatch_hello(key: &str) -> Result<()> {
+fn apatch_probe(key: &str) -> Result<ApatchCommandStyle> {
+    let candidates = apatch_command_candidates();
+    let mut failures = Vec::new();
+    for style in candidates {
+        let rc = apatch_hello(key, style)?;
+        if rc == SUPERCALL_HELLO_MAGIC {
+            return Ok(style);
+        }
+        failures.push(format!("{style:?}: rc={rc}"));
+    }
+    Err(format!(
+        "KernelPatch inactive or bad APatch SuperKey (hello attempts: {})",
+        failures.join(", ")
+    )
+    .into())
+}
+
+fn apatch_hello(key: &str, style: ApatchCommandStyle) -> Result<c_long> {
     let key = CString::new(key)?;
     let rc = unsafe {
         syscall(
             APATCH_SUPERCALL_NR,
             key.as_ptr(),
-            supercall_cmd(SUPERCALL_HELLO),
+            supercall_cmd(style, SUPERCALL_HELLO),
         )
     };
-    if rc == SUPERCALL_HELLO_MAGIC {
-        Ok(())
-    } else {
-        Err(format!("KernelPatch inactive or bad APatch SuperKey (hello rc={rc})").into())
-    }
+    Ok(rc)
 }
 
-fn apatch_kpm_list(key: &str) -> Result<String> {
+fn apatch_kpm_list(key: &str, style: ApatchCommandStyle) -> Result<String> {
     let key = CString::new(key)?;
     let mut buf = [0u8; 4096];
     let rc = unsafe {
         syscall(
             APATCH_SUPERCALL_NR,
             key.as_ptr(),
-            supercall_cmd(SUPERCALL_KPM_LIST),
+            supercall_cmd(style, SUPERCALL_KPM_LIST),
             buf.as_mut_ptr().cast::<c_char>(),
             buf.len() as c_long,
         )
@@ -607,7 +633,7 @@ fn apatch_kpm_list(key: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&buf[..len]).into_owned())
 }
 
-fn apatch_kpm_ctl0(key: &str, wire: &str) -> Result<()> {
+fn apatch_kpm_ctl0(key: &str, style: ApatchCommandStyle, wire: &str) -> Result<()> {
     let key = CString::new(key)?;
     let name = CString::new(KPM_NAME)?;
     let wire = CString::new(wire)?;
@@ -616,7 +642,7 @@ fn apatch_kpm_ctl0(key: &str, wire: &str) -> Result<()> {
         syscall(
             APATCH_SUPERCALL_NR,
             key.as_ptr(),
-            supercall_cmd(SUPERCALL_KPM_CONTROL),
+            supercall_cmd(style, SUPERCALL_KPM_CONTROL),
             name.as_ptr(),
             wire.as_ptr(),
             out.as_mut_ptr().cast::<c_char>(),
@@ -626,8 +652,63 @@ fn apatch_kpm_ctl0(key: &str, wire: &str) -> Result<()> {
     supercall_ok(rc, "kpm ctl0")
 }
 
-fn supercall_cmd(cmd: c_long) -> c_long {
-    (APATCH_SUPERCALL_VERSION_CODE << 32) | (APATCH_SUPERCALL_MAGIC << 16) | (cmd & 0xffff)
+fn apatch_command_candidates() -> Vec<ApatchCommandStyle> {
+    let mut styles = Vec::new();
+    if let Some(version) = apatch_kernel_version_hint() {
+        push_apatch_style(&mut styles, ApatchCommandStyle::Versioned(version));
+    }
+    push_apatch_style(
+        &mut styles,
+        ApatchCommandStyle::Versioned(APATCH_SUPERCALL_DEFAULT_VERSION_CODE),
+    );
+    for version in APATCH_SUPERCALL_VERSION_FALLBACKS {
+        push_apatch_style(&mut styles, ApatchCommandStyle::Versioned(*version));
+    }
+    push_apatch_style(&mut styles, ApatchCommandStyle::Raw);
+    styles
+}
+
+fn push_apatch_style(styles: &mut Vec<ApatchCommandStyle>, style: ApatchCommandStyle) {
+    if !styles.contains(&style) {
+        styles.push(style);
+    }
+}
+
+fn apatch_kernel_version_hint() -> Option<c_long> {
+    let out = Command::new("dmesg").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_apatch_kernel_version_hint(&String::from_utf8_lossy(&out.stdout))
+}
+
+fn parse_apatch_kernel_version_hint(log: &str) -> Option<c_long> {
+    const MARKER: &str = "KP KernelPatch Version:";
+    for line in log.lines().rev() {
+        let Some((_, tail)) = line.split_once(MARKER) else {
+            continue;
+        };
+        let Some(value) = tail.split_whitespace().next() else {
+            continue;
+        };
+        let value = value.trim_start_matches("0x");
+        if value.is_empty() {
+            continue;
+        }
+        if let Ok(version) = c_long::from_str_radix(value, 16) {
+            return Some(version);
+        }
+    }
+    None
+}
+
+fn supercall_cmd(style: ApatchCommandStyle, cmd: c_long) -> c_long {
+    match style {
+        ApatchCommandStyle::Versioned(version) => {
+            (version << 32) | (APATCH_SUPERCALL_MAGIC << 16) | (cmd & 0xffff)
+        }
+        ApatchCommandStyle::Raw => cmd,
+    }
 }
 
 fn supercall_ok(rc: c_long, op: &str) -> Result<()> {
@@ -857,14 +938,39 @@ mod tests {
     #[test]
     fn apatch_supercall_command_keeps_kpm_command_in_low_bits() {
         assert_eq!(
-            supercall_cmd(SUPERCALL_KPM_CONTROL),
-            (APATCH_SUPERCALL_VERSION_CODE << 32)
+            supercall_cmd(
+                ApatchCommandStyle::Versioned(APATCH_SUPERCALL_DEFAULT_VERSION_CODE),
+                SUPERCALL_KPM_CONTROL,
+            ),
+            (APATCH_SUPERCALL_DEFAULT_VERSION_CODE << 32)
                 | (APATCH_SUPERCALL_MAGIC << 16)
                 | SUPERCALL_KPM_CONTROL,
         );
-        assert_eq!(supercall_cmd(SUPERCALL_KPM_CONTROL) & 0xffff, 0x1022);
-        assert_eq!(supercall_cmd(SUPERCALL_HELLO) & 0xffff, 0x1000);
+        assert_eq!(
+            supercall_cmd(
+                ApatchCommandStyle::Versioned(0x000c02),
+                SUPERCALL_KPM_CONTROL
+            ) & 0xffff,
+            0x1022,
+        );
+        assert_eq!(
+            supercall_cmd(ApatchCommandStyle::Raw, SUPERCALL_KPM_CONTROL),
+            0x1022
+        );
+        assert_eq!(
+            supercall_cmd(ApatchCommandStyle::Versioned(0x000c02), SUPERCALL_HELLO) & 0xffff,
+            0x1000,
+        );
         assert_eq!(SUPERCALL_HELLO_MAGIC, 0x11581158);
+    }
+
+    #[test]
+    fn apatch_kernel_version_hint_parses_dmesg() {
+        let log = "\
+[    0.000000] KP KernelPatch Version: c02
+[    0.000000] KP KernelPatch Config: 2
+";
+        assert_eq!(parse_apatch_kernel_version_hint(log), Some(0xc02));
     }
 
     #[test]
