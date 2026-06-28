@@ -1,0 +1,36 @@
+#!/system/bin/sh
+SKIPUNZIP=0
+MOD_VER="$(grep '^version=' "$MODPATH/module.prop" | cut -d= -f2)"
+ui_print "- VPN Hide (KPM) ${MOD_VER:-unknown}"
+ui_print "- Installing KernelPatch module to $MODPATH"
+
+# Persistent config directory (survives module updates — KSU/Magisk wipe the
+# module dir on update, but never touch /data/adb/vpnhide_kpm/).
+PERSIST_DIR="/data/adb/vpnhide_kpm"
+PERSIST_TARGETS="$PERSIST_DIR/targets.txt"
+
+mkdir -p "$PERSIST_DIR"
+set_perm "$PERSIST_DIR" 0 0 0755
+
+# Seed empty targets on a fresh install.
+if [ ! -f "$PERSIST_TARGETS" ]; then
+    cat > "$PERSIST_TARGETS" <<'EOF'
+# vpnhide-kpm target apps
+# One package name per line. Lines starting with '#' are comments.
+# Managed via the VPN Hide app.
+EOF
+fi
+set_perm "$PERSIST_TARGETS" 0 0 0644
+set_perm "$MODPATH/vpnhide.kpm" 0 0 0644
+
+# Single-active warning (protocol §1.5): the .ko and KPM wrap the SAME kernel
+# functions; running both freezes the device. The boot loader refuses to load
+# the KPM when the .ko module is present, but warn at install time too.
+if [ -d /data/adb/modules/vpnhide_kmod ]; then
+    ui_print "! WARNING: the .ko backend (vpnhide_kmod) is installed."
+    ui_print "! Only one native backend may be active — the KPM will NOT load"
+    ui_print "! while it is present. Uninstall vpnhide_kmod to use the KPM."
+fi
+
+ui_print "- Targets: $PERSIST_TARGETS (preserved across updates)"
+ui_print "- Pick target apps via the VPN Hide app."
