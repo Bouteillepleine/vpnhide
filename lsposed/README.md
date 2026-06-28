@@ -41,7 +41,7 @@ The APK includes a Compose UI for managing target apps across all vpnhide module
   - `/data/adb/vpnhide_kmod/targets.txt` (if kmod is installed)
   - `/data/adb/vpnhide_zygisk/targets.txt` (if zygisk is installed)
   - `/data/adb/modules/vpnhide_zygisk/targets.txt` (Magisk module dir copy)
-  - `/proc/vpnhide_targets` (kmod live update, no reboot needed)
+  - `/proc/vpnhide_ctl` (kmod live update, no reboot needed)
   - `/data/system/vpnhide_uids.txt` (system_server hooks, live reload via inotify)
 
 Works on KernelSU, Magisk, and any other root solution.

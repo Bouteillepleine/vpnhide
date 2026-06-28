@@ -17,24 +17,32 @@ internal fun managedConfigBody(
 ): String = (listOf(header) + lines).joinToString(separator = "\n", postfix = "\n")
 
 /**
- * Shell fragment writing a managed config file via a base64 round-trip:
+ * Shell fragment writing arbitrary [content] to [path] via a base64 round-trip:
  * `echo '<b64>' | base64 -d > path`. base64 sidesteps every quoting/escaping
- * hazard from package names or the header text inside the single `su -c`
- * string. Callers append their own `chmod` / dir-guard / perms tail — those
- * differ per file (644 vs system_data_file 640), see [systemDataFilePermsParts].
+ * hazard inside the single `su -c` string — package names, the header text, and
+ * the newline-separated `vpnhide 1 config` snapshots alike. Callers append their
+ * own `chmod` / dir-guard / perms tail.
+ */
+internal fun buildRawWriteCommand(
+    path: String,
+    content: String,
+): String {
+    val b64 = android.util.Base64.encodeToString(content.toByteArray(), android.util.Base64.NO_WRAP)
+    return "echo '$b64' | base64 -d > $path"
+}
+
+/**
+ * Shell fragment writing a managed PACKAGE-list file (the persistent
+ * per-backend `targets.txt` etc.): the `# Managed …` header comment + one
+ * package per line. NOT the wire protocol — they survive reinstall and feed the
+ * picker + boot re-resolution. The resolved-UID runtime channels carry the
+ * `vpnhide 1 config` wire instead (see [ConfigChannels]).
  */
 internal fun buildConfigWriteCommand(
     path: String,
     header: String,
     lines: List<String>,
-): String {
-    val b64 =
-        android.util.Base64.encodeToString(
-            managedConfigBody(header, lines).toByteArray(),
-            android.util.Base64.NO_WRAP,
-        )
-    return "echo '$b64' | base64 -d > $path"
-}
+): String = buildRawWriteCommand(path, managedConfigBody(header, lines))
 
 /**
  * The chmod/chown/chcon tail applied to a `/data/system` file so that
@@ -134,22 +142,13 @@ internal fun buildEnsureSelfInTargetsCommand(selfPkg: String): String =
         append("; echo $SELF_PM_PACKAGES_BEGIN")
         append("; printf '%s\\n' \"\$ALL_PKGS\"")
         append("; echo $SELF_PM_PACKAGES_END")
-        append("; ")
-        append(buildPackageUidsExpression(selfPkg, "SELF_UIDS"))
-        append("; if [ -n \"\$SELF_UIDS\" ]; then")
-        append(" for U in \$SELF_UIDS; do")
-        append("   case \"\$U\" in ''|*[!0-9]*) continue;; esac")
-        append(" ; if [ -f $PROC_TARGETS ]; then")
-        append("     grep -qx \"\$U\" $PROC_TARGETS 2>/dev/null || echo \"\$U\" >> $PROC_TARGETS")
-        append("   ; fi")
-        append(" ; grep -qx \"\$U\" $SS_UIDS_FILE 2>/dev/null || {")
-        append("     echo \"\$U\" >> $SS_UIDS_FILE")
-        append("   ; chmod 640 $SS_UIDS_FILE")
-        append("   ; chown root:system $SS_UIDS_FILE")
-        append("   ; chcon u:object_r:system_data_file:s0 $SS_UIDS_FILE 2>/dev/null || true")
-        append("   ; }")
-        append(" ; done")
-        append("; fi")
+        // The runtime channels (/proc/vpnhide_ctl, the zygisk module dir, the
+        // system_server UID file) are no longer seeded here with a bare UID:
+        // they carry a `vpnhide 1 config` snapshot now (docs/protocol.md), which
+        // can't be appended to line-by-line. They are (re-)written wholesale by
+        // the Kotlin reconcile (ConfigChannels.reconcileCommand) that runs once
+        // the root snapshot is available — it resolves every persistent target
+        // list (self included) to UIDs and emits the config to each channel.
         append("; echo BOOT_ID=\$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)")
         append("; echo ADDED=\$ADDED")
     }

@@ -955,10 +955,8 @@ static long vpnhide_kpm_exit(void *__user reserved)
 		hook_unwrap((void *)fn, (void *)fib_rule_before,
 			    (void *)fib_rule_after);
 
-	if (_remove_proc_entry) {
-		_remove_proc_entry("vpnhide_targets", 0);
-		_remove_proc_entry("vpnhide_debug", 0);
-	}
+	/* No /proc node to remove: the KPM's control channel is the ctl0
+	 * supercall, not procfs (the optional mirror was never created). */
 	logki(MODNAME ": KPM unloaded\n");
 	return 0;
 }

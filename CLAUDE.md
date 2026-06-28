@@ -22,6 +22,8 @@ These short files cover everything specific to this repo. Skipping them leads to
 - [CONTRIBUTING.md](CONTRIBUTING.md) — PR process, commit conventions, changelog requirement
 - [docs/development.md](docs/development.md) — prereqs, per-module build quickstart, keystore setup, device install, CI lints
 - [docs/state.md](docs/state.md) — every persistent path / proc entry / iptables chain the project touches; who writes, who reads, lifetime
+- [docs/storage.md](docs/storage.md) — **target** storage & activation design: the single JSON canonical, the activator (Rust workspace, three bins) that derives the runtime wire, LSPosed self-read, the APatch superkey, SELinux layout. Read before touching how config is stored/loaded.
+- [docs/protocol.md](docs/protocol.md) — the frozen v1 control/stats **wire** between the app and the native backends (config/stats/status); the format every backend parser must agree on
 - [docs/detection-vectors.md](docs/detection-vectors.md) — what an app can probe to detect the VPN (or a hidden package), which component (kmod / zygisk / lsposed / SELinux) covers each vector, how it manifests. Read before adding or changing a hook.
 - [docs/changelog.md](docs/changelog.md) — changelog storage (`changelog.d/` fragments + history JSON), `./scripts/changelog.py` usage
 - [docs/releasing.md](docs/releasing.md) — `./scripts/release.py` usage, version-bump flow

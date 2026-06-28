@@ -20,7 +20,7 @@ Zero footprint in the target app's process -- no modified function prologues, no
 | `rt6_fill_node` | Trims IPv6 VPN route entries from netlink route replies via `skb_trim` | IPv6 RTM_GETROUTE dumps/lookups |
 | `fib_nl_fill_rule` | Trims target-UID policy rules and VPN interface rules from netlink rule dumps via `skb_trim` | RTM_GETRULE policy routing dumps |
 
-All filtering is **per-UID**: only processes whose UID appears in `/proc/vpnhide_targets` see the filtered view. Everyone else (system services, VPN client, NFC subsystem) sees the real data.
+All filtering is **per-UID**: only processes whose UID is a `target` in the config written to `/proc/vpnhide_ctl` see the filtered view. Everyone else (system services, VPN client, NFC subsystem) sees the real data.
 
 ## Why kernel-level?
 
@@ -50,25 +50,25 @@ See [BUILDING.md](BUILDING.md) for the full guide (DDK Docker build, kernel sour
 
 On boot:
 - `post-fs-data.sh` runs `insmod` to load the kernel module
-- `service.sh` resolves package names from `targets.txt` to UIDs via `pm list packages -U` and writes them to `/proc/vpnhide_targets`
+- `service.sh` resolves package names from `targets.txt` to UIDs via `pm list packages -U` and emits a `vpnhide 1 config` snapshot (docs/protocol.md) to `/proc/vpnhide_ctl`
 
 ### Target management
 
-**VPN Hide app (recommended):** open the VPN Hide app (the [lsposed](../lsposed/) APK). It lists all installed apps with icons, search, and checkboxes. Saves targets for both kmod and zygisk, resolves UIDs, and writes to `/proc/vpnhide_targets` immediately. Works on both KernelSU and Magisk.
+**VPN Hide app (recommended):** open the VPN Hide app (the [lsposed](../lsposed/) APK). It lists all installed apps with icons, search, and checkboxes. Saves targets for every backend, resolves UIDs, and writes the config to `/proc/vpnhide_ctl` immediately. Works on both KernelSU and Magisk.
 
 **Shell:**
 ```bash
-# Write package names to the persistent config
+# Write package names to the persistent config (re-resolved at boot)
 adb shell su -c 'echo "com.example.targetapp" > /data/adb/vpnhide_kmod/targets.txt'
 
-# Or write UIDs directly to the kernel module
-adb shell su -c 'echo 10423 > /proc/vpnhide_targets'
+# Or push a control-config snapshot straight to the kernel (docs/protocol.md):
+# header + folded debug flag + one target line per UID (0x3ff = all hooks).
+adb shell su -c 'printf "vpnhide 1 config\ndebug 0\ntarget 0x28b7 0x3ff\n" > /proc/vpnhide_ctl'
 ```
 
-The app writes to **three places** simultaneously:
-1. `targets.txt` -- persistent package names (survives module updates)
-2. `/proc/vpnhide_targets` -- resolved UIDs for the kernel module (live, no reboot)
-3. `/data/system/vpnhide_uids.txt` -- resolved UIDs for the [lsposed](../lsposed/) module's system_server hooks (live reload via inotify)
+The app writes to **two layers** simultaneously:
+1. `targets.txt` -- persistent package names (survives module updates, re-resolved at boot)
+2. the runtime config channels -- a `vpnhide 1 config` snapshot of resolved UIDs: `/proc/vpnhide_ctl` for the kernel module (live, no reboot) and `/data/system/vpnhide_uids.txt` for the [lsposed](../lsposed/) module's system_server hooks (live reload via inotify)
 
 ## Combined use with system_server hooks
 

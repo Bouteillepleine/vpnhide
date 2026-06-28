@@ -80,6 +80,15 @@ fi
 # Build an iptables-restore ruleset for a given chain + loopback destination.
 # UDP reject differs by family: `icmp-port-unreachable` on IPv4,
 # `icmp6-port-unreachable` on IPv6.
+#
+# TODO(per-port ranges): today every observer UID is blocked from ALL localhost
+# ports (coarse, breaks apps that legitimately use 127.0.0.1 — Chromium dev/PWA).
+# iptables can scope this per app via `-m multiport --dports <range>` (or repeated
+# `--dport`), so observers.txt should grow optional per-UID port-range rules
+# (start-end, tcp/udp) and this builder should emit a `--dports` match instead of
+# the blanket loopback REJECT. Keeps the backend-independent netfilter approach
+# (no kernel connect-hook); see the vpnhide_next fork's per-app PortRules for the
+# UX shape. Until then, an observer = all-localhost-blocked.
 build_ruleset() {
     chain="$1"
     loopback="$2"

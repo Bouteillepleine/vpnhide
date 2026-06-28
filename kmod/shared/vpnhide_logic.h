@@ -130,7 +130,8 @@ vpnhide_compact_seq_lines(char *buf, unsigned long start, unsigned long count,
 /*
  * Parse a newline-separated list of decimal UIDs (with `#` comments and
  * blank lines) from `buf` into `out` (capacity `max`). Returns the count.
- * Pure string work — shared by both backends' /proc/vpnhide_targets writer.
+ * Pure string work for the legacy decimal load-args path (KPM bring-up + host
+ * tests). The protocol config channel uses vpnhide_parse_config instead.
  */
 static inline int
 vpnhide_parse_target_uids(const char *buf, unsigned long len,

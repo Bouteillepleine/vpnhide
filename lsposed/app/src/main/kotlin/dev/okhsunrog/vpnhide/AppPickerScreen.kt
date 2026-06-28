@@ -91,12 +91,16 @@ fun AppPickerScreen(
         countText = { entries, res ->
             res.getString(R.string.selected_count, entries.count { it.anySelected })
         },
-        buildSaveCommand = { entries, selfPkg, header ->
-            val javaPkgs = (entries.filter { it.java }.map { it.packageName } + selfPkg).distinct().sorted()
-            val nativePkgs = (entries.filter { it.native }.map { it.packageName } + selfPkg).distinct().sorted()
+        buildSaveCommand = { entries, ctx ->
+            val javaPkgs = (entries.filter { it.java }.map { it.packageName } + ctx.selfPkg).distinct().sorted()
+            val nativePkgs = (entries.filter { it.native }.map { it.packageName } + ctx.selfPkg).distinct().sorted()
             val observerPkgs = entries.filter { it.appHiding }.map { it.packageName }.sorted()
             val portsPkgs = entries.filter { it.ports }.map { it.packageName }.sorted()
-            buildUnifiedSaveCommand(header, javaPkgs, nativePkgs, observerPkgs, portsPkgs, selfPkg)
+            // Resolved UIDs for the runtime config channels (entries carry their
+            // all-profile UIDs; self is added explicitly — it's never a row).
+            val javaUids = (entries.filter { it.java }.flatMap { it.userIds } + ctx.selfUids).distinct()
+            val nativeUids = (entries.filter { it.native }.flatMap { it.userIds } + ctx.selfUids).distinct()
+            buildUnifiedSaveCommand(ctx, javaPkgs, nativePkgs, javaUids, nativeUids, observerPkgs, portsPkgs)
         },
         successMessage = { entries, res ->
             res.getString(R.string.save_success, entries.count { it.anySelected })
@@ -133,36 +137,34 @@ fun AppPickerScreen(
 }
 
 /**
- * Build the single root command that persists every role at once.
+ * Build the single root command that persists every role at once. Two layers,
+ * kept apart (protocol §1.2):
  *
- *  - Java   -> LSPosed targets file + system_server UID file.
- *  - Native -> one list written to every installed backend (kmod /proc + file,
- *              Zygisk file + module mirror, KPM file). Only the active backend
- *              acts (§1.5).
- *  - App-hiding -> observer UID file + the (auto-detected) hidden-package file.
- *  - Ports  -> observers file + apply script, when the ports module is present.
+ *  - **Persistent PACKAGE lists** (the per-backend `targets.txt`) — survive reinstall, feed
+ *    the picker + boot re-resolution. One per backend; NOT the wire protocol.
+ *  - **Runtime CONFIG channels** — the resolved-UID `vpnhide 1 config` wire,
+ *    serialised once via [ConfigChannels]: the Java set to the LSPosed channel,
+ *    the native set fanned to every installed native backend (only the active
+ *    one acts, §1.5; the KPM boot-applies from its package list — live ctl0
+ *    push is a TODO).
+ *  - **App-hiding** (observer UID file + hidden-package file) and **Ports**
+ *    (observers + apply script) stay NON-protocol, written as before.
  */
 private fun buildUnifiedSaveCommand(
-    header: String,
+    ctx: SaveContext,
     javaPkgs: List<String>,
     nativePkgs: List<String>,
+    javaUids: List<Int>,
+    nativeUids: List<Int>,
     observerPkgs: List<String>,
     portsPkgs: List<String>,
-    selfPkg: String,
 ): String {
+    val header = ctx.header
     val parts = mutableListOf<String>()
 
-    // --- Java (LSPosed) ---
+    // --- Persistent PACKAGE lists ---
     parts += "mkdir -p /data/adb/vpnhide_lsposed"
     parts += "${buildConfigWriteCommand(LSPOSED_TARGETS, header, javaPkgs)} && chmod 644 $LSPOSED_TARGETS"
-    if (javaPkgs.isNotEmpty()) {
-        parts += buildUidResolverCommand(javaPkgs, SS_UIDS_FILE)
-    } else {
-        parts += "echo > $SS_UIDS_FILE 2>/dev/null"
-    }
-    parts += systemDataFilePermsParts(SS_UIDS_FILE, "640")
-
-    // --- Native: one list, fanned out to every installed backend ---
     parts +=
         "if [ -d /data/adb/vpnhide_kmod ]; then ${buildConfigWriteCommand(KMOD_TARGETS, header, nativePkgs)} && chmod 644 $KMOD_TARGETS; fi"
     parts +=
@@ -171,22 +173,16 @@ private fun buildUnifiedSaveCommand(
             header,
             nativePkgs,
         )} && chmod 644 $ZYGISK_TARGETS; fi"
-    parts += "cp $ZYGISK_TARGETS $ZYGISK_MODULE_TARGETS 2>/dev/null; true"
     parts +=
         "if [ -d /data/adb/vpnhide_kpm ]; then ${buildConfigWriteCommand(KPM_TARGETS, header, nativePkgs)} && chmod 644 $KPM_TARGETS; fi"
-    // kmod live-applies via /proc; resolve native UIDs there. The KPM applies
-    // its targets at boot from the file above — a live `kpatch kpm ctl0` push
-    // needs the runtime CLI + (APatch) superkey and lands with the on-device
-    // KPM integration (TODO).
-    if (nativePkgs.isNotEmpty()) {
-        parts += buildUidResolverCommand(nativePkgs, PROC_TARGETS)
-    } else {
-        parts += "echo > $PROC_TARGETS 2>/dev/null; true"
-    }
+
+    // --- Runtime CONFIG channels (the `vpnhide 1 config` wire) ---
+    parts += ConfigChannels.javaWriteParts(ctx.debug, javaUids)
+    parts += ConfigChannels.nativeWriteParts(ctx.debug, nativeUids)
 
     // --- App hiding: observers (A) + hidden packages (auto-detected, stub) ---
     val existingHidden = TargetsCache.snapshot.value?.hiddenPkgs ?: emptySet()
-    val hiddenPkgs = resolveHiddenPackages(existingHidden, observerPkgs.toSet(), selfPkg)
+    val hiddenPkgs = resolveHiddenPackages(existingHidden, observerPkgs.toSet(), ctx.selfPkg)
     parts += appHidingSaveParts(header, hiddenPkgs, observerPkgs)
 
     // --- Ports (only when the module is installed) ---

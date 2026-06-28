@@ -58,7 +58,7 @@ Verify after reboot:
 ```bash
 adb shell "su -c 'lsmod | grep vpnhide'"
 adb shell "su -c 'dmesg | grep vpnhide'"
-adb shell "su -c 'cat /proc/vpnhide_targets'"
+adb shell "su -c 'cat /proc/vpnhide_ctl'"
 ```
 
 ## Troubleshooting
@@ -67,7 +67,7 @@ adb shell "su -c 'cat /proc/vpnhide_targets'"
 
 **`insmod: File exists`** — module already loaded. `rmmod vpnhide_kmod` first.
 
-**kretprobe not firing** — check `dmesg | grep vpnhide` for registration messages and `/proc/vpnhide_targets` for correct UIDs. Target app UIDs change on reinstall — re-resolve via the VPN Hide app.
+**kretprobe not firing** — check `dmesg | grep vpnhide` for registration messages and `/proc/vpnhide_ctl` for correct UIDs. Target app UIDs change on reinstall — re-resolve via the VPN Hide app.
 
 **`./kmod/build.py` says "neither podman nor docker found"** — install one (`dnf install podman` / `apt install docker.io`), or build natively against a local kernel source via `--kdir`.
 

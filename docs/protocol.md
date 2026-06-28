@@ -15,6 +15,14 @@ folded into config; the `.ko` channel is one folded node `/proc/vpnhide_ctl`
 (write=config, read=status+stats); KPM uses the `kpm ctl0` supercall (§7).
 Threat model: an **unprivileged** app — root-level detection is out of scope.
 
+> **Storage & activation live in [storage.md](storage.md).** This document is the
+> frozen **wire** spec (the bytes exchanged at runtime). The layer above it — a
+> single JSON canonical on disk, the activator that derives this wire for the
+> native backends, LSPosed reading the JSON directly (it does **not** consume this
+> wire), and the APatch superkey — is specified there, and supersedes the
+> storage-related statements in §1.3–§1.4, §6, and §7.4 below. The wire format
+> (§4–§5) is unchanged.
+
 ---
 
 ## 1. Architecture
@@ -65,7 +73,7 @@ in transport and in which records they carry (profiles, §6).
 
 | Channel | Write transport | Read transport | Reader runs in |
 |---|---|---|---|
-| app ↔ `.ko` | `echo > /proc/vpnhide_targets` | `cat /proc/vpnhide_stats` (seq_file) | kernel |
+| app ↔ `.ko` | `echo > /proc/vpnhide_ctl` | `cat /proc/vpnhide_ctl` (seq_file) | kernel |
 | app ↔ KPM | supercall `ctl0` (`args`) | supercall `ctl0` (`out_msg`) | kernel |
 | app ↔ Zygisk | `targets.txt` via module dir-fd | n/a (stats via §7 if added) | Zygisk process (zygote-forked) |
 | app ↔ LSPosed | `/data/system/vpnhide_*` files | same files | `system_server` |
@@ -532,13 +540,16 @@ the su-management supercalls allow):
   KPM if the `.ko` is loaded, §1.5), `kpatch kpm load vpnhide.kpm`, then apply the
   persisted config snapshot via `kpatch kpm ctl0`. Fully automatic, no user
   interaction. This is what we recommend users run.
-- **APatch, `c02`, superkey-required.** A boot script has no superkey, so it
-  **cannot** load or configure the KPM. It only writes a status flag
-  (`awaiting_superkey`) and may post a one-shot user notification (e.g. via
-  `am broadcast` to the app). Activation happens **in the app**: the user enters
-  the superkey, the app runs `kpatch <key> kpm load` + `ctl0`. The superkey is
-  held **session-only in memory** (matching APatch's own re-prompt model); no
-  at-rest persistence in v1 (an opt-in Keystore/biometric store is deferred).
+- **APatch, `c02`, superkey-required.** **By default** a boot script has no
+  superkey, so it **cannot** load or configure the KPM: it writes a status flag
+  (`awaiting_superkey`) and activation happens **in the app** (the user enters the
+  superkey, the app runs `kpatch <key> kpm load` + `ctl0`), with the key held
+  session-only in memory. **Superseded by [storage.md](storage.md) §6:** an opt-in
+  flag persists the key root-only at `/data/adb/vpnhide/superkey` (DE storage,
+  boot-readable), which lets the boot activator configure APatch at boot too —
+  parity with keyless KPatch-Next. The persisted key is a plain file (the boot
+  binary can't reach Android Keystore) and is safe under this threat model
+  (root-only, never unprivileged-readable).
 
 This keeps the smooth, zero-interaction KPM story on the recommended Magisk/KSU +
 KPatch-Next combo, and contains all the superkey friction in the APatch branch,

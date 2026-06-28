@@ -1,27 +1,33 @@
 #!/system/bin/sh
-# Copies zygisk targets to module dir and resolves lsposed targets at boot.
-# zygisk targets → module dir (read by Zygisk via get_module_dir() fd)
-# lsposed targets → /data/system/vpnhide_uids.txt
+# Resolves package names → UIDs at boot and writes a `vpnhide 1 config` snapshot
+# (docs/protocol.md) to each runtime channel — the same wire every backend
+# speaks. zygisk config → module dir (read by the .so via get_module_dir() fd),
+# lsposed config → /data/system/vpnhide_uids.txt. The debug flag is folded into
+# the config now (§4.3), so there is no separate debug_logging file to copy.
 
 ZYGISK_TARGETS="/data/adb/vpnhide_zygisk/targets.txt"
-ZYGISK_DEBUG_LOGGING="/data/adb/vpnhide_zygisk/debug_logging"
 LSPOSED_TARGETS="/data/adb/vpnhide_lsposed/targets.txt"
 MODULE_DIR="${0%/*}"
 SS_UIDS_FILE="/data/system/vpnhide_uids.txt"
+# Canonical persistent debug-logging flag; folded into each config's `debug`
+# line (§4.3). Absent ⇒ off (stealth-first default).
+SS_DEBUG_LOGGING="/data/system/vpnhide_debug_logging"
 
-# Copy zygisk targets to module dir so Zygisk can read via get_module_dir() fd.
-if [ -f "$ZYGISK_TARGETS" ]; then
-    cp "$ZYGISK_TARGETS" "$MODULE_DIR/targets.txt" 2>/dev/null
-fi
+DBG="$(cat "$SS_DEBUG_LOGGING" 2>/dev/null)"
+[ "$DBG" = 1 ] || DBG=0
 
-# Copy the persistent debug-logging flag into the module dir, same
-# pattern as targets.txt above — the .so reads it via the module dir
-# fd on every fork. The persistent file lives outside the module dir
-# so it survives module reinstall; this re-seed restores the module-
-# dir copy after a reinstall, before the user opens the app.
-if [ -f "$ZYGISK_DEBUG_LOGGING" ]; then
-    cp "$ZYGISK_DEBUG_LOGGING" "$MODULE_DIR/debug_logging" 2>/dev/null
-fi
+# Emit a `vpnhide 1 config` snapshot to stdout for a newline-separated UID list
+# (header + folded debug flag + one `target <uid> 0x3ff` line per UID). See the
+# matching helper in kmod/module/service.sh.
+emit_config() {
+    _uids="$1"
+    printf 'vpnhide 1 config\n'
+    printf 'debug %s\n' "$DBG"
+    [ -n "$_uids" ] && printf '%s\n' "$_uids" | while IFS= read -r u; do
+        [ -z "$u" ] && continue
+        printf 'target 0x%x 0x3ff\n' "$u"
+    done
+}
 
 # Wait until PackageManager has actually indexed user-installed apps.
 # `pm list packages` starts responding very early in boot but returns
@@ -79,7 +85,18 @@ ${expanded}"; fi
     [ -n "$uids" ] && echo "$uids"
 }
 
-# Resolve lsposed targets → /data/system/vpnhide_uids.txt
+# Resolve zygisk targets → config snapshot → module dir (read by the .so via
+# the get_module_dir() fd). The persistent package list lives outside the module
+# dir so it survives reinstall; this re-resolves it into the module-dir config
+# after a reinstall, before the user opens the app.
+if [ -f "$ZYGISK_TARGETS" ]; then
+    ZYGISK_UIDS="$(resolve_uids "$ZYGISK_TARGETS")"
+    printf '%s\n' "$(emit_config "$ZYGISK_UIDS")" > "$MODULE_DIR/targets.txt"
+    count="$(printf '%s\n' "$ZYGISK_UIDS" | grep -c .)"
+    log -t vpnhide "zygisk: applied config for $count target UIDs (debug=$DBG)"
+fi
+
+# Resolve lsposed targets → config snapshot → /data/system/vpnhide_uids.txt
 # Create persist dir if needed (for first-time installs)
 mkdir -p /data/adb/vpnhide_lsposed 2>/dev/null
 if [ -f "$LSPOSED_TARGETS" ]; then
@@ -88,19 +105,12 @@ if [ -f "$LSPOSED_TARGETS" ]; then
     # reads via the group bit; untrusted apps fall to "other" and get EACCES.
     # Default 0644 was a fingerprint vector — `/data/system/` itself is mode
     # 0775 traversable by untrusted, so any o+r file is enumerable + readable.
-    if [ -n "$LSPOSED_UIDS" ]; then
-        echo "$LSPOSED_UIDS" > "$SS_UIDS_FILE"
-        chmod 640 "$SS_UIDS_FILE"
-        chown root:system "$SS_UIDS_FILE"
-        chcon u:object_r:system_data_file:s0 "$SS_UIDS_FILE" 2>/dev/null
-        count="$(echo "$LSPOSED_UIDS" | wc -l)"
-        log -t vpnhide "zygisk: wrote $count lsposed UIDs to $SS_UIDS_FILE"
-    else
-        echo > "$SS_UIDS_FILE"
-        chmod 640 "$SS_UIDS_FILE"
-        chown root:system "$SS_UIDS_FILE"
-        log -t vpnhide "zygisk: no lsposed UIDs resolved"
-    fi
+    printf '%s\n' "$(emit_config "$LSPOSED_UIDS")" > "$SS_UIDS_FILE"
+    chmod 640 "$SS_UIDS_FILE"
+    chown root:system "$SS_UIDS_FILE"
+    chcon u:object_r:system_data_file:s0 "$SS_UIDS_FILE" 2>/dev/null
+    count="$(printf '%s\n' "$LSPOSED_UIDS" | grep -c .)"
+    log -t vpnhide "zygisk: wrote lsposed config for $count UIDs to $SS_UIDS_FILE"
 fi
 
 # Migrate pre-PR files written by older versions with mode 0644: any

@@ -1,5 +1,14 @@
 # Persistent state — every path the project touches
 
+> **Heads-up — storage redesign.** This catalogue describes the **current**
+> implementation (per-backend text files). The **target** storage & activation
+> architecture — one JSON canonical (`/data/system/vpnhide_config.json`) from
+> which an activator derives the runtime channels, LSPosed reading that JSON
+> directly, the four per-backend `targets.txt` + the `vpnhide_*` /data/system
+> files folding into the canonical, and the APatch superkey at
+> `/data/adb/vpnhide/superkey` — is specified in [storage.md](storage.md). Entries
+> below that it supersedes will be updated when that lands.
+
 Reference catalogue for everyone (humans, agents) trying to answer
 "where is this stored?" / "who reads X?" / "what survives a reboot?".
 
@@ -27,16 +36,15 @@ persistent dirs of section 2.
 ### `/data/adb/modules/vpnhide_kmod/`
 - `module.prop` — module metadata + stamped `gkiVariant=` and `version=`. Read by app dashboard (`DashboardData.kt:382` `parseModuleProp`).
 - `post-fs-data.sh` — runs at boot, attempts `insmod vpnhide_kmod.ko`, writes diagnostics into the persistent dir.
-- `service.sh` — runs after boot, reads `targets.txt`, resolves UIDs, writes `/proc/vpnhide_targets`.
+- `service.sh` — runs after boot, reads `targets.txt`, resolves UIDs, emits a `vpnhide 1 config` snapshot to `/proc/vpnhide_ctl`.
 - `vpnhide_kmod.ko` — the kernel module binary itself.
 
 ### `/data/adb/modules/vpnhide_zygisk/`
 - `module.prop` — module metadata.
 - `customize.sh` — install-time hook; seeds persistent dir, migrates legacy targets.
-- `service.sh` — boot script; copies persistent `targets.txt` and `debug_logging` into module dir so the Zygisk loader's `get_module_dir()` fd sees them.
+- `service.sh` — boot script; resolves the persistent `targets.txt` package list → UIDs and writes a `vpnhide 1 config` snapshot here so the Zygisk loader's `get_module_dir()` fd sees it.
 - `zygisk/arm64-v8a.so` — Rust cdylib injected into every forked app by NeoZygisk.
-- `targets.txt` — **boot-time copy** of the canonical persistent file (`/data/adb/vpnhide_zygisk/targets.txt`). Loader reads via fd, not path. (`zygisk/module/service.sh`, `zygisk/src/lib.rs`)
-- `debug_logging` — `"0"` or `"1"`. **Boot-time copy** of `/data/adb/vpnhide_zygisk/debug_logging` (canonical). The app also writes both paths directly via su on every toggle, so the module-dir mirror stays current between reinstall and reboot. Read by zygisk module on init via the module dir fd.
+- `targets.txt` — a `vpnhide 1 config` snapshot (resolved UIDs + folded `debug`), re-emitted at boot from the canonical persistent package list (`/data/adb/vpnhide_zygisk/targets.txt`) and on Save by the app. The loader parses it via fd, not path. (`zygisk/module/service.sh`, `zygisk/src/lib.rs`) — debug is folded in now, so there is no separate `debug_logging` file.
 
 ### `/data/adb/modules/vpnhide_ports/`
 - `module.prop`.
@@ -68,8 +76,7 @@ was written this boot" vs. "stale from last boot".
 ### `/data/adb/vpnhide_zygisk/`
 | File | Format | Writer | Reader | Lifetime |
 |---|---|---|---|---|
-| `targets.txt` | one pkg per line | app via su; `zygisk/module/customize.sh` migrates from legacy in-module location | copied into module dir by `zygisk/module/service.sh` at boot | persistent |
-| `debug_logging` | single byte `"0"` or `"1"` | app via su (`DebugLoggingPrefs.kt::writeDebugFlagFiles`, part of the persistent toggle fan-out) | copied into module dir by `zygisk/module/service.sh` at boot, where the .so reads it via `get_module_dir()` fd | persistent |
+| `targets.txt` | one pkg per line (canonical package list; NOT the wire) | app via su; `zygisk/module/customize.sh` migrates from legacy in-module location | `zygisk/module/service.sh` at boot resolves it → UIDs → emits the module-dir config | persistent |
 
 ### `/data/adb/vpnhide_ports/`
 | File | Format | Writer | Reader | Lifetime |
@@ -99,11 +106,11 @@ enumerable + readable.
 
 | File | Format | Writer | Reader | Lifetime |
 |---|---|---|---|---|
-| `vpnhide_uids.txt` | one UID per line (integer) | `kmod/module/service.sh` and `zygisk/module/service.sh` resolve `targets.txt` → UIDs at boot; app via su after Save | LSPosed hook in system_server; `HookEntry.kt:174` first-call read + FileObserver (`HookEntry.kt:346`) for live reload | persistent (rewritten at boot + on save) |
+| `vpnhide_uids.txt` | a `vpnhide 1 config` snapshot (docs/protocol.md): header + `debug` + `target <uid> <mask>` lines | `kmod/module/service.sh` and `zygisk/module/service.sh` resolve `targets.txt` → UIDs and emit the config at boot; app via su (`ConfigChannels`) after Save / at startup reconcile | LSPosed hook in system_server; `SystemServerTargetUidCache` parses the config (`Protocol.parseConfig`) + FileObserver for live reload | persistent (rewritten at boot + on save) |
 | `vpnhide_hidden_pkgs.txt` | one pkg per line | app via su when user picks "Apps to hide from PackageManager" | `PackageVisibilityHooks.kt:124` + FileObserver | persistent |
 | `vpnhide_observer_uids.txt` | one UID per line | app via su | `PackageVisibilityHooks.kt:111` + FileObserver | persistent |
 | `vpnhide_hook_active` | `key=value`: `version`, `boot_id`, `timestamp`, `aosp_sdk`, optional `broken_fields` | `HookEntry.kt:312-339` `writeHookStatusFile` (in system_server) | app dashboard (`DashboardData.kt:805` reads via su); compares `boot_id` to detect stale records | per-boot |
-| `vpnhide_debug_logging` | single byte `"0"` or `"1"` | app via su (`DebugLoggingPrefs.kt::writeDebugFlagFiles`) | LSPosed hooks via `HookLog.reload` + FileObserver (`HookLog.kt:30-43`); `kmod/module/service.sh` re-seeds `/proc/vpnhide_debug` from this file at boot; surfaced as a Dashboard warning (`DashboardData.kt:991`) | persistent |
+| `vpnhide_debug_logging` | single byte `"0"` or `"1"` | app via su (`DebugLoggingPrefs.kt::writeDebugFlagFiles`) | LSPosed hooks via `HookLog.reload` + FileObserver (`HookLog.kt:30-43`); the boot scripts read it as the source for the `debug` line they fold into each config; surfaced as a Dashboard warning | persistent — the single canonical debug flag |
 
 **FileObservers** in `HookEntry.kt` and `PackageVisibilityHooks.kt`
 watch `/data/system/` for `CREATE | CLOSE_WRITE | MOVED_TO | MODIFY`
@@ -113,8 +120,10 @@ hooks **without any IPC or restart**.
 
 ### Debug-logging fan-out
 
-The "Debug logging" toggle in Diagnostics drives **four sinks** from
-one writer (`DebugLoggingPrefs.kt::applyDebugLoggingRuntime`):
+Debug is **folded into the control config** (the `debug` line, protocol §4.3),
+so the kmod and zygisk learn it from their config snapshot — there is no longer
+a per-backend debug node/file. One canonical persistent flag remains for the
+parts that can't take a config: `/data/system/vpnhide_debug_logging`.
 
 ```
 toggle ON/OFF
@@ -123,29 +132,18 @@ toggle ON/OFF
 applyDebugLoggingRuntime(enabled)
     ├─ VpnHideLog.enabled = enabled                          (1) app process — instant, in-memory
     └─ writeDebugFlagFiles (one batched su):
-         ├─ /data/system/vpnhide_debug_logging               (2) system_server — ~10ms via inotify FileObserver
-         ├─ /data/adb/vpnhide_zygisk/debug_logging           (3a) zygisk persistent — survives module reinstall
-         ├─ /data/adb/modules/vpnhide_zygisk/debug_logging   (3b) zygisk module-dir mirror — read by .so on next fork
-         └─ /proc/vpnhide_debug                              (4) kmod — instant if loaded, else no-op
+         ├─ /data/system/vpnhide_debug_logging               (2) the single canonical flag: system_server hook
+         │                                                       reads it live (HookLog inotify); boot scripts read
+         │                                                       it as the source for each config's `debug` line
+         └─ ConfigChannels.reconcileCommand(snapshot, enabled) re-emits the runtime config to
+              ├─ /proc/vpnhide_ctl                           (3) kmod — picks up the new flag on write, if loaded
+              └─ /data/adb/modules/vpnhide_zygisk/targets.txt (4) zygisk — folded into its config; takes effect on
+                                                                  the target app's next restart, as targets always have
 ```
 
-`/data/system/vpnhide_debug_logging` is the canonical persistent
-source-of-truth on disk for everything except zygisk; zygisk has its
-own canonical at `/data/adb/vpnhide_zygisk/debug_logging` because
-the .so reads via the module-dir fd, not via system_data_file path.
-
-Boot-time re-seeding makes the persistent toggle survive reboots
-without the app needing to open:
-
-- `kmod/module/service.sh` copies `/data/system/vpnhide_debug_logging`
-  → `/proc/vpnhide_debug` (in-kernel state lost on every boot).
-- `zygisk/module/service.sh` copies `/data/adb/vpnhide_zygisk/debug_logging`
-  → `/data/adb/modules/vpnhide_zygisk/debug_logging` (module-dir
-  mirror lost on every module reinstall).
-
-`MainActivity.onCreate` re-propagates from SharedPrefs to all four
-sinks at every app launch as a safety-net for "user reinstalled a
-module mid-session and didn't reboot before opening the app".
+Boot-time: each module's `service.sh` reads `/data/system/vpnhide_debug_logging`
+and folds it into the `debug` line of the config it emits, so the persistent
+toggle survives reboots without the app needing to open.
 
 Errors (`Log.e` / `HookLog.e` / Rust `error!`) always print
 regardless of the toggle — these fire at most once per process /
@@ -154,21 +152,22 @@ attach"-class problems happen.
 
 ---
 
-## 4. Kernel module ABI — `/proc/vpnhide_*`
+## 4. Kernel module ABI — `/proc/vpnhide_ctl`
 
 Created by `kmod/vpnhide_kmod.c` at module init via `proc_create()`,
-removed at module exit. Mode `0600`, root-only.
+removed at module exit. Mode `0600`, root-only. One folded control+stats
+node (protocol §OPEN-4) — it replaced the old `/proc/vpnhide_targets`
+(decimal UID list) + `/proc/vpnhide_debug` nodes.
 
 | Path | Format | Writer | Reader (kernel side) |
 |---|---|---|---|
-| `/proc/vpnhide_targets` | one UID per line; write replaces full set | root userspace: `kmod/module/service.sh` writes resolved UIDs at boot; LSPosed app via su after Save | `vpnhide_kmod.c` `targets_write` handler — caches UIDs in kernel memory, consulted by every kretprobe handler |
-| `/proc/vpnhide_debug` | `"1"` enables, `"0"` disables verbose `pr_info` from kretprobes | app via `DebugLoggingPrefs.kt::writeDebugFlagFiles` (part of the persistent toggle fan-out, see § 3); `kmod/module/service.sh` re-seeds at boot from `/data/system/vpnhide_debug_logging` | `READ_ONCE(debug_enabled)` in every probe handler |
+| `/proc/vpnhide_ctl` (write) | a `vpnhide 1 config` snapshot — `debug` line + `target <uid> <hookmask>` lines; write replaces full state, rejected-whole on a bad header | root userspace: `kmod/module/service.sh` emits the config at boot; the app via su (`ConfigChannels`) after Save / at startup reconcile | `vpnhide_kmod.c` `ctl_write` → shared `vpnhide_parse_config` — caches per-UID hook masks + the debug flag, consulted by every kretprobe handler (`hook_active`) |
+| `/proc/vpnhide_ctl` (read) | a self-documenting banner + `status` (backend/kver/installed-hook mask/error) + `stats` (counters TODO) | — | `ctl_show` via the shared `vpnhide_format_status`/`vpnhide_format_stats` |
 
-Both files are **per-boot, in-kernel state only**. Unloading the
-module (or rebooting) wipes the in-kernel state; service.sh re-seeds
-both at next boot — `/proc/vpnhide_targets` from
-`/data/adb/vpnhide_kmod/targets.txt`, and `/proc/vpnhide_debug` from
-`/data/system/vpnhide_debug_logging`.
+The state is **per-boot, in-kernel only**. Unloading the module (or
+rebooting) wipes it; service.sh re-emits the config at next boot from
+`/data/adb/vpnhide_kmod/targets.txt` (package names → resolved UIDs),
+folding the debug flag from `/data/system/vpnhide_debug_logging`.
 
 ---
 
@@ -275,12 +274,13 @@ post-fs-data.sh phase (root, before zygote):
 service.sh phase (root, after boot_completed-ish):
   kmod/module/service.sh
     → resolve /data/adb/vpnhide_kmod/targets.txt → UIDs
-    → write /proc/vpnhide_targets
-    → write /data/system/vpnhide_uids.txt
+    → emit `vpnhide 1 config` → /proc/vpnhide_ctl
+    → emit `vpnhide 1 config` → /data/system/vpnhide_uids.txt
   zygisk/module/service.sh
-    → cp /data/adb/vpnhide_zygisk/targets.txt → /data/adb/modules/vpnhide_zygisk/targets.txt
+    → resolve /data/adb/vpnhide_zygisk/targets.txt → UIDs
+      → emit `vpnhide 1 config` → /data/adb/modules/vpnhide_zygisk/targets.txt
     → resolve /data/adb/vpnhide_lsposed/targets.txt → UIDs
-    → append/merge into /data/system/vpnhide_uids.txt
+      → emit `vpnhide 1 config` → /data/system/vpnhide_uids.txt
   portshide/module/service.sh
     → wait for netd
     → /data/adb/modules/vpnhide_ports/vpnhide_ports_apply.sh
@@ -307,7 +307,7 @@ zygote forks an app (NeoZygisk):
 
 | Lifetime class | Examples |
 |---|---|
-| **In-kernel only (per-boot, volatile)** | `/proc/vpnhide_targets`, `/proc/vpnhide_debug`, iptables `vpnhide_out{,6}` chains |
+| **In-kernel only (per-boot, volatile)** | `/proc/vpnhide_ctl` (config + status/stats), iptables `vpnhide_out{,6}` chains |
 | **Per-boot** (overwritten each boot by service scripts) | `/data/adb/vpnhide_kmod/load_status`, `/data/adb/vpnhide_kmod/load_dmesg`, `/data/system/vpnhide_uids.txt`, `/data/system/vpnhide_hook_active` |
 | **Per-app-launch** (overwritten on each fork) | `<app-filesDir>/vpnhide_zygisk_active` |
 | **Persistent — survives reboot, module reinstall, app reinstall** | `/data/adb/vpnhide_*/targets.txt`, `/data/adb/vpnhide_ports/observers.txt`, `/data/system/vpnhide_hidden_pkgs.txt`, `/data/system/vpnhide_observer_uids.txt`, `/data/system/vpnhide_debug_logging` |

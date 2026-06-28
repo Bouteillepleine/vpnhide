@@ -232,7 +232,7 @@ internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): S
     __VPNHIDE_PM_PACKAGES_FUNCTION__
     phase_proc_exists() {
       phase_start shell_probe_proc_exists
-      emit_eval proc_exists '[ -f $PROC_TARGETS ] && echo 1 || echo 0'
+      emit_eval proc_exists '[ -e $PROC_CTL ] && echo 1 || echo 0'
       phase_end
     }
     phase_ports_chain() {
