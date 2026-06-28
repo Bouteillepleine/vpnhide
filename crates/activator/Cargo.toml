@@ -26,3 +26,6 @@ path = "src/bin/kpm.rs"
 name = "zygisk"
 path = "src/bin/zygisk.rs"
 
+[[bin]]
+name = "ports"
+path = "src/bin/ports.rs"

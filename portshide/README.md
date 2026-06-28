@@ -7,8 +7,9 @@ via `connect(127.0.0.1, PORT)` / `connect(::1, PORT)`.
 
 ## How it works
 
-A small shell script installs `iptables` / `ip6tables` rules inside a
-dedicated chain `vpnhide_out` / `vpnhide_out6`:
+A small Rust activator reads `/data/system/vpnhide_config.json`, resolves
+packages through PackageManager, and installs `iptables` / `ip6tables` rules
+inside a dedicated chain `vpnhide_out` / `vpnhide_out6`:
 
 ```
 iptables -A vpnhide_out -m owner --uid-owner <UID> -d 127.0.0.1 -p tcp -j REJECT --reject-with tcp-reset
@@ -29,7 +30,7 @@ beside them and is idempotently re-applied on every config change.
 Pick `vpnhide-ports.zip` in the KernelSU-Next or Magisk manager and
 install. Reboot not strictly required — rules apply on next boot via
 `service.sh`, or immediately if you manage observers through the VPN
-Hide app (it invokes `vpnhide_ports_apply.sh` via `su`).
+Hide app (it invokes the ports activator via `su`).
 
 ## Configuration
 
@@ -43,7 +44,7 @@ Managed by the VPN Hide app (Protection -> Ports). Direct shell alternative:
 Then:
 
 ```sh
-su -c sh /data/adb/modules/vpnhide_ports/vpnhide_ports_apply.sh
+su -c /data/adb/modules/vpnhide_ports/activator
 ```
 
 ## Why just localhost, and why for selected apps only
@@ -67,7 +68,7 @@ su -c sh /data/adb/modules/vpnhide_ports/vpnhide_ports_apply.sh
   `bw_OUTPUT` readiness).
 - Some Android versions rebuild `OUTPUT` on network state changes.
   Our rules in our own chain survive; only the `OUTPUT -j vpnhide_out`
-  jump can be affected. Re-run apply script if needed; the VPN Hide
+  jump can be affected. Re-run the activator if needed; the VPN Hide
   app's Save action does this automatically.
 - `iptables-legacy` backend expected (default on AOSP 16 as of this
   writing). nftables backend via `iptables-nft` also works — same

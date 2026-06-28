@@ -136,11 +136,11 @@ jobs:
             apt-get update -qq && apt-get install -y --no-install-recommends shellcheck >/dev/null
           fi
           shellcheck -x -e SC2034,SC3043 \
-            kmod/module/customize.sh kmod/module/post-fs-data.sh kmod/module/service.sh \
-            kmod/kpm/module/customize.sh kmod/kpm/module/post-fs-data.sh kmod/kpm/module/service.sh \
-            zygisk/module/customize.sh zygisk/module/service.sh \
+            kmod/module/customize.sh kmod/module/post-fs-data.sh kmod/module/service.sh kmod/module/uninstall.sh \
+            kmod/kpm/module/customize.sh kmod/kpm/module/post-fs-data.sh kmod/kpm/module/service.sh kmod/kpm/module/uninstall.sh \
+            zygisk/module/customize.sh zygisk/module/service.sh zygisk/module/uninstall.sh \
             portshide/module/customize.sh portshide/module/service.sh \
-            portshide/module/uninstall.sh portshide/module/vpnhide_ports_apply.sh \
+            portshide/module/uninstall.sh \
             scripts/clean-device.sh scripts/update-json.sh \
             kmod/test/run.sh kmod/test/build-kernel.sh kmod/test/init.sh
 
@@ -572,11 +572,30 @@ jobs:
           if-no-files-found: error
 
   portshide:
+    needs: setup
     runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.setup.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - name: Mark workspace safe
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
+            target
+          key: cargo-${{ runner.os }}-portshide-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-portshide-
 
       - name: Package ports module zip
         env:

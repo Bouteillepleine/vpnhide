@@ -8,9 +8,9 @@ defines the single on-disk source of truth those bytes are derived from.
 > **Status.** This is the **target** design. The current code (the control-protocol
 > migration, PR #164) is an interim step: it puts the text protocol on *every*
 > backend with per-backend text files. This document is where that converges —
-> one JSON canonical + an activator that derives the wire for the native
-> backends, with LSPosed reading the JSON directly. Sections below note where the
-> current code differs.
+> one JSON canonical + activators that derive runtime state for the native and
+> ports backends, with LSPosed reading the JSON directly. Sections below note
+> where the current code differs.
 
 ---
 
@@ -20,8 +20,8 @@ Two formats, by role — not one format stretched over everything:
 
 - **On disk = JSON.** A single canonical "desired state" file. Package-keyed (so it
   survives reinstalls), rich (roles, per-hook selection, debug, app settings),
-  trivially import/export-able. Read by the app (Kotlin) and the LSPosed hook
-  (Kotlin) and the activator (Rust).
+  trivially import/export-able. Read by the app (Kotlin), the LSPosed hook
+  (Kotlin), and the Rust activators.
 - **Runtime IPC = the text protocol** ([protocol.md](protocol.md), v1 frozen).
   uid-keyed, hand-parsed, kernel-safe. The runtime wire for the **native**
   backends only (kmod / KPM / Zygisk): config in, stats/status out.
@@ -139,11 +139,13 @@ warns/errors and asks the user to remove the extra otherwise). So the activator
 never writes "all three": it writes the **one** channel of the one installed native
 backend.
 
-### 4.1 The activator — a Rust workspace, three thin bins
+### 4.1 The activator — a Rust workspace, thin bins
 
 The projection is *identical* for all three native backends (take the `native`-role
 packages → resolve to UIDs → emit a `vpnhide 1 config` snapshot); only the
-**delivery sink** differs. So: one shared core, three thin per-target front-ends.
+**delivery sink** differs. Ports use the same canonical parser and package→UID
+resolver, but project `ports: true` roles into iptables rules instead of the text
+wire. So: one shared core, thin per-target front-ends.
 
 ```
 crates/
@@ -158,25 +160,28 @@ crates/
     src/bin/kmod.rs         #   project_native(json) → write("/proc/vpnhide_ctl")
     src/bin/kpm.rs          #   project_native(json) → `kpatch [key] kpm ctl0`
     src/bin/zygisk.rs       #   project_native(json) → write_atomic(module_dir file)
+    src/bin/ports.rs        #   project_ports(json) → iptables-restore/ip6tables-restore
 ```
 
 - **Why a workspace, not feature-flags or one crate with `src/bin/`+cdylib:**
   `cdylib` and `bin` are different crate-types; feature-flags don't select artifact
   type. A single crate that is *both* a cdylib and a bin risks pulling `serde` into
   the injected `.so`. The workspace keeps the `.so`'s dependency tree lean (protocol
-  only) while the activator (a normal executable) freely uses `serde`. The three
+  only) while the activator (a normal executable) freely uses `serde`. The
   **activators are executables**, so they fit `src/bin/` perfectly over a shared
   `src/lib.rs`.
 - **Each native module ships only its own activator bin** (kmod module → `kmod`,
   KPM module → `kpm`, Zygisk module → `zygisk`). Each does exactly its one channel,
   no detection, no runtime branching.
+- **The ports module ships `ports`**, which reads the same canonical JSON but applies
+  iptables state instead of writing the native text protocol.
 - **When it runs:** at boot from that module's `service.sh` as
   `activator --boot-wait`, and on Save from the app (`su <path>/activator`).
   Boot mode waits indefinitely for PackageManager readiness; Save mode keeps a
   bounded wait so the UI cannot hang forever. Then it reads the canonical,
   resolves, and writes its channel.
 
-### 4.2 The three channels
+### 4.2 The native channels
 
 | Backend | Channel | Kind | Note |
 |---|---|---|---|
@@ -360,7 +365,8 @@ app builds it **once** from whatever old per-backend text files exist (package
 lists, observers, hidden, debug flag), writes the canonical, then runs the
 activator. After that the old files are unused; app startup removes the retired
 legacy inputs best-effort once canonical JSON exists. The canonical is the single
-source from then on.
+source from then on. Keep the legacy read paths for a few public releases as a
+migration shim, then remove them.
 
 ---
 

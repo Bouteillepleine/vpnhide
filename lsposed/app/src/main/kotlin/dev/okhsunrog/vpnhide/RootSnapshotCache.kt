@@ -206,6 +206,8 @@ internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): S
     phase_target_files() {
       phase_start target_files
       emit_file canonical_config $CANONICAL_CONFIG_FILE
+      # Migration shim: the legacy files below are read only when canonical JSON
+      # is absent. Remove after a few public releases with the ShellUtils consts.
       emit_file kmod_targets $KMOD_TARGETS
       emit_file zygisk_targets $ZYGISK_TARGETS
       emit_file kpm_targets $KPM_TARGETS

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fs;
 use std::io::ErrorKind;
@@ -6,6 +7,7 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::process::Stdio;
 use std::thread;
 use std::time::Duration;
 
@@ -24,6 +26,8 @@ pub const KPM_MODULE_FILE: &str = "/data/adb/modules/vpnhide_kpm/vpnhide.kpm";
 pub const SUPERKEY_FILE: &str = "/data/adb/vpnhide/superkey";
 const APP_PACKAGE: &str = "dev.okhsunrog.vpnhide";
 const KPM_NAME: &str = "vpnhide";
+const PORTS_CHAIN4: &str = "vpnhide_out";
+const PORTS_CHAIN6: &str = "vpnhide_out6";
 const MAX_NATIVE_TARGETS: usize = 64;
 const PM_READY_ATTEMPTS: u32 = 60;
 
@@ -193,6 +197,48 @@ pub fn project_native_with_resolver(cfg: &CanonicalConfig, resolver: &PackageUid
     format_config(cfg.debug, &targets)
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PortsRuleset {
+    pub ipv4: String,
+    pub ipv6: String,
+    pub target_count: usize,
+}
+
+pub fn project_ports(json: &str) -> Result<PortsRuleset> {
+    project_ports_with_pm_wait(json, PmReadyWait::Bounded(PM_READY_ATTEMPTS))
+}
+
+fn project_ports_with_pm_wait(json: &str, wait: PmReadyWait) -> Result<PortsRuleset> {
+    let cfg = parse_canonical(json)?;
+    if !has_ports_targets(&cfg) {
+        return Ok(project_ports_with_resolver(&cfg, &PackageUidMap::default()));
+    }
+    let resolver = PackageUidMap::from_pm_with_wait(wait)?;
+    Ok(project_ports_with_resolver(&cfg, &resolver))
+}
+
+pub fn project_ports_with_resolver(
+    cfg: &CanonicalConfig,
+    resolver: &PackageUidMap,
+) -> PortsRuleset {
+    let mut uids = BTreeSet::<u32>::new();
+    for (pkg, app) in &cfg.apps {
+        if !app.ports {
+            continue;
+        }
+        for uid in resolver.uids_for(pkg) {
+            if *uid >= 10_000 {
+                uids.insert(*uid);
+            }
+        }
+    }
+    PortsRuleset {
+        ipv4: build_ports_ruleset(PORTS_CHAIN4, "127.0.0.1", "icmp-port-unreachable", &uids),
+        ipv6: build_ports_ruleset(PORTS_CHAIN6, "::1", "icmp6-port-unreachable", &uids),
+        target_count: uids.len(),
+    }
+}
+
 pub fn read_canonical() -> Result<String> {
     match fs::read_to_string(CANONICAL_CONFIG) {
         Ok(raw) => Ok(raw),
@@ -253,6 +299,19 @@ fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Resu
     run_kpm_ctl0(&kpatch, key.as_deref(), &wire)
 }
 
+pub fn activate_ports() -> Result<()> {
+    activate_ports_with_pm_wait(PmReadyWait::Bounded(PM_READY_ATTEMPTS))
+}
+
+pub fn activate_ports_boot() -> Result<()> {
+    activate_ports_with_pm_wait(PmReadyWait::Forever)
+}
+
+fn activate_ports_with_pm_wait(wait: PmReadyWait) -> Result<()> {
+    let rules = project_ports_with_pm_wait(&read_canonical()?, wait)?;
+    apply_ports_rules(&rules)
+}
+
 pub fn boot_wait_requested_from_env() -> Result<bool> {
     let mut boot_wait = false;
     for arg in std::env::args().skip(1) {
@@ -270,6 +329,10 @@ pub fn boot_wait_requested_from_env() -> Result<bool> {
 
 fn has_native_targets(cfg: &CanonicalConfig) -> bool {
     cfg.apps.values().any(|app| app.native.hookmask().is_some())
+}
+
+fn has_ports_targets(cfg: &CanonicalConfig) -> bool {
+    cfg.apps.values().any(|app| app.ports)
 }
 
 fn empty_canonical_json() -> &'static str {
@@ -426,6 +489,75 @@ fn kpatch_command(kpatch: &Path, key: Option<&str>) -> Command {
     cmd
 }
 
+fn build_ports_ruleset(
+    chain: &str,
+    loopback: &str,
+    udp_reject: &str,
+    uids: &BTreeSet<u32>,
+) -> String {
+    let mut out = String::new();
+    out.push_str("*filter\n");
+    out.push_str(&format!(":{chain} - [0:0]\n"));
+    for uid in uids {
+        out.push_str(&format!(
+            "-A {chain} -m owner --uid-owner {uid} -d {loopback} -p tcp -j REJECT --reject-with tcp-reset\n",
+        ));
+        out.push_str(&format!(
+            "-A {chain} -m owner --uid-owner {uid} -d {loopback} -p udp -j REJECT --reject-with {udp_reject}\n",
+        ));
+    }
+    out.push_str(&format!("-A {chain} -j RETURN\n"));
+    out.push_str("COMMIT\n");
+    out
+}
+
+fn apply_ports_rules(rules: &PortsRuleset) -> Result<()> {
+    let _ = Command::new("iptables").args(["-N", PORTS_CHAIN4]).status();
+    let _ = Command::new("ip6tables")
+        .args(["-N", PORTS_CHAIN6])
+        .status();
+
+    let rc4 = run_with_stdin("iptables-restore", &["--noflush"], &rules.ipv4)?;
+    let rc6 = run_with_stdin("ip6tables-restore", &["--noflush"], &rules.ipv6)?;
+
+    ensure_output_jump("iptables", PORTS_CHAIN4)?;
+    ensure_output_jump("ip6tables", PORTS_CHAIN6)?;
+
+    if !rc4.success() || !rc6.success() {
+        return Err(format!("ports apply failed: rc4={rc4} rc6={rc6}").into());
+    }
+    Ok(())
+}
+
+fn run_with_stdin(program: &str, args: &[&str], stdin: &str) -> Result<std::process::ExitStatus> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .spawn()?;
+    {
+        let pipe = child.stdin.as_mut().ok_or("stdin pipe unavailable")?;
+        pipe.write_all(stdin.as_bytes())?;
+    }
+    Ok(child.wait()?)
+}
+
+fn ensure_output_jump(program: &str, chain: &str) -> Result<()> {
+    let check = Command::new(program)
+        .args(["-C", "OUTPUT", "-j", chain])
+        .status()?;
+    if check.success() {
+        return Ok(());
+    }
+    let insert = Command::new(program)
+        .args(["-I", "OUTPUT", "-j", chain])
+        .status()?;
+    if insert.success() {
+        Ok(())
+    } else {
+        Err(format!("{program} failed to insert OUTPUT jump to {chain}: {insert}").into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -489,6 +621,68 @@ mod tests {
                 "sock_ioctl".to_owned()
             ]),
         );
+    }
+
+    #[test]
+    fn projects_ports_roles_to_iptables_rulesets() {
+        let cfg = parse_canonical(
+            r#"{
+              "version": 1,
+              "apps": {
+                "com.example.disabled": { "ports": false },
+                "com.example.ports": { "ports": true },
+                "com.example.system": { "ports": true }
+              }
+            }"#,
+        )
+        .unwrap();
+        let resolver = parse_pm_packages(
+            "package:com.example.ports uid:10123,1010123\n\
+             package:com.example.system uid:999\n\
+             package:com.example.disabled uid:10345\n",
+        );
+
+        let rules = project_ports_with_resolver(&cfg, &resolver);
+
+        assert_eq!(rules.target_count, 2);
+        assert_eq!(
+            rules.ipv4,
+            "*filter\n\
+             :vpnhide_out - [0:0]\n\
+             -A vpnhide_out -m owner --uid-owner 10123 -d 127.0.0.1 -p tcp -j REJECT --reject-with tcp-reset\n\
+             -A vpnhide_out -m owner --uid-owner 10123 -d 127.0.0.1 -p udp -j REJECT --reject-with icmp-port-unreachable\n\
+             -A vpnhide_out -m owner --uid-owner 1010123 -d 127.0.0.1 -p tcp -j REJECT --reject-with tcp-reset\n\
+             -A vpnhide_out -m owner --uid-owner 1010123 -d 127.0.0.1 -p udp -j REJECT --reject-with icmp-port-unreachable\n\
+             -A vpnhide_out -j RETURN\n\
+             COMMIT\n",
+        );
+        assert_eq!(
+            rules.ipv6,
+            "*filter\n\
+             :vpnhide_out6 - [0:0]\n\
+             -A vpnhide_out6 -m owner --uid-owner 10123 -d ::1 -p tcp -j REJECT --reject-with tcp-reset\n\
+             -A vpnhide_out6 -m owner --uid-owner 10123 -d ::1 -p udp -j REJECT --reject-with icmp6-port-unreachable\n\
+             -A vpnhide_out6 -m owner --uid-owner 1010123 -d ::1 -p tcp -j REJECT --reject-with tcp-reset\n\
+             -A vpnhide_out6 -m owner --uid-owner 1010123 -d ::1 -p udp -j REJECT --reject-with icmp6-port-unreachable\n\
+             -A vpnhide_out6 -j RETURN\n\
+             COMMIT\n",
+        );
+    }
+
+    #[test]
+    fn projects_shared_fixture_ports_role() {
+        let cfg =
+            parse_canonical(include_str!("../../../testdata/storage_config_v1.json")).unwrap();
+        let resolver = parse_pm_packages(
+            "package:org.example.proxy uid:10177\n\
+             package:com.example.bank uid:10178\n",
+        );
+
+        let rules = project_ports_with_resolver(&cfg, &resolver);
+
+        assert_eq!(rules.target_count, 1);
+        assert!(rules.ipv4.contains("--uid-owner 10177"));
+        assert!(!rules.ipv4.contains("--uid-owner 10178"));
     }
 
     #[test]

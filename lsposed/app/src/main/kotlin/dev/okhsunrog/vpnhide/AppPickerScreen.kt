@@ -135,8 +135,8 @@ fun AppPickerScreen(
 /**
  * Build the single root command that persists every role at once. The canonical
  * JSON is the single persistent source of truth. Native backends are updated by
- * running the installed activator; LSPosed reads the JSON directly; ports apply
- * script derives its observer set from the same JSON.
+ * running the installed activator; LSPosed reads the JSON directly; the ports
+ * activator derives its observer set from the same JSON.
  */
 private fun buildUnifiedSaveCommand(
     ctx: SaveContext,
@@ -164,7 +164,7 @@ private fun buildUnifiedSaveCommand(
 
     parts += ConfigChannels.nativeWriteParts()
 
-    parts += "if [ -d $PORTS_MODULE_DIR ]; then sh $PORTS_APPLY_SCRIPT; fi"
+    parts += "if [ -x $PORTS_ACTIVATOR ]; then $PORTS_ACTIVATOR; fi"
 
     return parts.joinToString(" ; ")
 }

@@ -25,9 +25,8 @@ The single managed desired-state file.
 - Writer: VPN Hide app via `su` (`StorageConfig.kt`) on Save, startup
   migration/self-target preparation, debug toggle, and APatch SuperKey setting.
 - Readers:
-  - Rust activator bins (`crates/activator`) for native backends.
+  - Rust activator bins (`crates/activator`) for native and ports backends.
   - LSPosed hooks in `system_server` (`SystemServerConfigCache`) directly.
-  - Ports apply script (`portshide/module/vpnhide_ports_apply.sh`) for `ports`.
   - App UI caches (`TargetsCache`, `DashboardData`).
 - Permissions: `0640 root:system`, SELinux `system_data_file`.
 - Lifetime: persistent across reboot, module reinstall, and app reinstall.
@@ -52,7 +51,9 @@ state into the canonical JSON:
 - `/data/system/vpnhide_debug_logging`
 
 After canonical JSON exists, app startup removes these retired inputs
-best-effort. The LSPosed hooks do not read them anymore.
+best-effort. The LSPosed hooks do not read them anymore. These read paths are
+temporary migration shims; remove them after a few public releases once upgraded
+devices have had a chance to fold old files into canonical JSON.
 
 ---
 
@@ -103,11 +104,10 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 ### `/data/adb/modules/vpnhide_ports/`
 
 - `module.prop`: module metadata.
-- `service.sh`: background-waits for netd baseline iptables, then calls
-  `vpnhide_ports_apply.sh`, and repeats once after 30 seconds.
-- `vpnhide_ports_apply.sh`: waits for PackageManager user-package readiness,
-  derives `ports: true` packages from canonical JSON, resolves UIDs, and applies
-  iptables rules.
+- `service.sh`: background-waits for netd baseline iptables, then runs
+  `activator --boot-wait`, and repeats once after 30 seconds.
+- `activator`: Rust bin that reads canonical JSON, derives `ports: true`
+  packages, resolves UIDs, and applies iptables rules.
 - `uninstall.sh`: removes `vpnhide_out`, `vpnhide_out6`, and legacy
   `/data/adb/vpnhide_ports/observers.txt`.
 
@@ -204,13 +204,13 @@ Two chains in the filter/OUTPUT path:
 - `vpnhide_out` for IPv4 loopback.
 - `vpnhide_out6` for IPv6 loopback.
 
-Writer: `portshide/module/vpnhide_ports_apply.sh` through
-`iptables-restore --noflush` and `ip6tables-restore --noflush`.
+Writer: ports Rust activator through `iptables-restore --noflush` and
+`ip6tables-restore --noflush`.
 
 Readers/checks: dashboard tests chain existence with `iptables -L vpnhide_out -n`.
 
 Lifetime: in-kernel, per-boot. The ports service reapplies rules after reboot,
-and the app reruns the apply script on Save.
+and the app reruns the ports activator on Save.
 
 ---
 
@@ -286,8 +286,9 @@ service:
     -> activator reads canonical JSON and writes exactly one native channel
   ports service.sh
     -> start background waiter
-    -> wait for netd baseline and PackageManager readiness
-    -> apply iptables from canonical JSON
+    -> wait for netd baseline
+    -> run ports activator with --boot-wait
+    -> activator waits for PackageManager readiness and applies iptables from canonical JSON
 
 system_server:
   HookEntry.handleLoadPackage

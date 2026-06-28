@@ -12,6 +12,8 @@ private const val TAG = "VpnHide"
 
 // Legacy storage files retained as read-only migration inputs when canonical
 // JSON is absent. New writes go to CANONICAL_CONFIG_FILE only.
+// TODO(storage-migration): remove these shims after a few public releases once
+// upgraded devices have had a chance to fold old files into canonical JSON.
 internal const val KMOD_TARGETS = "/data/adb/vpnhide_kmod/targets.txt"
 internal const val ZYGISK_TARGETS = "/data/adb/vpnhide_zygisk/targets.txt"
 internal const val LSPOSED_TARGETS = "/data/adb/vpnhide_lsposed/targets.txt"
@@ -23,8 +25,8 @@ internal const val PROC_CTL = "/proc/vpnhide_ctl"
 internal const val SS_HIDDEN_PKGS_FILE = "/data/system/vpnhide_hidden_pkgs.txt"
 internal const val SS_OBSERVER_UIDS_FILE = "/data/system/vpnhide_observer_uids.txt"
 internal const val PORTS_OBSERVERS_FILE = "/data/adb/vpnhide_ports/observers.txt"
-internal const val PORTS_APPLY_SCRIPT = "/data/adb/modules/vpnhide_ports/vpnhide_ports_apply.sh"
 internal const val PORTS_MODULE_DIR = "/data/adb/modules/vpnhide_ports"
+internal const val PORTS_ACTIVATOR = "$PORTS_MODULE_DIR/activator"
 internal const val KMOD_MODULE_DIR = "/data/adb/modules/vpnhide_kmod"
 internal const val KMOD_LOAD_STATUS_FILE = "/data/adb/vpnhide_kmod/load_status"
 internal const val KMOD_LOAD_DMESG_FILE = "/data/adb/vpnhide_kmod/load_dmesg"
@@ -330,7 +332,7 @@ private fun writeStartupCanonical(
         listOf(
             buildCanonicalConfigWriteCommand(canonical),
             ConfigChannels.reconcileCommand(),
-            "if [ -d $PORTS_MODULE_DIR ]; then sh $PORTS_APPLY_SCRIPT; fi",
+            "if [ -x $PORTS_ACTIVATOR ]; then $PORTS_ACTIVATOR; fi",
         ).joinToString(" ; ")
     val (exit, out) = suExec(command, timeoutSec = timeoutSec)
     if (exit == 0) return null
