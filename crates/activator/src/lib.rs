@@ -27,6 +27,12 @@ const KPM_NAME: &str = "vpnhide";
 const MAX_NATIVE_TARGETS: usize = 64;
 const PM_READY_ATTEMPTS: u32 = 60;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PmReadyWait {
+    Bounded(u32),
+    Forever,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CanonicalConfig {
@@ -105,7 +111,11 @@ pub struct PackageUidMap {
 
 impl PackageUidMap {
     pub fn from_pm() -> Result<Self> {
-        wait_for_pm_ready()?;
+        Self::from_pm_with_wait(PmReadyWait::Bounded(PM_READY_ATTEMPTS))
+    }
+
+    fn from_pm_with_wait(wait: PmReadyWait) -> Result<Self> {
+        wait_for_pm_ready(wait)?;
         let stdout = pm_list_packages(&["list", "packages", "-U", "--user", "all"])?;
         Ok(parse_pm_packages(&stdout))
     }
@@ -150,11 +160,15 @@ pub fn parse_canonical(json: &str) -> Result<CanonicalConfig> {
 }
 
 pub fn project_native(json: &str) -> Result<String> {
+    project_native_with_pm_wait(json, PmReadyWait::Bounded(PM_READY_ATTEMPTS))
+}
+
+fn project_native_with_pm_wait(json: &str, wait: PmReadyWait) -> Result<String> {
     let cfg = parse_canonical(json)?;
     if !has_native_targets(&cfg) {
         return Ok(format_config(cfg.debug, &[]));
     }
-    let resolver = PackageUidMap::from_pm()?;
+    let resolver = PackageUidMap::from_pm_with_wait(wait)?;
     Ok(project_native_with_resolver(&cfg, &resolver))
 }
 
@@ -188,7 +202,16 @@ pub fn read_canonical() -> Result<String> {
 }
 
 pub fn activate_kmod() -> Result<()> {
-    let wire = project_native(&read_canonical()?)?;
+    activate_kmod_with_pm_wait(PmReadyWait::Bounded(PM_READY_ATTEMPTS))
+}
+
+pub fn activate_kmod_boot() -> Result<()> {
+    wait_for_path(KMOD_CTL);
+    activate_kmod_with_pm_wait(PmReadyWait::Forever)
+}
+
+fn activate_kmod_with_pm_wait(wait: PmReadyWait) -> Result<()> {
+    let wire = project_native_with_pm_wait(&read_canonical()?, wait)?;
     // /proc/vpnhide_ctl replaces the entire config per write(), so keep this
     // bounded to MAX_NATIVE_TARGETS and deliver one complete snapshot.
     fs::write(KMOD_CTL, wire)?;
@@ -196,19 +219,53 @@ pub fn activate_kmod() -> Result<()> {
 }
 
 pub fn activate_zygisk() -> Result<()> {
-    let wire = project_native(&read_canonical()?)?;
+    activate_zygisk_with_pm_wait(PmReadyWait::Bounded(PM_READY_ATTEMPTS))
+}
+
+pub fn activate_zygisk_boot() -> Result<()> {
+    activate_zygisk_with_pm_wait(PmReadyWait::Forever)
+}
+
+fn activate_zygisk_with_pm_wait(wait: PmReadyWait) -> Result<()> {
+    let wire = project_native_with_pm_wait(&read_canonical()?, wait)?;
     write_atomic(Path::new(ZYGISK_RUNTIME_CONFIG), wire.as_bytes(), 0o644)
 }
 
 pub fn activate_kpm() -> Result<()> {
-    if kmod_backend_present() {
-        return Err("kmod backend present; refusing to load/configure KPM".into());
+    activate_kpm_with_pm_wait(PmReadyWait::Bounded(PM_READY_ATTEMPTS), true)
+}
+
+pub fn activate_kpm_boot() -> Result<()> {
+    activate_kpm_with_pm_wait(PmReadyWait::Forever, false)
+}
+
+fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Result<()> {
+    if skip_kpm_for_kmod_conflict(conflict_is_error)? {
+        return Ok(());
     }
-    let wire = project_native(&read_canonical()?)?;
+    let wire = project_native_with_pm_wait(&read_canonical()?, wait)?;
+    if skip_kpm_for_kmod_conflict(conflict_is_error)? {
+        return Ok(());
+    }
     let kpatch = find_kpatch().ok_or("kpatch CLI not found")?;
     let key = read_superkey().ok();
     ensure_kpm_loaded(&kpatch, key.as_deref())?;
     run_kpm_ctl0(&kpatch, key.as_deref(), &wire)
+}
+
+pub fn boot_wait_requested_from_env() -> Result<bool> {
+    let mut boot_wait = false;
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--boot-wait" => boot_wait = true,
+            _ => {
+                return Err(
+                    format!("unknown argument {arg}; usage: activator [--boot-wait]").into(),
+                );
+            }
+        }
+    }
+    Ok(boot_wait)
 }
 
 fn has_native_targets(cfg: &CanonicalConfig) -> bool {
@@ -219,18 +276,28 @@ fn empty_canonical_json() -> &'static str {
     "{\"version\":1,\"debug\":false,\"apps\":{},\"settings\":{\"rememberSuperkey\":false}}\n"
 }
 
-fn wait_for_pm_ready() -> Result<()> {
-    for attempt in 0..PM_READY_ATTEMPTS {
+fn wait_for_pm_ready(wait: PmReadyWait) -> Result<()> {
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
         if let Ok(stdout) = pm_list_packages(&["list", "packages", "-U"])
             && pm_output_has_package(&stdout, APP_PACKAGE)
         {
             return Ok(());
         }
-        if attempt + 1 != PM_READY_ATTEMPTS {
-            thread::sleep(Duration::from_secs(1));
+        if matches!(wait, PmReadyWait::Bounded(max) if attempts >= max) {
+            return Err(
+                format!("PackageManager did not expose {APP_PACKAGE} within {attempts}s").into(),
+            );
         }
+        thread::sleep(Duration::from_secs(1));
     }
-    Err(format!("PackageManager did not expose {APP_PACKAGE} within {PM_READY_ATTEMPTS}s").into())
+}
+
+fn wait_for_path(path: &str) {
+    while !Path::new(path).exists() {
+        thread::sleep(Duration::from_secs(1));
+    }
 }
 
 fn pm_list_packages(args: &[&str]) -> Result<String> {
@@ -252,6 +319,16 @@ fn kmod_backend_present() -> bool {
     Path::new(KMOD_CTL).exists()
         || (Path::new(KMOD_MODULE_DIR).is_dir()
             && !Path::new(KMOD_MODULE_DIR).join("disable").exists())
+}
+
+fn skip_kpm_for_kmod_conflict(conflict_is_error: bool) -> Result<bool> {
+    if !kmod_backend_present() {
+        return Ok(false);
+    }
+    if conflict_is_error {
+        return Err("kmod backend present; refusing to load/configure KPM".into());
+    }
+    Ok(true)
 }
 
 pub fn write_atomic(path: &Path, content: &[u8], mode: u32) -> Result<()> {

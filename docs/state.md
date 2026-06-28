@@ -64,10 +64,10 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 
 - `module.prop`: module metadata, version, and stamped `gkiVariant=`.
 - `post-fs-data.sh`: loads `vpnhide_kmod.ko`, writes load diagnostics.
-- `service.sh`: starts a background waiter, waits for `/proc/vpnhide_ctl` and
-  PackageManager user-package readiness, then runs `activator`.
+- `service.sh`: starts `activator --boot-wait` in the background.
 - `activator`: Rust bin that reads canonical JSON, resolves packages via
-  `pm list packages -U --user all`, formats text wire, writes `/proc/vpnhide_ctl`.
+  `pm list packages -U --user all`, formats text wire, waits for
+  `/proc/vpnhide_ctl` in boot mode, and writes `/proc/vpnhide_ctl`.
 - `vpnhide_kmod.ko`: kernel module binary.
 
 ### `/data/adb/modules/vpnhide_kpm/`
@@ -75,8 +75,7 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 - `module.prop`: module metadata.
 - `post-fs-data.sh`: loads KPM automatically on keyless KPatch-Next; on APatch
   records `awaiting_superkey` unless the later service activator has a saved key.
-- `service.sh`: background-waits for PackageManager readiness, then runs
-  `activator`.
+- `service.sh`: starts `activator --boot-wait` in the background.
 - `activator`: Rust bin that refuses to run when the `.ko` backend is present,
   reads optional `/data/adb/vpnhide/superkey`, loads/configures KPM through
   `kpatch kpm load` + `kpatch kpm ctl0`.
@@ -87,8 +86,7 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 - `module.prop`: module metadata.
 - `customize.sh`: install hook; only preserves an old in-module `targets.txt`
   into the legacy migration path if needed.
-- `service.sh`: background-waits for PackageManager readiness, then runs
-  `activator`.
+- `service.sh`: starts `activator --boot-wait` in the background.
 - `activator`: Rust bin that writes the Zygisk runtime config.
 - `zygisk/arm64-v8a.so`: Rust cdylib injected into app processes.
 - `targets.txt`: runtime `vpnhide 1 config` text snapshot read through Zygisk's
@@ -274,9 +272,9 @@ post-fs-data:
 
 service:
   kmod / KPM / Zygisk service.sh
-    -> start background waiter
-    -> wait for PackageManager to expose dev.okhsunrog.vpnhide
-    -> run that module's activator
+    -> start that module's activator with --boot-wait in the background
+    -> activator waits for PackageManager to expose dev.okhsunrog.vpnhide
+    -> kmod activator also waits for /proc/vpnhide_ctl
     -> activator reads canonical JSON and writes exactly one native channel
   ports service.sh
     -> start background waiter

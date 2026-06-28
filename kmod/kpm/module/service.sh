@@ -5,18 +5,14 @@
 MODDIR="${0%/*}"
 ACTIVATOR="$MODDIR/activator"
 
-apply_when_pm_ready() {
-    while ! pm list packages -U 2>/dev/null | grep -q "^package:dev.okhsunrog.vpnhide "; do
-        sleep 5
-    done
-
+apply_at_boot() {
     if [ ! -x "$ACTIVATOR" ]; then
         log -t vpnhide "kpm: activator missing at $ACTIVATOR"
         return 1
     fi
 
-    if "$ACTIVATOR"; then
-        log -t vpnhide "kpm: activator applied config"
+    if "$ACTIVATOR" --boot-wait; then
+        log -t vpnhide "kpm: activator finished boot config"
     else
         rc=$?
         log -t vpnhide "kpm: activator failed rc=$rc"
@@ -24,5 +20,5 @@ apply_when_pm_ready() {
     fi
 }
 
-apply_when_pm_ready &
+apply_at_boot &
 exit 0

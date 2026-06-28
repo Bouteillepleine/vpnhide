@@ -1,5 +1,17 @@
 fn main() {
-    if let Err(e) = vpnhide_activator::activate_kmod() {
+    let boot_wait = match vpnhide_activator::boot_wait_requested_from_env() {
+        Ok(value) => value,
+        Err(e) => {
+            eprintln!("vpnhide kmod activator failed: {e}");
+            std::process::exit(2);
+        }
+    };
+    let result = if boot_wait {
+        vpnhide_activator::activate_kmod_boot()
+    } else {
+        vpnhide_activator::activate_kmod()
+    };
+    if let Err(e) = result {
         eprintln!("vpnhide kmod activator failed: {e}");
         std::process::exit(1);
     }

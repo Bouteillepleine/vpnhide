@@ -170,8 +170,11 @@ crates/
 - **Each native module ships only its own activator bin** (kmod module → `kmod`,
   KPM module → `kpm`, Zygisk module → `zygisk`). Each does exactly its one channel,
   no detection, no runtime branching.
-- **When it runs:** at boot from that module's `service.sh`, and on Save from the
-  app (`su <path>/activator`). It reads the canonical, resolves, writes its channel.
+- **When it runs:** at boot from that module's `service.sh` as
+  `activator --boot-wait`, and on Save from the app (`su <path>/activator`).
+  Boot mode waits indefinitely for PackageManager readiness; Save mode keeps a
+  bounded wait so the UI cannot hang forever. Then it reads the canonical,
+  resolves, and writes its channel.
 
 ### 4.2 The three channels
 
