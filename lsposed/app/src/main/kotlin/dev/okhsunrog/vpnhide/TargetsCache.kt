@@ -23,9 +23,11 @@ import kotlinx.coroutines.flow.StateFlow
  */
 internal data class TargetsSnapshot(
     val kmodModuleInstalled: Boolean,
+    val kpmModuleInstalled: Boolean,
     val zygiskModuleInstalled: Boolean,
     val portsModuleInstalled: Boolean,
     val kmodTargets: Set<String>,
+    val kpmTargets: Set<String>,
     val zygiskTargets: Set<String>,
     val lsposedTargets: Set<String>,
     val hiddenPkgs: Set<String>,
@@ -33,6 +35,17 @@ internal data class TargetsSnapshot(
     val portsObservers: Set<String>,
     val uidToPkg: Map<Int, String>,
 ) {
+    /** True if any native backend is installed (kmod / KPM / Zygisk). The
+     * picker's "N" toggle is meaningful only when at least one is present. */
+    val anyNativeInstalled: Boolean
+        get() = kmodModuleInstalled || kpmModuleInstalled || zygiskModuleInstalled
+
+    /** A package is a native target if it's in ANY native backend's list —
+     * the merged "N" role (the app writes one list to every installed
+     * backend; only the active one acts, §1.5). */
+    val nativeTargets: Set<String>
+        get() = kmodTargets + kpmTargets + zygiskTargets
+
     /** Observer UIDs resolved back to current package names via
      * `pm list packages -U`. UIDs that no longer map to an installed
      * package (e.g. after an uninstall) silently drop out.
@@ -107,9 +120,11 @@ internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
 
     return TargetsSnapshot(
         kmodModuleInstalled = sections["kmod_module_dir"]?.trim() == "1",
+        kpmModuleInstalled = sections["kpm_module_dir"]?.trim() == "1",
         zygiskModuleInstalled = sections["zygisk_module_dir"]?.trim() == "1",
         portsModuleInstalled = portsInstalled,
         kmodTargets = nonEmptyLines(sections["kmod_targets"]),
+        kpmTargets = nonEmptyLines(sections["kpm_targets"]),
         zygiskTargets = nonEmptyLines(sections["zygisk_targets"]),
         lsposedTargets = nonEmptyLines(sections["lsposed_targets"]),
         hiddenPkgs = nonEmptyLines(sections["hidden_pkgs"]),
