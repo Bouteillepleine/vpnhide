@@ -6,11 +6,15 @@ This document is the **arbiter**: when two implementations disagree, this file
 decides who is wrong. Every implementation (C / Rust / Kotlin) and every test
 vector references it.
 
-Status: design spec, being implemented on `feat/control-protocol`. OPEN-5 is
-resolved on-device (§7, §10); a third `kind = status` (backend health + errors,
-§4.3/§5.1) was added after device testing surfaced the `.ko`↔KPM
-mutual-exclusion (§1.2). The remaining **OPEN** items (§10) are decided before
-freezing `version 1`.
+Status: design spec, being implemented on `feat/control-protocol`. Resolved so
+far: OPEN-3 (`u64` cumulative counters), OPEN-5 (KPM CLI, on-device), OPEN-6
+(`debug` folded into the config snapshot). A third `kind = status` (backend
+health + errors, §4.3/§5.1) and a backend-selection model — one always-on Java
+(LSPosed) layer + exactly one active native backend, priority `kmod > KPM >
+Zygisk` (§1.5) — were added after device testing surfaced the `.ko`↔KPM
+mutual-exclusion. UID is the key on every channel incl. Zygisk (§4.3). Remaining
+**OPEN**: 1 (`0x` prefix), 2 (`key=value`), 4 (`.ko` stats node), 7 (in-band
+header) — decided before freezing `version 1`.
 
 ---
 
@@ -96,6 +100,43 @@ The UI itself originates *data* (package→UID via PackageManager, per-app hook
 selection) but the app is also the orchestrator, so wire serialisation lives in
 Kotlin here. Parser parity across C / Rust / Kotlin is held by golden vectors +
 differential testing (§8), not by shared code.
+
+### 1.5 Backend selection: one Java layer + exactly one active native
+
+Backends split into two layers that run *together*:
+
+- **Java layer — LSPosed, always active.** It hooks Java APIs inside
+  `system_server` (PackageManager, ConnectivityManager, …) — a vantage no native
+  backend has. It is orthogonal to the native layer and is never "the one of N".
+- **Native layer — exactly one of {`.ko` kmod, KPM, Zygisk} is active.** They
+  cover the same native surface (netlink / proc / libc), so running two is at
+  best redundant double-hiding and at worst fatal: the `.ko` (kretprobe) and KPM
+  (KernelPatch inline) wrap the *same* kernel functions and deadlocked a device
+  when both fired (§1.2). So the product runs one native backend, period.
+
+**Selection is by fixed priority `kmod > KPM > Zygisk`,** among the backends
+actually *loaded* (read from each backend's `status`, §4.3). The app:
+
+1. reads `status` from every native backend that is present;
+2. picks the highest-priority loaded one as **active**, writes it the real config
+   snapshot, and writes the others an **empty** snapshot (no targets ⇒ hooks
+   installed but idle);
+3. if more than one native backend is loaded, **warns the user** (a second loaded
+   backend is a misconfiguration to clean up, not a supported mode).
+
+Two backstops make this safe even if the app's policy is wrong or not yet run:
+
+- **Kernel guard.** A native kernel backend refuses to *install hooks* if the
+  other kernel backend is already present (KPM checks for the `.ko` via kallsyms;
+  the `.ko` checks the KPM's `/proc` marker) and reports
+  `status.error = conflicting_backend` (§5.1). This prevents the deadlock at the
+  source, independent of userspace.
+- **No self-activation of dangerous overlap.** Boot scripts may *load* a backend,
+  but the single-active decision is the app's; a loaded-but-unconfigured native
+  backend filters nothing.
+
+This does not contradict §1.1 (no hub) or §1.2 (per-backend state): selection is
+a read-only policy the app computes from `status`, not a shared runtime store.
 
 ---
 
@@ -186,6 +227,11 @@ target <uid> <hookmask>
 - `target <uid> <hookmask>` — one per target app. `uid` is the app UID;
   `hookmask` is a hex bitset of enabled hooks (bit N ⇔ `hook_id` N, §5/registry).
   Duplicate `uid` ⇒ last-wins (producer guarantees uniqueness; consumer defends).
+  **UID is the key for *every* backend**, including Zygisk: the kernel backends
+  have no PackageManager so they cannot key on package names, and Zygisk (which
+  runs in the target's own process and could match either way) keys on `getuid()`
+  for one grammar across all channels. The package→UID resolution is the
+  producer's job (app / boot script), the same for all backends.
 
 **stats** (`kind = stats`):
 
@@ -194,7 +240,9 @@ target <uid> <hookmask>
 ```
 
 - One line per uid that has any non-zero counter. Sparse: only non-zero
-  `hook_id:count` pairs are emitted. `hook_id` and `count` are hex.
+  `hook_id:count` pairs are emitted. `hook_id` and `count` are hex; `count` is a
+  `u64` **cumulative since the backend loaded** (OPEN-3) — reads never reset it,
+  so two readers don't race and the app computes deltas itself.
 
 Asymmetry is deliberate: config uses a dense mask (a *set* over a small fixed
 universe, applied in the kernel in O(1)); stats uses sparse `id:count` (most
@@ -241,7 +289,9 @@ One primitive for every data field (`uid`, `hookmask`, `hook_id`, `count`):
   lowercase**. Liberal-in / strict-out: producers are deterministic, the consumer
   never trips on case. (Pin this with a vector — it is a classic silent-drift
   corner: C ASCII-folds, Rust forgets, they diverge on `0xC` vs `0xc`.)
-- Overflow of `u32` → reject the line (not saturate, not wrap).
+- **Widths:** `uid`, `hookmask`, `hook_id` are `u32`; `count` (stats) is `u64`
+  (OPEN-3). A value that overflows its field's width → reject the line (not
+  saturate, not wrap).
 
 The `debug` flag (`0`/`1`) and the header `version` are the only non-hex tokens,
 and both are special-cased to their keyword/line.
@@ -354,6 +404,14 @@ A backend ignores `target` mask bits it does not own (`mask & own_hooks`), so th
 same `target 0x27fa 0x3ff` line is valid on every channel and each backend takes
 its slice.
 
+**Active vs idle (§1.5).** The grammar is the same on every channel, but the app
+only writes a *real* config to the LSPosed channel and the **one active** native
+channel; the other native channels get an empty config (or none), so a
+loaded-but-not-selected native backend parses nothing to act on. Selection is the
+app's policy from `status`, not part of the wire format — a backend never knows
+whether it is "the active one"; it just applies whatever config it is given (and
+the empty config makes it idle).
+
 ---
 
 ## 7. KPM supercall binding
@@ -461,6 +519,32 @@ format contains no `'`); under APatch the `<superkey>` is visible in argv
 and if argv exposure of the key is in scope, prefer a small root binary that
 takes the key off-argv. (KPatch-Next `d05` is keyless — no key in argv.)
 
+### 7.4 Distribution & boot integration
+
+The `.kpm` ships as a **thin flashable module** (Magisk/KSU format; APatch reads
+it too). The module delivers the binary and a boot script; the actual KPM-load
+mechanism is delegated to the runtime. The two runtimes split sharply on whether
+boot can configure it, because of the superkey boundary (`sc_kpm_load` /
+`sc_kpm_control` require the **real superkey**, with no "su"-as-key shortcut that
+the su-management supercalls allow):
+
+- **KPatch-Next (Magisk / KSU), `d05`, keyless — the recommended path.** The boot
+  script does everything itself: detect the runtime, enforce single-active (skip
+  KPM if the `.ko` is loaded, §1.5), `kpatch kpm load vpnhide.kpm`, then apply the
+  persisted config snapshot via `kpatch kpm ctl0`. Fully automatic, no user
+  interaction. This is what we recommend users run.
+- **APatch, `c02`, superkey-required.** A boot script has no superkey, so it
+  **cannot** load or configure the KPM. It only writes a status flag
+  (`awaiting_superkey`) and may post a one-shot user notification (e.g. via
+  `am broadcast` to the app). Activation happens **in the app**: the user enters
+  the superkey, the app runs `kpatch <key> kpm load` + `ctl0`. The superkey is
+  held **session-only in memory** (matching APatch's own re-prompt model); no
+  at-rest persistence in v1 (an opt-in Keystore/biometric store is deferred).
+
+This keeps the smooth, zero-interaction KPM story on the recommended Magisk/KSU +
+KPatch-Next combo, and contains all the superkey friction in the APatch branch,
+which most users will not use.
+
 ---
 
 ## 8. Drift prevention (C ↔ Rust ↔ Kotlin parity)
@@ -531,9 +615,20 @@ Recorded so they are not re-litigated.
   `echo >>`, but reintroduces stateful, history-dependent application: an
   interrupted batch leaves a half-applied state not derivable from `cat`. Snapshot
   is a pure function of the last write. Rejected.
-- **A resident root hub** — adds a named, enumerable process (against the stealth
-  posture), adds an app↔hub IPC layer for a rare exchange, and does not remove
-  the in-`system_server` Kotlin reader. No payoff for this workload.
+- **A resident root hub / daemon** — reconsidered explicitly (and after reviewing
+  `vpnhide_next`, whose daemon is a narrow netlink poller justified by an IP-spoof
+  feature we do not have; its real "hub" is the kmod's `/dev` misc device, which
+  couples everything to the `.ko` being loaded — incompatible with "any one of N
+  native backends"). Re-rejected: a resident named root process is enumerable
+  (`ps`/`/proc`), exactly the fingerprint this project minimises; it adds
+  keep-alive/SELinux/IPC surface; and it does not remove the irreducible
+  in-`system_server` Kotlin reader. Its one real win — *live* reaction to events
+  without the app open — is not a requirement (targets change rarely; boot +
+  app-open re-resolution suffice), and its other wins (single code path, root
+  syscalls, coordinated single-active) are had by the app-as-orchestrator + a
+  thin boot script + the kernel guard (§1.5) with no resident process. Revisit
+  only if a feature needs a live event loop. The narrow KPM coordination it would
+  buy is already covered by the kernel guard.
 - **Unified single state file across backends** — multi-writer across three
   SELinux domains, torn reads, one label for all readers. State stays
   per-backend.
@@ -555,9 +650,10 @@ Recorded so they are not re-litigated.
   misread and survives shell quoting equally, at a few extra bytes and a
   `split_once('=')`. Decide if positional-after-keyword is enough or `key=value`
   is worth it.
-- **OPEN-3 — stats counter type.** `u32` reset-on-read (simpler, loses data
-  between reads) vs `u64` cumulative-since-load (robust against wrap). Sets the
-  width of `count` in the spec.
+- **OPEN-3 — stats counter type. RESOLVED: `u64` cumulative-since-load.** Reads
+  are non-destructive (no reset-on-read race between two readers), it never
+  wraps in practice, and deltas are the app's job — which suits the pull model
+  (§2). `count` is therefore a `u64` hex value; kernel counters are per-CPU `u64`.
 - **OPEN-4 — `.ko` stats node.** Fold stats read into the existing
   `/proc/vpnhide_targets` node (`.proc_read` returns state+stats, `.proc_write`
   takes config) to add zero new detection nodes, vs a separate
@@ -570,9 +666,12 @@ Recorded so they are not re-litigated.
   constraints captured in §7.3: (a) the CLI binary must match the running runtime
   (the `.kpm` is cross-version, the supercall ABI is not); (b) APatch is
   superkey-based (key in argv), KPatch-Next `d05` is keyless.
-- **OPEN-6 — `debug` placement.** Inside the config snapshot (one channel, one
-  parse — as spec'd) vs a separate node/file as today. Folding into the snapshot
-  is architecturally cleaner and adds no node.
+- **OPEN-6 — `debug` placement. RESOLVED: folded into the config snapshot.**
+  `debug <flag>` is the one global (non-`target`) config record (§4.3). Today
+  each backend has its own `debug_logging` file (and the `.ko` a
+  `/proc/vpnhide_debug` node); folding it into the config snapshot removes those
+  per-backend files/nodes (less enumerable surface), makes it atomic with the
+  rest of config, and needs one parse instead of a second channel.
 - **OPEN-7 — self-documenting read.** Have the read side return a one-line spec
   header (`# vpnhide v1 config — WRITE REPLACES ENTIRE STATE …`) plus current
   state, so the agent learns the grammar in-band from a `cat`. Cheap; pairs with
