@@ -1,5 +1,14 @@
 # Persistent state — every path the project touches
 
+> **Heads-up — storage redesign.** This catalogue describes the **current**
+> implementation (per-backend text files). The **target** storage & activation
+> architecture — one JSON canonical (`/data/system/vpnhide_config.json`) from
+> which an activator derives the runtime channels, LSPosed reading that JSON
+> directly, the four per-backend `targets.txt` + the `vpnhide_*` /data/system
+> files folding into the canonical, and the APatch superkey at
+> `/data/adb/vpnhide/superkey` — is specified in [storage.md](storage.md). Entries
+> below that it supersedes will be updated when that lands.
+
 Reference catalogue for everyone (humans, agents) trying to answer
 "where is this stored?" / "who reads X?" / "what survives a reboot?".
 
