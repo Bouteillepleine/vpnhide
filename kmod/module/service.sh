@@ -68,7 +68,7 @@ ALL_PACKAGES="$(pm list packages -U --user all 2>/dev/null)"
 
 # resolve_uids <targets_file> — prints one UID per line to stdout.
 # Splits the comma-separated UID list so every profile's copy of the
-# target package ends up individually in /proc/vpnhide_targets.
+# target package becomes its own `target` line in the emitted config.
 resolve_uids() {
     local targets_file="$1"
     [ -f "$targets_file" ] || return

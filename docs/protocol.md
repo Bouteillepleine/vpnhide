@@ -65,7 +65,7 @@ in transport and in which records they carry (profiles, §6).
 
 | Channel | Write transport | Read transport | Reader runs in |
 |---|---|---|---|
-| app ↔ `.ko` | `echo > /proc/vpnhide_targets` | `cat /proc/vpnhide_stats` (seq_file) | kernel |
+| app ↔ `.ko` | `echo > /proc/vpnhide_ctl` | `cat /proc/vpnhide_ctl` (seq_file) | kernel |
 | app ↔ KPM | supercall `ctl0` (`args`) | supercall `ctl0` (`out_msg`) | kernel |
 | app ↔ Zygisk | `targets.txt` via module dir-fd | n/a (stats via §7 if added) | Zygisk process (zygote-forked) |
 | app ↔ LSPosed | `/data/system/vpnhide_*` files | same files | `system_server` |

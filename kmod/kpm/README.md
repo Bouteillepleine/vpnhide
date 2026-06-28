@@ -118,7 +118,7 @@ Targeting / control plane: our target-UID set is delivered via the module's
 own `KPM_CTL0` supercall + load-args (the shape the QEMU harness exercises) —
 this is independent of KPatch-Next's generic `package_config` →
 `kpatch exclude_set <uid>` mechanism. The `.ko`'s
-`targets.txt` → `/proc/vpnhide_targets` → live-reload plane is the same idea;
+`targets.txt` → `/proc/vpnhide_ctl` → live-reload plane is the same idea;
 the matching procfs plane for the KPM is still TODO (see backlog).
 
 ## Safety — read before testing on a device
