@@ -271,6 +271,7 @@ internal fun ensureSelfInTargets(
         writeStartupCanonical(update.canonical, timeoutSec)?.let { return selfTargetPreparationFailure(it) }
         RootSnapshotCache.invalidate()
     }
+    cleanupLegacyConfigInputs(timeoutSec)
     val pmPackages = sections["pm_packages"]?.trimEnd()?.takeIf { it.isNotBlank() }
     val currentBootId = sections["current_boot_id"]?.trim()?.takeIf { it.isNotBlank() }
     VpnHideLog.d(TAG, "ensureSelfInTargets: done, selfNeedsRestart=${update.selfNeedsRestart}")
@@ -335,6 +336,13 @@ private fun writeStartupCanonical(
     if (exit == 0) return null
     VpnHideLog.w(TAG, "ensureSelfInTargets: canonical write failed (exit=$exit): ${out.trim()}")
     return "canonical write exit=$exit"
+}
+
+private fun cleanupLegacyConfigInputs(timeoutSec: Long) {
+    val (exit, out) = suExec(buildLegacyConfigCleanupCommand(), timeoutSec = timeoutSec)
+    if (exit != 0) {
+        VpnHideLog.w(TAG, "legacy config cleanup failed (exit=$exit): ${out.trim()}")
+    }
 }
 
 private fun selfTargetPreparationFailure(error: String): SelfTargetPreparation =

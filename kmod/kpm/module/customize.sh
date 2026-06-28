@@ -12,6 +12,7 @@ mkdir -p "$PERSIST_DIR"
 set_perm "$PERSIST_DIR" 0 0 0755
 
 set_perm "$MODPATH/vpnhide.kpm" 0 0 0644
+set_perm "$MODPATH/uninstall.sh" 0 0 0755
 
 # Single-active warning (protocol §1.5): the .ko and KPM wrap the SAME kernel
 # functions; running both freezes the device. The boot loader refuses to load

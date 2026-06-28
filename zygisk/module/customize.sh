@@ -10,6 +10,7 @@ ui_print "- Installing to $MODPATH"
 
 # Make the native library readable/executable by zygote
 set_perm "$MODPATH/zygisk/arm64-v8a.so" 0 0 0755
+set_perm "$MODPATH/uninstall.sh" 0 0 0755
 
 # ----------------------------------------------------------------------
 #  Legacy target-list migration aid

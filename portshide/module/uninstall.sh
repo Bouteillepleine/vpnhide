@@ -14,4 +14,8 @@ while ip6tables -D OUTPUT -j "$CHAIN6" >/dev/null 2>&1; do :; done
 ip6tables -F "$CHAIN6" >/dev/null 2>&1
 ip6tables -X "$CHAIN6" >/dev/null 2>&1
 
+PERSIST_DIR="/data/adb/vpnhide_ports"
+rm -f "$PERSIST_DIR/observers.txt"
+rmdir "$PERSIST_DIR" 2>/dev/null || true
+
 log -t vpnhide_ports "uninstalled, iptables chains removed"

@@ -133,6 +133,26 @@ class StorageConfigTest {
         assertTrue(cfg.apps.getValue("com.ports").ports)
     }
 
+    @Test
+    fun `legacy cleanup removes retired config inputs only`() {
+        val cmd = buildLegacyConfigCleanupCommand()
+
+        listOf(
+            KMOD_TARGETS,
+            KPM_TARGETS,
+            ZYGISK_TARGETS,
+            LSPOSED_TARGETS,
+            PORTS_OBSERVERS_FILE,
+            SS_HIDDEN_PKGS_FILE,
+            SS_OBSERVER_UIDS_FILE,
+            "/data/system/vpnhide_uids.txt",
+            "/data/system/vpnhide_debug_logging",
+        ).forEach { path -> assertTrue(cmd.contains(path)) }
+
+        assertTrue(!cmd.contains(CANONICAL_CONFIG_FILE))
+        assertTrue(!cmd.contains(SUPERKEY_FILE))
+    }
+
     private fun sharedStorageFixture(): String =
         listOf(
             File("../../testdata/storage_config_v1.json"),

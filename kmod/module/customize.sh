@@ -11,6 +11,7 @@ mkdir -p "$PERSIST_DIR"
 set_perm "$PERSIST_DIR" 0 0 0755
 
 set_perm "$MODPATH/vpnhide_kmod.ko" 0 0 0644
+set_perm "$MODPATH/uninstall.sh" 0 0 0755
 
 ui_print "- Config: /data/system/vpnhide_config.json (managed by the app)"
 ui_print "- Pick target apps via the VPN Hide app."

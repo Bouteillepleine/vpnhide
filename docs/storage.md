@@ -358,8 +358,9 @@ Removed vs. the pre-redesign layout:
 On first run after the upgrade, if `/data/system/vpnhide_config.json` is absent, the
 app builds it **once** from whatever old per-backend text files exist (package
 lists, observers, hidden, debug flag), writes the canonical, then runs the
-activator. After that the old files are unused (and can be removed). The canonical is
-the single source from then on.
+activator. After that the old files are unused; app startup removes the retired
+legacy inputs best-effort once canonical JSON exists. The canonical is the single
+source from then on.
 
 ---
 
