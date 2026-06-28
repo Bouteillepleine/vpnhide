@@ -94,9 +94,7 @@ if [ -n "${VPNHIDE_GAI_BIN:-}" ] && [ -x "${VPNHIDE_GAI_BIN:-}" ]; then
 	GAI="$VPNHIDE_GAI_BIN"
 	echo "[run-kpm] getifaddrs probe: prebuilt bionic ($GAI)"
 else
-	# `|| true`: with no NDK present the glob matches nothing and `ls` exits
-	# non-zero, which under `set -euo pipefail` would kill the script silently.
-	GAI_CC="${VPNHIDE_GAI_CC:-$(ls "$HOME"/Android/Sdk/ndk/*/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android*-clang 2>/dev/null | sort | tail -1 || true)}"
+	GAI_CC="${VPNHIDE_GAI_CC:-$(find "$HOME/Android/Sdk/ndk" -type f -path '*/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android*-clang' 2>/dev/null | sort | tail -1 || true)}"
 	if [ -n "$GAI_CC" ] && [ -x "$GAI_CC" ]; then
 		GAI="$CACHE/gai"
 		"$GAI_CC" -static -O2 -o "$GAI" "$HERE/gai-probe.c" 2>/dev/null || GAI=""
@@ -174,6 +172,19 @@ for vec in proc_route_v4 getifaddrs proc_route_v6 siocgifconf dev_ioctl netlink_
 	nt="$(vec_count "$vec" "$NT_LOG")"
 	tg="$(vec_count "$vec" "$TG_LOG")"
 	if [ "$nt" -gt 0 ] && [ "$tg" -eq 0 ]; then
+		echo "RESULT $vec=PASS (notarget=$nt target=$tg)"; PASS=$((PASS+1))
+	else
+		echo "RESULT $vec=FAIL (notarget=$nt target=$tg)"; FAIL=$((FAIL+1))
+	fi
+done
+
+for vec in keep_proc_route_v4 keep_getifaddrs keep_siocgifconf keep_dev_ioctl keep_netlink_route4 keep_policy_rule keep_gai_getifaddrs; do
+	if [ "$vec" = keep_gai_getifaddrs ] && [ -z "$GAI" ]; then
+		echo "RESULT $vec=SKIP (no bionic getifaddrs probe available)"; continue
+	fi
+	nt="$(vec_count "$vec" "$NT_LOG")"
+	tg="$(vec_count "$vec" "$TG_LOG")"
+	if [ "$nt" -gt 0 ] && [ "$tg" -gt 0 ]; then
 		echo "RESULT $vec=PASS (notarget=$nt target=$tg)"; PASS=$((PASS+1))
 	else
 		echo "RESULT $vec=FAIL (notarget=$nt target=$tg)"; FAIL=$((FAIL+1))

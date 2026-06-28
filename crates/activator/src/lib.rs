@@ -16,8 +16,8 @@ use std::time::Duration;
 
 use serde::Deserialize;
 use vpnhide_protocol::Target;
-use vpnhide_protocol::format_config;
 use vpnhide_protocol::hook_ids::{HOOK_NAMES, KERNEL_HOOK_MASK};
+use vpnhide_protocol::{format_config, parse_config};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -580,11 +580,23 @@ fn run_kpatch_kpm_ctl0(kpatch: &Path, wire: &str) -> Result<()> {
     let mut cmd = Command::new(kpatch);
     cmd.args(["kpm", "ctl0", KPM_NAME, wire]);
     let out = cmd.output()?;
-    if out.status.success() {
+    if kpatch_ctl0_config_status_ok(out.status, wire) {
         Ok(())
     } else {
         Err(format!("kpm ctl0 failed with status {}", out.status).into())
     }
+}
+
+fn kpatch_ctl0_config_status_ok(status: std::process::ExitStatus, wire: &str) -> bool {
+    if status.success() {
+        return true;
+    }
+    let Some(expected_targets) = parse_config(wire.as_bytes()).map(|cfg| cfg.targets.len()) else {
+        return false;
+    };
+    // Compatibility with older vpnhide KPM builds: `ctl0 config` returned the
+    // applied target count, which KPatch-Next exposes as the shell exit status.
+    status.code() == Some(expected_targets as i32)
 }
 
 fn apatch_probe(key: &str) -> Result<ApatchCommandStyle> {
@@ -791,6 +803,7 @@ fn ensure_output_jump(program: &str, chain: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::process::ExitStatusExt;
 
     #[test]
     fn parses_pm_package_uids_for_all_profiles() {
@@ -1004,5 +1017,34 @@ mod tests {
                 .count(),
             64
         );
+    }
+
+    #[test]
+    fn kpatch_ctl0_accepts_config_target_count_exit_codes() {
+        let one_target = "vpnhide 1 config\ndebug 0\ntarget 0x123 0x1\n";
+        assert!(kpatch_ctl0_config_status_ok(
+            std::process::ExitStatus::from_raw(0),
+            "vpnhide 1 config\ndebug 0\n"
+        ));
+        assert!(kpatch_ctl0_config_status_ok(
+            std::process::ExitStatus::from_raw(1 << 8),
+            one_target
+        ));
+        assert!(!kpatch_ctl0_config_status_ok(
+            std::process::ExitStatus::from_raw(2 << 8),
+            one_target
+        ));
+        assert!(!kpatch_ctl0_config_status_ok(
+            std::process::ExitStatus::from_raw(1 << 8),
+            "not vpnhide config\n"
+        ));
+        assert!(!kpatch_ctl0_config_status_ok(
+            std::process::ExitStatus::from_raw(255 << 8),
+            one_target
+        ));
+        assert!(!kpatch_ctl0_config_status_ok(
+            std::process::ExitStatus::from_raw(15),
+            one_target
+        ));
     }
 }

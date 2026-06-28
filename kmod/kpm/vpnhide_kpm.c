@@ -867,7 +867,7 @@ static long vpnhide_kpm_init(const char *args, const char *event,
  * Runtime control/stats channel (protocol §7.1). KernelPatch forwards `args`
  * in and `out_msg` (copy_to_user) out; the `long` return is a short code only,
  * never surfaced as text. Dispatch on the header `kind`:
- *   config → apply the snapshot (per-hook masks + debug), return target count.
+ *   config → apply the snapshot (per-hook masks + debug), return 0.
  *   stats  → serialise counters into out_msg.   (counters: TODO, see below)
  *   status → serialise backend health into out_msg.
  */
@@ -894,7 +894,7 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 		debug_enabled = dbg ? true : false;
 		vpnhide_dbg("ctl0 config: %d targets, debug=%d active=0x%x\n",
 			    n, dbg, active_hook_mask);
-		return n;
+		return 0;
 	}
 
 	if (kind == VPNHIDE_KIND_STATS || kind == VPNHIDE_KIND_STATUS) {

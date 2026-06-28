@@ -25,6 +25,7 @@ These short files cover everything specific to this repo. Skipping them leads to
 - [docs/storage.md](docs/storage.md) — **target** storage & activation design: the single JSON canonical, the activator (Rust workspace, three bins) that derives the runtime wire, LSPosed self-read, the APatch superkey, SELinux layout. Read before touching how config is stored/loaded.
 - [docs/protocol.md](docs/protocol.md) — the frozen v1 control/stats **wire** between the app and the native backends (config/stats/status); the format every backend parser must agree on
 - [docs/detection-vectors.md](docs/detection-vectors.md) — what an app can probe to detect the VPN (or a hidden package), which component (kmod / zygisk / lsposed / SELinux) covers each vector, how it manifests. Read before adding or changing a hook.
+- [docs/adb-root-debugging.md](docs/adb-root-debugging.md) — how to make `adb shell su` useful on KernelSU/APatch/Magisk test devices; covers UID 0 without capabilities, SELinux denials on `/data/adb` and `/data/system`, and KPM/KPatch diagnostics.
 - [docs/changelog.md](docs/changelog.md) — changelog storage (`changelog.d/` fragments + history JSON), `./scripts/changelog.py` usage
 - [docs/releasing.md](docs/releasing.md) — `./scripts/release.py` usage, version-bump flow
 - [kmod/BUILDING.md](kmod/BUILDING.md) — kernel-module build (one-command DDK via `./kmod/build.py`, GKI matrix, troubleshooting)

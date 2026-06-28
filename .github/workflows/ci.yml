@@ -142,7 +142,8 @@ jobs:
             portshide/module/customize.sh portshide/module/service.sh \
             portshide/module/uninstall.sh \
             scripts/clean-device.sh scripts/update-json.sh \
-            kmod/test/run.sh kmod/test/build-kernel.sh kmod/test/init.sh
+            kmod/test/run.sh kmod/test/build-kernel.sh kmod/test/init.sh \
+            kmod/test/run-kpm.sh kmod/test/init-kpm.sh kmod/test/build-source-kernel.sh
 
       # C (kernel module)
       - name: clang-format

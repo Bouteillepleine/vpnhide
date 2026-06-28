@@ -284,7 +284,10 @@ static const struct vpnhide_offsets vpnhide_off_5_4 = {
  * struct fib6_info IPv6 route model (4.14 still uses rt6_info). procfs is
  * file_operations (<5.6). */
 static const struct vpnhide_offsets vpnhide_off_4_19 = {
-	.skb_len = 112, /* modern sk_buff head + _nfct (conntrack) -> len@112 */
+	/* XFRM + conntrack + bridge-netfilter fields put sk_buff.len at 128 on
+	 * the 4.19 image we validate with. A smaller value trims netlink dumps
+	 * back to a pointer field and can make getifaddrs() look completely empty. */
+	.skb_len = 128,
 	.netdev_name = 0,
 	.seqfile_buf = 0,
 	.seqfile_count = 24,
@@ -322,7 +325,9 @@ static const struct vpnhide_offsets vpnhide_off_4_19 = {
  * embedded dst_entry (rt6_via_dst) rather than a fib6_nh walk. procfs is
  * file_operations (<5.6). */
 static const struct vpnhide_offsets vpnhide_off_4_x = {
-	.skb_len = 104, /* older sk_buff head -> len@104 even with conntrack */
+	/* XFRM + conntrack + bridge-netfilter fields put sk_buff.len at 128 on
+	 * the 4.14 images we validate with, including sunfish 4.14.302. */
+	.skb_len = 128,
 	.netdev_name = 0,
 	.seqfile_buf = 0,
 	.seqfile_count = 24,
