@@ -194,7 +194,7 @@ Why Zygisk needs a file in its module dir even though there is one canonical: th
 it (§7). This is a *mechanism* constraint, not a format one — the activator simply
 derives the protocol config there. (Note: the protocol text — not JSON — keeps the
 injected `.so` free of a JSON parser, and carries the per-hook `hookmask` + `debug`
-+ the future stats the way a flat package list never could.)
++ the native stats the way a flat package list never could.)
 
 ---
 
@@ -240,8 +240,9 @@ single-writer / atomic-replace, and stats are never written back into it.
 
 ### 5.3 Stats scope
 
-- **kmod / KPM: yes** — counters live in one place (kernel memory), so a pull-read is
-  natural. (Format wired; per-(uid,hook) counters are a TODO.)
+- **kmod / KPM: yes** — counters live in one place (kernel memory), so a
+  pull-read is natural. They emit cumulative-since-load non-zero
+  `(uid, hook_id)` cells for hooks that actually hid or rewrote a result.
 - **Zygisk: deferred.** Its counters would live **per app process** with no shared
   aggregation point. A unix socket is out — it violates protocol.md §2 (pull-only,
   no per-hit push) and needs a collector process (a rejected resident root daemon,

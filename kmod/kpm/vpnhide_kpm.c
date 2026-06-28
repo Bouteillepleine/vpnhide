@@ -73,6 +73,15 @@ static bool debug_enabled;
 static uint32_t installed_hooks;
 static uint32_t last_error;
 
+/* Native interception stats, cumulative since KPM load. The KernelPatch build
+ * does not use the target kernel's spinlock headers, so slots are reserved with
+ * atomic builtins: used=0 empty, 2 initializing, 1 ready. */
+static uint32_t stats_used[MAX_TARGET_UIDS];
+static uint32_t stats_uids[MAX_TARGET_UIDS];
+static unsigned long long stats_counts[MAX_TARGET_UIDS][VPNHIDE_HOOK_COUNT];
+static struct vpnhide_stat_entry
+	stats_snapshot[MAX_TARGET_UIDS * VPNHIDE_HOOK_COUNT];
+
 /* kernel functions resolved at init via kallsyms */
 static void *(*_proc_create_data)(const char *, uint16_t, void *, void *,
 				  void *);
@@ -128,6 +137,66 @@ static int hook_active(uint32_t hook_id)
 	return (target_mask() & (1u << hook_id)) != 0;
 }
 
+static int stats_slot_for_uid(uint32_t uid)
+{
+	int i;
+
+	for (i = 0; i < MAX_TARGET_UIDS; i++) {
+		if (__atomic_load_n(&stats_used[i], __ATOMIC_ACQUIRE) == 1 &&
+		    stats_uids[i] == uid)
+			return i;
+	}
+
+	for (i = 0; i < MAX_TARGET_UIDS; i++) {
+		if (__atomic_load_n(&stats_used[i], __ATOMIC_ACQUIRE) != 0)
+			continue;
+		if (__sync_bool_compare_and_swap(&stats_used[i], 0, 2)) {
+			stats_uids[i] = uid;
+			__sync_synchronize();
+			__atomic_store_n(&stats_used[i], 1, __ATOMIC_RELEASE);
+			return i;
+		}
+		if (__atomic_load_n(&stats_used[i], __ATOMIC_ACQUIRE) == 1 &&
+		    stats_uids[i] == uid)
+			return i;
+	}
+
+	return -1;
+}
+
+static void record_hook_hit(uint32_t hook_id)
+{
+	int slot;
+
+	if (hook_id >= VPNHIDE_HOOK_COUNT)
+		return;
+	slot = stats_slot_for_uid((uint32_t)current_uid());
+	if (slot >= 0)
+		__sync_fetch_and_add(&stats_counts[slot][hook_id], 1ULL);
+}
+
+static int snapshot_stats(struct vpnhide_stat_entry *out, int max)
+{
+	int i, hook, n = 0;
+
+	for (i = 0; i < MAX_TARGET_UIDS && n < max; i++) {
+		if (__atomic_load_n(&stats_used[i], __ATOMIC_ACQUIRE) != 1)
+			continue;
+		for (hook = 0; hook < VPNHIDE_HOOK_COUNT && n < max; hook++) {
+			unsigned long long count = __atomic_load_n(
+				&stats_counts[i][hook], __ATOMIC_RELAXED);
+
+			if (count == 0)
+				continue;
+			out[n].uid = stats_uids[i];
+			out[n].hook_id = (unsigned int)hook;
+			out[n].count = count;
+			n++;
+		}
+	}
+	return n;
+}
+
 /* NUL-safe copy of a kernel iface name, then match via the generated rules. */
 static int iface_is_vpn(const char *name)
 {
@@ -177,8 +246,15 @@ static void fib_route_after(hook_fargs2_t *fargs, void *udata)
 
 	buf = *(char **)((char *)seq + off->seqfile_buf);
 	countp = (unsigned long *)((char *)seq + off->seqfile_count);
-	*countp = vpnhide_compact_seq_lines(buf, start, *countp,
-					    VPNHIDE_FIELD_FIRST, iface_is_vpn);
+	{
+		unsigned long old = *countp;
+		unsigned long next = vpnhide_compact_seq_lines(
+			buf, start, old, VPNHIDE_FIELD_FIRST, iface_is_vpn);
+
+		*countp = next;
+		if (next != old)
+			record_hook_hit(VPNHIDE_HOOK_FIB_ROUTE_SEQ_SHOW);
+	}
 }
 
 /* ipv6_route_seq_show — /proc/net/ipv6_route. Same as fib_route but the iface
@@ -195,8 +271,15 @@ static void ipv6_route_after(hook_fargs2_t *fargs, void *udata)
 
 	buf = *(char **)((char *)seq + off->seqfile_buf);
 	countp = (unsigned long *)((char *)seq + off->seqfile_count);
-	*countp = vpnhide_compact_seq_lines(buf, start, *countp,
-					    VPNHIDE_FIELD_LAST, iface_is_vpn);
+	{
+		unsigned long old = *countp;
+		unsigned long next = vpnhide_compact_seq_lines(
+			buf, start, old, VPNHIDE_FIELD_LAST, iface_is_vpn);
+
+		*countp = next;
+		if (next != old)
+			record_hook_hit(VPNHIDE_HOOK_IPV6_ROUTE_SEQ_SHOW);
+	}
 }
 
 /* ================================================================== */
@@ -221,7 +304,7 @@ static void rtnl_fill_before(hook_fargs12_t *fargs, void *udata)
 	fargs->local.data0 = 1; /* filter */
 	fargs->local.data1 = (uint64_t)skb;
 	fargs->local.data2 =
-		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
+		(uint64_t)*(unsigned int *)((char *)skb + off->skb_len);
 }
 
 static void rtnl_fill_after(hook_fargs12_t *fargs, void *udata)
@@ -234,6 +317,7 @@ static void rtnl_fill_after(hook_fargs12_t *fargs, void *udata)
 		_skb_trim((void *)fargs->local.data1,
 			  (unsigned int)fargs->local.data2);
 	fargs->ret = 0;
+	record_hook_hit(VPNHIDE_HOOK_RTNL_FILL_IFINFO);
 }
 
 /* ================================================================== */
@@ -286,6 +370,7 @@ static void dev_ioctl_after(hook_fargs5_t *fargs, void *udata)
 	if (is_vpn) {
 		vpnhide_dbg("dev_ioctl: hiding cmd=0x%lx\n", cmd);
 		fargs->ret = VPNHIDE_ENODEV;
+		record_hook_hit(VPNHIDE_HOOK_DEV_IOCTL);
 	}
 }
 
@@ -300,7 +385,7 @@ static void dev_ioctl_after(hook_fargs5_t *fargs, void *udata)
 #define VPNHIDE_SIOCGIFCONF 0x8912
 #define VPNHIDE_IFREQ_SZ 40 /* sizeof(struct ifreq) on arm64 */
 
-static void filter_ifconf(void *uifc)
+static int filter_ifconf(void *uifc)
 {
 	char ifc[16]; /* struct ifconf snapshot: len@0 (int), req@8 (ptr) */
 	char e[VPNHIDE_IFREQ_SZ];
@@ -308,35 +393,37 @@ static void filter_ifconf(void *uifc)
 	int len, n, i, dst = 0;
 
 	if (!_copy_from_user || !_copy_to_user)
-		return;
+		return 0;
 	if (_copy_from_user(ifc, uifc, sizeof(ifc)))
-		return;
+		return 0;
 	len = *(int *)ifc;
 	req = *(char **)(ifc + 8);
 	if (!req || len <= 0)
-		return;
+		return 0;
 
 	n = len / VPNHIDE_IFREQ_SZ;
 	for (i = 0; i < n; i++) {
 		if (_copy_from_user(e, req + (long)i * VPNHIDE_IFREQ_SZ,
 				    VPNHIDE_IFREQ_SZ))
-			return;
+			return 0;
 		e[VPNHIDE_IFNAMSIZ - 1] = '\0';
 		if (iface_is_vpn(e))
 			continue; /* drop VPN entry */
 		if (dst != i &&
 		    _copy_to_user(req + (long)dst * VPNHIDE_IFREQ_SZ, e,
 				  VPNHIDE_IFREQ_SZ))
-			return;
+			return 0;
 		dst++;
 	}
 	if (dst != n) {
 		int newlen = dst * VPNHIDE_IFREQ_SZ;
 
-		_copy_to_user(uifc, &newlen,
-			      sizeof(newlen)); /* shrink ifc_len */
+		if (_copy_to_user(uifc, &newlen, sizeof(newlen)))
+			return 0; /* failed to shrink ifc_len */
 		vpnhide_dbg("sock_ioctl: ifconf %d -> %d\n", len, newlen);
+		return 1;
 	}
+	return 0;
 }
 
 static void sock_ioctl_after(hook_fargs3_t *fargs, void *udata)
@@ -348,7 +435,8 @@ static void sock_ioctl_after(hook_fargs3_t *fargs, void *udata)
 		return;
 	if (cmd != VPNHIDE_SIOCGIFCONF || !hook_active(VPNHIDE_HOOK_SOCK_IOCTL))
 		return;
-	filter_ifconf(argp);
+	if (filter_ifconf(argp))
+		record_hook_hit(VPNHIDE_HOOK_SOCK_IOCTL);
 }
 
 /* ================================================================== */
@@ -386,10 +474,10 @@ static void addr_fill_before(hook_fargs4_t *fargs, void *dev, uint32_t hook_id)
 	fargs->local.data0 = 1;
 	fargs->local.data1 = (uint64_t)skb;
 	fargs->local.data2 =
-		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
+		(uint64_t)*(unsigned int *)((char *)skb + off->skb_len);
 }
 
-static void addr_fill_after(hook_fargs4_t *fargs, void *udata)
+static void addr_fill_after_hook(hook_fargs4_t *fargs, uint32_t hook_id)
 {
 	if (!fargs->local.data0)
 		return;
@@ -399,6 +487,17 @@ static void addr_fill_after(hook_fargs4_t *fargs, void *udata)
 		_skb_trim((void *)fargs->local.data1,
 			  (unsigned int)fargs->local.data2);
 	fargs->ret = 0;
+	record_hook_hit(hook_id);
+}
+
+static void inet_fill_after(hook_fargs4_t *fargs, void *udata)
+{
+	addr_fill_after_hook(fargs, VPNHIDE_HOOK_INET_FILL_IFADDR);
+}
+
+static void inet6_fill_after(hook_fargs4_t *fargs, void *udata)
+{
+	addr_fill_after_hook(fargs, VPNHIDE_HOOK_INET6_FILL_IFADDR);
 }
 
 static void inet_fill_before(hook_fargs4_t *fargs, void *udata)
@@ -476,7 +575,7 @@ static void fib_dump_before(hook_fargs12_t *fargs, void *udata)
 	fargs->local.data0 = 1;
 	fargs->local.data1 = (uint64_t)skb;
 	fargs->local.data2 =
-		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
+		(uint64_t)*(unsigned int *)((char *)skb + off->skb_len);
 }
 
 static void fib_dump_after(hook_fargs12_t *fargs, void *udata)
@@ -489,6 +588,7 @@ static void fib_dump_after(hook_fargs12_t *fargs, void *udata)
 		_skb_trim((void *)fargs->local.data1,
 			  (unsigned int)fargs->local.data2);
 	fargs->ret = 0;
+	record_hook_hit(VPNHIDE_HOOK_FIB_DUMP_INFO);
 }
 
 /* ================================================================== */
@@ -534,7 +634,7 @@ static void rt6_fill_before(hook_fargs12_t *fargs, void *udata)
 	fargs->local.data0 = 1;
 	fargs->local.data1 = (uint64_t)skb;
 	fargs->local.data2 =
-		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
+		(uint64_t)*(unsigned int *)((char *)skb + off->skb_len);
 }
 
 static void rt6_fill_after(hook_fargs12_t *fargs, void *udata)
@@ -547,6 +647,7 @@ static void rt6_fill_after(hook_fargs12_t *fargs, void *udata)
 		_skb_trim((void *)fargs->local.data1,
 			  (unsigned int)fargs->local.data2);
 	fargs->ret = 0;
+	record_hook_hit(VPNHIDE_HOOK_RT6_FILL_NODE);
 }
 
 /* ================================================================== */
@@ -588,8 +689,7 @@ static void fib_rule_before(hook_fargs8_t *fargs, void *udata)
 		fargs->local.data0 = 1;
 		fargs->local.data1 = (uint64_t)skb;
 		fargs->local.data2 =
-			(uint64_t) *
-			(unsigned int *)((char *)skb + off->skb_len);
+			(uint64_t)*(unsigned int *)((char *)skb + off->skb_len);
 	}
 }
 
@@ -603,6 +703,7 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
 		_skb_trim((void *)fargs->local.data1,
 			  (unsigned int)fargs->local.data2);
 	fargs->ret = 0;
+	record_hook_hit(VPNHIDE_HOOK_FIB_NL_FILL_RULE);
 }
 
 /*
@@ -838,11 +939,12 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 			     VPNHIDE_HOOK_RTNL_FILL_IFINFO);
 	if (off->in_ifaddr_ifa_dev)
 		install_hook("inet_fill_ifaddr", off->addr_fill_argno,
-			     (void *)inet_fill_before, (void *)addr_fill_after,
+			     (void *)inet_fill_before, (void *)inet_fill_after,
 			     VPNHIDE_HOOK_INET_FILL_IFADDR);
 	if (off->inet6_ifaddr_idev)
 		install_hook("inet6_fill_ifaddr", off->addr_fill_argno,
-			     (void *)inet6_fill_before, (void *)addr_fill_after,
+			     (void *)inet6_fill_before,
+			     (void *)inet6_fill_after,
 			     VPNHIDE_HOOK_INET6_FILL_IFADDR);
 	if (off->fib_dump_fi_arg)
 		install_hook("fib_dump_info", 11, (void *)fib_dump_before,
@@ -879,7 +981,7 @@ static long vpnhide_kpm_init(const char *args, const char *event,
  * in and `out_msg` (copy_to_user) out; the `long` return is a short code only,
  * never surfaced as text. Dispatch on the header `kind`:
  *   config → apply the snapshot (per-hook masks + debug), return 0.
- *   stats  → serialise counters into out_msg.   (counters: TODO, see below)
+ *   stats  → serialise cumulative per-uid/per-hook counters into out_msg.
  *   status → serialise backend health into out_msg.
  */
 static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
@@ -913,14 +1015,12 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 		unsigned long full, n;
 
 		if (kind == VPNHIDE_KIND_STATS) {
-			/*
-			 * TODO(stats counters): maintain per-(uid,hook) u64
-			 * counters in the filter paths and serialise the
-			 * non-zero cells here. For now emit a valid empty
-			 * snapshot (header only) so the channel + format are
-			 * wired and the app can already read it.
-			 */
-			full = vpnhide_format_stats(buf, sizeof(buf), 0, 0);
+			int count = snapshot_stats(stats_snapshot,
+						   MAX_TARGET_UIDS *
+							   VPNHIDE_HOOK_COUNT);
+
+			full = vpnhide_format_stats(buf, sizeof(buf),
+						    stats_snapshot, count);
 		} else {
 			struct vpnhide_status st;
 
@@ -960,11 +1060,11 @@ static long vpnhide_kpm_exit(void *__user reserved)
 	fn = lookup_fn("inet_fill_ifaddr");
 	if (fn)
 		hook_unwrap((void *)fn, (void *)inet_fill_before,
-			    (void *)addr_fill_after);
+			    (void *)inet_fill_after);
 	fn = lookup_fn("inet6_fill_ifaddr");
 	if (fn)
 		hook_unwrap((void *)fn, (void *)inet6_fill_before,
-			    (void *)addr_fill_after);
+			    (void *)inet6_fill_after);
 	fn = lookup_fn("dev_ioctl");
 	if (fn)
 		hook_unwrap((void *)fn, 0, (void *)dev_ioctl_after);

@@ -66,6 +66,8 @@
 
 #define MODNAME "vpnhide"
 #define MAX_TARGET_UIDS 64
+#define MAX_STATS_ENTRIES (MAX_TARGET_UIDS * VPNHIDE_HOOK_COUNT)
+#define CTL_READ_BUF_SIZE 32768
 
 /*
  * Pre-allocated kretprobe instance pool size, applied to every probe.
@@ -144,6 +146,66 @@ static bool hook_active(u32 hook_id)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Native interception stats (protocol §4.3 `stats`)                 */
+/* ------------------------------------------------------------------ */
+
+struct stats_row {
+	uid_t uid;
+	u64 counts[VPNHIDE_HOOK_COUNT];
+};
+
+static struct stats_row stats_rows[MAX_TARGET_UIDS];
+static int nr_stats_rows;
+static DEFINE_SPINLOCK(stats_lock);
+
+static void record_hook_hit(u32 hook_id)
+{
+	uid_t uid;
+	unsigned long flags;
+	int i;
+
+	if (hook_id >= VPNHIDE_HOOK_COUNT)
+		return;
+
+	uid = from_kuid(&init_user_ns, current_uid());
+	spin_lock_irqsave(&stats_lock, flags);
+	for (i = 0; i < nr_stats_rows; i++) {
+		if (stats_rows[i].uid == uid) {
+			stats_rows[i].counts[hook_id]++;
+			spin_unlock_irqrestore(&stats_lock, flags);
+			return;
+		}
+	}
+	if (nr_stats_rows < MAX_TARGET_UIDS) {
+		i = nr_stats_rows++;
+		stats_rows[i].uid = uid;
+		memset(stats_rows[i].counts, 0, sizeof(stats_rows[i].counts));
+		stats_rows[i].counts[hook_id] = 1;
+	}
+	spin_unlock_irqrestore(&stats_lock, flags);
+}
+
+static int snapshot_stats(struct vpnhide_stat_entry *out, int max)
+{
+	unsigned long flags;
+	int i, hook, n = 0;
+
+	spin_lock_irqsave(&stats_lock, flags);
+	for (i = 0; i < nr_stats_rows && n < max; i++) {
+		for (hook = 0; hook < VPNHIDE_HOOK_COUNT && n < max; hook++) {
+			if (stats_rows[i].counts[hook] == 0)
+				continue;
+			out[n].uid = stats_rows[i].uid;
+			out[n].hook_id = hook;
+			out[n].count = stats_rows[i].counts[hook];
+			n++;
+		}
+	}
+	spin_unlock_irqrestore(&stats_lock, flags);
+	return n;
+}
+
+/* ------------------------------------------------------------------ */
 /*  /proc/vpnhide_ctl — the folded control + stats channel            */
 /* ------------------------------------------------------------------ */
 
@@ -193,18 +255,26 @@ static ssize_t ctl_write(struct file *file, const char __user *ubuf,
 
 /*
  * Read side: a self-documenting banner + `status` + `stats` (§4.3/§7.1).
- * The shared formatters render into a stack buffer which we hand to seq_file.
- * Stats counters are not yet maintained (same TODO as the KPM): emit a valid
- * empty `stats` snapshot so the channel + format are wired and the app can
- * already read status.
+ * The shared formatters render into a temporary buffer which we hand to
+ * seq_file. Stats are cumulative since module load and sparse per uid/hook.
  */
 static int ctl_show(struct seq_file *m, void *v)
 {
-	char buf[256];
+	char *buf;
+	struct vpnhide_stat_entry *stats;
 	struct vpnhide_status st;
 	unsigned long len;
+	int n;
 
 	seq_puts(m, VPNHIDE_READ_BANNER);
+
+	buf = kmalloc(CTL_READ_BUF_SIZE, GFP_KERNEL);
+	stats = kcalloc(MAX_STATS_ENTRIES, sizeof(*stats), GFP_KERNEL);
+	if (!buf || !stats) {
+		kfree(stats);
+		kfree(buf);
+		return -ENOMEM;
+	}
 
 	st.backend = VPNHIDE_BACKEND_KMOD;
 	st.kver = LINUX_VERSION_CODE;
@@ -212,11 +282,15 @@ static int ctl_show(struct seq_file *m, void *v)
 	st.error = (st.hooks == VPNHIDE_KERNEL_HOOK_MASK) ?
 			   VPNHIDE_ERR_OK :
 			   VPNHIDE_ERR_PARTIAL_HOOKS;
-	len = vpnhide_format_status(buf, sizeof(buf), &st);
-	seq_write(m, buf, min_t(size_t, len, sizeof(buf)));
+	len = vpnhide_format_status(buf, CTL_READ_BUF_SIZE, &st);
+	seq_write(m, buf, min_t(size_t, len, CTL_READ_BUF_SIZE));
 
-	len = vpnhide_format_stats(buf, sizeof(buf), NULL, 0);
-	seq_write(m, buf, min_t(size_t, len, sizeof(buf)));
+	n = snapshot_stats(stats, MAX_STATS_ENTRIES);
+	len = vpnhide_format_stats(buf, CTL_READ_BUF_SIZE, stats, n);
+	seq_write(m, buf, min_t(size_t, len, CTL_READ_BUF_SIZE));
+
+	kfree(stats);
+	kfree(buf);
 	return 0;
 }
 
@@ -294,6 +368,7 @@ static int dev_ioctl_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 		vpnhide_dbg("dev_ioctl_ret: hiding iface=%s cmd=0x%x\n", name,
 			    data->cmd);
 		regs_set_return_value(regs, -ENODEV);
+		record_hook_hit(VPNHIDE_HOOK_DEV_IOCTL);
 	}
 
 	return 0;
@@ -463,6 +538,7 @@ static int sock_ioctl_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 		}
 		vpnhide_dbg("ifconf filtered %d -> %d bytes\n", orig_len,
 			    ifc.ifc_len);
+		record_hook_hit(VPNHIDE_HOOK_SOCK_IOCTL);
 	}
 
 	return 0;
@@ -547,6 +623,7 @@ static int rtnl_fill_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 	/* Undo whatever the fill function wrote to the skb */
 	skb_trim(data->skb, data->saved_len);
 	regs_set_return_value(regs, 0);
+	record_hook_hit(VPNHIDE_HOOK_RTNL_FILL_IFINFO);
 	return 0;
 }
 
@@ -624,6 +701,7 @@ static int inet6_fill_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 	/* Undo whatever the fill function wrote to the skb */
 	skb_trim(data->skb, data->saved_len);
 	regs_set_return_value(regs, 0);
+	record_hook_hit(VPNHIDE_HOOK_INET6_FILL_IFADDR);
 	return 0;
 }
 
@@ -688,6 +766,7 @@ static int inet_fill_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 		    data->saved_len);
 	skb_trim(data->skb, data->saved_len);
 	regs_set_return_value(regs, 0);
+	record_hook_hit(VPNHIDE_HOOK_INET_FILL_IFADDR);
 	return 0;
 }
 
@@ -799,6 +878,8 @@ static int fib_route_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 	}
 
 	seq->count = dst - buf;
+	if (seq->count != (size_t)(end - buf))
+		record_hook_hit(VPNHIDE_HOOK_FIB_ROUTE_SEQ_SHOW);
 	return 0;
 }
 
@@ -889,6 +970,8 @@ static int ipv6_route_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 	}
 
 	seq->count = dst - buf;
+	if (seq->count != (size_t)(end - buf))
+		record_hook_hit(VPNHIDE_HOOK_IPV6_ROUTE_SEQ_SHOW);
 	return 0;
 }
 
@@ -1113,7 +1196,7 @@ static void init_route_skb_data(struct route_skb_data *data)
 }
 
 static int route_skb_ret(struct route_skb_data *data, struct pt_regs *regs,
-			 const char *hook_name)
+			 const char *hook_name, u32 hook_id)
 {
 	if (!data->should_filter || !data->skb)
 		return 0;
@@ -1123,6 +1206,7 @@ static int route_skb_ret(struct route_skb_data *data, struct pt_regs *regs,
 			    data->skb->len, data->saved_len);
 		skb_trim(data->skb, data->saved_len);
 		regs_set_return_value(regs, 0);
+		record_hook_hit(hook_id);
 	}
 	return 0;
 }
@@ -1173,7 +1257,8 @@ static int fib_dump_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 
 static int fib_dump_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	return route_skb_ret((void *)ri->data, regs, "fib_dump_ret");
+	return route_skb_ret((void *)ri->data, regs, "fib_dump_ret",
+			     VPNHIDE_HOOK_FIB_DUMP_INFO);
 }
 
 static struct kretprobe fib_dump_krp = {
@@ -1229,7 +1314,8 @@ static int rt6_fill_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 
 static int rt6_fill_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	return route_skb_ret((void *)ri->data, regs, "rt6_fill_ret");
+	return route_skb_ret((void *)ri->data, regs, "rt6_fill_ret",
+			     VPNHIDE_HOOK_RT6_FILL_NODE);
 }
 
 static struct kretprobe rt6_fill_krp = {
@@ -1323,7 +1409,8 @@ static int fib_rule_fill_entry(struct kretprobe_instance *ri,
 static int fib_rule_fill_ret(struct kretprobe_instance *ri,
 			     struct pt_regs *regs)
 {
-	return route_skb_ret((void *)ri->data, regs, "fib_rule_fill_ret");
+	return route_skb_ret((void *)ri->data, regs, "fib_rule_fill_ret",
+			     VPNHIDE_HOOK_FIB_NL_FILL_RULE);
 }
 
 static struct kretprobe fib_rule_fill_krp = {
