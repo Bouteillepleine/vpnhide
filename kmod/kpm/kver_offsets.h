@@ -171,7 +171,9 @@ static const struct vpnhide_offsets vpnhide_off_6_12 = {
 /* 5.10 (android12-5.10) — QEMU-validated 9/9. (5.15 has a different fib6_info
  * and gets its own table below.) */
 static const struct vpnhide_offsets vpnhide_off_5_x = {
-	.skb_len = 104,
+	.skb_len = 112, /* GKI 5.10 has CONFIG_NF_CONNTRACK=y: _nfct@104,
+			 * len@112. Reading 104 trims netlink dumps to garbage and
+			 * drops non-VPN rows alongside vpn0. */
 	.netdev_name = 0,
 	.seqfile_buf = 0,
 	.seqfile_count = 24,
@@ -212,8 +214,8 @@ static const struct vpnhide_offsets vpnhide_off_5_x = {
  * misread. Everything else (idev@168, fib_info 96/104/128, fib_dump via
  * fib_rt_info*@arg4, fib_rule) matches 5.10. */
 static const struct vpnhide_offsets vpnhide_off_5_15 = {
-	.skb_len =
-		104, /* GKI 5.15 head (validated); bump to 112 if conntrack on */
+	.skb_len = 112, /* GKI 5.15 has CONFIG_NF_CONNTRACK=y: _nfct@104,
+			 * len@112. Same rollback requirement as 5.10. */
 	.netdev_name = 0,
 	.seqfile_buf = 0,
 	.seqfile_count = 24,
