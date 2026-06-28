@@ -1,0 +1,11 @@
+[package]
+name = "vpnhide_protocol"
+version = "0.7.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Shared vpnhide control/stats wire protocol parser and formatter."
+
+[lib]
+name = "vpnhide_protocol"
+

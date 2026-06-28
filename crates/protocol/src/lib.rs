@@ -6,11 +6,14 @@
 //! tests at the bottom run against this implementation (protocol §8 Layer 1).
 //! When the spec changes, change both sides and add a vector.
 //!
-//! Roles (§1.4): the Zygisk backend PARSES config (its own profile) and EMITS
-//! stats/status. So the producing direction here is `format_*`; `parse_config`
-//! is the consuming direction. (The app, in Kotlin, is the other end.)
+//! Roles (§1.4): backends PARSE config and EMIT stats/status. The activator
+//! also uses this crate to FORMAT config snapshots for native backends.
 
 #![allow(dead_code)]
+
+pub mod generated;
+
+pub use generated::hook_ids;
 
 /// Wire version this implementation speaks (header line, §4.2).
 pub const PROTO_VERSION: u32 = 1;
@@ -249,6 +252,16 @@ fn set_target(targets: &mut Vec<Target>, uid: u32, hookmask: u32) {
 
 // --- serialise (§4.3/§4.4) -------------------------------------------------
 
+/// Serialise a `config` snapshot (lowercase-out hex, §4.4).
+pub fn format_config(debug: bool, targets: &[Target]) -> String {
+    let mut out = String::from("vpnhide 1 config\n");
+    out.push_str(if debug { "debug 1\n" } else { "debug 0\n" });
+    for t in targets {
+        out.push_str(&format!("target 0x{:x} 0x{:x}\n", t.uid, t.hookmask));
+    }
+    out
+}
+
 /// Serialise a `stats` snapshot. Entries grouped by uid (consecutive same-uid
 /// entries share a line); lowercase-out hex (§4.4).
 pub fn format_stats(entries: &[StatEntry]) -> String {
@@ -299,7 +312,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn vectors_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../kmod/shared/protocol_vectors.tsv")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../kmod/shared/protocol_vectors.tsv")
     }
 
     /// Decode the `\n \t \r \\ \xNN` escapes used in the vectors file.
@@ -395,6 +408,24 @@ mod tests {
             });
         }
         assert_eq!(format_stats(&e), decode_str(expect), "stats mismatch");
+    }
+
+    #[test]
+    fn formats_config_snapshot() {
+        let targets = [
+            Target {
+                uid: 0x27fa,
+                hookmask: 0x3ff,
+            },
+            Target {
+                uid: 0x2947,
+                hookmask: 0x4,
+            },
+        ];
+        assert_eq!(
+            format_config(false, &targets),
+            "vpnhide 1 config\ndebug 0\ntarget 0x27fa 0x3ff\ntarget 0x2947 0x4\n",
+        );
     }
 
     fn run_status(fields: &str, expect: &str) {

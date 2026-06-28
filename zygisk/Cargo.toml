@@ -19,6 +19,7 @@ zygisk-api = { git = "https://github.com/rmnscnce/zygisk-api-rs.git" }
 libc = "0.2.186"
 log = { version = "0.4.33", default-features = false }
 android_logger = { version = "0.15.1", default-features = false }
+vpnhide_protocol = { path = "../crates/protocol" }
 
 # Compile-time log level. `log` statically elides any call below the
 # selected ceiling, so disabled levels add zero runtime cost and zero
@@ -33,18 +34,6 @@ log-warn  = ["log/release_max_level_warn"]
 log-info  = ["log/release_max_level_info"]
 log-debug = ["log/release_max_level_debug"]
 log-trace = ["log/release_max_level_trace"]
-
-[profile.release]
-opt-level = 3
-lto = "fat"
-codegen-units = 1
-strip = true
-panic = "abort"
-# Zygisk modules are very small — keep them tiny.
-
-[profile.dev]
-opt-level = 1
-panic = "abort"
 
 [build-dependencies]
 cmake = "0.1.58"

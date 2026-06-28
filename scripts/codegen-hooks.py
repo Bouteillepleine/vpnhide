@@ -11,6 +11,7 @@ stats line. This script emits the matching id enums, per-backend "own" masks,
 and status error codes for every language that touches the protocol:
 
   - kmod/KPM   C   -> kmod/generated/hook_ids.h
+  - protocol   Rust-> crates/protocol/src/generated/hook_ids.rs
   - zygisk     Rust-> zygisk/src/generated/hook_ids.rs
   - lsposed    Rust-> lsposed/native/src/generated/hook_ids.rs
   - app        Kotlin-> .../generated/HookIds.kt
@@ -39,6 +40,7 @@ TOML_PATH = REPO_ROOT / "data" / "hooks.toml"
 # lsposed/native — that Rust crate is the uniffi diagnostic-probe library; it
 # consumes iface_lists (VPN-name matching) but never the protocol/registry.
 OUT_KMOD = REPO_ROOT / "kmod" / "generated" / "hook_ids.h"
+OUT_PROTOCOL_RS = REPO_ROOT / "crates" / "protocol" / "src" / "generated" / "hook_ids.rs"
 OUT_ZYGISK = REPO_ROOT / "zygisk" / "src" / "generated" / "hook_ids.rs"
 OUT_LSP_KT = (
     REPO_ROOT
@@ -287,6 +289,7 @@ def main() -> None:
     hooks, errs, backends = load()
     outputs = {
         OUT_KMOD: emit_kmod(hooks, errs, backends),
+        OUT_PROTOCOL_RS: emit_rust(hooks, errs, backends),
         OUT_ZYGISK: emit_rust(hooks, errs, backends),
         OUT_LSP_KT: emit_kotlin(hooks, errs, backends),
     }

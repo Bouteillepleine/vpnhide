@@ -11,7 +11,9 @@ tools available.
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import subprocess
 import zipfile
 from pathlib import Path
@@ -58,3 +60,67 @@ def get_build_version(repo_root: Path | None = None) -> str:
 
     version_file = repo_root / "VERSION"
     return version_file.read_text(encoding="utf-8").strip()
+
+
+def detect_android_ndk() -> str | None:
+    """Find an Android NDK for cargo-ndk based builds."""
+    android_ndk_home = os.environ.get("ANDROID_NDK_HOME")
+    if android_ndk_home and Path(android_ndk_home).is_dir():
+        return android_ndk_home
+
+    ndk_base = Path.home() / "Android" / "Sdk" / "ndk"
+    if not ndk_base.exists():
+        return None
+    versions = sorted((d.name for d in ndk_base.iterdir() if d.is_dir()), key=version_sort_key)
+    if not versions:
+        return None
+    return str(ndk_base / versions[-1])
+
+
+def build_activator_bin(
+    repo_root: Path,
+    bin_name: str,
+    *,
+    android_ndk_home: str | None = None,
+    target_dir: Path | None = None,
+    required: bool = True,
+) -> Path | None:
+    """Build one Android arm64 activator binary and return its artifact path.
+
+    `required=False` lets the kmod DDK packaging path reuse a prebuilt binary
+    when Rust/NDK are unavailable in the kernel-build container.
+    """
+    ndk = android_ndk_home or detect_android_ndk()
+    cargo = shutil.which("cargo")
+    if not ndk or not cargo:
+        msg = "cargo/Android NDK not available; activator not built"
+        if required:
+            raise RuntimeError(msg)
+        print(f"warning: {msg}")
+        return None
+
+    out_target_dir = target_dir or repo_root / "target"
+    env = os.environ.copy()
+    env["ANDROID_NDK_HOME"] = ndk
+    env["CARGO_TARGET_DIR"] = str(out_target_dir)
+    subprocess.run(
+        [
+            "cargo",
+            "ndk",
+            "-t",
+            "arm64-v8a",
+            "build",
+            "--release",
+            "-p",
+            "vpnhide_activator",
+            "--bin",
+            bin_name,
+        ],
+        cwd=repo_root,
+        env=env,
+        check=True,
+    )
+    artifact = out_target_dir / "aarch64-linux-android" / "release" / bin_name
+    if not artifact.exists():
+        raise RuntimeError(f"expected activator artifact {artifact}, not found")
+    return artifact

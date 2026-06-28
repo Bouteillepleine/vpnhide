@@ -46,6 +46,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from build_lib import (  # type: ignore[import-not-found]
+    build_activator_bin,
     get_build_version,
     make_zip,
     version_sort_key,
@@ -71,6 +72,25 @@ GKI_VARIANTS = (
 )
 
 DEFAULT_KMI = "android14-6.1"
+
+
+def stage_kmod_activator(repo_root: Path, staging: Path) -> None:
+    """Copy the kmod activator into the module zip when a binary is available."""
+    env_path = os.environ.get("VPNHIDE_KMOD_ACTIVATOR")
+    candidates = []
+    if env_path:
+        candidates.append(Path(env_path))
+    candidates.append(repo_root / "target" / "aarch64-linux-android" / "release" / "kmod")
+
+    activator = next((p for p in candidates if p.is_file()), None)
+    if activator is None:
+        activator = build_activator_bin(repo_root, "kmod", required=False)
+    if activator is None:
+        print("warning: kmod activator binary not staged")
+        return
+
+    shutil.copy(activator, staging / "activator")
+    (staging / "activator").chmod(0o755)
 
 
 # ----- Native build (in-container or local kernel-source) ------------------
@@ -126,6 +146,7 @@ def native_build_one(
         shutil.rmtree(staging)
     shutil.copytree(kmod_dir / "module", staging)
     shutil.copy(kmod_dir / KMOD_KO, staging / KMOD_KO)
+    stage_kmod_activator(kmod_dir.parent, staging)
 
     build_version = get_build_version(kmod_dir.parent)
 

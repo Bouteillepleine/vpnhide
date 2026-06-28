@@ -41,6 +41,7 @@ kmod/*.kpm
 kmod/shared/test_vpnhide_logic
 
 # General
+target/
 *.swp
 *.log
 /tmp/

@@ -19,9 +19,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from build_lib import (  # type: ignore[import-not-found]
+    build_activator_bin,
+    detect_android_ndk,
     get_build_version,
     make_zip,
-    version_sort_key,
 )
 
 
@@ -30,17 +31,7 @@ def main() -> int:
     os.chdir(script_dir)
 
     # Auto-detect NDK if ANDROID_NDK_HOME isn't set
-    android_ndk_home = os.environ.get("ANDROID_NDK_HOME")
-    if not android_ndk_home:
-        ndk_base = Path.home() / "Android" / "Sdk" / "ndk"
-        if ndk_base.exists():
-            ndk_versions = sorted(
-                (d.name for d in ndk_base.iterdir() if d.is_dir()),
-                key=version_sort_key,
-            )
-            if ndk_versions:
-                android_ndk_home = str(ndk_base / ndk_versions[-1])
-
+    android_ndk_home = detect_android_ndk()
     if not android_ndk_home or not Path(android_ndk_home).is_dir():
         print(
             "error: ANDROID_NDK_HOME not set and no NDK found under ~/Android/Sdk/ndk",
@@ -49,12 +40,22 @@ def main() -> int:
         return 1
 
     print(f"Using NDK: {android_ndk_home}")
-    os.environ["ANDROID_NDK_HOME"] = android_ndk_home
+    target_dir = script_dir / "target"
+    env = os.environ.copy()
+    env["ANDROID_NDK_HOME"] = android_ndk_home
+    env["CARGO_TARGET_DIR"] = str(target_dir)
 
     # Build the cdylib for arm64-v8a
     subprocess.run(
         ["cargo", "ndk", "-t", "arm64-v8a", "build", "--release"],
+        env=env,
         check=True,
+    )
+    activator = build_activator_bin(
+        script_dir.parent,
+        "zygisk",
+        android_ndk_home=android_ndk_home,
+        target_dir=target_dir,
     )
 
     so_src = script_dir / "target" / "aarch64-linux-android" / "release" / "libvpnhide_zygisk.so"
@@ -69,6 +70,8 @@ def main() -> int:
     shutil.copytree(script_dir / "module", staging)
     (staging / "zygisk").mkdir(parents=True, exist_ok=True)
     shutil.copy(so_src, staging / "zygisk" / "arm64-v8a.so")
+    shutil.copy(activator, staging / "activator")
+    (staging / "activator").chmod(0o755)
 
     # Get build version
     build_version = get_build_version(script_dir.parent)
