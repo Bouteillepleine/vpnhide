@@ -27,9 +27,19 @@ reinvent them.** `grep` for an existing helper before writing a new one.
 - **`ShellUtils`** — `suExec`/`suExecAsync`, and the parsers `parseConfigLines`,
   `parseKeyValueLines`, `parsePackageUidMap`. **Never write another `pm list`
   or `key=value` parser** — there used to be four; there is now one of each.
-- **`ShellCommandBuilders`** — `buildConfigWriteCommand` / `managedConfigBody` /
-  `systemDataFilePermsParts` / `buildUidResolverCommand`. Every managed-config
-  file write goes through here so the on-disk format lives in one place.
+- **`ConfigChannels`** — the single serialiser of the `vpnhide 1 config` wire
+  (docs/protocol.md) and the one place that fans it to every runtime channel
+  (kmod `/proc/vpnhide_ctl`, the zygisk module dir, the system_server UID file).
+  Save, the debug toggle, and the startup reconcile all go through it. **Don't
+  hand-build a config snapshot anywhere else** — use `Protocol.formatConfig` via
+  this object.
+- **`ShellCommandBuilders`** — `buildRawWriteCommand` (the base64 `echo | base64
+  -d > path` primitive every file write uses), `buildConfigWriteCommand` /
+  `managedConfigBody` (the persistent **package-list** files, NOT the wire),
+  `systemDataFilePermsParts`, and `buildUidResolverCommand` (now only the
+  observer-UID file — the app-hiding "A" role; it is **not** the target-config
+  path anymore, that's `ConfigChannels`). The persistent package lists and the
+  resolved-UID runtime channels are deliberately separate (protocol §1.2).
 - **`TargetPickerScaffold`** — `TargetPickerScreen<T>`, `TargetRowShell`,
   `TargetChip`, `AppListScrollbar`. All three picker screens (tun / hiding /
   ports) are thin configs over this; a new picker is too.
