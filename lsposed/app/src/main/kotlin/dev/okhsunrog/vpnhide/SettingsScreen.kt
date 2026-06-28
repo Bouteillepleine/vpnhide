@@ -1,5 +1,8 @@
 package dev.okhsunrog.vpnhide
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,6 +19,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Animation
 import androidx.compose.material.icons.filled.BrightnessMedium
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
@@ -50,12 +55,14 @@ import dev.okhsunrog.vpnhide.settings.LocalSettingsInteractor
 import dev.okhsunrog.vpnhide.settings.LocalSettingsState
 import dev.okhsunrog.vpnhide.settings.ThemeMode
 import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
+import dev.okhsunrog.vpnhide.ui.components.EnhancedOutlinedButton
 import dev.okhsunrog.vpnhide.ui.components.PreferenceRow
 import dev.okhsunrog.vpnhide.ui.components.PreferenceRowSwitch
 import dev.okhsunrog.vpnhide.ui.theme.AppColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.nio.charset.StandardCharsets
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -183,7 +190,146 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
+            ConfigBackupSection()
             SuperkeySettingsSection()
+        }
+    }
+}
+
+@Composable
+private fun ConfigBackupSection() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val targets by TargetsCache.snapshot.collectAsState()
+    var operation by remember { mutableStateOf(ConfigOperation.Idle) }
+    var pendingExport by remember { mutableStateOf<String?>(null) }
+    var status by remember { mutableStateOf<String?>(null) }
+    val exportDone = stringResource(R.string.settings_config_export_done)
+    val exportFailed = stringResource(R.string.settings_config_export_failed)
+    val importDone = stringResource(R.string.settings_config_import_done)
+    val importInvalid = stringResource(R.string.settings_config_import_invalid)
+    val importRootFailed = stringResource(R.string.settings_config_import_root_failed)
+
+    val exportLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.CreateDocument("application/json"),
+        ) { uri ->
+            val raw = pendingExport
+            pendingExport = null
+            if (uri == null || raw == null) return@rememberLauncherForActivityResult
+            operation = ConfigOperation.Export
+            scope.launch {
+                val ok = withContext(Dispatchers.IO) { writeTextToUri(context, uri, raw) }
+                operation = ConfigOperation.Idle
+                status = if (ok) exportDone else exportFailed
+            }
+        }
+
+    val importLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.OpenDocument(),
+        ) { uri ->
+            if (uri == null) return@rememberLauncherForActivityResult
+            operation = ConfigOperation.Import
+            status = null
+            scope.launch {
+                val result = withContext(Dispatchers.IO) { importConfigFromUri(context, uri) }
+                operation = ConfigOperation.Idle
+                status =
+                    when (result) {
+                        ConfigImportResult.Success -> {
+                            TargetsCache.refreshAfterSave(scope, context)
+                            importDone
+                        }
+
+                        ConfigImportResult.InvalidJson -> {
+                            importInvalid
+                        }
+
+                        ConfigImportResult.RootFailed -> {
+                            importRootFailed
+                        }
+                    }
+            }
+        }
+
+    LaunchedEffect(Unit) {
+        TargetsCache.ensureLoaded(scope, context)
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SettingsSectionHeader(stringResource(R.string.settings_config_section))
+        PreferenceRow(
+            title = stringResource(R.string.settings_config_backup_title),
+            subtitle = stringResource(R.string.settings_config_backup_sub),
+            icon = Icons.Default.FileDownload,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            EnhancedOutlinedButton(
+                onClick = {
+                    pendingExport = buildConfigExportJson(context, targets)
+                    status = null
+                    exportLauncher.launch("vpnhide_config.json")
+                },
+                enabled = operation == ConfigOperation.Idle && targets != null,
+                modifier = Modifier.weight(1f),
+            ) {
+                if (operation == ConfigOperation.Export) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp).padding(end = 8.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } else {
+                    Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(stringResource(R.string.settings_config_export))
+            }
+            EnhancedButton(
+                onClick = {
+                    importLauncher.launch(
+                        arrayOf(
+                            "application/json",
+                            "text/json",
+                            "text/plain",
+                            "application/octet-stream",
+                            "*/*",
+                        ),
+                    )
+                },
+                enabled = operation == ConfigOperation.Idle,
+                modifier = Modifier.weight(1f),
+            ) {
+                if (operation == ConfigOperation.Import) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp).padding(end = 8.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                } else {
+                    Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(stringResource(R.string.settings_config_import))
+            }
+        }
+        Text(
+            text = stringResource(R.string.settings_config_import_note),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 4.dp),
+        )
+        status?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp),
+            )
         }
     }
 }
@@ -312,6 +458,68 @@ private fun writeSuperkeySetting(
         DashboardCache.invalidate()
     }
     return exit
+}
+
+private enum class ConfigImportResult {
+    Success,
+    InvalidJson,
+    RootFailed,
+}
+
+private enum class ConfigOperation {
+    Idle,
+    Export,
+    Import,
+}
+
+private fun buildConfigExportJson(
+    context: android.content.Context,
+    snapshot: TargetsSnapshot?,
+): String {
+    val canonical =
+        when {
+            snapshot?.canonicalConfig != null -> snapshot.canonicalConfig
+            snapshot != null -> buildCanonicalConfigFromTargetsSnapshot(snapshot)
+            else -> CanonicalConfig(debug = isEnabledInPrefs(context))
+        }
+    return canonicalConfigJson(canonical)
+}
+
+private fun writeTextToUri(
+    context: android.content.Context,
+    uri: Uri,
+    text: String,
+): Boolean =
+    runCatching {
+        context.contentResolver.openOutputStream(uri)?.use { out ->
+            out.write(text.toByteArray(StandardCharsets.UTF_8))
+        } ?: error("openOutputStream returned null")
+    }.isSuccess
+
+private fun importConfigFromUri(
+    context: android.content.Context,
+    uri: Uri,
+): ConfigImportResult {
+    val raw =
+        runCatching {
+            context.contentResolver
+                .openInputStream(uri)
+                ?.bufferedReader(StandardCharsets.UTF_8)
+                ?.use { it.readText() }
+        }.getOrNull() ?: return ConfigImportResult.InvalidJson
+    val canonical = parseImportedCanonicalConfig(raw, context.packageName) ?: return ConfigImportResult.InvalidJson
+    val cmd =
+        listOf(
+            buildCanonicalConfigWriteCommand(canonical),
+            ConfigChannels.reconcileCommand(),
+            "if [ -x $PORTS_ACTIVATOR ]; then $PORTS_ACTIVATOR; fi",
+        ).joinToString(" ; ")
+    val (exit, _) = suExec(cmd)
+    if (exit != 0) return ConfigImportResult.RootFailed
+    storeDebugLoggingPreference(context, canonical.debug)
+    RootSnapshotCache.invalidate()
+    DashboardCache.invalidate()
+    return ConfigImportResult.Success
 }
 
 @Composable

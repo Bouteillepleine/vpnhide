@@ -212,6 +212,17 @@
     <string name="settings_haptics_sub">Вибрация при нажатиях и переключениях</string>
     <string name="settings_animations">Анимации</string>
     <string name="settings_animations_sub">Пружинные переходы и морфинг форм</string>
+    <string name="settings_config_section">Конфигурация</string>
+    <string name="settings_config_backup_title">Резервная копия конфига</string>
+    <string name="settings_config_backup_sub">Сохранить или восстановить канонический JSON-конфиг</string>
+    <string name="settings_config_export">Экспорт JSON</string>
+    <string name="settings_config_import">Импорт JSON</string>
+    <string name="settings_config_import_note">Импорт заменяет текущий конфиг и применяет установленные модули заново.</string>
+    <string name="settings_config_export_done">Конфиг экспортирован.</string>
+    <string name="settings_config_export_failed">Не удалось экспортировать конфиг.</string>
+    <string name="settings_config_import_done">Конфиг импортирован.</string>
+    <string name="settings_config_import_invalid">Импорт не удался: некорректный JSON-конфиг.</string>
+    <string name="settings_config_import_root_failed">Импорт не удался: не получилось записать root-конфиг.</string>
     <string name="settings_security">Безопасность</string>
     <string name="settings_superkey_title">APatch SuperKey</string>
     <string name="settings_superkey_saved">Сохранён для активации KPM при загрузке.</string>

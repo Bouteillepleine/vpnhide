@@ -21,3 +21,60 @@ internal fun resolveHiddenPackages(
     observers: Set<String>,
     selfPkg: String,
 ): List<String> = (existing.filterNot { it in observers } + selfPkg).distinct().sorted()
+
+internal data class AppRoleSelection(
+    val packageName: String,
+    val java: Boolean = false,
+    val native: Boolean = false,
+    val appHiding: Boolean = false,
+    val ports: Boolean = false,
+)
+
+internal fun buildCanonicalConfigForAppPickerSave(
+    debug: Boolean,
+    selfPkg: String,
+    selections: Collection<AppRoleSelection>,
+    snapshot: TargetsSnapshot?,
+): CanonicalConfig {
+    val base = canonicalBaseForSave(debug, snapshot)
+    val visiblePkgs = selections.mapTo(mutableSetOf()) { it.packageName }
+
+    fun preserved(predicate: (CanonicalApp) -> Boolean): Set<String> =
+        base.apps
+            .filter { (pkg, app) -> pkg !in visiblePkgs && predicate(app) }
+            .keys
+
+    val javaPkgs = preserved { it.java } + selections.selectedPkgs { it.java } + selfPkg
+    val nativePkgs = preserved { it.native.enabled } + selections.selectedPkgs { it.native } + selfPkg
+    val observerPkgs = preserved { it.appHiding } + selections.selectedPkgs { it.appHiding }
+    val portsPkgs = preserved { it.ports } + selections.selectedPkgs { it.ports }
+    val hiddenPkgs =
+        resolveHiddenPackages(
+            existing = base.apps.filterValues { it.hidden }.keys,
+            observers = observerPkgs,
+            selfPkg = selfPkg,
+        )
+
+    return buildCanonicalConfig(
+        debug = debug,
+        javaPkgs = javaPkgs,
+        nativePkgs = nativePkgs,
+        hiddenPkgs = hiddenPkgs,
+        observerPkgs = observerPkgs,
+        portsPkgs = portsPkgs,
+        existing = base,
+    )
+}
+
+private fun canonicalBaseForSave(
+    debug: Boolean,
+    snapshot: TargetsSnapshot?,
+): CanonicalConfig =
+    when {
+        snapshot?.canonicalConfig != null -> snapshot.canonicalConfig.copy(debug = debug)
+        snapshot != null -> buildCanonicalConfigFromTargetsSnapshot(snapshot, debug = debug)
+        else -> CanonicalConfig(debug = debug)
+    }
+
+private fun Collection<AppRoleSelection>.selectedPkgs(predicate: (AppRoleSelection) -> Boolean): Set<String> =
+    filter(predicate).mapTo(mutableSetOf()) { it.packageName }
