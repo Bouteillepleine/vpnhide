@@ -7,36 +7,37 @@ internal object HookIds {
     enum class Hook(
         val id: Int,
         val hookName: String,
+        val note: String,
     ) {
         // /proc/net/route — IPv4 route lines
-        FIB_ROUTE_SEQ_SHOW(0, "fib_route_seq_show"),
+        FIB_ROUTE_SEQ_SHOW(0, "fib_route_seq_show", "/proc/net/route — IPv4 route lines"),
 
         // /proc/net/ipv6_route — IPv6 route lines
-        IPV6_ROUTE_SEQ_SHOW(1, "ipv6_route_seq_show"),
+        IPV6_ROUTE_SEQ_SHOW(1, "ipv6_route_seq_show", "/proc/net/ipv6_route — IPv6 route lines"),
 
         // RTM_NEWLINK — getifaddrs() link enumeration
-        RTNL_FILL_IFINFO(2, "rtnl_fill_ifinfo"),
+        RTNL_FILL_IFINFO(2, "rtnl_fill_ifinfo", "RTM_NEWLINK — getifaddrs() link enumeration"),
 
         // RTM_GETADDR — IPv4 address dump
-        INET_FILL_IFADDR(3, "inet_fill_ifaddr"),
+        INET_FILL_IFADDR(3, "inet_fill_ifaddr", "RTM_GETADDR — IPv4 address dump"),
 
         // RTM_GETADDR — IPv6 address dump
-        INET6_FILL_IFADDR(4, "inet6_fill_ifaddr"),
+        INET6_FILL_IFADDR(4, "inet6_fill_ifaddr", "RTM_GETADDR — IPv6 address dump"),
 
         // SIOCGIF* by name (per-interface ioctls)
-        DEV_IOCTL(5, "dev_ioctl"),
+        DEV_IOCTL(5, "dev_ioctl", "SIOCGIF* by name (per-interface ioctls)"),
 
         // SIOCGIFCONF — interface list ioctl
-        SOCK_IOCTL(6, "sock_ioctl"),
+        SOCK_IOCTL(6, "sock_ioctl", "SIOCGIFCONF — interface list ioctl"),
 
         // RTM_GETROUTE — IPv4 route dump (issue #86)
-        FIB_DUMP_INFO(7, "fib_dump_info"),
+        FIB_DUMP_INFO(7, "fib_dump_info", "RTM_GETROUTE — IPv4 route dump (issue #86)"),
 
         // RTM_GETROUTE — IPv6 route dump
-        RT6_FILL_NODE(8, "rt6_fill_node"),
+        RT6_FILL_NODE(8, "rt6_fill_node", "RTM_GETROUTE — IPv6 route dump"),
 
         // RTM_GETRULE — policy routing rules
-        FIB_NL_FILL_RULE(9, "fib_nl_fill_rule"),
+        FIB_NL_FILL_RULE(9, "fib_nl_fill_rule", "RTM_GETRULE — policy routing rules"),
     }
 
     // Hooks owned by each backend: apply `mask and own`.

@@ -36,8 +36,10 @@
     <string name="apps_help_title">How it works</string>
     <string name="chip_java" translatable="false">J</string>
     <string name="chip_native" translatable="false">N</string>
+    <string name="chip_native_partial" translatable="false">N*</string>
     <string name="chip_app_hiding" translatable="false">A</string>
     <string name="chip_ports" translatable="false">P</string>
+    <string name="native_hooks_title">Native hooks</string>
     <string name="apps_hint_roles">Tap a chip to toggle that role for an app, or tap the row to toggle all of them. J = LSPosed (Java-level hiding). N = the native backend (kernel-level hiding via kmod/KPM, or Zygisk). A = app hiding (this app sees a sanitized package list). P = block this app from reaching localhost ports. N and P only appear when a native backend / the ports module is installed.</string>
     <string name="apps_hint_restart_target">After Save: J (LSPosed) and a kernel native backend (kmod/KPM) apply to the target immediately — no restart needed. If your native backend is Zygisk, or you changed P (ports), the target app must be force-stopped and reopened for the change to take effect for it.</string>
     <string name="apps_hint_zygisk">If your native backend is Zygisk, banking and payment apps can detect its in-process hooks and crash when N is on for them — leave N off for such apps and rely on J (LSPosed). The kmod and KPM native backends hook in kernel space and are invisible to those checks.</string>

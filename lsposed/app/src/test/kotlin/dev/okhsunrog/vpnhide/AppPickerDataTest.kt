@@ -109,13 +109,88 @@ class AppPickerDataTest {
                 selfPkg = self,
                 selections =
                     listOf(
-                        AppRoleSelection(packageName = "com.visible", native = true),
+                        AppRoleSelection(packageName = "com.visible", native = true, nativeHooks = customNative.hooks),
                     ),
                 snapshot = snapshot,
             )
 
         assertEquals(customNative, cfg.apps.getValue("com.visible").native)
         assertEquals(customNative, cfg.apps.getValue("com.frozen").native)
+    }
+
+    @Test
+    fun `save applies selected custom native hooks for visible apps`() {
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections =
+                    listOf(
+                        AppRoleSelection(
+                            packageName = "com.visible",
+                            native = true,
+                            nativeHooks = listOf("dev_ioctl", "sock_ioctl"),
+                        ),
+                    ),
+                snapshot = snapshotWithCanonical(),
+            )
+
+        assertEquals(
+            NativeRole(enabled = true, hooks = listOf("dev_ioctl", "sock_ioctl")),
+            cfg.apps.getValue("com.visible").native,
+        )
+    }
+
+    @Test
+    fun `save converts enabled native role without hook list to all hooks`() {
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections =
+                    listOf(
+                        AppRoleSelection(packageName = "com.visible", native = true),
+                    ),
+                snapshot =
+                    snapshotWithCanonical(
+                        "com.visible" to CanonicalApp(native = NativeRole(enabled = true, hooks = listOf("sock_ioctl"))),
+                    ),
+            )
+
+        assertEquals(NativeRole.All, cfg.apps.getValue("com.visible").native)
+    }
+
+    @Test
+    fun `native hook selection returns empty list when no hooks are selected`() {
+        assertEquals(
+            emptyList<String>(),
+            resolveNativeHookSelection(
+                hookNames = listOf("dev_ioctl", "sock_ioctl"),
+                selectedHookNames = emptySet(),
+            ),
+        )
+    }
+
+    @Test
+    fun `native hook selection returns null when all hooks are selected`() {
+        assertEquals(
+            null,
+            resolveNativeHookSelection(
+                hookNames = listOf("dev_ioctl", "sock_ioctl"),
+                selectedHookNames = setOf("sock_ioctl", "dev_ioctl"),
+            ),
+        )
+    }
+
+    @Test
+    fun `native hook selection keeps registry order for partial selections`() {
+        assertEquals(
+            listOf("dev_ioctl", "sock_ioctl"),
+            resolveNativeHookSelection(
+                hookNames = listOf("inet_ioctl", "dev_ioctl", "sock_ioctl"),
+                selectedHookNames = setOf("sock_ioctl", "dev_ioctl"),
+            ),
+        )
     }
 
     @Test

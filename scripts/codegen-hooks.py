@@ -132,6 +132,10 @@ def pascal(name: str) -> str:
     return "".join(part.capitalize() for part in name.split("_"))
 
 
+def kt_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 # ---------------------------------------------------------------------------
 # emitters
 # ---------------------------------------------------------------------------
@@ -239,13 +243,14 @@ def emit_kotlin(hooks: list[Hook], errs: list[Err], backends: list[Backend]) -> 
     L.append("    enum class Hook(")
     L.append("        val id: Int,")
     L.append("        val hookName: String,")
+    L.append("        val note: String,")
     L.append("    ) {")
     for i, h in enumerate(hooks):
         if i:
             L.append("")
         if h.note:
             L.append(f"        // {h.note}")
-        L.append(f'        {upper(h.name)}({h.id}, "{h.name}"),')
+        L.append(f'        {upper(h.name)}({h.id}, "{h.name}", "{kt_string(h.note)}"),')
     L.append("    }")
     L.append("")
     L.append("    // Hooks owned by each backend: apply `mask and own`.")
