@@ -12,6 +12,15 @@ How to build vpnhide from source.
   rustup target add aarch64-linux-android
   cargo install cargo-ndk
   ```
+- **clang-format 18.x** — kmod C formatting is pinned because clang-format
+  versions disagree on kernel-style C casts. The repo checks this via
+  `scripts/clang-format-c.sh`. On Arch:
+  ```sh
+  sudo pacman -S clang18
+  mkdir -p ~/.local/bin
+  ln -sfn /usr/lib/llvm18/bin/clang-format ~/.local/bin/clang-format-18
+  clang-format-18 --version
+  ```
 - **`docker` or `podman`** — only for building the kernel module via DDK images. Docker is preferred when both are installed, matching CI and device-test workflows. See [kmod/BUILDING.md](../kmod/BUILDING.md).
 - **`zip`** — packaging module zips.
 - **`adb`** — installing builds on a device.
@@ -114,7 +123,7 @@ cd ../zygisk && cargo test
 cd ../lsposed/native && cargo test
 
 # C (kernel module)
-clang-format --dry-run --Werror kmod/vpnhide_kmod.c
+scripts/clang-format-c.sh --check
 # Host-side test of the generated VPN-iface matcher used by the kernel module
 gcc -O2 -Wall -Werror -o /tmp/test_iface_lists kmod/test_iface_lists.c && /tmp/test_iface_lists
 
