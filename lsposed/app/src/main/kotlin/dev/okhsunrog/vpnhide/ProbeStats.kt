@@ -13,17 +13,19 @@ internal enum class MethodSurface { Java, Native, Package }
 internal enum class DetectionMethod(
     val surface: MethodSurface,
     val labelRes: Int,
+    // Explains what the probe is and how an app uses it to infer a VPN is up.
+    val descriptionRes: Int,
 ) {
-    Routes(MethodSurface.Native, R.string.method_routes),
-    Interfaces(MethodSurface.Native, R.string.method_interfaces),
-    InterfaceIoctl(MethodSurface.Native, R.string.method_interface_ioctl),
-    PolicyRules(MethodSurface.Native, R.string.method_policy_rules),
-    NetworkCapabilities(MethodSurface.Java, R.string.method_network_capabilities),
-    LinkProperties(MethodSurface.Java, R.string.method_link_properties),
-    NetworkInfo(MethodSurface.Java, R.string.method_network_info),
-    NetworkHandle(MethodSurface.Java, R.string.method_network_handle),
-    ConnectivityService(MethodSurface.Java, R.string.method_connectivity_service),
-    PackageEnumeration(MethodSurface.Package, R.string.method_package_enumeration),
+    Routes(MethodSurface.Native, R.string.method_routes, R.string.method_desc_routes),
+    Interfaces(MethodSurface.Native, R.string.method_interfaces, R.string.method_desc_interfaces),
+    InterfaceIoctl(MethodSurface.Native, R.string.method_interface_ioctl, R.string.method_desc_interface_ioctl),
+    PolicyRules(MethodSurface.Native, R.string.method_policy_rules, R.string.method_desc_policy_rules),
+    NetworkCapabilities(MethodSurface.Java, R.string.method_network_capabilities, R.string.method_desc_network_capabilities),
+    LinkProperties(MethodSurface.Java, R.string.method_link_properties, R.string.method_desc_link_properties),
+    NetworkInfo(MethodSurface.Java, R.string.method_network_info, R.string.method_desc_network_info),
+    NetworkHandle(MethodSurface.Java, R.string.method_network_handle, R.string.method_desc_network_handle),
+    ConnectivityService(MethodSurface.Java, R.string.method_connectivity_service, R.string.method_desc_connectivity_service),
+    PackageEnumeration(MethodSurface.Package, R.string.method_package_enumeration, R.string.method_desc_package_enumeration),
     ;
 
     companion object {

@@ -187,6 +187,17 @@
     <string name="method_network_handle">Network handle</string>
     <string name="method_connectivity_service">ConnectivityService</string>
     <string name="method_package_enumeration">Package enumeration</string>
+    <!-- Detection method descriptions: what the probe is + how it reveals a VPN -->
+    <string name="method_desc_routes">An app reads the routing table (/proc/net/route or netlink). A VPN installs a catch-all default route through its tunnel interface — its presence gives the VPN away.</string>
+    <string name="method_desc_interfaces">An app enumerates network interfaces and their addresses (getifaddrs / netlink). A VPN appears as an extra tunNN interface with an address that doesn\'t match Wi-Fi or cellular.</string>
+    <string name="method_desc_interface_ioctl">An app queries interfaces directly via ioctl (SIOCGIFCONF / SIOCGIFFLAGS). The VPN tunnel interface shows up in the list or reports as up.</string>
+    <string name="method_desc_policy_rules">An app reads policy routing rules (RTM_GETRULE). A VPN adds rules that steer traffic into the tunnel, which betray its presence.</string>
+    <string name="method_desc_network_capabilities">An app queries NetworkCapabilities. An active VPN sets the VPN transport flag — a direct signal that a VPN is up.</string>
+    <string name="method_desc_link_properties">An app reads LinkProperties. A VPN exposes its tunNN interface name, VPN routes and DNS servers.</string>
+    <string name="method_desc_network_info">An app checks NetworkInfo (legacy API). An active VPN reports type VPN instead of mobile or Wi-Fi.</string>
+    <string name="method_desc_network_handle">An app resolves the active Network handle. A VPN returns its own virtual network instead of the physical one.</string>
+    <string name="method_desc_connectivity_service">An app lists all networks or subscribes to network callbacks via ConnectivityService. The VPN network shows up in the list or through callbacks.</string>
+    <string name="method_desc_package_enumeration">An app lists installed packages or queries VpnService components. The presence of known VPN apps reveals VPN use.</string>
     <string name="surface_java">Java API</string>
     <string name="surface_native">Native</string>
     <string name="surface_package">Packages</string>

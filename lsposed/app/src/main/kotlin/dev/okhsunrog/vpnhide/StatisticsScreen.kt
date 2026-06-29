@@ -553,53 +553,32 @@ private fun AppProbeDetailDialog(
             Column(
                 modifier =
                     Modifier
-                        .heightIn(max = 420.dp)
+                        .heightIn(max = 480.dp)
                         .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Text(
-                    text = stringResource(R.string.statistics_apps_caption),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                // Grouped by surface (Java API / Native / Packages) with a
-                // coloured header, so it's clear which hooks are framework-level
-                // vs native syscall/libc.
+                // Grouped: surface (Java API / Native / Packages, coloured) →
+                // detection method (with an explanation of how it reveals a VPN)
+                // → the exact hooks behind it when a method folds several.
                 app.byHook.entries
                     .groupBy { DetectionMethod.of(it.key).surface }
                     .entries
                     .sortedByDescending { (_, hooks) -> hooks.sumOf { it.value } }
-                    .forEach { (surface, hooks) ->
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    .forEach { (surface, surfaceHooks) ->
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(
                                 text = surfaceLabel(surface),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = surfaceAccentColor(surface),
                             )
-                            hooks.sortedByDescending { it.value }.forEach { (hook, hookCount) ->
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Column(Modifier.weight(1f)) {
-                                        Text(
-                                            text = stringResource(DetectionMethod.of(hook).labelRes),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.Medium,
-                                        )
-                                        Text(
-                                            text = hook.note,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                    Spacer(Modifier.width(10.dp))
-                                    Text(
-                                        text = formatStatCount(hookCount),
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = StatusColors.infoAccent,
-                                    )
+                            surfaceHooks
+                                .groupBy { DetectionMethod.of(it.key) }
+                                .entries
+                                .sortedByDescending { (_, hooks) -> hooks.sumOf { it.value } }
+                                .forEach { (method, methodHooks) ->
+                                    MethodDetailBlock(method = method, hooks = methodHooks)
                                 }
-                            }
                         }
                     }
             }
@@ -608,6 +587,55 @@ private fun AppProbeDetailDialog(
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.contact_close)) }
         },
     )
+}
+
+@Composable
+private fun MethodDetailBlock(
+    method: DetectionMethod,
+    hooks: List<Map.Entry<HookIds.Hook, Long>>,
+) {
+    val total = hooks.sumOf { it.value }
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = stringResource(method.labelRes),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = formatStatCount(total),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = StatusColors.infoAccent,
+            )
+        }
+        Text(
+            text = stringResource(method.descriptionRes),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        // When a method folds several hooks, list the exact ones behind it.
+        if (hooks.size > 1) {
+            hooks.sortedByDescending { it.value }.forEach { (hook, count) ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "·  ${hook.note}",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = formatStatCount(count),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable

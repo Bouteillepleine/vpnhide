@@ -156,6 +156,17 @@
     <string name="method_network_handle">Сетевой хэндл</string>
     <string name="method_connectivity_service">ConnectivityService</string>
     <string name="method_package_enumeration">Перечисление пакетов</string>
+    <!-- Описания способов детекта: что это за проверка + как она выдаёт VPN -->
+    <string name="method_desc_routes">Приложение читает таблицу маршрутов (/proc/net/route или netlink). VPN добавляет маршрут по умолчанию через свой туннель-интерфейс — его наличие выдаёт VPN.</string>
+    <string name="method_desc_interfaces">Приложение перечисляет сетевые интерфейсы и их адреса (getifaddrs / netlink). VPN виден как лишний интерфейс tunNN с адресом, не совпадающим с Wi-Fi или моб. сетью.</string>
+    <string name="method_desc_interface_ioctl">Приложение запрашивает интерфейсы напрямую через ioctl (SIOCGIFCONF / SIOCGIFFLAGS). Туннель-интерфейс VPN появляется в списке или числится поднятым.</string>
+    <string name="method_desc_policy_rules">Приложение читает правила маршрутизации (RTM_GETRULE). VPN добавляет правила, заворачивающие трафик в туннель, — они его выдают.</string>
+    <string name="method_desc_network_capabilities">Приложение запрашивает NetworkCapabilities. Активный VPN выставляет флаг VPN-транспорта — прямой признак включённого VPN.</string>
+    <string name="method_desc_link_properties">Приложение читает LinkProperties. VPN раскрывает имя своего интерфейса tunNN, VPN-маршруты и DNS-серверы.</string>
+    <string name="method_desc_network_info">Приложение проверяет NetworkInfo (устаревший API). Активный VPN сообщает тип VPN вместо моб. сети или Wi-Fi.</string>
+    <string name="method_desc_network_handle">Приложение получает хэндл активной сети. VPN возвращает свою виртуальную сеть вместо физической.</string>
+    <string name="method_desc_connectivity_service">Приложение перечисляет все сети или подписывается на колбэки через ConnectivityService. VPN-сеть всплывает в списке или в колбэках.</string>
+    <string name="method_desc_package_enumeration">Приложение перечисляет установленные пакеты или ищет компоненты VpnService. Наличие известных VPN-приложений выдаёт использование VPN.</string>
     <string name="surface_java">Java API</string>
     <string name="surface_native">Нативные</string>
     <string name="surface_package">Пакеты</string>
