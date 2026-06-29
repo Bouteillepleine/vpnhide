@@ -5,6 +5,8 @@ import android.database.sqlite.SQLiteDatabase
 import android.os.Build
 import android.os.SystemClock
 import dev.okhsunrog.vpnhide.generated.HookIds
+import dev.okhsunrog.vpnhide.settings.SettingsRepository
+import kotlinx.coroutines.flow.first
 import java.io.File
 
 // ── Domain types — invalid states are unrepresentable ────────────────────
@@ -1301,10 +1303,24 @@ internal suspend fun loadDashboardState(
     if (ports is ModuleState.Installed && ports.targetCount == 0) {
         info(res.getString(R.string.dashboard_issue_ports_no_observers))
     }
+    // The running-LSPosed-vs-installed-APK check compares the FULL version by
+    // default: the hook code lives in system_server and only swaps on reboot, so
+    // a dev who reinstalls the APK on the same base keeps running the old hook
+    // until reboot. Developers who reinstall constantly can flip
+    // suppressVersionWarnings to fall back to base-compare (release users see no
+    // difference — release versions carry no dev suffix).
+    val suppressVersionWarnings =
+        SettingsRepository(context.applicationContext).settings.first().suppressVersionWarnings
     var lsposedVersionMismatch: String? = null
     if (lsposed is LsposedState.Active) {
         val runningVersion = lsposed.version
-        if (versionsMismatch(runningVersion, appVersion)) {
+        val mismatch =
+            if (suppressVersionWarnings) {
+                versionsMismatch(runningVersion, appVersion)
+            } else {
+                versionsMismatchFull(runningVersion, appVersion)
+            }
+        if (mismatch) {
             VpnHideLog.w(TAG, "version mismatch: running=$runningVersion app=$appVersion")
             lsposedVersionMismatch = res.getString(R.string.dashboard_issue_version_mismatch, runningVersion, appVersion)
         }

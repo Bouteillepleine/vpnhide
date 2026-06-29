@@ -57,6 +57,21 @@ internal fun versionsMismatch(
     return baseVersion(moduleVersion) != baseVersion(appVersion)
 }
 
+// Like [versionsMismatch] but compares the FULL version string (git-describe
+// dev suffix included). Used for the running-LSPosed-vs-installed-APK check:
+// the hook code lives in system_server and is only swapped on reboot, so a dev
+// who rebuilds + reinstalls the APK on the same base keeps running the old hook
+// until they reboot — base-compare hides that, full-compare surfaces it.
+// Release versions are clean (no suffix) so this is identical to
+// [versionsMismatch] for end users.
+internal fun versionsMismatchFull(
+    moduleVersion: String?,
+    appVersion: String,
+): Boolean {
+    if (moduleVersion == null) return false
+    return normalizeVersion(moduleVersion) != normalizeVersion(appVersion)
+}
+
 // True when `remote` is a strictly newer release than `current` — used
 // to decide whether to offer an in-app update prompt. Both sides go
 // through baseVersion() so a dev APK built on top of 0.6.2 still gets

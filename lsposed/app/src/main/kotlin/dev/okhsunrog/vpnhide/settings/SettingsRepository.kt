@@ -36,6 +36,7 @@ class SettingsRepository(
         val HAPTICS = booleanPreferencesKey("haptics_enabled")
         val FULL_PROTECTION_ROLE_LABELS = booleanPreferencesKey("full_protection_role_labels")
         val SETTINGS_HINT_SEEN = booleanPreferencesKey("settings_hint_seen")
+        val SUPPRESS_VERSION_WARNINGS = booleanPreferencesKey("suppress_version_warnings")
     }
 
     val settings: Flow<AppSettings> =
@@ -54,6 +55,8 @@ class SettingsRepository(
                 fullProtectionRoleLabels =
                     p[Keys.FULL_PROTECTION_ROLE_LABELS] ?: defaults.fullProtectionRoleLabels,
                 settingsHintSeen = p[Keys.SETTINGS_HINT_SEEN] ?: defaults.settingsHintSeen,
+                suppressVersionWarnings =
+                    p[Keys.SUPPRESS_VERSION_WARNINGS] ?: defaults.suppressVersionWarnings,
             )
         }
 
@@ -78,6 +81,8 @@ class SettingsRepository(
     suspend fun setFullProtectionRoleLabels(value: Boolean) = edit { it[Keys.FULL_PROTECTION_ROLE_LABELS] = value }
 
     suspend fun setSettingsHintSeen(value: Boolean) = edit { it[Keys.SETTINGS_HINT_SEEN] = value }
+
+    suspend fun setSuppressVersionWarnings(value: Boolean) = edit { it[Keys.SUPPRESS_VERSION_WARNINGS] = value }
 
     private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
         context.uiSettingsStore.edit(block)

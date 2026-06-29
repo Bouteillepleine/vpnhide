@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.RoundedCorner
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.Update
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.VpnKey
@@ -236,6 +237,7 @@ fun SettingsScreen(
             AutoHideSettingsSection()
             DiagnosticsSettingsSection(onOpen = { diagnosticsOpen = true })
             DebugToolsSettingsSection(selfNeedsRestart = selfNeedsRestart)
+            DeveloperSettingsSection()
             ConfigBackupSection()
             SuperkeySettingsSection()
             CommunitySettingsSection()
@@ -328,6 +330,24 @@ private fun DebugToolsSettingsSection(selfNeedsRestart: Boolean?) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         SettingsSectionHeader(stringResource(R.string.settings_debug_section))
         DebugToolsSection(selfNeedsRestart = selfNeedsRestart)
+    }
+}
+
+@Composable
+private fun DeveloperSettingsSection() {
+    val settings = LocalSettingsState.current
+    val interactor = LocalSettingsInteractor.current
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        SettingsSectionHeader(stringResource(R.string.settings_developer_section))
+        PreferenceRowSwitch(
+            title = stringResource(R.string.settings_suppress_version_warnings),
+            subtitle = stringResource(R.string.settings_suppress_version_warnings_sub),
+            icon = Icons.Default.Update,
+            index = 0,
+            count = 1,
+            checked = settings.suppressVersionWarnings,
+            onCheckedChange = interactor::setSuppressVersionWarnings,
+        )
     }
 }
 
