@@ -134,7 +134,15 @@
     <string name="statistics_load_failed_message">VPN Hide не смог собрать root-состояние для этой вкладки. Проверьте менеджер root, если разрешение было прервано, затем нажмите «Повторить».</string>
     <string name="statistics_refresh_failed_message">Обновление не удалось. Показываются предыдущие данные статистики.</string>
     <string name="statistics_apps_header">Приложения, проверявшие VPN</string>
-    <string name="statistics_apps_caption">Накопительно с момента загрузки, по способам детекта</string>
+    <string name="statistics_apps_caption">Накопительно с момента загрузки. Нажмите приложение для полной разбивки по хукам.</string>
+    <string name="statistics_capture_title">Сессия захвата</string>
+    <string name="statistics_capture_intro">Снимок счётчиков, затем откройте и потыкайте целевое приложение и нажмите «Обновить», чтобы увидеть, что именно оно проверяло за это окно.</string>
+    <string name="statistics_capture_start">Начать захват</string>
+    <string name="statistics_capture_active">Идёт захват · %1$s · приложений: %2$d</string>
+    <string name="statistics_capture_stop">Стоп</string>
+    <string name="statistics_capture_apps_header">Пробы за сессию</string>
+    <string name="statistics_capture_hint">Что целевые приложения проверяли с начала захвата. Нажмите для разбивки по хукам.</string>
+    <string name="statistics_capture_empty">Пока ничего не поймано. Откройте целевое приложение и нажмите «Обновить».</string>
     <string name="statistics_apps_metric">Приложений</string>
     <string name="statistics_methods_metric">Способов</string>
     <!-- Способы детекта (разбивка по приложениям) -->

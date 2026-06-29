@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -34,8 +35,10 @@ import androidx.compose.ui.unit.dp
 import dev.okhsunrog.vpnhide.generated.HookIds
 import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
 import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
+import dev.okhsunrog.vpnhide.ui.components.EnhancedOutlinedButton
 import dev.okhsunrog.vpnhide.ui.components.GroupedCard
 import dev.okhsunrog.vpnhide.ui.theme.AppColors
+import kotlinx.coroutines.delay
 
 @Composable
 fun StatisticsScreen(modifier: Modifier = Modifier) {
@@ -43,9 +46,19 @@ fun StatisticsScreen(modifier: Modifier = Modifier) {
     val state by StatisticsCache.state.collectAsState()
     val loadError by StatisticsCache.error.collectAsState()
     var detailApp by remember { mutableStateOf<AppProbeStats?>(null) }
+    var captureBaseline by remember { mutableStateOf<Map<Pair<Long, Long>, Long>?>(null) }
+    var captureStartMs by remember { mutableLongStateOf(0L) }
+    var nowMs by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(Unit) {
         StatisticsCache.ensureLoaded(scope)
+    }
+    // Tick the elapsed clock while a capture session is active.
+    LaunchedEffect(captureBaseline != null) {
+        while (captureBaseline != null) {
+            nowMs = System.currentTimeMillis()
+            delay(1000)
+        }
     }
 
     Column(
@@ -79,11 +92,38 @@ fun StatisticsScreen(modifier: Modifier = Modifier) {
         val appStats = remember(s, selfPackage) { buildAppProbeStats(s, selfPackage) }
         val methodCount = remember(appStats) { appStats.flatMap { it.byMethod.keys }.toSet().size }
 
+        val capturing = captureBaseline != null
+        val capture = captureBaseline?.let { diffCapture(it, s, selfPackage) }
+        val backendReset = capture?.backendReset == true
+        // Backend restarted mid-session (a counter dropped): re-baseline so the
+        // deltas restart from the fresh counter values instead of going negative.
+        LaunchedEffect(backendReset) {
+            if (backendReset) {
+                captureBaseline = snapshotCounters(s)
+                captureStartMs = System.currentTimeMillis()
+            }
+        }
+        val shownApps = capture?.apps ?: appStats
+
         detailApp?.let { app ->
             AppProbeDetailDialog(app = app, onDismiss = { detailApp = null })
         }
 
         StatisticsHeroCard(state = s, appCount = appStats.size, methodCount = methodCount)
+        Spacer(Modifier.height(20.dp))
+
+        CaptureControlCard(
+            capturing = capturing,
+            elapsedMs = if (capturing) (nowMs - captureStartMs).coerceAtLeast(0L) else 0L,
+            capturedAppCount = capture?.apps?.size ?: 0,
+            onStart = {
+                captureBaseline = snapshotCounters(s)
+                captureStartMs = System.currentTimeMillis()
+                nowMs = captureStartMs
+            },
+            onStop = { captureBaseline = null },
+            onRefresh = { StatisticsCache.refresh(scope) },
+        )
         Spacer(Modifier.height(20.dp))
 
         SectionHeader(stringResource(R.string.statistics_backends))
@@ -110,19 +150,34 @@ fun StatisticsScreen(modifier: Modifier = Modifier) {
             )
         }
 
-        if (appStats.isNotEmpty()) {
+        if (capturing || shownApps.isNotEmpty()) {
             Spacer(Modifier.height(20.dp))
-            SectionHeader(stringResource(R.string.statistics_apps_header))
+            SectionHeader(
+                stringResource(
+                    if (capturing) R.string.statistics_capture_apps_header else R.string.statistics_apps_header,
+                ),
+            )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = stringResource(R.string.statistics_apps_caption),
+                text =
+                    stringResource(
+                        if (capturing) R.string.statistics_capture_hint else R.string.statistics_apps_caption,
+                    ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(8.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                appStats.forEachIndexed { index, app ->
-                    AppProbeCard(app, index = index, count = appStats.size, onClick = { detailApp = app })
+            if (capturing && shownApps.isEmpty()) {
+                StatusBanner(
+                    text = stringResource(R.string.statistics_capture_empty),
+                    containerColor = StatusColors.infoContainer(),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    shownApps.forEachIndexed { index, app ->
+                        AppProbeCard(app, index = index, count = shownApps.size, onClick = { detailApp = app })
+                    }
                 }
             }
         }
@@ -250,6 +305,63 @@ private fun StatisticsHeroCard(
             }
         }
     }
+}
+
+@Composable
+private fun CaptureControlCard(
+    capturing: Boolean,
+    elapsedMs: Long,
+    capturedAppCount: Int,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onRefresh: () -> Unit,
+) {
+    EnhancedCard(modifier = Modifier.fillMaxWidth(), color = AppColors.cardContainer) {
+        Column(
+            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.statistics_capture_title),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            if (!capturing) {
+                Text(
+                    text = stringResource(R.string.statistics_capture_intro),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                EnhancedButton(onClick = onStart, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.statistics_capture_start))
+                }
+            } else {
+                Text(
+                    text =
+                        stringResource(
+                            R.string.statistics_capture_active,
+                            formatElapsed(elapsedMs),
+                            capturedAppCount,
+                        ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    EnhancedButton(onClick = onRefresh, modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.action_refresh))
+                    }
+                    EnhancedOutlinedButton(onClick = onStop, modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.statistics_capture_stop))
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatElapsed(ms: Long): String {
+    val totalSeconds = ms / 1000
+    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
 
 @Composable

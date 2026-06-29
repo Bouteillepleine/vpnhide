@@ -165,7 +165,15 @@
     <string name="statistics_load_failed_message">VPN Hide could not collect the root state needed for this tab. Check your root manager if permission was interrupted, then tap Retry.</string>
     <string name="statistics_refresh_failed_message">Refresh failed. Showing the previous statistics data.</string>
     <string name="statistics_apps_header">Apps probing VPN</string>
-    <string name="statistics_apps_caption">Cumulative since boot, by detection method</string>
+    <string name="statistics_apps_caption">Cumulative since boot. Tap an app for the full per-hook breakdown.</string>
+    <string name="statistics_capture_title">Capture session</string>
+    <string name="statistics_capture_intro">Snapshot the counters, open and use a target app, then Refresh to see exactly what it probed in this window.</string>
+    <string name="statistics_capture_start">Start capture</string>
+    <string name="statistics_capture_active">Capturing · %1$s · %2$d apps</string>
+    <string name="statistics_capture_stop">Stop</string>
+    <string name="statistics_capture_apps_header">Probes during capture</string>
+    <string name="statistics_capture_hint">What target apps probed since the capture started. Tap for the per-hook breakdown.</string>
+    <string name="statistics_capture_empty">No probes captured yet. Open a target app, then tap Refresh.</string>
     <string name="statistics_apps_metric">Apps</string>
     <string name="statistics_methods_metric">Methods</string>
     <!-- Detection methods (per-app breakdown) -->

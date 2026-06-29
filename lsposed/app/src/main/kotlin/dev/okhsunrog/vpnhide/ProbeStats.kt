@@ -141,3 +141,56 @@ internal fun buildAppProbeStats(
                 .thenBy { it.uid },
         )
 }
+
+// ── Capture session: baseline-diff over a user-controlled window ──────────
+//
+// No backend reset command and no per-event timestamps — the app snapshots the
+// cumulative counters at "Start capture" and shows current − baseline. Lets a
+// user start a session, exercise a target app, and see exactly what it probed
+// in that window, on any active backend.
+
+/** Snapshot of cumulative counters keyed by (uid, hookId), taken at capture start. */
+internal fun snapshotCounters(state: StatisticsState): Map<Pair<Long, Long>, Long> =
+    state.backends
+        .flatMap { it.rows }
+        .associate { (it.uid to it.hookId) to it.count }
+
+internal data class CaptureDiff(
+    val apps: List<AppProbeStats>,
+    // A counter dropped below its baseline — the backend restarted (reboot /
+    // system_server restart / Zygisk re-inject). The caller should re-baseline.
+    val backendReset: Boolean,
+)
+
+/** Probes that happened since [baseline] was taken, as a per-app rollup. */
+internal fun diffCapture(
+    baseline: Map<Pair<Long, Long>, Long>,
+    current: StatisticsState,
+    selfPackage: String? = null,
+): CaptureDiff {
+    var reset = false
+    val deltaRows =
+        current.backends
+            .flatMap { it.rows }
+            .mapNotNull { row ->
+                val base = baseline[row.uid to row.hookId] ?: 0L
+                val delta = row.count - base
+                when {
+                    delta < 0L -> {
+                        reset = true
+                        null
+                    }
+
+                    delta == 0L -> {
+                        null
+                    }
+
+                    else -> {
+                        row.copy(count = delta)
+                    }
+                }
+            }
+    val synthetic =
+        StatisticsState(backends = listOf(BackendStatistics(backend = HookIds.Backend.LSPOSED, status = null, rows = deltaRows)))
+    return CaptureDiff(apps = buildAppProbeStats(synthetic, selfPackage), backendReset = reset)
+}

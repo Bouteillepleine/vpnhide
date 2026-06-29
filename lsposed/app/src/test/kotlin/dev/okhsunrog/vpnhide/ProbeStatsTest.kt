@@ -101,4 +101,48 @@ class ProbeStatsTest {
     fun `empty state yields no apps`() {
         assertEquals(emptyList<AppProbeStats>(), buildAppProbeStats(StatisticsState(backends = emptyList())))
     }
+
+    @Test
+    fun `capture diff shows only probes since the baseline`() {
+        val baseline =
+            snapshotCounters(
+                StatisticsState(listOf(backend(HookIds.Backend.LSPOSED, listOf(row(10100, HookIds.Hook.LSPOSED_NETWORK_CAPABILITIES, 5))))),
+            )
+        val current =
+            StatisticsState(
+                listOf(
+                    backend(
+                        HookIds.Backend.LSPOSED,
+                        listOf(
+                            row(10100, HookIds.Hook.LSPOSED_NETWORK_CAPABILITIES, 8), // +3
+                            row(10200, HookIds.Hook.FIB_ROUTE_SEQ_SHOW, 4), // new, +4
+                        ),
+                    ),
+                ),
+            )
+
+        val diff = diffCapture(baseline, current)
+
+        assertEquals(false, diff.backendReset)
+        assertEquals(listOf(10200L, 10100L), diff.apps.map { it.uid }) // delta 4 before delta 3
+        assertEquals(4uL, diff.apps[0].total)
+        assertEquals(mapOf(DetectionMethod.Routes to 4L), diff.apps[0].byMethod)
+        assertEquals(3uL, diff.apps[1].total)
+        assertEquals(mapOf(DetectionMethod.NetworkCapabilities to 3L), diff.apps[1].byMethod)
+    }
+
+    @Test
+    fun `capture diff flags a backend restart when a counter drops`() {
+        val baseline =
+            snapshotCounters(
+                StatisticsState(listOf(backend(HookIds.Backend.LSPOSED, listOf(row(10100, HookIds.Hook.LSPOSED_NETWORK_CAPABILITIES, 5))))),
+            )
+        val afterReboot =
+            StatisticsState(listOf(backend(HookIds.Backend.LSPOSED, listOf(row(10100, HookIds.Hook.LSPOSED_NETWORK_CAPABILITIES, 2)))))
+
+        val diff = diffCapture(baseline, afterReboot)
+
+        assertEquals(true, diff.backendReset)
+        assertEquals(emptyList<AppProbeStats>(), diff.apps)
+    }
 }
