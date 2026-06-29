@@ -58,6 +58,11 @@ fun DashboardScreen(
     val updateInfo by UpdateCheckCache.info.collectAsState()
     var showChangelog by remember { mutableStateOf(false) }
     var changelogData by remember { mutableStateOf<ChangelogData?>(null) }
+    var showContact by remember { mutableStateOf(false) }
+
+    if (showContact) {
+        ContactModal(onDismiss = { showContact = false })
+    }
 
     // Both caches are reactive to tab switches without re-doing work:
     // ensureLoaded / ensureFresh are no-ops if the data is already
@@ -242,6 +247,12 @@ fun DashboardScreen(
                     text = message.text,
                     containerColor = infoBg,
                     contentColor = onBannerColor,
+                    action =
+                        if (message.action == DashboardMessageAction.ContactAuthor) {
+                            { ContactAuthorButton(onClick = { showContact = true }) }
+                        } else {
+                            null
+                        },
                 )
                 Spacer(Modifier.height(6.dp))
             }
@@ -1059,10 +1070,10 @@ private fun ModuleBadge(
 @Composable
 private fun NativeInstallRecommendationCard(recommendation: NativeInstallRecommendation) {
     val containerColor =
-        if (recommendation.preferKmod) {
-            StatusColors.infoContainer()
-        } else {
+        if (recommendation.recommended == RecommendedBackend.Zygisk) {
             StatusColors.zygiskRecommendContainer()
+        } else {
+            StatusColors.infoContainer()
         }
 
     EnhancedCard(
@@ -1109,40 +1120,61 @@ private fun NativeInstallRecommendationCard(recommendation: NativeInstallRecomme
             val alternative = recommendation.alternativeArtifact
             Text(
                 text =
-                    when {
-                        !recommendation.preferKmod -> {
+                    when (recommendation.recommended) {
+                        RecommendedBackend.Zygisk -> {
                             stringResource(
                                 R.string.dashboard_install_recommendation_zygisk,
                                 recommendation.recommendedArtifact,
                             )
                         }
 
-                        recommendation.variantAmbiguous && alternative != null -> {
-                            stringResource(
-                                R.string.dashboard_install_recommendation_kmod_ambiguous,
-                                recommendation.recommendedArtifact,
-                                alternative,
-                            )
+                        RecommendedBackend.Kpm -> {
+                            if (recommendation.kpatchRuntimeAvailable) {
+                                stringResource(
+                                    R.string.dashboard_install_recommendation_kpm,
+                                    recommendation.recommendedArtifact,
+                                )
+                            } else {
+                                stringResource(
+                                    R.string.dashboard_install_recommendation_kpm_needs_runtime,
+                                    recommendation.recommendedArtifact,
+                                )
+                            }
                         }
 
-                        else -> {
-                            stringResource(
-                                R.string.dashboard_install_recommendation_kmod,
-                                recommendation.recommendedArtifact,
-                            )
+                        RecommendedBackend.Kmod -> {
+                            if (recommendation.variantAmbiguous && alternative != null) {
+                                stringResource(
+                                    R.string.dashboard_install_recommendation_kmod_ambiguous,
+                                    recommendation.recommendedArtifact,
+                                    alternative,
+                                )
+                            } else {
+                                stringResource(
+                                    R.string.dashboard_install_recommendation_kmod,
+                                    recommendation.recommendedArtifact,
+                                )
+                            }
                         }
                     },
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
             )
-            if (!recommendation.preferKmod) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = stringResource(R.string.dashboard_install_recommendation_zygisk_warning),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
-                )
-            }
+            // Trailing note per backend: zygisk's detectability caveat, kmod's
+            // "stable; KPM is a universal beta alternative" mention, or KPM's
+            // beta disclaimer.
+            val note =
+                when (recommendation.recommended) {
+                    RecommendedBackend.Zygisk -> R.string.dashboard_install_recommendation_zygisk_warning
+                    RecommendedBackend.Kmod -> R.string.dashboard_install_recommendation_kmod_kpm_alt
+                    RecommendedBackend.Kpm -> R.string.dashboard_install_recommendation_kpm_beta_note
+                }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = stringResource(note),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+            )
         }
     }
 }

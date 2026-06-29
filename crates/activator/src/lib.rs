@@ -598,10 +598,14 @@ pub fn write_atomic(path: &Path, content: &[u8], mode: u32) -> Result<()> {
     Ok(())
 }
 
+// Locate the KPatch-Next `kpatch` CLI. This is the KPatch-Next-Module path only
+// (Magisk / KSU / KSU-Next all install the same module — bin path confirmed on a
+// Pixel 8 Pro). APatch is NOT covered here: it has no kpatch CLI on disk (the
+// binary lives in the manager app's private libs) and loads KPMs via the
+// supercall instead, so KpmClient::detect() routes APatch through that path.
 fn find_kpatch() -> Option<PathBuf> {
     [
         "kpatch",
-        "/data/adb/ksu/bin/kpatch",
         "/data/adb/modules/KPatch-Next/bin/kpatch",
         "/data/adb/modules/kpatch-next/bin/kpatch",
     ]

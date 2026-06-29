@@ -30,10 +30,15 @@ NOW=$(date +%s 2>/dev/null)
 GKI_VARIANT=$(grep '^gkiVariant=' "$MODULE_PROP" 2>/dev/null | cut -d= -f2-)
 KMOD_VERSION=$(grep '^version=' "$MODULE_PROP" 2>/dev/null | cut -d= -f2-)
 
+# Order matters: APatch and KernelSU both ship a /data/adb/magisk compat layer
+# (confirmed on an APatch Pixel 4a — it has /data/adb/magisk + magisk.db), so
+# /data/adb/magisk is NOT exclusive to Magisk. Check magisk first, then let the
+# exclusive kernel-manager dirs (ksu / ap) override it. Magisk is the manager
+# only when neither of those is present.
 ROOT_MANAGER="unknown"
+[ -d /data/adb/magisk ] && ROOT_MANAGER="magisk"
 [ -d /data/adb/ksu ] && ROOT_MANAGER="kernelsu"
 [ -d /data/adb/ap ] && ROOT_MANAGER="apatch"
-[ -d /data/adb/magisk ] && ROOT_MANAGER="magisk"
 
 KPROBES="unknown"
 KRETPROBES="unknown"
