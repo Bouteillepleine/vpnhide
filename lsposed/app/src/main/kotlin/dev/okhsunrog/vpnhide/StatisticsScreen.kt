@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,7 +69,10 @@ fun StatisticsScreen(modifier: Modifier = Modifier) {
             return@Column
         }
 
-        StatisticsHeroCard(s)
+        val appStats = remember(s) { buildAppProbeStats(s) }
+        val methodCount = remember(appStats) { appStats.flatMap { it.byMethod.keys }.toSet().size }
+
+        StatisticsHeroCard(state = s, appCount = appStats.size, methodCount = methodCount)
         Spacer(Modifier.height(20.dp))
 
         SectionHeader(stringResource(R.string.statistics_backends))
@@ -95,31 +99,29 @@ fun StatisticsScreen(modifier: Modifier = Modifier) {
             )
         }
 
-        s.backends
-            .filter { it.isActive }
-            .forEach { backend ->
-                Spacer(Modifier.height(20.dp))
-                SectionHeader(backendName(backend.backend))
-                Spacer(Modifier.height(8.dp))
-                if (backend.unavailableReason != null) {
-                    StatusBanner(
-                        text = statisticsUnavailableText(backend.unavailableReason),
-                        containerColor = StatusColors.infoContainer(),
-                        contentColor = MaterialTheme.colorScheme.onSurface,
-                    )
-                } else if (backend.rows.isEmpty()) {
-                    StatusBanner(
-                        text = stringResource(R.string.statistics_no_counters),
-                        containerColor = StatusColors.infoContainer(),
-                        contentColor = MaterialTheme.colorScheme.onSurface,
-                    )
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        backend.rows.forEachIndexed { index, row ->
-                            StatisticsRowCard(row, index = index, count = backend.rows.size)
-                        }
-                    }
+        if (appStats.isNotEmpty()) {
+            Spacer(Modifier.height(20.dp))
+            SectionHeader(stringResource(R.string.statistics_apps_header))
+            Spacer(Modifier.height(8.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                appStats.forEachIndexed { index, app ->
+                    AppProbeCard(app, index = index, count = appStats.size)
                 }
+            }
+        }
+
+        // The active native backend can't report counters (Zygisk): keep the
+        // explanatory note so the per-app list reading "Java only" makes sense.
+        s.backends
+            .firstOrNull { it.unavailableReason != null }
+            ?.unavailableReason
+            ?.let { reason ->
+                Spacer(Modifier.height(12.dp))
+                StatusBanner(
+                    text = statisticsUnavailableText(reason),
+                    containerColor = StatusColors.infoContainer(),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                )
             }
 
         Spacer(Modifier.height(16.dp))
@@ -164,7 +166,11 @@ private fun StatisticsLoadErrorCard(
 }
 
 @Composable
-private fun StatisticsHeroCard(state: StatisticsState) {
+private fun StatisticsHeroCard(
+    state: StatisticsState,
+    appCount: Int,
+    methodCount: Int,
+) {
     EnhancedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.extraLarge,
@@ -212,14 +218,14 @@ private fun StatisticsHeroCard(state: StatisticsState) {
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StatisticsMetric(
-                        label = stringResource(R.string.statistics_counter_rows),
-                        value = state.totalRows.toString(),
+                        label = stringResource(R.string.statistics_apps_metric),
+                        value = appCount.toString(),
                         accent = StatusColors.successDot,
                         modifier = Modifier.weight(1f),
                     )
                     StatisticsMetric(
-                        label = stringResource(R.string.statistics_hooks),
-                        value = state.backends.sumOf { it.hookedCount }.toString(),
+                        label = stringResource(R.string.statistics_methods_metric),
+                        value = methodCount.toString(),
                         accent = StatusColors.successDot,
                         modifier = Modifier.weight(1f),
                     )
@@ -342,9 +348,10 @@ private fun BackendSummaryCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun StatisticsRowCard(
-    row: StatisticsRow,
+private fun AppProbeCard(
+    app: AppProbeStats,
     index: Int,
     count: Int,
 ) {
@@ -354,46 +361,106 @@ private fun StatisticsRowCard(
         modifier = Modifier.fillMaxWidth(),
         color = AppColors.cardContainer,
     ) {
-        Row(
-            modifier = Modifier.padding(14.dp).fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = rowTargetText(row),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    text = rowHookText(row),
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                row.hook?.note?.takeIf { it.isNotBlank() }?.let { note ->
+        Column(modifier = Modifier.padding(14.dp).fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
                     Text(
-                        text = note,
-                        style = MaterialTheme.typography.labelSmall,
+                        text = appLabel(app),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = appSurfacesText(app),
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    text = formatStatCount(app.total),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = StatusColors.infoAccent,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-            Spacer(Modifier.width(12.dp))
-            Text(
-                text = formatStatCount(row.count),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = StatusColors.infoAccent,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (app.byMethod.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    app.byMethod.entries
+                        .sortedByDescending { it.value }
+                        .forEach { (method, methodCount) ->
+                            MethodChip(method = method, count = methodCount)
+                        }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MethodChip(
+    method: DetectionMethod,
+    count: Long,
+) {
+    Row(
+        modifier =
+            Modifier
+                .clip(MaterialTheme.shapes.small)
+                .background(surfaceContainerColor(method.surface))
+                .padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(method.labelRes),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = formatStatCount(count),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+@Composable
+private fun surfaceContainerColor(surface: MethodSurface): Color =
+    when (surface) {
+        MethodSurface.Java -> StatusColors.infoContainer()
+        MethodSurface.Native -> StatusColors.successContainer()
+        MethodSurface.Package -> StatusColors.neutralContainer()
+    }
+
+@Composable
+private fun appLabel(app: AppProbeStats): String =
+    app.packageNames
+        .takeIf { it.isNotEmpty() }
+        ?.joinToString(", ")
+        ?: stringResource(R.string.statistics_unknown_uid, app.uid)
+
+@Composable
+private fun appSurfacesText(app: AppProbeStats): String {
+    // Resolve labels up front: stringResource can't be called inside the
+    // joinToString transform (not a @Composable context).
+    val java = stringResource(R.string.surface_java)
+    val native = stringResource(R.string.surface_native)
+    val pkg = stringResource(R.string.surface_package)
+    return app.surfaces.sorted().joinToString(" · ") { surface ->
+        when (surface) {
+            MethodSurface.Java -> java
+            MethodSurface.Native -> native
+            MethodSurface.Package -> pkg
         }
     }
 }
@@ -450,16 +517,6 @@ private fun backendBadge(backend: HookIds.Backend): String =
         HookIds.Backend.ZYGISK -> "Z"
         HookIds.Backend.LSPOSED -> "J"
     }
-
-@Composable
-private fun rowTargetText(row: StatisticsRow): String =
-    row.packageNames
-        .takeIf { it.isNotEmpty() }
-        ?.joinToString(", ")
-        ?: stringResource(R.string.statistics_unknown_uid, row.uid)
-
-@Composable
-private fun rowHookText(row: StatisticsRow): String = row.hook?.hookName ?: stringResource(R.string.statistics_unknown_hook, row.hookId)
 
 private enum class BackendHealth { Ok, Partial, Error, NoData, Unavailable }
 
