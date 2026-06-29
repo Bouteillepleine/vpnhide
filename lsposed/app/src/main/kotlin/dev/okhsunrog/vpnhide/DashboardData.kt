@@ -1343,9 +1343,7 @@ internal suspend fun loadDashboardState(
                 }
             }
 
-            else -> {
-                Unit
-            }
+            else -> {}
         }
     }
 

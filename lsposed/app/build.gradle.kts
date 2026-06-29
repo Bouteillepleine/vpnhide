@@ -1,6 +1,12 @@
 import java.io.FileInputStream
 import java.util.Properties
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.tasks.Exec
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -63,6 +69,45 @@ uniffi {
     generateFromLibrary {
         packageName = "dev.okhsunrog.vpnhide.checks"
     }
+}
+
+abstract class SuppressGeneratedUniffiWarningsTask : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val bindingFile: RegularFileProperty
+
+    @TaskAction
+    fun suppress() {
+        // UniFFI emits two intentional object references as bare expressions.
+        // Keep the suppression scoped to the generated binding file so real
+        // UNUSED_EXPRESSION warnings in hand-written Kotlin still surface.
+        val binding = bindingFile.get().asFile
+        if (!binding.isFile) return
+
+        val original = binding.readText()
+        val updated =
+            original.replaceFirst(
+                "@file:Suppress(\"RemoveRedundantBackticks\")",
+                "@file:Suppress(\"RemoveRedundantBackticks\", \"UNUSED_EXPRESSION\")",
+            )
+        if (updated != original) {
+            binding.writeText(updated)
+        }
+    }
+}
+
+val generatedUniffiBinding =
+    layout.buildDirectory.file("generated/uniffi/main/dev/okhsunrog/vpnhide/checks/vpnhide_checks.android.kt")
+
+val suppressGeneratedUniffiWarnings =
+    tasks.register<SuppressGeneratedUniffiWarningsTask>("suppressGeneratedUniffiWarnings") {
+        dependsOn("buildUniffiBindings")
+        bindingFile.set(generatedUniffiBinding)
+        outputs.upToDateWhen { false }
+    }
+
+tasks.matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }.configureEach {
+    dependsOn(suppressGeneratedUniffiWarnings)
 }
 
 android {
