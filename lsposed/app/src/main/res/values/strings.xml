@@ -52,12 +52,25 @@
     <string name="chip_ports_full" translatable="false">Ports</string>
     <string name="java_hooks_title">Java hooks</string>
     <string name="native_hooks_title">Native hooks</string>
+    <string name="ports_policy_title">Port rules</string>
+    <string name="ports_policy_all_title">All localhost ports</string>
+    <string name="ports_policy_all_body">Block every TCP and UDP connection to 127.0.0.1 and ::1 for this app. This is the default P behavior.</string>
+    <string name="ports_policy_preset_title">Preset</string>
+    <string name="ports_policy_preset_body">%1$s: %2$s</string>
+    <string name="ports_policy_common_proxy">Common proxy ports</string>
+    <string name="ports_policy_custom_title">Custom ranges</string>
+    <string name="ports_policy_custom_body">Block only the listed localhost ports. Leave End empty for a single port.</string>
+    <string name="ports_policy_add_rule">Add rule</string>
+    <string name="ports_policy_start">Start</string>
+    <string name="ports_policy_end">End</string>
+    <string name="ports_policy_delete_rule">Delete rule</string>
+    <string name="ports_policy_invalid">Enter at least one valid port or range from 1 to 65535.</string>
     <string name="apps_help_role_java_body">LSPosed hides VPN signals exposed through Android Java APIs such as NetworkCapabilities, NetworkInfo, LinkProperties, and NetworkInterface.</string>
     <string name="apps_help_role_native_body">The active native backend hides VPN signals visible through kernel or libc probes. VPN Hide writes one native selection to every installed native backend; only the active backend acts.</string>
     <string name="apps_help_role_apps_body">App-hiding observer mode. This app receives a sanitized package-manager view and cannot list, resolve, or query packages that VPN Hide marks as hidden.</string>
-    <string name="apps_help_role_ports_body">Ports observer mode. The ports module makes localhost VPN/proxy daemon probes look like closed ports for this app. This role appears only when the ports module is installed.</string>
+    <string name="apps_help_role_ports_body">Ports observer mode. The ports module makes localhost VPN/proxy daemon probes look like closed ports for this app. By default P blocks every localhost port; the settings edge can limit it to selected ranges.</string>
     <string name="apps_help_hook_settings_title">Per-hook settings</string>
-    <string name="apps_help_hook_settings_body">For Java and Native, tap the settings edge of the combined chip to choose exact hooks for this app. A chip marked with * means only part of that backend is enabled.</string>
+    <string name="apps_help_hook_settings_body">For Java, Native, and Ports, tap the settings edge of the combined chip to choose exact hooks or port ranges for this app. A chip marked with * means custom settings are active.</string>
     <string name="apps_help_apps_hiding_title">Apps hiding</string>
     <string name="apps_help_apps_hiding_body">VPN Hide auto-detects packages that should be hidden from observers, including apps declaring a VPN service and optional name heuristics. Manual hidden-package choices live in Settings → Advanced protection. System callers stay exempt so Android can keep installing and launching apps.</string>
     <string name="apps_help_apply_title">Applying changes</string>

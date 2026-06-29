@@ -27,6 +27,7 @@ internal data class CanonicalApp(
     val native: NativeRole = NativeRole.Disabled,
     val appHiding: Boolean = false,
     val ports: Boolean = false,
+    val portPolicy: PortPolicy? = null,
     val hidden: Boolean = false,
 ) {
     val hasAnyRole: Boolean
@@ -108,13 +109,52 @@ internal fun parseCanonicalConfig(raw: String): CanonicalConfig? {
 private fun parseCanonicalApp(obj: JSONObject?): CanonicalApp {
     if (obj == null) return CanonicalApp()
     val java = parseHookRole(obj.opt("java"))
+    val ports = obj.optBoolean("ports", false)
     return CanonicalApp(
         java = java.enabled,
         javaHooks = java.hooks,
         native = parseNativeRole(obj.opt("native")),
         appHiding = obj.optBoolean("appHiding", false),
-        ports = obj.optBoolean("ports", false),
+        ports = ports,
+        portPolicy = if (ports) parsePortPolicy(obj.optJSONObject("portPolicy")) else null,
         hidden = obj.optBoolean("hidden", false),
+    )
+}
+
+private fun parsePortPolicy(obj: JSONObject?): PortPolicy? {
+    if (obj == null) return null
+    val rulesJson =
+        obj.optJSONArray("rules")
+            ?: throw IllegalArgumentException("portPolicy.rules is required")
+    val rules =
+        (0 until rulesJson.length())
+            .map { idx ->
+                parsePortRule(
+                    rulesJson.optJSONObject(idx)
+                        ?: throw IllegalArgumentException("portPolicy.rules[$idx] must be an object"),
+                )
+            }
+    return normalizePortPolicy(
+        PortPolicy(
+            mode = PortPolicyMode.fromJson(obj.optString("mode", PortPolicyMode.Custom.jsonName)),
+            preset =
+                if (obj.has("preset") && !obj.isNull("preset")) {
+                    obj.optString("preset").takeIf { it.isNotBlank() }
+                } else {
+                    null
+                },
+            rules = rules,
+        ),
+    )
+}
+
+private fun parsePortRule(obj: JSONObject): PortRule {
+    val start = obj.optInt("start", -1)
+    val end = if (obj.has("end")) obj.optInt("end", start) else start
+    return PortRule(
+        protocol = PortProtocol.fromJson(obj.optString("protocol", PortProtocol.Both.jsonName)),
+        start = start,
+        end = end,
     )
 }
 
@@ -165,13 +205,14 @@ internal fun buildCanonicalConfig(
         packages
             .associateWith { pkg ->
                 val previous = existing?.apps?.get(pkg)
-                val previousNative = existing?.apps?.get(pkg)?.native
+                val previousNative = previous?.native
                 CanonicalApp(
                     java = pkg in java,
                     javaHooks = previous?.javaHooks?.takeIf { pkg in java && previous.java },
                     native = if (pkg in native) previousNative?.takeIf { it.enabled } ?: NativeRole.All else NativeRole.Disabled,
                     appHiding = pkg in observers,
                     ports = pkg in ports,
+                    portPolicy = previous?.portPolicy?.takeIf { pkg in ports && previous.ports },
                     hidden = pkg in hidden,
                 )
             }.filterValues { it.hasAnyRole }
@@ -274,8 +315,41 @@ private fun StringBuilder.appendCanonicalApp(app: CanonicalApp) {
     append(app.appHiding)
     append(", \"ports\": ")
     append(app.ports)
+    if (app.ports) {
+        normalizePortPolicy(app.portPolicy)?.let { policy ->
+            append(", \"portPolicy\": ")
+            appendPortPolicy(policy)
+        }
+    }
     if (app.hidden) {
         append(", \"hidden\": true")
+    }
+    append(" }")
+}
+
+private fun StringBuilder.appendPortPolicy(policy: PortPolicy) {
+    append("{ \"mode\": ")
+    appendJsonString(policy.mode.jsonName)
+    policy.preset?.takeIf { it.isNotBlank() }?.let { preset ->
+        append(", \"preset\": ")
+        appendJsonString(preset)
+    }
+    append(", \"rules\": [")
+    normalizedPortRules(policy.rules).forEachIndexed { index, rule ->
+        if (index != 0) append(", ")
+        appendPortRule(rule)
+    }
+    append("] }")
+}
+
+private fun StringBuilder.appendPortRule(rule: PortRule) {
+    append("{ \"protocol\": ")
+    appendJsonString(rule.protocol.jsonName)
+    append(", \"start\": ")
+    append(rule.start)
+    if (rule.end != rule.start) {
+        append(", \"end\": ")
+        append(rule.end)
     }
     append(" }")
 }

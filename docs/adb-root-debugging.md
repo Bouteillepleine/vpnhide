@@ -20,12 +20,41 @@ Check all three before assuming a device path is inaccessible:
 adb -s SERIAL shell 'su -c "
 id
 getenforce
-grep -E \"Cap(Inh|Prm|Eff|Bnd|Amb)\" /proc/self/status
+echo root_shell_pid=\$\$
+grep -E \"Cap(Inh|Prm|Eff|Bnd|Amb)\" /proc/\$\$/status
 ls -ldZ /data /data/adb /data/adb/modules /data/system
 head -c 120 /data/system/vpnhide_config.json 2>&1
 cat /data/adb/vpnhide_kpm/load_status 2>&1 | head
 "'
 ```
+
+## Command chains and quoting
+
+When running more than one command through `su -c`, quote the whole remote
+command for `adb shell`, then quote the payload passed to `su -c`.
+
+Do not write chained commands like this:
+
+```sh
+adb -s SERIAL shell su -c 'id; iptables -S OUTPUT'
+```
+
+The local shell strips those quotes before `adb` sends the command, so Android's
+remote shell can parse it as `su -c id; iptables -S OUTPUT`. Only `id` runs under
+`su`; the rest runs as the ordinary adb shell (`uid=2000`, `u:r:shell:s0`,
+usually with no useful capabilities).
+
+Use one of these forms instead:
+
+```sh
+adb -s SERIAL shell "su -c 'id; iptables -S OUTPUT'"
+adb -s SERIAL shell 'su -c "id; iptables -S OUTPUT"'
+```
+
+When checking the root shell itself, prefer `/proc/\$\$/status` inside the
+`su -c` payload. `/proc/self/status` describes the process that opens the file
+(`cat`, `grep`, etc.), which can hide quoting mistakes while debugging command
+chains.
 
 Healthy examples:
 
@@ -89,7 +118,8 @@ After changing the profile, open a new `adb shell su -c ...` session and verify:
 ```sh
 adb -s SERIAL shell 'su -c "
 id
-grep -E \"Cap(Prm|Eff|Bnd)\" /proc/self/status
+echo root_shell_pid=\$\$
+grep -E \"Cap(Prm|Eff|Bnd)\" /proc/\$\$/status
 echo ok >/data/local/tmp/vpnhide_diag_write_test
 cat /data/local/tmp/vpnhide_diag_write_test
 rm /data/local/tmp/vpnhide_diag_write_test
