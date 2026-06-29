@@ -193,7 +193,9 @@ package set in the same canonical JSON:
 - UID mapping: `getPackageUid` (→ −1), `getPackagesForUid` (filtered)
 
 System callers (UID < 10000) are always exempt so the launcher/installer keep
-working.
+working. Self-lookups are exempt too: a hidden package is not hidden from callers
+with the same appId, so a VPN app can protect itself with Apps hiding while still
+being hidden from other observer apps.
 
 ---
 

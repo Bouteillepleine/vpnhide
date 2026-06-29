@@ -8,10 +8,19 @@ internal data class SystemServerConfig(
     val javaTargetHookMasksByAppId: Map<Int, Long> = emptyMap(),
     val observerAppIds: Set<Int> = emptySet(),
     val hiddenPackages: Set<String> = emptySet(),
+    val packageAppIds: Map<String, Int> = emptyMap(),
     val debug: Boolean = false,
 ) {
     val javaTargetAppIds: Set<Int>
         get() = javaTargetHookMasksByAppId.keys
+
+    fun shouldHidePackageForCallerAppId(
+        packageName: String,
+        callerAppId: Int,
+    ): Boolean {
+        if (packageName !in hiddenPackages) return false
+        return packageAppIds[packageName] != callerAppId
+    }
 }
 
 /**
@@ -131,6 +140,7 @@ internal object SystemServerConfigCache {
                 javaTargetHookMasksByAppId = javaTargetHookMasks,
                 observerAppIds = observers,
                 hiddenPackages = hidden,
+                packageAppIds = packageAppIds,
                 debug = canonical.debug,
             )
         } catch (t: Throwable) {

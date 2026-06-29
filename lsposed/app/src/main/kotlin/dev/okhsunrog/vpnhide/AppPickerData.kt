@@ -8,18 +8,14 @@ package dev.okhsunrog.vpnhide
  * packages and auto-detected VPN apps, and always includes [selfPkg] (managed
  * invisibly, never shown in the picker).
  *
- * Hidden and app-hiding observer roles are **mutually exclusive**: a package
- * that is both crashes the framework on a self-lookup (an observer querying its
- * own PackageInfo gets a NameNotFoundException when it is also hidden). So
- * [observers] win — any package the user just marked "A" is dropped from the
- * hidden set. Self is never an observer (the picker never lists it), so it
- * always stays hidden.
+ * Hidden and app-hiding observer roles can coexist. The package-visibility hook
+ * avoids self-crashes by never hiding a package from callers with the same
+ * appId; other observers still cannot see it.
  */
 internal fun resolveHiddenPackages(
     existing: Set<String>,
-    observers: Set<String>,
     selfPkg: String,
-): List<String> = (existing.filterNot { it in observers } + selfPkg).distinct().sorted()
+): List<String> = (existing + selfPkg).distinct().sorted()
 
 internal data class AppAutoHideSignal(
     val packageName: String,
@@ -92,7 +88,6 @@ internal fun buildCanonicalConfigForAppPickerSave(
     val hiddenPkgs =
         resolveHiddenPackages(
             existing = manualHiddenPkgs,
-            observers = observerPkgs,
             selfPkg = selfPkg,
         )
 
@@ -122,11 +117,10 @@ internal fun applyAutoHiddenPackages(
     val observerPkgs = config.apps.filterValues { it.appHiding }.keys
     val manualHiddenPkgs = config.apps.filterValues { it.hidden }.keys - config.settings.autoHiddenPackages
     val autoHiddenPkgs = resolveAutoHiddenPackages(signals, config.settings, selfPkg)
-    val effectiveAutoHiddenPkgs = autoHiddenPkgs - observerPkgs
+    val effectiveAutoHiddenPkgs = autoHiddenPkgs
     val hiddenPkgs =
         resolveHiddenPackages(
             existing = manualHiddenPkgs + effectiveAutoHiddenPkgs,
-            observers = observerPkgs,
             selfPkg = selfPkg,
         )
     return buildCanonicalConfig(
@@ -160,7 +154,7 @@ internal fun updateManualHiddenPackages(
             debug = config.debug,
             javaPkgs = config.apps.filterValues { it.java }.keys,
             nativePkgs = config.apps.filterValues { it.native.enabled }.keys,
-            hiddenPkgs = resolveHiddenPackages(nextManualHidden, observerPkgs, selfPkg),
+            hiddenPkgs = resolveHiddenPackages(nextManualHidden, selfPkg),
             observerPkgs = observerPkgs,
             portsPkgs = config.apps.filterValues { it.ports }.keys,
             existing = config,

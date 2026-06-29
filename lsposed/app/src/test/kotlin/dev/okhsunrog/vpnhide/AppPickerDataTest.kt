@@ -10,30 +10,28 @@ class AppPickerDataTest {
     fun `preserves existing hidden and always includes self`() {
         assertEquals(
             listOf("com.a", "com.b", self).sorted(),
-            resolveHiddenPackages(existing = setOf("com.b", "com.a"), observers = emptySet(), selfPkg = self),
+            resolveHiddenPackages(existing = setOf("com.b", "com.a"), selfPkg = self),
         )
     }
 
     @Test
     fun `empty existing still hides self`() {
-        assertEquals(listOf(self), resolveHiddenPackages(emptySet(), emptySet(), self))
+        assertEquals(listOf(self), resolveHiddenPackages(emptySet(), self))
     }
 
     @Test
-    fun `observer wins - a package marked observer is dropped from hidden`() {
-        // com.x was previously hidden; now it's also an observer -> must NOT be
-        // written as hidden (the H+O self-lookup crash).
+    fun `observer can stay hidden`() {
         assertEquals(
-            listOf("com.keep", self).sorted(),
-            resolveHiddenPackages(existing = setOf("com.x", "com.keep"), observers = setOf("com.x"), selfPkg = self),
+            listOf("com.keep", "com.x", self).sorted(),
+            resolveHiddenPackages(existing = setOf("com.x", "com.keep"), selfPkg = self),
         )
     }
 
     @Test
-    fun `self stays hidden even if it somehow appears as an observer`() {
+    fun `self stays hidden`() {
         assertEquals(
             listOf(self),
-            resolveHiddenPackages(existing = setOf(self), observers = setOf(self), selfPkg = self),
+            resolveHiddenPackages(existing = setOf(self), selfPkg = self),
         )
     }
 
@@ -41,7 +39,7 @@ class AppPickerDataTest {
     fun `result is deduplicated and sorted`() {
         assertEquals(
             listOf("com.a", "com.z", self).sorted(),
-            resolveHiddenPackages(existing = setOf("com.z", "com.a", self), observers = emptySet(), selfPkg = self),
+            resolveHiddenPackages(existing = setOf("com.z", "com.a", self), selfPkg = self),
         )
     }
 
@@ -249,7 +247,7 @@ class AppPickerDataTest {
     }
 
     @Test
-    fun `observer role still wins over hidden for visible packages`() {
+    fun `observer role can coexist with hidden for visible packages`() {
         val snapshot =
             snapshotWithCanonical(
                 "com.vpn" to CanonicalApp(hidden = true),
@@ -267,7 +265,7 @@ class AppPickerDataTest {
             )
 
         assertEquals(true, cfg.apps.getValue("com.vpn").appHiding)
-        assertEquals(false, cfg.apps.getValue("com.vpn").hidden)
+        assertEquals(true, cfg.apps.getValue("com.vpn").hidden)
         assertEquals(true, cfg.apps.getValue(self).hidden)
     }
 
@@ -318,7 +316,7 @@ class AppPickerDataTest {
     }
 
     @Test
-    fun `app hiding observer wins over auto hidden vpn app`() {
+    fun `app hiding observer can also be auto hidden vpn app`() {
         val cfg =
             buildCanonicalConfigForAppPickerSave(
                 debug = false,
@@ -335,8 +333,8 @@ class AppPickerDataTest {
             )
 
         assertEquals(true, cfg.apps.getValue("com.vpn.client").appHiding)
-        assertEquals(false, cfg.apps.getValue("com.vpn.client").hidden)
-        assertEquals(emptySet<String>(), cfg.settings.autoHiddenPackages)
+        assertEquals(true, cfg.apps.getValue("com.vpn.client").hidden)
+        assertEquals(setOf("com.vpn.client"), cfg.settings.autoHiddenPackages)
     }
 
     @Test
