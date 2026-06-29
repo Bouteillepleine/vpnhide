@@ -38,8 +38,7 @@ internal fun buildStatisticsState(snapshot: RootSnapshot): StatisticsState {
     val kmodRaw = snapshot.sections["kmod_state"].orEmpty()
     val kpmRaw = snapshot.sections["kpm_state"].orEmpty()
     val lsposedRaw = snapshot.sections["lsposed_state"].orEmpty()
-
-    return StatisticsState(
+    val nativeBackends =
         listOf(
             buildBackendStatistics(
                 backend = HookIds.Backend.KMOD,
@@ -53,14 +52,18 @@ internal fun buildStatisticsState(snapshot: RootSnapshot): StatisticsState {
                 stats = parseProtocolStatsBlock(kpmRaw),
                 uidPackages = uidPackages,
             ),
-            buildBackendStatistics(
-                backend = HookIds.Backend.LSPOSED,
-                status = parseProtocolStatusBlock(lsposedRaw),
-                stats = parseProtocolStatsBlock(lsposedRaw),
-                metadata = parseLsposedStateMetadata(lsposedRaw),
-                uidPackages = uidPackages,
-            ),
-        ),
+        )
+    val lsposed =
+        buildBackendStatistics(
+            backend = HookIds.Backend.LSPOSED,
+            status = parseProtocolStatusBlock(lsposedRaw),
+            stats = parseProtocolStatsBlock(lsposedRaw),
+            metadata = parseLsposedStateMetadata(lsposedRaw),
+            uidPackages = uidPackages,
+        )
+
+    return StatisticsState(
+        listOfNotNull(selectActiveNativeStatisticsBackend(nativeBackends), lsposed),
     )
 }
 
@@ -110,6 +113,23 @@ private fun buildBackendStatistics(
         metadata = metadata,
         rows = buildStatisticsRows(stats, uidPackages),
     )
+
+private val ACTIVE_NATIVE_STATUS_ERRORS =
+    setOf(
+        HookIds.StatusError.OK.code
+            .toLong(),
+        HookIds.StatusError.PARTIAL_HOOKS.code
+            .toLong(),
+    )
+
+private fun selectActiveNativeStatisticsBackend(backends: List<BackendStatistics>): BackendStatistics? =
+    backends.firstOrNull(BackendStatistics::isActiveNativeStatisticsBackend)
+
+private fun BackendStatistics.isActiveNativeStatisticsBackend(): Boolean {
+    if (rows.isNotEmpty()) return true
+    val status = status ?: return false
+    return status.backend == backend.id.toLong() && status.error in ACTIVE_NATIVE_STATUS_ERRORS
+}
 
 private fun buildStatisticsRows(
     stats: List<Protocol.StatEntry>,
