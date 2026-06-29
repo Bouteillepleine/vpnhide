@@ -39,6 +39,12 @@ internal object PackageVisibilityHooks {
     private const val IPM_LEGACY = "com.android.server.pm.PackageManagerService"
     private const val PARCELED_LIST_SLICE = "android.content.pm.ParceledListSlice"
 
+    private data class ObserverCaller(
+        val uid: Int,
+        val appId: Int,
+        val config: SystemServerConfig,
+    )
+
     @Volatile private var parceledListSliceClass: Class<*>? = null
 
     @Volatile private var fileObserver: FileObserver? = null
@@ -96,17 +102,18 @@ internal object PackageVisibilityHooks {
     //  Caller classification
     // ------------------------------------------------------------------
 
-    private fun observerCallerUid(): Int? {
+    private fun observerCaller(): ObserverCaller? {
         val uid = Binder.getCallingUid()
         // Exempt system callers: installd, shell, system_server itself,
         // LauncherApps, StatusBar, etc. all run under UID < 10000.
         if (uid < Process.FIRST_APPLICATION_UID) return null
         if (uid == Process.myUid()) return null
         val appId = SystemServerConfigCache.appId(uid)
-        return if (SystemServerConfigCache.load().observerAppIds.contains(appId)) uid else null
+        val config = SystemServerConfigCache.load()
+        return if (config.observerAppIds.contains(appId)) ObserverCaller(uid, appId, config) else null
     }
 
-    private fun loadHiddenPackages(): Set<String> = SystemServerConfigCache.load().hiddenPackages
+    private fun ObserverCaller.shouldHidePackage(packageName: String): Boolean = config.shouldHidePackageForCallerAppId(packageName, appId)
 
     private fun watchConfigFiles() {
         fileObserver =
@@ -155,9 +162,8 @@ internal object PackageVisibilityHooks {
         object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
                 if (param.hasThrowable()) return
-                val callerUid = observerCallerUid() ?: return
-                val hidden = loadHiddenPackages()
-                if (hidden.isEmpty()) return
+                val caller = observerCaller() ?: return
+                if (caller.config.hiddenPackages.isEmpty()) return
 
                 val result = param.result ?: return
                 val pls = parceledListSliceClass ?: return
@@ -168,15 +174,15 @@ internal object PackageVisibilityHooks {
                 val filtered =
                     original.filter {
                         val p = pkgOf(it)
-                        p == null || p !in hidden
+                        p == null || !caller.shouldHidePackage(p)
                     }
-                val removed = original.mapNotNull { pkgOf(it)?.takeIf(hidden::contains) }
+                val removed = original.mapNotNull { pkgOf(it)?.takeIf { pkg -> caller.shouldHidePackage(pkg) } }
                 if (removed.isEmpty()) return
 
                 param.result = newListResultLike(result, filtered) ?: return
-                LsposedStats.record(callerUid, HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY)
+                LsposedStats.record(caller.uid, HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY)
                 HookLog.i(
-                    "VpnHide/PV: $methodName uid=$callerUid filtered ${removed.size}/${original.size} " +
+                    "VpnHide/PV: $methodName uid=${caller.uid} filtered ${removed.size}/${original.size} " +
                         "hidden=${removed.sorted()} wrapper=${result.javaClass.simpleName}",
                 )
             }
@@ -224,11 +230,11 @@ internal object PackageVisibilityHooks {
                 if (param.hasThrowable()) return
                 if (param.result == null) return
                 val pkg = param.args.firstOrNull() as? String ?: return
-                val callerUid = observerCallerUid() ?: return
-                if (pkg in loadHiddenPackages()) {
+                val caller = observerCaller() ?: return
+                if (caller.shouldHidePackage(pkg)) {
                     param.result = null
-                    LsposedStats.record(callerUid, HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY)
-                    HookLog.i("VpnHide/PV: $methodName uid=$callerUid hid $pkg")
+                    LsposedStats.record(caller.uid, HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY)
+                    HookLog.i("VpnHide/PV: $methodName uid=${caller.uid} hid $pkg")
                 }
             }
         }
@@ -239,11 +245,11 @@ internal object PackageVisibilityHooks {
             override fun afterHookedMethod(param: MethodHookParam) {
                 if (param.hasThrowable()) return
                 val pkg = param.args.firstOrNull() as? String ?: return
-                val callerUid = observerCallerUid() ?: return
-                if (pkg in loadHiddenPackages()) {
+                val caller = observerCaller() ?: return
+                if (caller.shouldHidePackage(pkg)) {
                     param.result = -1
-                    LsposedStats.record(callerUid, HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY)
-                    HookLog.i("VpnHide/PV: getPackageUid uid=$callerUid hid $pkg")
+                    LsposedStats.record(caller.uid, HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY)
+                    HookLog.i("VpnHide/PV: getPackageUid uid=${caller.uid} hid $pkg")
                 }
             }
         }
@@ -254,12 +260,12 @@ internal object PackageVisibilityHooks {
             override fun afterHookedMethod(param: MethodHookParam) {
                 if (param.hasThrowable()) return
                 val ri = param.result as? ResolveInfo ?: return
-                val callerUid = observerCallerUid() ?: return
+                val caller = observerCaller() ?: return
                 val pkg = resolveInfoPackageName(ri) ?: return
-                if (pkg in loadHiddenPackages()) {
+                if (caller.shouldHidePackage(pkg)) {
                     param.result = null
-                    LsposedStats.record(callerUid, HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY)
-                    HookLog.i("VpnHide/PV: $methodName uid=$callerUid hid $pkg")
+                    LsposedStats.record(caller.uid, HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY)
+                    HookLog.i("VpnHide/PV: $methodName uid=${caller.uid} hid $pkg")
                 }
             }
         }
@@ -270,17 +276,16 @@ internal object PackageVisibilityHooks {
             override fun afterHookedMethod(param: MethodHookParam) {
                 if (param.hasThrowable()) return
                 val arr = param.result as? Array<*> ?: return
-                val callerUid = observerCallerUid() ?: return
-                val hidden = loadHiddenPackages()
-                if (hidden.isEmpty()) return
-                val filtered = arr.filterIsInstance<String>().filter { it !in hidden }
+                val caller = observerCaller() ?: return
+                if (caller.config.hiddenPackages.isEmpty()) return
+                val filtered = arr.filterIsInstance<String>().filterNot { caller.shouldHidePackage(it) }
                 if (filtered.size == arr.size) return
                 param.result = if (filtered.isEmpty()) null else filtered.toTypedArray()
-                LsposedStats.record(callerUid, HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY)
+                LsposedStats.record(caller.uid, HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY)
                 val requestedUid = param.args.firstOrNull()
-                val removed = arr.filterIsInstance<String>().filter { it in hidden }
+                val removed = arr.filterIsInstance<String>().filter { caller.shouldHidePackage(it) }
                 HookLog.i(
-                    "VpnHide/PV: getPackagesForUid uid=$callerUid requestedUid=$requestedUid " +
+                    "VpnHide/PV: getPackagesForUid uid=${caller.uid} requestedUid=$requestedUid " +
                         "hidden=${removed.sorted()}",
                 )
             }
