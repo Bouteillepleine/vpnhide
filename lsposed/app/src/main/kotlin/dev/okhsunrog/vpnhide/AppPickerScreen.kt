@@ -79,16 +79,20 @@ data class AppEntry(
 internal enum class Layer { JAVA, NATIVE, APP_HIDING, PORTS }
 
 @Composable
-fun AppPickerScreen(
+internal fun AppPickerScreen(
     searchQuery: String,
     showSystem: Boolean,
     showRussianOnly: Boolean,
+    showConfiguredOnly: Boolean,
+    sortMode: TargetListSortMode,
     modifier: Modifier = Modifier,
 ) {
     TargetPickerScreen(
         searchQuery = searchQuery,
         showSystem = showSystem,
         showRussianOnly = showRussianOnly,
+        showConfiguredOnly = showConfiguredOnly,
+        sortMode = sortMode,
         modifier = modifier,
         helpPrefKey = "apps_unified",
         helpTitle = stringResource(R.string.apps_help_title),

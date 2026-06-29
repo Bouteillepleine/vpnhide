@@ -10,16 +10,20 @@ import androidx.compose.ui.Modifier
  * every backend at once.
  */
 @Composable
-fun ProtectionScreen(
+internal fun ProtectionScreen(
     searchQuery: String,
     showSystem: Boolean,
     showRussianOnly: Boolean,
+    showConfiguredOnly: Boolean,
+    sortMode: TargetListSortMode,
     modifier: Modifier = Modifier,
 ) {
     AppPickerScreen(
         searchQuery = searchQuery,
         showSystem = showSystem,
         showRussianOnly = showRussianOnly,
+        showConfiguredOnly = showConfiguredOnly,
+        sortMode = sortMode,
         modifier = modifier,
     )
 }
