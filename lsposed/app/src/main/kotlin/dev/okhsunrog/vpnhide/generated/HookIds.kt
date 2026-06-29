@@ -62,11 +62,32 @@ internal object HookIds {
 
         // PackageManager app-hiding filters
         LSPOSED_PACKAGE_VISIBILITY(17, "lsposed_package_visibility", "PackageManager app-hiding filters"),
+
+        // libc ioctl() SIOCGIF* interface probes
+        ZYGISK_IOCTL(18, "zygisk_ioctl", "libc ioctl() SIOCGIF* interface probes"),
+
+        // libc getifaddrs() interface enumeration
+        ZYGISK_GETIFADDRS(19, "zygisk_getifaddrs", "libc getifaddrs() interface enumeration"),
+
+        // openat() filtering for /proc/net routes and sockets
+        ZYGISK_OPENAT(20, "zygisk_openat", "openat() filtering for /proc/net routes and sockets"),
+
+        // recvmsg() netlink dump filtering
+        ZYGISK_RECVMSG(21, "zygisk_recvmsg", "recvmsg() netlink dump filtering"),
+
+        // recv() netlink dump filtering
+        ZYGISK_RECV(22, "zygisk_recv", "recv() netlink dump filtering"),
+
+        // recvfrom() netlink dump filtering
+        ZYGISK_RECVFROM(23, "zygisk_recvfrom", "recvfrom() netlink dump filtering"),
+
+        // __recvfrom_chk() fortified netlink dump filtering
+        ZYGISK_RECVFROM_CHK(24, "zygisk_recvfrom_chk", "__recvfrom_chk() fortified netlink dump filtering"),
     }
 
     // Hooks owned by each backend: apply `mask and own`.
     const val KERNEL_HOOK_MASK = 0x3ff
-    const val ZYGISK_HOOK_MASK = 0x0
+    const val ZYGISK_HOOK_MASK = 0x1fc0000
     const val LSPOSED_HOOK_MASK = 0x3fc00
 
     /** status error codes (protocol §5.1). */

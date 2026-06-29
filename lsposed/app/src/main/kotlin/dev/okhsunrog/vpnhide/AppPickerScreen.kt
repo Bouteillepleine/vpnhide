@@ -74,7 +74,7 @@ internal data class AppEntry(
     val java: Boolean = false,
     val javaHooks: List<String>? = null,
     val native: Boolean = false,
-    val nativeHooks: List<String>? = null,
+    val nativeOverrides: NativeHookOverrides = NativeHookOverrides(),
     val appHiding: Boolean = false,
     val ports: Boolean = false,
     val portPolicy: PortPolicy? = null,
@@ -131,7 +131,7 @@ internal fun AppPickerScreen(
                             java = canonicalApp?.java ?: (app.packageName in t.lsposedTargets),
                             javaHooks = canonicalApp?.takeIf { it.java }?.javaHooks?.takeIf { it.isNotEmpty() },
                             native = app.packageName in nativeTargets,
-                            nativeHooks = nativeRole?.hooks?.takeIf { it.isNotEmpty() },
+                            nativeOverrides = nativeRole?.overrides ?: NativeHookOverrides(),
                             appHiding = app.packageName in observers,
                             ports = app.packageName in t.portsObservers,
                             portPolicy = canonicalApp?.takeIf { it.ports }?.portPolicy,
@@ -156,16 +156,19 @@ internal fun AppPickerScreen(
             res.getString(R.string.save_success, entries.count { it.anySelected })
         },
     ) { app, userNames, targets, onChange ->
+        val nativeHookFamily = targets.nativeHookFamily
         AppRow(
             app = app,
             userNames = userNames,
             anyNativeInstalled = targets.anyNativeInstalled,
+            nativeBackendId = targets.displayNativeBackendId,
+            nativeHookFamily = nativeHookFamily,
             portsInstalled = targets.portsModuleInstalled,
             onToggle = { layer ->
                 onChange(
                     when (layer) {
                         Layer.JAVA -> app.copy(java = !app.java, javaHooks = null)
-                        Layer.NATIVE -> app.copy(native = !app.native, nativeHooks = null)
+                        Layer.NATIVE -> app.copy(native = !app.native, nativeOverrides = NativeHookOverrides())
                         Layer.APP_HIDING -> app.copy(appHiding = !app.appHiding)
                         Layer.PORTS -> app.copy(ports = !app.ports)
                     },
@@ -183,7 +186,15 @@ internal fun AppPickerScreen(
                 onChange(
                     app.copy(
                         native = hooks == null || hooks.isNotEmpty(),
-                        nativeHooks = hooks?.takeIf { it.isNotEmpty() },
+                        nativeOverrides =
+                            if (hooks == null || hooks.isNotEmpty()) {
+                                app.nativeOverrides.withHooksFor(
+                                    nativeHookFamily,
+                                    hooks?.takeIf { it.isNotEmpty() },
+                                )
+                            } else {
+                                NativeHookOverrides()
+                            },
                     ),
                 )
             },
@@ -202,7 +213,7 @@ internal fun AppPickerScreen(
                         java = newState,
                         javaHooks = null,
                         native = if (targets.anyNativeInstalled) newState else false,
-                        nativeHooks = null,
+                        nativeOverrides = NativeHookOverrides(),
                         appHiding = newState,
                         ports = if (targets.portsModuleInstalled) newState else false,
                     ),
@@ -377,7 +388,7 @@ private fun AppEntry.toRoleSelection(): AppRoleSelection =
         java = java,
         javaHooks = javaHooks,
         native = native,
-        nativeHooks = nativeHooks,
+        nativeOverrides = nativeOverrides,
         appHiding = appHiding,
         ports = ports,
         portPolicy = portPolicy,
@@ -395,6 +406,8 @@ private fun AppRow(
     app: AppEntry,
     userNames: Map<Int, String>,
     anyNativeInstalled: Boolean,
+    nativeBackendId: NativeBackendId?,
+    nativeHookFamily: NativeHookFamily,
     portsInstalled: Boolean,
     onToggle: (Layer) -> Unit,
     onJavaHooksChange: (List<String>?) -> Unit,
@@ -406,6 +419,7 @@ private fun AppRow(
     var nativeHookDialogOpen by remember { mutableStateOf(false) }
     var portsDialogOpen by remember { mutableStateOf(false) }
     val fullRoleLabels = LocalSettingsState.current.fullProtectionRoleLabels
+    val nativeHooks = app.nativeOverrides.hooksFor(nativeHookFamily)
     TargetRowShell(
         label = app.label,
         packageName = app.packageName,
@@ -433,7 +447,7 @@ private fun AppRow(
                     roleLabel(
                         compact = stringResource(R.string.chip_native),
                         full = stringResource(R.string.chip_native_full),
-                        partial = app.nativeHooks != null,
+                        partial = nativeHooks != null,
                         fullLabels = fullRoleLabels,
                     ),
                 enabled = app.native,
@@ -487,9 +501,9 @@ private fun AppRow(
     if (nativeHookDialogOpen) {
         HooksDialog(
             app = app,
-            title = stringResource(R.string.native_hooks_title),
-            hookEntries = NativeHookEntries,
-            selectedHooks = app.nativeHooks,
+            title = nativeHooksTitle(nativeBackendId),
+            hookEntries = nativeHookEntriesFor(nativeHookFamily),
+            selectedHooks = nativeHooks,
             onDismiss = { nativeHookDialogOpen = false },
             onSave = { hooks ->
                 onNativeHooksChange(hooks)
@@ -517,6 +531,18 @@ private fun roleLabel(
     partial: Boolean,
     fullLabels: Boolean,
 ): String = (if (fullLabels) full else compact) + if (partial) "*" else ""
+
+@Composable
+private fun nativeHooksTitle(backend: NativeBackendId?): String {
+    val backendName =
+        when (backend) {
+            NativeBackendId.Kmod -> stringResource(R.string.dashboard_backend_kmod)
+            NativeBackendId.Kpm -> stringResource(R.string.dashboard_backend_kpm)
+            NativeBackendId.Zygisk -> stringResource(R.string.dashboard_backend_zygisk)
+            null -> stringResource(R.string.chip_native_full)
+        }
+    return stringResource(R.string.native_hooks_title_with_backend, backendName)
+}
 
 @Composable
 private fun HookTargetChip(

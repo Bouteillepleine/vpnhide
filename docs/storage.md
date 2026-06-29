@@ -93,14 +93,28 @@ Shape (illustrative):
 
 Per-hook granularity ("раздельное управление хуками"): the coarse `"java": true`
 or `"native": true` is the common case (enable every hook in that role for the
-app). When the UI exposes per-hook control, the role grows into an explicit hook
-list, e.g. `"java": ["lsposed_network_capabilities"]` or
-`"native": ["fib_route_seq_show", "sock_ioctl"]`. The native activator maps the
-native list to protocol `hookmask` bits. LSPosed reads the Java list directly in
-`system_server`; app-hiding package visibility is still controlled by
-`appHiding`, not by the Java VPN hook list. An absent/`true` value means "all
-hooks for this role". The JSON is the *desired* selection; the native wire
-carries the resolved `hookmask`.
+app). Java per-hook control uses an explicit hook list, e.g.
+`"java": ["lsposed_network_capabilities"]`. Native per-hook control is
+backend-family-specific because `.ko`/KPM kernel hooks and Zygisk libc hooks are
+different hook ids:
+
+```json
+"native": {
+  "enabled": true,
+  "kernel": ["fib_route_seq_show", "sock_ioctl"],
+  "zygisk": ["zygisk_ioctl", "zygisk_recvfrom_chk"]
+}
+```
+
+The old `"native": ["fib_route_seq_show", "sock_ioctl"]` shape is still accepted
+as a legacy **kernel** override. For any active native backend family whose list
+is absent, the role means "all hooks for that family"; switching from Zygisk to
+KPM preserves the Zygisk override but uses all kernel hooks until the user
+configures kernel hooks explicitly, and vice versa. The native activator maps the
+active family list to protocol `hookmask` bits. LSPosed reads the Java list
+directly in `system_server`; app-hiding package visibility is still controlled
+by `appHiding`, not by the Java VPN hook list. The JSON is the *desired*
+selection; the native wire carries the resolved `hookmask`.
 
 The `rememberSuperkey` boolean lives here (it is a preference, not a secret). The
 superkey itself does **not** (§6).
@@ -167,9 +181,11 @@ backend.
 
 ### 4.1 The activator — a Rust workspace, thin bins
 
-The projection is *identical* for all three native backends (take the `native`-role
-packages → resolve to UIDs → emit a `vpnhide 1 config` snapshot); only the
-**delivery sink** differs. Ports use the same canonical parser and package→UID
+The projection is shared for all three native backends (take the `native`-role
+packages → resolve to UIDs → emit a `vpnhide 1 config` snapshot), but the
+resolved hookmask uses the active backend family: `.ko`/KPM consume `kernel`
+overrides, while Zygisk consumes `zygisk` overrides. Only the **delivery sink**
+differs after that. Ports use the same canonical parser and package→UID
 resolver, but project `ports: true` roles into iptables rules instead of the text
 wire. So: one shared core, thin per-target front-ends.
 
@@ -276,8 +292,8 @@ single-writer / atomic-replace, and stats are never written back into it.
   to share *writable* memory across all injected app-domain processes without a
   daemon (the module-dir file isn't writable by `untrusted_app` under SELinux; a
   zygote-inherited memfd must be created in the zygote, where our code does not run).
-  So Zygisk emits **status only**; per-hook stats are a future problem, not a
-  blocker for this design.
+  So Zygisk consumes per-target hookmasks but does not emit per-hook stats yet;
+  stats remain a future problem, not a blocker for this design.
 - **LSPosed: yes** — counters live in `system_server`, so the hook aggregates
   cumulative-since-boot non-zero `(uid, hook_id)` cells and writes them into
   `/data/system/vpnhide_lsposed_state` next to its `status` block.

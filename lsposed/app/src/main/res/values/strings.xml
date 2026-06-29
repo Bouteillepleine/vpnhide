@@ -52,6 +52,7 @@
     <string name="chip_ports_full" translatable="false">Ports</string>
     <string name="java_hooks_title">Java hooks</string>
     <string name="native_hooks_title">Native hooks</string>
+    <string name="native_hooks_title_with_backend">Native hooks · %1$s</string>
     <string name="ports_policy_title">Port rules</string>
     <string name="ports_policy_all_title">All localhost ports</string>
     <string name="ports_policy_all_body">Block every TCP and UDP connection to 127.0.0.1 and ::1 for this app. This is the default P behavior.</string>

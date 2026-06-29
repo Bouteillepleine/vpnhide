@@ -41,7 +41,7 @@ internal data class AppRoleSelection(
     val java: Boolean = false,
     val javaHooks: List<String>? = null,
     val native: Boolean = false,
-    val nativeHooks: List<String>? = null,
+    val nativeOverrides: NativeHookOverrides = NativeHookOverrides(),
     val appHiding: Boolean = false,
     val ports: Boolean = false,
     val portPolicy: PortPolicy? = null,
@@ -187,8 +187,7 @@ private fun Collection<AppRoleSelection>.selectedPkgs(predicate: (AppRoleSelecti
 private fun Collection<AppRoleSelection>.selectedNativeRoles(): Map<String, NativeRole> =
     filter { it.native }
         .associate { selection ->
-            val hooks = selection.nativeHooks?.takeIf { it.isNotEmpty() }
-            selection.packageName to (hooks?.let { NativeRole(enabled = true, hooks = it) } ?: NativeRole.All)
+            selection.packageName to NativeRole(enabled = true, overrides = selection.nativeOverrides)
         }
 
 private fun Collection<AppRoleSelection>.selectedJavaHooks(): Map<String, List<String>?> =

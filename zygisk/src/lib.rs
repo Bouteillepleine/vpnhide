@@ -83,6 +83,7 @@ use std::sync::Once;
 
 use log::{debug, error, info};
 use vpnhide_protocol as protocol;
+use vpnhide_protocol::hook_ids::{Hook, ZYGISK_HOOK_MASK};
 use zygisk_api::ZygiskModule;
 use zygisk_api::api::ZygiskApi;
 use zygisk_api::api::v2::{AppSpecializeArgs, V2, ZygiskOption};
@@ -144,9 +145,10 @@ fn set_log_level(enabled: bool) {
 #[derive(Default)]
 pub struct VpnHide {
     /// Set by `preAppSpecialize` if the forked process is a target we want
-    /// to hook. Read by `postAppSpecialize`. Accessed single-threaded
-    /// (Zygisk calls pre/post sequentially on the zygote main thread).
-    is_target: core::cell::Cell<bool>,
+    /// to hook. Carries only Zygisk-owned hook bits and is read by
+    /// `postAppSpecialize`. Accessed single-threaded (Zygisk calls pre/post
+    /// sequentially on the zygote main thread).
+    target_hookmask: core::cell::Cell<u32>,
     /// True only when the currently specializing app is the VPN Hide app
     /// itself, so we can write a heartbeat the dashboard can trust.
     report_status: core::cell::Cell<bool>,
@@ -164,12 +166,11 @@ unsafe impl Sync for VpnHide {}
 /// `targets.txt` are picked up on the next force-stop + restart — no zygote
 /// restart, no reboot needed. See the lifecycle block at the top of this file.
 ///
-/// `target_uids` is the set of UIDs to hide for (protocol §4.3 — UID is the
-/// key on every channel, including Zygisk); `debug` is the folded debug flag.
-/// Zygisk owns no registry hook bits yet, so it acts on target *presence* and
-/// ignores the per-hook mask (protocol §6 note).
+/// `targets` carries one Zygisk-owned hook mask per target UID (protocol §4.3 —
+/// UID is the key on every channel, including Zygisk); `debug` is the folded
+/// debug flag.
 struct ZygiskConfig {
-    target_uids: Vec<u32>,
+    targets: Vec<protocol::Target>,
     debug: bool,
 }
 
@@ -184,7 +185,7 @@ fn load_config_from_dir_fd(dir_fd: std::os::fd::RawFd) -> ZygiskConfig {
     use std::io::Read;
     use std::os::fd::FromRawFd;
     let empty = ZygiskConfig {
-        target_uids: Vec::new(),
+        targets: Vec::new(),
         debug: false,
     };
     let filename = std::ffi::CString::new(TARGETS_FILENAME).unwrap();
@@ -204,7 +205,17 @@ fn load_config_from_dir_fd(dir_fd: std::os::fd::RawFd) -> ZygiskConfig {
     }
     match protocol::parse_config(&content) {
         Some(cfg) => ZygiskConfig {
-            target_uids: cfg.targets.iter().map(|t| t.uid).collect(),
+            targets: cfg
+                .targets
+                .iter()
+                .filter_map(|t| {
+                    let hookmask = t.hookmask & ZYGISK_HOOK_MASK;
+                    (hookmask != 0).then_some(protocol::Target {
+                        uid: t.uid,
+                        hookmask,
+                    })
+                })
+                .collect(),
             debug: cfg.debug.unwrap_or(false),
         },
         None => {
@@ -238,8 +249,8 @@ impl ZygiskModule for VpnHide {
         // anything below logs. Default Off ⇒ silence on a fresh/empty install.
         set_log_level(cfg.debug);
         debug!(
-            "on_load: {} target uids cached, debug={}",
-            cfg.target_uids.len(),
+            "on_load: {} zygisk targets cached, debug={}",
+            cfg.targets.len(),
             cfg.debug
         );
         // dir_fd drops here → closed before any app fork.
@@ -258,13 +269,14 @@ impl ZygiskModule for VpnHide {
         // nice_name is still read, but only to recognise the VPN Hide app
         // itself for the status heartbeat — an identity check, not targeting.
         let package = read_jstring(&env, args.nice_name);
-        if is_target_uid(uid) {
-            info!("pre_app_specialize: targeting uid {uid}");
-            self.is_target.set(true);
+        let hookmask = target_hookmask(uid);
+        if hookmask != 0 {
+            info!("pre_app_specialize: targeting uid {uid} hooks=0x{hookmask:x}");
+            self.target_hookmask.set(hookmask);
             self.report_status
                 .set(package.as_deref() == Some(APP_PACKAGE));
         } else {
-            self.is_target.set(false);
+            self.target_hookmask.set(0);
             self.report_status.set(false);
             mark_cleanup(&mut api);
         }
@@ -276,12 +288,13 @@ impl ZygiskModule for VpnHide {
         _env: JNIEnv<'a>,
         _args: &'a AppSpecializeArgs<'_>,
     ) {
-        if !self.is_target.get() {
+        let hookmask = self.target_hookmask.get();
+        if hookmask == 0 {
             return;
         }
-        match install_hooks() {
+        match install_hooks(hookmask) {
             Ok(()) => {
-                info!("hooks installed (inline libc!ioctl + getifaddrs + openat for proc/net/*)");
+                info!("selected libc hooks installed (mask=0x{hookmask:x})");
                 if self.report_status.get() {
                     write_status_file();
                 }
@@ -338,8 +351,7 @@ fn mark_cleanup(api: &mut ZygiskApi<'_, V2>) {
     api.set_option(ZygiskOption::DlCloseModuleLibrary);
 }
 
-/// Install inline hooks on `libc.so` via ByteDance shadowhook. We patch
-/// three entry points:
+/// Install selected inline hooks on `libc.so` via ByteDance shadowhook.
 ///
 ///   * `ioctl` — catches `SIOCGIFNAME` / `SIOCGIFFLAGS` interface
 ///     probes from native code.
@@ -351,15 +363,16 @@ fn mark_cleanup(api: &mut ZygiskApi<'_, V2>) {
 ///   * `openat` — intercepts opens of `/proc/net/{route,ipv6_route,
 ///     if_inet6,tcp,tcp6}`; returns a `memfd` with VPN
 ///     entries stripped out.
-///   * `recvmsg` — filters netlink `RTM_NEWADDR` / `RTM_NEWLINK`
-///     dump responses, removing VPN interface entries.
+///   * `recvmsg` / `recv` / `recvfrom` / `__recvfrom_chk` — filter netlink
+///     `RTM_NEWADDR` / `RTM_NEWLINK` dump responses, removing VPN interface
+///     entries.
 ///
 /// This replaces the earlier PLT-hook approach. PLT hooks can only patch
 /// callers that are already mapped at `post_app_specialize` time — which
 /// excludes `libflutter.so`/`libapp.so` and any other library loaded later
 /// via `dlopen`. Inline-hooking libc's entry points themselves catches
 /// every caller regardless of load order.
-fn install_hooks() -> Result<(), String> {
+fn install_hooks(hookmask: u32) -> Result<(), String> {
     shadowhook::init_once().map_err(|rc| format!("shadowhook_init: rc={rc}"))?;
 
     // (sym, replacement, stash-original-via). Install order is the
@@ -370,29 +383,42 @@ fn install_hooks() -> Result<(), String> {
     // would break recv. recv itself is 12 bytes (3 instructions),
     // safe for island-mode hooking.
     type StoreFn = fn(*const ());
-    let plan: [(&core::ffi::CStr, *mut core::ffi::c_void, StoreFn); 7] = [
-        (c"ioctl", hooked_ioctl as *mut _, set_real_ioctl_ptr),
-        (
+    let mut plan: Vec<(&core::ffi::CStr, *mut core::ffi::c_void, StoreFn)> = Vec::new();
+    if zygisk_hook_enabled(hookmask, Hook::ZygiskIoctl) {
+        plan.push((c"ioctl", hooked_ioctl as *mut _, set_real_ioctl_ptr));
+    }
+    if zygisk_hook_enabled(hookmask, Hook::ZygiskGetifaddrs) {
+        plan.push((
             c"getifaddrs",
             hooked_getifaddrs as *mut _,
             set_real_getifaddrs_ptr,
-        ),
-        (c"openat", hooked_openat as *mut _, set_real_openat_ptr),
-        (c"recvmsg", hooked_recvmsg as *mut _, set_real_recvmsg_ptr),
-        (c"recv", hooked_recv as *mut _, set_real_recv_ptr),
-        // recvfrom + __recvfrom_chk catch FORTIFY'd / direct callers that
-        // never touch the `recv` symbol (issue #86 native route dump).
-        (
+        ));
+    }
+    if zygisk_hook_enabled(hookmask, Hook::ZygiskOpenat) {
+        plan.push((c"openat", hooked_openat as *mut _, set_real_openat_ptr));
+    }
+    if zygisk_hook_enabled(hookmask, Hook::ZygiskRecvmsg) {
+        plan.push((c"recvmsg", hooked_recvmsg as *mut _, set_real_recvmsg_ptr));
+    }
+    if zygisk_hook_enabled(hookmask, Hook::ZygiskRecv) {
+        plan.push((c"recv", hooked_recv as *mut _, set_real_recv_ptr));
+    }
+    // recvfrom + __recvfrom_chk catch FORTIFY'd / direct callers that
+    // never touch the `recv` symbol (issue #86 native route dump).
+    if zygisk_hook_enabled(hookmask, Hook::ZygiskRecvfrom) {
+        plan.push((
             c"recvfrom",
             hooked_recvfrom as *mut _,
             set_real_recvfrom_ptr,
-        ),
-        (
+        ));
+    }
+    if zygisk_hook_enabled(hookmask, Hook::ZygiskRecvfromChk) {
+        plan.push((
             c"__recvfrom_chk",
             hooked_recvfrom_chk as *mut _,
             set_real_recvfrom_chk_ptr,
-        ),
-    ];
+        ));
+    }
 
     let mut installed: Vec<*mut core::ffi::c_void> = Vec::with_capacity(plan.len());
     for (sym, new_fn, store_orig) in plan {
@@ -552,19 +578,28 @@ fn scrub_shadowhook_maps() {
     }
 }
 
-/// Is this UID one of our targets? (protocol §4.3 — UID is the key on every
-/// channel, including Zygisk.)
+/// Return this UID's Zygisk-owned hook mask, or zero if it is not targeted.
+/// Protocol §4.3 uses UID as the key on every channel, including Zygisk.
 ///
 /// Called from `pre_app_specialize`, which runs on the zygote side BEFORE the
 /// uid drop, so `args.uid` already holds the UID this child will become. One
 /// UID covers every process of a multi-process app, so this needs no
 /// sub-process name handling (the old package-name path did).
 #[inline(never)]
-fn is_target_uid(uid: u32) -> bool {
+fn target_hookmask(uid: u32) -> u32 {
     match CACHED_CONFIG.get() {
-        Some(cfg) => cfg.target_uids.contains(&uid),
-        None => false,
+        Some(cfg) => cfg
+            .targets
+            .iter()
+            .find(|target| target.uid == uid)
+            .map(|target| target.hookmask)
+            .unwrap_or(0),
+        None => 0,
     }
+}
+
+fn zygisk_hook_enabled(hookmask: u32, hook: Hook) -> bool {
+    hookmask & (1u32 << hook as u32) != 0
 }
 
 /// Decode a `JString` (as stored in `AppSpecializeArgs::nice_name`) into

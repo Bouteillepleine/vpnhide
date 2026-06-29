@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 use vpnhide_protocol::Target;
-use vpnhide_protocol::hook_ids::{HOOK_NAMES, KERNEL_HOOK_MASK};
+use vpnhide_protocol::hook_ids::{HOOK_NAMES, KERNEL_HOOK_MASK, ZYGISK_HOOK_MASK};
 use vpnhide_protocol::{format_config, parse_config};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -154,6 +154,18 @@ fn default_port_protocol() -> PortProtocol {
 pub enum NativeSelection {
     Enabled(bool),
     Hooks(Vec<String>),
+    Detailed(NativeSelectionDetail),
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeSelectionDetail {
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub kernel: Option<Vec<String>>,
+    #[serde(default)]
+    pub zygisk: Option<Vec<String>>,
 }
 
 impl Default for NativeSelection {
@@ -162,14 +174,55 @@ impl Default for NativeSelection {
     }
 }
 
+fn default_enabled() -> bool {
+    true
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeHookFamily {
+    Kernel,
+    Zygisk,
+}
+
+impl NativeHookFamily {
+    fn full_mask(self) -> u32 {
+        match self {
+            NativeHookFamily::Kernel => KERNEL_HOOK_MASK,
+            NativeHookFamily::Zygisk => ZYGISK_HOOK_MASK,
+        }
+    }
+}
+
 impl NativeSelection {
-    fn hookmask(&self) -> Option<u32> {
+    fn hookmask(&self, family: NativeHookFamily) -> Option<u32> {
         match self {
             NativeSelection::Enabled(false) => None,
-            NativeSelection::Enabled(true) => Some(KERNEL_HOOK_MASK),
+            NativeSelection::Enabled(true) => Some(family.full_mask()),
             NativeSelection::Hooks(names) => {
+                if names.is_empty() {
+                    return None;
+                }
+                let mask = match family {
+                    NativeHookFamily::Kernel => {
+                        names.iter().fold(0u32, |acc, name| acc | hook_bit(name)) & KERNEL_HOOK_MASK
+                    }
+                    NativeHookFamily::Zygisk => ZYGISK_HOOK_MASK,
+                };
+                (mask != 0).then_some(mask)
+            }
+            NativeSelection::Detailed(detail) => {
+                if !detail.enabled {
+                    return None;
+                }
+                let selected = match family {
+                    NativeHookFamily::Kernel => &detail.kernel,
+                    NativeHookFamily::Zygisk => &detail.zygisk,
+                };
+                let Some(names) = selected else {
+                    return Some(family.full_mask());
+                };
                 let mask =
-                    names.iter().fold(0u32, |acc, name| acc | hook_bit(name)) & KERNEL_HOOK_MASK;
+                    names.iter().fold(0u32, |acc, name| acc | hook_bit(name)) & family.full_mask();
                 (mask != 0).then_some(mask)
             }
         }
@@ -286,22 +339,36 @@ fn validate_port_policies(cfg: &CanonicalConfig) -> Result<()> {
 }
 
 pub fn project_native(json: &str) -> Result<String> {
-    project_native_with_pm_wait(json, PmReadyWait::Bounded(PM_READY_ATTEMPTS))
+    project_native_with_pm_wait(
+        json,
+        NativeHookFamily::Kernel,
+        PmReadyWait::Bounded(PM_READY_ATTEMPTS),
+    )
 }
 
-fn project_native_with_pm_wait(json: &str, wait: PmReadyWait) -> Result<String> {
+fn project_native_with_pm_wait(
+    json: &str,
+    family: NativeHookFamily,
+    wait: PmReadyWait,
+) -> Result<String> {
     let cfg = parse_canonical(json)?;
-    if !has_native_targets(&cfg) {
+    if !has_native_targets(&cfg, family) {
         return Ok(format_config(cfg.debug, &[]));
     }
     let resolver = PackageUidMap::from_pm_with_wait(wait)?;
-    Ok(project_native_with_resolver(&cfg, &resolver))
+    Ok(project_native_with_resolver_for_family(
+        &cfg, &resolver, family,
+    ))
 }
 
-pub fn project_native_with_resolver(cfg: &CanonicalConfig, resolver: &PackageUidMap) -> String {
+fn project_native_with_resolver_for_family(
+    cfg: &CanonicalConfig,
+    resolver: &PackageUidMap,
+    family: NativeHookFamily,
+) -> String {
     let mut by_uid = BTreeMap::<u32, u32>::new();
     for (pkg, app) in &cfg.apps {
-        let Some(mask) = app.native.hookmask() else {
+        let Some(mask) = app.native.hookmask(family) else {
             continue;
         };
         for uid in resolver.uids_for(pkg) {
@@ -317,6 +384,10 @@ pub fn project_native_with_resolver(cfg: &CanonicalConfig, resolver: &PackageUid
         .map(|(uid, hookmask)| Target { uid, hookmask })
         .collect::<Vec<_>>();
     format_config(cfg.debug, &targets)
+}
+
+pub fn project_native_with_resolver(cfg: &CanonicalConfig, resolver: &PackageUidMap) -> String {
+    project_native_with_resolver_for_family(cfg, resolver, NativeHookFamily::Kernel)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -400,7 +471,7 @@ pub fn activate_kmod_boot() -> Result<()> {
 }
 
 fn activate_kmod_with_pm_wait(wait: PmReadyWait) -> Result<()> {
-    let wire = project_native_with_pm_wait(&read_canonical()?, wait)?;
+    let wire = project_native_with_pm_wait(&read_canonical()?, NativeHookFamily::Kernel, wait)?;
     // /proc/vpnhide_ctl replaces the entire config per write(), so keep this
     // bounded to MAX_NATIVE_TARGETS and deliver one complete snapshot.
     fs::write(KMOD_CTL, wire)?;
@@ -416,7 +487,7 @@ pub fn activate_zygisk_boot() -> Result<()> {
 }
 
 fn activate_zygisk_with_pm_wait(wait: PmReadyWait) -> Result<()> {
-    let wire = project_native_with_pm_wait(&read_canonical()?, wait)?;
+    let wire = project_native_with_pm_wait(&read_canonical()?, NativeHookFamily::Zygisk, wait)?;
     write_atomic(Path::new(ZYGISK_RUNTIME_CONFIG), wire.as_bytes(), 0o644)
 }
 
@@ -468,7 +539,7 @@ fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Resu
     if skip_kpm_for_kmod_conflict(conflict_is_error)? {
         return Ok(KpmBootOutcome::DeferredConflict);
     }
-    let wire = project_native_with_pm_wait(&read_canonical()?, wait)?;
+    let wire = project_native_with_pm_wait(&read_canonical()?, NativeHookFamily::Kernel, wait)?;
     // Re-check after the (possibly long) PackageManager wait: the .ko may have
     // been loaded meanwhile, in which case we must not configure the KPM.
     if skip_kpm_for_kmod_conflict(conflict_is_error)? {
@@ -508,8 +579,10 @@ pub fn boot_wait_requested_from_env() -> Result<bool> {
     Ok(boot_wait)
 }
 
-fn has_native_targets(cfg: &CanonicalConfig) -> bool {
-    cfg.apps.values().any(|app| app.native.hookmask().is_some())
+fn has_native_targets(cfg: &CanonicalConfig, family: NativeHookFamily) -> bool {
+    cfg.apps
+        .values()
+        .any(|app| app.native.hookmask(family).is_some())
 }
 
 fn has_ports_targets(cfg: &CanonicalConfig) -> bool {
@@ -1136,6 +1209,89 @@ mod tests {
 
         assert_eq!(
             project_native_with_resolver(&cfg, &resolver),
+            "vpnhide 1 config\ndebug 0\n",
+        );
+    }
+
+    #[test]
+    fn projects_backend_specific_native_hook_overrides() {
+        let cfg = parse_canonical(
+            r#"{
+              "version": 1,
+              "apps": {
+                "com.example.app": {
+                  "native": {
+                    "enabled": true,
+                    "kernel": ["sock_ioctl"],
+                    "zygisk": ["zygisk_ioctl", "zygisk_recvfrom_chk"]
+                  }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let resolver = parse_pm_packages("package:com.example.app uid:10234\n");
+
+        assert_eq!(
+            project_native_with_resolver(&cfg, &resolver),
+            "vpnhide 1 config\n\
+             debug 0\n\
+             target 0x27fa 0x40\n",
+        );
+        assert_eq!(
+            project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Zygisk),
+            "vpnhide 1 config\n\
+             debug 0\n\
+             target 0x27fa 0x1040000\n",
+        );
+    }
+
+    #[test]
+    fn legacy_native_hook_list_is_kernel_only_and_zygisk_defaults_to_all() {
+        let cfg = parse_canonical(
+            r#"{
+              "version": 1,
+              "apps": {
+                "com.example.app": { "native": ["sock_ioctl"] }
+              }
+            }"#,
+        )
+        .unwrap();
+        let resolver = parse_pm_packages("package:com.example.app uid:10234\n");
+
+        assert_eq!(
+            project_native_with_resolver(&cfg, &resolver),
+            "vpnhide 1 config\n\
+             debug 0\n\
+             target 0x27fa 0x40\n",
+        );
+        assert_eq!(
+            project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Zygisk),
+            "vpnhide 1 config\n\
+             debug 0\n\
+             target 0x27fa 0x1fc0000\n",
+        );
+    }
+
+    #[test]
+    fn empty_legacy_native_hook_list_is_disabled_for_every_backend() {
+        let cfg = parse_canonical(
+            r#"{
+              "version": 1,
+              "apps": {
+                "com.example.app": { "native": [] }
+              }
+            }"#,
+        )
+        .unwrap();
+        let resolver = parse_pm_packages("package:com.example.app uid:10234\n");
+
+        assert_eq!(
+            project_native_with_resolver(&cfg, &resolver),
+            "vpnhide 1 config\ndebug 0\n",
+        );
+        assert_eq!(
+            project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Zygisk),
             "vpnhide 1 config\ndebug 0\n",
         );
     }
