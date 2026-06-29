@@ -77,6 +77,27 @@ class ProbeStatsTest {
     }
 
     @Test
+    fun `self package is excluded from the list`() {
+        val state =
+            StatisticsState(
+                backends =
+                    listOf(
+                        backend(
+                            HookIds.Backend.LSPOSED,
+                            listOf(
+                                row(10100, HookIds.Hook.LSPOSED_NETWORK_CAPABILITIES, 5, pkg = "com.other"),
+                                row(10999, HookIds.Hook.LSPOSED_NETWORK_CAPABILITIES, 99, pkg = "dev.okhsunrog.vpnhide"),
+                            ),
+                        ),
+                    ),
+            )
+
+        val apps = buildAppProbeStats(state, selfPackage = "dev.okhsunrog.vpnhide")
+
+        assertEquals(listOf(listOf("com.other")), apps.map { it.packageNames })
+    }
+
+    @Test
     fun `empty state yields no apps`() {
         assertEquals(emptyList<AppProbeStats>(), buildAppProbeStats(StatisticsState(backends = emptyList())))
     }

@@ -134,6 +134,7 @@
     <string name="statistics_load_failed_message">VPN Hide не смог собрать root-состояние для этой вкладки. Проверьте менеджер root, если разрешение было прервано, затем нажмите «Повторить».</string>
     <string name="statistics_refresh_failed_message">Обновление не удалось. Показываются предыдущие данные статистики.</string>
     <string name="statistics_apps_header">Приложения, проверявшие VPN</string>
+    <string name="statistics_apps_caption">Накопительно с момента загрузки, по способам детекта</string>
     <string name="statistics_apps_metric">Приложений</string>
     <string name="statistics_methods_metric">Способов</string>
     <!-- Способы детекта (разбивка по приложениям) -->

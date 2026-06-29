@@ -92,7 +92,14 @@ internal data class AppProbeStats(
 // Collapse the per-backend / per-(uid×hook) rows into one entry per app, with a
 // per-method breakdown. Hooks map to methods; an unknown hook id still counts
 // toward the app total but has no method bucket. Sorted by total, descending.
-internal fun buildAppProbeStats(state: StatisticsState): List<AppProbeStats> {
+//
+// [selfPackage] (VPN Hide's own package) is excluded: the app's cold-start
+// diagnostic check suite probes every vector against itself, which would
+// otherwise dominate the list as self-noise rather than a real prober.
+internal fun buildAppProbeStats(
+    state: StatisticsState,
+    selfPackage: String? = null,
+): List<AppProbeStats> {
     class Acc {
         var total: ULong = 0uL
         var packages: List<String> = emptyList()
@@ -119,7 +126,8 @@ internal fun buildAppProbeStats(state: StatisticsState): List<AppProbeStats> {
                 total = acc.total,
                 byMethod = acc.byMethod.toMap(),
             )
-        }.sortedWith(
+        }.filterNot { selfPackage != null && selfPackage in it.packageNames }
+        .sortedWith(
             compareByDescending<AppProbeStats> { it.total }
                 .thenBy { it.packageNames.joinToString() }
                 .thenBy { it.uid },

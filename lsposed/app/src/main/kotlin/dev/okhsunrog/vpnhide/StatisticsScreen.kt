@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -69,7 +70,8 @@ fun StatisticsScreen(modifier: Modifier = Modifier) {
             return@Column
         }
 
-        val appStats = remember(s) { buildAppProbeStats(s) }
+        val selfPackage = LocalContext.current.packageName
+        val appStats = remember(s, selfPackage) { buildAppProbeStats(s, selfPackage) }
         val methodCount = remember(appStats) { appStats.flatMap { it.byMethod.keys }.toSet().size }
 
         StatisticsHeroCard(state = s, appCount = appStats.size, methodCount = methodCount)
@@ -102,6 +104,12 @@ fun StatisticsScreen(modifier: Modifier = Modifier) {
         if (appStats.isNotEmpty()) {
             Spacer(Modifier.height(20.dp))
             SectionHeader(stringResource(R.string.statistics_apps_header))
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = stringResource(R.string.statistics_apps_caption),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Spacer(Modifier.height(8.dp))
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 appStats.forEachIndexed { index, app ->

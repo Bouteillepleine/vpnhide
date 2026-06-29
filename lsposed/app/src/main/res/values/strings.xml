@@ -165,6 +165,7 @@
     <string name="statistics_load_failed_message">VPN Hide could not collect the root state needed for this tab. Check your root manager if permission was interrupted, then tap Retry.</string>
     <string name="statistics_refresh_failed_message">Refresh failed. Showing the previous statistics data.</string>
     <string name="statistics_apps_header">Apps probing VPN</string>
+    <string name="statistics_apps_caption">Cumulative since boot, by detection method</string>
     <string name="statistics_apps_metric">Apps</string>
     <string name="statistics_methods_metric">Methods</string>
     <!-- Detection methods (per-app breakdown) -->
