@@ -37,12 +37,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.okhsunrog.vpnhide.settings.LocalSettingsState
+import dev.okhsunrog.vpnhide.settings.SettingsRepository
 import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
 import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
 import dev.okhsunrog.vpnhide.ui.components.GroupedCard
 import dev.okhsunrog.vpnhide.ui.components.pulse
 import dev.okhsunrog.vpnhide.ui.theme.AppColors
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -72,7 +74,14 @@ fun DashboardScreen(
         UpdateCheckCache.ensureFresh(scope, BuildConfig.VERSION_NAME)
     }
     LaunchedEffect(Unit) {
-        if (shouldShowChangelog(context)) {
+        // Read the persisted flag directly rather than LocalSettingsState: the
+        // ambient snapshot is the default (false) until DataStore loads, which
+        // would race this cold-start effect and pop the changelog anyway. When
+        // suppressed we also skip markChangelogSeen, so turning the toggle back
+        // off still shows the changelog for the current version.
+        val suppress =
+            SettingsRepository(context.applicationContext).settings.first().suppressVersionWarnings
+        if (!suppress && shouldShowChangelog(context)) {
             val data = withContext(Dispatchers.IO) { loadChangelog(context) }
             // Only raise the dialog when there's something to show — the
             // emptiness guard lives here (a side-effect scope) rather than

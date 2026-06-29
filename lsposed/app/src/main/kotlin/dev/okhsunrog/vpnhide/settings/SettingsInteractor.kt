@@ -41,6 +41,8 @@ interface SettingsInteractor {
     fun setFullProtectionRoleLabels(value: Boolean)
 
     fun setSettingsHintSeen(value: Boolean)
+
+    fun setSuppressVersionWarnings(value: Boolean)
 }
 
 /**
@@ -72,6 +74,8 @@ class RepositorySettingsInteractor(
     override fun setFullProtectionRoleLabels(value: Boolean) = launch { repository.setFullProtectionRoleLabels(value) }
 
     override fun setSettingsHintSeen(value: Boolean) = launch { repository.setSettingsHintSeen(value) }
+
+    override fun setSuppressVersionWarnings(value: Boolean) = launch { repository.setSuppressVersionWarnings(value) }
 
     private inline fun launch(crossinline block: suspend () -> Unit) {
         scope.launch { block() }

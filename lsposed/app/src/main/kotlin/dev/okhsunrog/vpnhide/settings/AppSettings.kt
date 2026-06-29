@@ -47,6 +47,14 @@ data class AppSettings(
     val fullProtectionRoleLabels: Boolean = true,
     /** Whether the user has opened Settings at least once (gates the gear hint). */
     val settingsHintSeen: Boolean = false,
+    /**
+     * Suppress the LSPosed running-vs-installed version warning by comparing only
+     * the release base version (ignoring the git-describe dev suffix). Off by
+     * default, so a stale dev build surfaces; a developer who reinstalls the APK
+     * repeatedly without rebooting can flip this to silence the reminder. No
+     * effect on release builds (their versions carry no dev suffix).
+     */
+    val suppressVersionWarnings: Boolean = false,
 ) {
     companion object {
         /** Brand seed — a crisp blue-teal, used as the non-dynamic fallback palette. */

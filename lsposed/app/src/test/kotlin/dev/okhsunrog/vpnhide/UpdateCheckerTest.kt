@@ -171,6 +171,42 @@ class VersionsMismatchTest {
     }
 }
 
+class VersionsMismatchFullTest {
+    @Test
+    fun `identical full versions do not mismatch`() {
+        assertFalse(versionsMismatchFull("0.6.2", "0.6.2"))
+        assertFalse(versionsMismatchFull("0.6.2-14-g1f2205e", "0.6.2-14-g1f2205e"))
+    }
+
+    @Test
+    fun `v-prefix difference does not mismatch`() {
+        assertFalse(versionsMismatchFull("v0.6.2", "0.6.2"))
+    }
+
+    @Test
+    fun `dev build on top of release does mismatch under full compare`() {
+        // The whole point of full-compare: a dev APK rebuilt past the tag runs
+        // a different hook than the released module/system_server still holds.
+        assertTrue(versionsMismatchFull("0.6.2", "0.6.2-14-g1f2205e"))
+        assertTrue(versionsMismatchFull("0.6.2-14-g1f2205e", "0.6.2"))
+    }
+
+    @Test
+    fun `two dev builds on same base but different commit do mismatch`() {
+        assertTrue(versionsMismatchFull("0.6.2-3-gabc1234", "0.6.2-14-g1f2205e"))
+    }
+
+    @Test
+    fun `different release versions do mismatch`() {
+        assertTrue(versionsMismatchFull("0.6.1", "0.6.2"))
+    }
+
+    @Test
+    fun `null module version never mismatches`() {
+        assertFalse(versionsMismatchFull(null, "0.6.2-14-g1f2205e"))
+    }
+}
+
 class IsNewerVersionTest {
     @Test
     fun `newer release beats older release`() {
