@@ -368,8 +368,10 @@ Current kernel hooks (`.ko` / KPM, 10): `fib_route_seq_show`,
 `fib_nl_fill_rule`. Current LSPosed Java hooks (8): `lsposed_link_properties`,
 `lsposed_network_capabilities`, `lsposed_network_info`, `lsposed_network`,
 `lsposed_connectivity_result`, `lsposed_connectivity_callback`,
-`lsposed_connectivity_network`, `lsposed_package_visibility`. Zygisk libc hooks
-take the next free global ids when they are wired into per-hook protocol stats.
+`lsposed_connectivity_network`, `lsposed_package_visibility`. Current Zygisk
+libc hooks (7): `zygisk_ioctl`, `zygisk_getifaddrs`, `zygisk_openat`,
+`zygisk_recvmsg`, `zygisk_recv`, `zygisk_recvfrom`,
+`zygisk_recvfrom_chk`.
 
 ### 5.1 Error codes (`status`)
 
@@ -406,7 +408,7 @@ the only writer of all profiles; each backend reads its own.
 | Channel | config records it acts on | emits stats? | emits status? |
 |---|---|---|---|
 | `.ko` / KPM | `debug`, `target` (kernel-owned mask bits) | yes | yes (§4.3) |
-| Zygisk | `debug`, `target` (zygisk-owned mask bits) | yes (§7, if added) | yes, if a read channel is added |
+| Zygisk | `debug`, `target` (zygisk-owned mask bits) | no, not yet (§7) | yes, via the app heartbeat |
 | LSPosed | `debug`, `target` (lsposed-owned mask bits), package/observer records | yes | yes |
 
 A backend ignores `target` mask bits it does not own (`mask & own_hooks`), so the

@@ -42,13 +42,27 @@ pub enum Hook {
     LsposedConnectivityNetwork = 16,
     /// PackageManager app-hiding filters
     LsposedPackageVisibility = 17,
+    /// libc ioctl() SIOCGIF* interface probes
+    ZygiskIoctl = 18,
+    /// libc getifaddrs() interface enumeration
+    ZygiskGetifaddrs = 19,
+    /// openat() filtering for /proc/net routes and sockets
+    ZygiskOpenat = 20,
+    /// recvmsg() netlink dump filtering
+    ZygiskRecvmsg = 21,
+    /// recv() netlink dump filtering
+    ZygiskRecv = 22,
+    /// recvfrom() netlink dump filtering
+    ZygiskRecvfrom = 23,
+    /// __recvfrom_chk() fortified netlink dump filtering
+    ZygiskRecvfromChk = 24,
 }
 
-pub const HOOK_COUNT: u32 = 18;
+pub const HOOK_COUNT: u32 = 25;
 
 /// Hooks owned by each backend: apply `mask & own`.
 pub const KERNEL_HOOK_MASK: u32 = 0x3ff;
-pub const ZYGISK_HOOK_MASK: u32 = 0x0;
+pub const ZYGISK_HOOK_MASK: u32 = 0x1fc0000;
 pub const LSPOSED_HOOK_MASK: u32 = 0x3fc00;
 
 /// status error codes (protocol §5.1).
@@ -81,7 +95,7 @@ pub enum Backend {
     Lsposed = 3,
 }
 
-pub const HOOK_NAMES: [&str; 18] = [
+pub const HOOK_NAMES: [&str; 25] = [
     "fib_route_seq_show",
     "ipv6_route_seq_show",
     "rtnl_fill_ifinfo",
@@ -100,4 +114,11 @@ pub const HOOK_NAMES: [&str; 18] = [
     "lsposed_connectivity_callback",
     "lsposed_connectivity_network",
     "lsposed_package_visibility",
+    "zygisk_ioctl",
+    "zygisk_getifaddrs",
+    "zygisk_openat",
+    "zygisk_recvmsg",
+    "zygisk_recv",
+    "zygisk_recvfrom",
+    "zygisk_recvfrom_chk",
 ];

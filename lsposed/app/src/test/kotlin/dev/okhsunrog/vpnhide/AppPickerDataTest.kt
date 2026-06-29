@@ -105,7 +105,15 @@ class AppPickerDataTest {
 
     @Test
     fun `save preserves custom native hooks for missing and still selected apps`() {
-        val customNative = NativeRole(enabled = true, hooks = listOf("sock_ioctl"))
+        val customNative =
+            NativeRole(
+                enabled = true,
+                overrides =
+                    NativeHookOverrides(
+                        kernel = listOf("sock_ioctl"),
+                        zygisk = listOf("zygisk_ioctl"),
+                    ),
+            )
         val snapshot =
             snapshotWithCanonical(
                 "com.visible" to CanonicalApp(native = customNative),
@@ -118,7 +126,11 @@ class AppPickerDataTest {
                 selfPkg = self,
                 selections =
                     listOf(
-                        AppRoleSelection(packageName = "com.visible", native = true, nativeHooks = customNative.hooks),
+                        AppRoleSelection(
+                            packageName = "com.visible",
+                            native = true,
+                            nativeOverrides = customNative.overrides,
+                        ),
                     ),
                 snapshot = snapshot,
             )
@@ -233,14 +245,20 @@ class AppPickerDataTest {
                         AppRoleSelection(
                             packageName = "com.visible",
                             native = true,
-                            nativeHooks = listOf("dev_ioctl", "sock_ioctl"),
+                            nativeOverrides =
+                                NativeHookOverrides(
+                                    kernel = listOf("dev_ioctl", "sock_ioctl"),
+                                ),
                         ),
                     ),
                 snapshot = snapshotWithCanonical(),
             )
 
         assertEquals(
-            NativeRole(enabled = true, hooks = listOf("dev_ioctl", "sock_ioctl")),
+            NativeRole(
+                enabled = true,
+                overrides = NativeHookOverrides(kernel = listOf("dev_ioctl", "sock_ioctl")),
+            ),
             cfg.apps.getValue("com.visible").native,
         )
     }
@@ -257,7 +275,14 @@ class AppPickerDataTest {
                     ),
                 snapshot =
                     snapshotWithCanonical(
-                        "com.visible" to CanonicalApp(native = NativeRole(enabled = true, hooks = listOf("sock_ioctl"))),
+                        "com.visible" to
+                            CanonicalApp(
+                                native =
+                                    NativeRole(
+                                        enabled = true,
+                                        overrides = NativeHookOverrides(kernel = listOf("sock_ioctl")),
+                                    ),
+                            ),
                     ),
             )
 

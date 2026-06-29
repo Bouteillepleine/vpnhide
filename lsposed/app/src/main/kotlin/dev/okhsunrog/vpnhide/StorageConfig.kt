@@ -36,7 +36,7 @@ internal data class CanonicalApp(
 
 internal data class NativeRole(
     val enabled: Boolean,
-    val hooks: List<String>? = null,
+    val overrides: NativeHookOverrides = NativeHookOverrides(),
 ) {
     companion object {
         val Disabled = NativeRole(enabled = false)
@@ -44,18 +44,63 @@ internal data class NativeRole(
     }
 }
 
+internal enum class NativeHookFamily {
+    Kernel,
+    Zygisk,
+}
+
+internal data class NativeHookOverrides(
+    val kernel: List<String>? = null,
+    val zygisk: List<String>? = null,
+) {
+    fun hooksFor(family: NativeHookFamily): List<String>? =
+        when (family) {
+            NativeHookFamily.Kernel -> kernel
+            NativeHookFamily.Zygisk -> zygisk
+        }
+
+    fun withHooksFor(
+        family: NativeHookFamily,
+        hooks: List<String>?,
+    ): NativeHookOverrides =
+        when (family) {
+            NativeHookFamily.Kernel -> copy(kernel = hooks)
+            NativeHookFamily.Zygisk -> copy(zygisk = hooks)
+        }
+
+    val hasAnyOverride: Boolean
+        get() = kernel != null || zygisk != null
+}
+
 private data class ParsedHookRole(
     val enabled: Boolean,
     val hooks: List<String>? = null,
 )
 
-internal val NativeHookEntries: List<HookIds.Hook> =
+internal val NativeKernelHookEntries: List<HookIds.Hook> =
     HookIds.Hook.entries.filter { hookBit(it) and HookIds.KERNEL_HOOK_MASK.toLong() != 0L }
+
+internal val ZygiskNativeHookEntries: List<HookIds.Hook> =
+    HookIds.Hook.entries.filter { hookBit(it) and HookIds.ZYGISK_HOOK_MASK.toLong() != 0L }
+
+internal val NativeHookEntries: List<HookIds.Hook> = NativeKernelHookEntries
 
 internal val LsposedJavaHookEntries: List<HookIds.Hook> =
     HookIds.Hook.entries.filter {
         hookBit(it) and HookIds.LSPOSED_HOOK_MASK.toLong() != 0L &&
             it != HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY
+    }
+
+internal fun nativeHookEntriesFor(family: NativeHookFamily): List<HookIds.Hook> =
+    when (family) {
+        NativeHookFamily.Kernel -> NativeKernelHookEntries
+        NativeHookFamily.Zygisk -> ZygiskNativeHookEntries
+    }
+
+internal fun nativeHookFamilyFor(backend: NativeBackendId?): NativeHookFamily =
+    when (backend) {
+        NativeBackendId.Zygisk -> NativeHookFamily.Zygisk
+        NativeBackendId.Kmod, NativeBackendId.Kpm, null -> NativeHookFamily.Kernel
     }
 
 internal fun hookSelectionMask(
@@ -159,9 +204,37 @@ private fun parsePortRule(obj: JSONObject): PortRule {
 }
 
 private fun parseNativeRole(value: Any?): NativeRole =
-    parseHookRole(value).let { role ->
-        if (role.enabled) NativeRole(enabled = true, hooks = role.hooks) else NativeRole.Disabled
+    when (value) {
+        is JSONObject -> {
+            parseNativeRoleObject(value)
+        }
+
+        else -> {
+            parseHookRole(value).let { role ->
+                if (role.enabled) {
+                    NativeRole(
+                        enabled = true,
+                        overrides = NativeHookOverrides(kernel = role.hooks),
+                    )
+                } else {
+                    NativeRole.Disabled
+                }
+            }
+        }
     }
+
+private fun parseNativeRoleObject(obj: JSONObject): NativeRole {
+    val enabled = obj.optBoolean("enabled", obj.has("kernel") || obj.has("zygisk"))
+    if (!enabled) return NativeRole.Disabled
+    return NativeRole(
+        enabled = true,
+        overrides =
+            NativeHookOverrides(
+                kernel = parseOptionalStringList(obj, "kernel"),
+                zygisk = parseOptionalStringList(obj, "zygisk"),
+            ),
+    )
+}
 
 private fun parseHookRole(value: Any?): ParsedHookRole =
     when (value) {
@@ -185,6 +258,16 @@ private fun parseStringSet(value: JSONArray?): Set<String> =
     (0 until (value?.length() ?: 0))
         .mapNotNull { idx -> value?.optString(idx)?.takeIf { it.isNotBlank() } }
         .toSortedSet()
+
+private fun parseOptionalStringList(
+    obj: JSONObject,
+    key: String,
+): List<String>? {
+    if (!obj.has(key) || obj.isNull(key)) return null
+    val array = obj.optJSONArray(key) ?: return null
+    return (0 until array.length())
+        .mapNotNull { idx -> array.optString(idx).takeIf { it.isNotBlank() } }
+}
 
 internal fun buildCanonicalConfig(
     debug: Boolean,
@@ -355,7 +438,28 @@ private fun StringBuilder.appendPortRule(rule: PortRule) {
 }
 
 private fun StringBuilder.appendNativeRole(native: NativeRole) {
-    appendHookRole(native.enabled, native.hooks)
+    when {
+        !native.enabled -> {
+            append("false")
+        }
+
+        !native.overrides.hasAnyOverride -> {
+            append("true")
+        }
+
+        else -> {
+            append("{ \"enabled\": true")
+            native.overrides.kernel?.let { hooks ->
+                append(", \"kernel\": ")
+                appendStringArray(hooks)
+            }
+            native.overrides.zygisk?.let { hooks ->
+                append(", \"zygisk\": ")
+                appendStringArray(hooks)
+            }
+            append(" }")
+        }
+    }
 }
 
 private fun StringBuilder.appendHookRole(

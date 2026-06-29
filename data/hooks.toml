@@ -128,8 +128,49 @@ name = "lsposed_package_visibility"
 backend = "lsposed"
 note = "PackageManager app-hiding filters"
 
-# --- zygisk libc hooks take the next free ids as they are wired into the
-# --- protocol; appended here then (kept here as the record).
+# --- Zygisk libc hooks -----------------------------------------------------
+
+[[hook]]
+id = 18
+name = "zygisk_ioctl"
+backend = "zygisk"
+note = "libc ioctl() SIOCGIF* interface probes"
+
+[[hook]]
+id = 19
+name = "zygisk_getifaddrs"
+backend = "zygisk"
+note = "libc getifaddrs() interface enumeration"
+
+[[hook]]
+id = 20
+name = "zygisk_openat"
+backend = "zygisk"
+note = "openat() filtering for /proc/net routes and sockets"
+
+[[hook]]
+id = 21
+name = "zygisk_recvmsg"
+backend = "zygisk"
+note = "recvmsg() netlink dump filtering"
+
+[[hook]]
+id = 22
+name = "zygisk_recv"
+backend = "zygisk"
+note = "recv() netlink dump filtering"
+
+[[hook]]
+id = 23
+name = "zygisk_recvfrom"
+backend = "zygisk"
+note = "recvfrom() netlink dump filtering"
+
+[[hook]]
+id = 24
+name = "zygisk_recvfrom_chk"
+backend = "zygisk"
+note = "__recvfrom_chk() fortified netlink dump filtering"
 
 # --- backend ids (protocol §4.3 `status backend <id>`) ----------------------
 # Which backend answered a `status` read. Distinct from the hook `backend`

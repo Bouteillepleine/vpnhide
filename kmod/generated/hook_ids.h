@@ -21,11 +21,18 @@
 #define VPNHIDE_HOOK_LSPOSED_CONNECTIVITY_CALLBACK 15
 #define VPNHIDE_HOOK_LSPOSED_CONNECTIVITY_NETWORK  16
 #define VPNHIDE_HOOK_LSPOSED_PACKAGE_VISIBILITY    17
-#define VPNHIDE_HOOK_COUNT                         18
+#define VPNHIDE_HOOK_ZYGISK_IOCTL                  18
+#define VPNHIDE_HOOK_ZYGISK_GETIFADDRS             19
+#define VPNHIDE_HOOK_ZYGISK_OPENAT                 20
+#define VPNHIDE_HOOK_ZYGISK_RECVMSG                21
+#define VPNHIDE_HOOK_ZYGISK_RECV                   22
+#define VPNHIDE_HOOK_ZYGISK_RECVFROM               23
+#define VPNHIDE_HOOK_ZYGISK_RECVFROM_CHK           24
+#define VPNHIDE_HOOK_COUNT                         25
 
 /* Hooks owned by each backend: apply `mask & own`, ignore foreign bits. */
 #define VPNHIDE_KERNEL_HOOK_MASK 0x3ffu
-#define VPNHIDE_ZYGISK_HOOK_MASK 0x0u
+#define VPNHIDE_ZYGISK_HOOK_MASK 0x1fc0000u
 #define VPNHIDE_LSPOSED_HOOK_MASK 0x3fc00u
 
 /* status error codes (protocol §5.1). */
@@ -64,6 +71,13 @@ static inline const char *vpnhide_hook_name(int id)
 	case 15: return "lsposed_connectivity_callback";
 	case 16: return "lsposed_connectivity_network";
 	case 17: return "lsposed_package_visibility";
+	case 18: return "zygisk_ioctl";
+	case 19: return "zygisk_getifaddrs";
+	case 20: return "zygisk_openat";
+	case 21: return "zygisk_recvmsg";
+	case 22: return "zygisk_recv";
+	case 23: return "zygisk_recvfrom";
+	case 24: return "zygisk_recvfrom_chk";
 	default: return "?";
 	}
 }

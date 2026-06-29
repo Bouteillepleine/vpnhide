@@ -49,6 +49,19 @@ internal data class TargetsSnapshot(
     val nativeTargets: Set<String>
         get() = kmodTargets + kpmTargets + zygiskTargets
 
+    val displayNativeBackendId: NativeBackendId?
+        get() =
+            activeNativeBackendId
+                ?: when {
+                    kmodModuleInstalled -> NativeBackendId.Kmod
+                    kpmModuleInstalled -> NativeBackendId.Kpm
+                    zygiskModuleInstalled -> NativeBackendId.Zygisk
+                    else -> null
+                }
+
+    val nativeHookFamily: NativeHookFamily
+        get() = nativeHookFamilyFor(displayNativeBackendId)
+
     /** Observer UIDs resolved back to current package names via
      * `pm list packages -U`. UIDs that no longer map to an installed
      * package (e.g. after an uninstall) silently drop out.

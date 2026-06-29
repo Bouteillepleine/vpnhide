@@ -7,6 +7,37 @@ import java.io.File
 
 class StorageConfigTest {
     @Test
+    fun `native hook entries are raw backend hooks`() {
+        assertEquals(
+            listOf(
+                "fib_route_seq_show",
+                "ipv6_route_seq_show",
+                "rtnl_fill_ifinfo",
+                "inet_fill_ifaddr",
+                "inet6_fill_ifaddr",
+                "dev_ioctl",
+                "sock_ioctl",
+                "fib_dump_info",
+                "rt6_fill_node",
+                "fib_nl_fill_rule",
+            ),
+            NativeKernelHookEntries.map { it.hookName },
+        )
+        assertEquals(
+            listOf(
+                "zygisk_ioctl",
+                "zygisk_getifaddrs",
+                "zygisk_openat",
+                "zygisk_recvmsg",
+                "zygisk_recv",
+                "zygisk_recvfrom",
+                "zygisk_recvfrom_chk",
+            ),
+            ZygiskNativeHookEntries.map { it.hookName },
+        )
+    }
+
+    @Test
     fun `canonical config parses roles settings and hook lists`() {
         val cfg =
             requireNotNull(
@@ -47,8 +78,50 @@ class StorageConfigTest {
         )
         assertTrue(cfg.apps.getValue("com.bank").java)
         assertEquals(listOf("lsposed_network_capabilities"), cfg.apps.getValue("com.bank").javaHooks)
-        assertEquals(NativeRole(enabled = true, hooks = listOf("sock_ioctl")), cfg.apps.getValue("com.bank").native)
+        assertEquals(
+            NativeRole(
+                enabled = true,
+                overrides = NativeHookOverrides(kernel = listOf("sock_ioctl")),
+            ),
+            cfg.apps.getValue("com.bank").native,
+        )
         assertTrue(cfg.apps.getValue("dev.okhsunrog.vpnhide").hidden)
+    }
+
+    @Test
+    fun `canonical config parses backend specific native hook overrides`() {
+        val cfg =
+            requireNotNull(
+                parseCanonicalConfig(
+                    """
+                    {
+                      "version": 1,
+                      "apps": {
+                        "com.bank": {
+                          "native": {
+                            "enabled": true,
+                            "kernel": ["sock_ioctl"],
+                            "zygisk": ["zygisk_ioctl", "zygisk_recvfrom_chk"]
+                          }
+                        }
+                      }
+                    }
+                    """.trimIndent(),
+                ),
+            )
+
+        assertEquals(
+            NativeRole(
+                enabled = true,
+                overrides =
+                    NativeHookOverrides(
+                        kernel = listOf("sock_ioctl"),
+                        zygisk = listOf("zygisk_ioctl", "zygisk_recvfrom_chk"),
+                    ),
+            ),
+            cfg.apps.getValue("com.bank").native,
+        )
+        assertEquals(cfg, requireNotNull(parseCanonicalConfig(canonicalConfigJson(cfg))))
     }
 
     @Test
@@ -124,7 +197,10 @@ class StorageConfigTest {
         assertEquals(NativeRole.All, cfg.apps.getValue("com.example.bank").native)
         val proxy = cfg.apps.getValue("org.example.proxy")
         assertEquals(
-            NativeRole(enabled = true, hooks = listOf("fib_route_seq_show", "sock_ioctl")),
+            NativeRole(
+                enabled = true,
+                overrides = NativeHookOverrides(kernel = listOf("fib_route_seq_show", "sock_ioctl")),
+            ),
             proxy.native,
         )
         // Per-hook Java selection: the same array shape the native activator
@@ -140,7 +216,14 @@ class StorageConfigTest {
             CanonicalConfig(
                 apps =
                     mapOf(
-                        "com.bank" to CanonicalApp(native = NativeRole(enabled = true, hooks = listOf("sock_ioctl"))),
+                        "com.bank" to
+                            CanonicalApp(
+                                native =
+                                    NativeRole(
+                                        enabled = true,
+                                        overrides = NativeHookOverrides(kernel = listOf("sock_ioctl")),
+                                    ),
+                            ),
                     ),
             )
 
@@ -155,7 +238,13 @@ class StorageConfigTest {
                 existing = existing,
             )
 
-        assertEquals(NativeRole(enabled = true, hooks = listOf("sock_ioctl")), cfg.apps.getValue("com.bank").native)
+        assertEquals(
+            NativeRole(
+                enabled = true,
+                overrides = NativeHookOverrides(kernel = listOf("sock_ioctl")),
+            ),
+            cfg.apps.getValue("com.bank").native,
+        )
         assertEquals(NativeRole.All, cfg.apps.getValue("com.new").native)
     }
 
@@ -269,7 +358,11 @@ class StorageConfigTest {
                             CanonicalApp(
                                 java = true,
                                 javaHooks = listOf("lsposed_network_capabilities"),
-                                native = NativeRole(enabled = true, hooks = listOf("sock_ioctl")),
+                                native =
+                                    NativeRole(
+                                        enabled = true,
+                                        overrides = NativeHookOverrides(kernel = listOf("sock_ioctl")),
+                                    ),
                             ),
                     ),
             )

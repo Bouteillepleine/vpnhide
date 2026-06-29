@@ -42,6 +42,7 @@
     <string name="apps_help_title">Как это работает</string>
     <string name="java_hooks_title">Java-хуки</string>
     <string name="native_hooks_title">Нативные хуки</string>
+    <string name="native_hooks_title_with_backend">Нативные хуки · %1$s</string>
     <string name="ports_policy_title">Правила портов</string>
     <string name="ports_policy_all_title">Все localhost-порты</string>
     <string name="ports_policy_all_body">Блокировать все TCP и UDP подключения к 127.0.0.1 и ::1 для этого приложения. Это стандартное поведение P.</string>
