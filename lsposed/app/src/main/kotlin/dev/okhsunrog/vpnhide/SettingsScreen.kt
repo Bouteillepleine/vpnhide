@@ -1,5 +1,7 @@
 package dev.okhsunrog.vpnhide
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -25,7 +27,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Animation
 import androidx.compose.material.icons.filled.BrightnessMedium
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Forum
@@ -33,6 +37,7 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.RoundedCorner
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -45,6 +50,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -326,12 +332,17 @@ private fun ConfigBackupSection() {
     val targets by TargetsCache.snapshot.collectAsState()
     var operation by remember { mutableStateOf(ConfigOperation.Idle) }
     var pendingExport by remember { mutableStateOf<String?>(null) }
+    var pendingPackageListExport by remember { mutableStateOf<String?>(null) }
+    var packageListDialogOpen by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     val exportDone = stringResource(R.string.settings_config_export_done)
     val exportFailed = stringResource(R.string.settings_config_export_failed)
     val importDone = stringResource(R.string.settings_config_import_done)
     val importInvalid = stringResource(R.string.settings_config_import_invalid)
     val importRootFailed = stringResource(R.string.settings_config_import_root_failed)
+    val packageListCopied = stringResource(R.string.settings_package_list_copied)
+    val packageListSaved = stringResource(R.string.settings_package_list_saved)
+    val packageListSaveFailed = stringResource(R.string.settings_package_list_save_failed)
 
     val exportLauncher =
         rememberLauncherForActivityResult(
@@ -373,6 +384,21 @@ private fun ConfigBackupSection() {
                             importRootFailed
                         }
                     }
+            }
+        }
+
+    val packageListSaveLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.CreateDocument("text/plain"),
+        ) { uri ->
+            val raw = pendingPackageListExport
+            pendingPackageListExport = null
+            if (uri == null || raw == null) return@rememberLauncherForActivityResult
+            operation = ConfigOperation.PackageListSave
+            scope.launch {
+                val ok = withContext(Dispatchers.IO) { writeTextToUri(context, uri, raw) }
+                operation = ConfigOperation.Idle
+                status = if (ok) packageListSaved else packageListSaveFailed
             }
         }
 
@@ -446,6 +472,13 @@ private fun ConfigBackupSection() {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 4.dp),
         )
+        PreferenceRow(
+            title = stringResource(R.string.settings_package_list_title),
+            subtitle = stringResource(R.string.settings_package_list_sub),
+            icon = Icons.Default.ContentCopy,
+            enabled = targets != null && operation == ConfigOperation.Idle,
+            onClick = { packageListDialogOpen = true },
+        )
         status?.let {
             Text(
                 text = it,
@@ -455,7 +488,158 @@ private fun ConfigBackupSection() {
             )
         }
     }
+
+    val packageListConfig = targets?.let { buildConfigExportCanonical(context, it) }
+    if (packageListDialogOpen && packageListConfig != null) {
+        PackageListExportDialog(
+            config = packageListConfig,
+            selfPkg = context.packageName,
+            onDismiss = { packageListDialogOpen = false },
+            onCopy = { text ->
+                copyTextToClipboard(context, text)
+                status = packageListCopied
+                packageListDialogOpen = false
+            },
+            onSave = { text, source ->
+                pendingPackageListExport = text
+                status = null
+                packageListDialogOpen = false
+                packageListSaveLauncher.launch(packageListExportFileName(source))
+            },
+        )
+    }
 }
+
+private fun copyTextToClipboard(
+    context: android.content.Context,
+    text: String,
+) {
+    val clipboard = context.getSystemService(ClipboardManager::class.java)
+    clipboard.setPrimaryClip(ClipData.newPlainText("VPN Hide package list", text))
+}
+
+@Composable
+private fun PackageListExportDialog(
+    config: CanonicalConfig,
+    selfPkg: String,
+    onDismiss: () -> Unit,
+    onCopy: (String) -> Unit,
+    onSave: (String, PackageListSource) -> Unit,
+) {
+    var source by remember { mutableStateOf(PackageListSource.Java) }
+    var format by remember { mutableStateOf(PackageListFormat.Comma) }
+    val packages = remember(config, source, selfPkg) { packageListExportPackages(config, source, selfPkg) }
+    val text = remember(config, source, format, selfPkg) { formatPackageListExport(config, source, format, selfPkg) }
+    val hasPackages = packages.isNotEmpty()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.settings_package_list_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = stringResource(R.string.settings_package_list_dialog_body),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = stringResource(R.string.settings_package_list_source),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                PackageListSource.entries.forEach { option ->
+                    PackageListRadioRow(
+                        label = packageListSourceLabel(option),
+                        selected = source == option,
+                        onClick = { source = option },
+                    )
+                }
+                Text(
+                    text = stringResource(R.string.settings_package_list_format),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                PackageListFormat.entries.forEach { option ->
+                    PackageListRadioRow(
+                        label = packageListFormatLabel(option),
+                        selected = format == option,
+                        onClick = { format = option },
+                    )
+                }
+                Text(
+                    text =
+                        if (hasPackages) {
+                            stringResource(R.string.settings_package_list_count, packages.size)
+                        } else {
+                            stringResource(R.string.settings_package_list_empty)
+                        },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(
+                    onClick = { onSave(text, source) },
+                    enabled = hasPackages,
+                ) {
+                    Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.settings_package_list_save))
+                }
+                TextButton(
+                    onClick = { onCopy(text) },
+                    enabled = hasPackages,
+                ) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.settings_package_list_copy))
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.btn_cancel))
+            }
+        },
+    )
+}
+
+@Composable
+private fun PackageListRadioRow(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Spacer(Modifier.width(8.dp))
+        Text(text = label, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun packageListSourceLabel(source: PackageListSource): String =
+    when (source) {
+        PackageListSource.Java -> stringResource(R.string.settings_package_list_source_java)
+        PackageListSource.Native -> stringResource(R.string.settings_package_list_source_native)
+        PackageListSource.AppHiding -> stringResource(R.string.settings_package_list_source_app_hiding)
+        PackageListSource.Ports -> stringResource(R.string.settings_package_list_source_ports)
+        PackageListSource.AllProtection -> stringResource(R.string.settings_package_list_source_all)
+    }
+
+@Composable
+private fun packageListFormatLabel(format: PackageListFormat): String =
+    when (format) {
+        PackageListFormat.Comma -> stringResource(R.string.settings_package_list_format_comma)
+        PackageListFormat.Lines -> stringResource(R.string.settings_package_list_format_lines)
+    }
 
 @Composable
 private fun SuperkeySettingsSection() {
@@ -597,20 +781,23 @@ private enum class ConfigOperation {
     Idle,
     Export,
     Import,
+    PackageListSave,
 }
+
+private fun buildConfigExportCanonical(
+    context: android.content.Context,
+    snapshot: TargetsSnapshot?,
+): CanonicalConfig =
+    when {
+        snapshot?.canonicalConfig != null -> snapshot.canonicalConfig
+        snapshot != null -> buildCanonicalConfigFromTargetsSnapshot(snapshot)
+        else -> CanonicalConfig(debug = isEnabledInPrefs(context))
+    }
 
 private fun buildConfigExportJson(
     context: android.content.Context,
     snapshot: TargetsSnapshot?,
-): String {
-    val canonical =
-        when {
-            snapshot?.canonicalConfig != null -> snapshot.canonicalConfig
-            snapshot != null -> buildCanonicalConfigFromTargetsSnapshot(snapshot)
-            else -> CanonicalConfig(debug = isEnabledInPrefs(context))
-        }
-    return canonicalConfigJson(canonical)
-}
+): String = canonicalConfigJson(buildConfigExportCanonical(context, snapshot))
 
 private fun writeTextToUri(
     context: android.content.Context,
@@ -659,11 +846,28 @@ private fun AutoHideSettingsSection() {
     var saving by remember { mutableStateOf<AutoHideSetting?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
     var manualDialogOpen by remember { mutableStateOf(false) }
+    var unavailableDialogOpen by remember { mutableStateOf(false) }
     val savedMessage = stringResource(R.string.settings_auto_hide_saved)
     val failedMessage = stringResource(R.string.settings_auto_hide_failed)
+    val unavailableRemovedMessage = stringResource(R.string.settings_unavailable_configured_removed)
+    val unavailableFailedMessage = stringResource(R.string.settings_unavailable_configured_failed)
     val canonical = targets?.let(::buildCanonicalConfigFromTargetsSnapshot)
     val settings = canonical?.settings ?: CanonicalSettings()
     val manualHidden = canonical?.let { manualHiddenPackages(it, context.packageName) }.orEmpty()
+    val unavailableConfigured =
+        remember(canonical, apps, context.packageName) {
+            val cfg = canonical
+            val appList = apps
+            if (cfg == null || appList == null) {
+                emptyList()
+            } else {
+                unavailableConfiguredApps(
+                    config = cfg,
+                    visiblePackages = appList.mapTo(mutableSetOf()) { it.packageName },
+                    selfPkg = context.packageName,
+                )
+            }
+        }
     val canWrite = targets != null && apps != null && saving == null
 
     fun updateSetting(
@@ -698,6 +902,20 @@ private fun AutoHideSettingsSection() {
         }
     }
 
+    fun removeUnavailableConfigured(packages: Set<String>) {
+        saving = AutoHideSetting.UnavailableConfigured
+        status = null
+        scope.launch {
+            val exit = withContext(Dispatchers.IO) { writeRemoveUnavailableConfiguredApps(context, packages) }
+            saving = null
+            status = if (exit == 0) unavailableRemovedMessage else unavailableFailedMessage
+            if (exit == 0) {
+                unavailableDialogOpen = false
+                TargetsCache.refreshAfterSave(scope, context)
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
         TargetsCache.ensureLoaded(scope, context)
         AppListCache.ensureLoaded(scope, context)
@@ -710,7 +928,7 @@ private fun AutoHideSettingsSection() {
             subtitle = stringResource(R.string.settings_auto_hide_vpn_services_sub),
             icon = Icons.Default.VpnKey,
             index = 0,
-            count = 3,
+            count = 4,
             checked = settings.autoHideVpnServices,
             enabled = canWrite,
             onCheckedChange = { enabled ->
@@ -722,7 +940,7 @@ private fun AutoHideSettingsSection() {
             subtitle = stringResource(R.string.settings_auto_hide_vpn_name_sub),
             icon = Icons.Default.TextFields,
             index = 1,
-            count = 3,
+            count = 4,
             checked = settings.autoHideVpnName,
             enabled = canWrite,
             onCheckedChange = { enabled ->
@@ -734,9 +952,23 @@ private fun AutoHideSettingsSection() {
             subtitle = stringResource(R.string.settings_manual_hidden_apps_sub, manualHidden.size),
             icon = Icons.Default.VisibilityOff,
             index = 2,
-            count = 3,
+            count = 4,
             enabled = canWrite,
             onClick = { manualDialogOpen = true },
+        )
+        PreferenceRow(
+            title = stringResource(R.string.settings_unavailable_configured_title),
+            subtitle =
+                if (targets == null || apps == null) {
+                    stringResource(R.string.settings_unavailable_configured_loading)
+                } else {
+                    stringResource(R.string.settings_unavailable_configured_sub, unavailableConfigured.size)
+                },
+            icon = Icons.Default.Delete,
+            index = 3,
+            count = 4,
+            enabled = canWrite && unavailableConfigured.isNotEmpty(),
+            onClick = { unavailableDialogOpen = true },
         )
         status?.let {
             Text(
@@ -758,12 +990,107 @@ private fun AutoHideSettingsSection() {
             onSave = ::updateManualHidden,
         )
     }
+
+    if (unavailableDialogOpen) {
+        UnavailableConfiguredAppsDialog(
+            apps = unavailableConfigured,
+            saving = saving == AutoHideSetting.UnavailableConfigured,
+            onDismiss = { if (saving != AutoHideSetting.UnavailableConfigured) unavailableDialogOpen = false },
+            onRemove = { app -> removeUnavailableConfigured(setOf(app.packageName)) },
+            onRemoveAll = { removeUnavailableConfigured(unavailableConfigured.mapTo(mutableSetOf()) { it.packageName }) },
+        )
+    }
 }
 
 private enum class AutoHideSetting {
     VpnService,
     VpnName,
     ManualHidden,
+    UnavailableConfigured,
+}
+
+@Composable
+private fun UnavailableConfiguredAppsDialog(
+    apps: List<UnavailableConfiguredApp>,
+    saving: Boolean,
+    onDismiss: () -> Unit,
+    onRemove: (UnavailableConfiguredApp) -> Unit,
+    onRemoveAll: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.settings_unavailable_configured_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = stringResource(R.string.settings_unavailable_configured_body),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                    items(apps, key = { it.packageName }) { app ->
+                        UnavailableConfiguredAppRow(
+                            app = app,
+                            saving = saving,
+                            onRemove = { onRemove(app) },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onRemoveAll, enabled = !saving && apps.isNotEmpty()) {
+                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(stringResource(R.string.settings_unavailable_configured_remove_all))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !saving) {
+                Text(stringResource(R.string.btn_cancel))
+            }
+        },
+    )
+}
+
+@Composable
+private fun UnavailableConfiguredAppRow(
+    app: UnavailableConfiguredApp,
+    saving: Boolean,
+    onRemove: () -> Unit,
+) {
+    val roleLabels =
+        mapOf(
+            ConfiguredAppRole.Java to stringResource(R.string.chip_java_full),
+            ConfiguredAppRole.Native to stringResource(R.string.chip_native_full),
+            ConfiguredAppRole.AppHiding to stringResource(R.string.chip_app_hiding_full),
+            ConfiguredAppRole.Ports to stringResource(R.string.chip_ports_full),
+            ConfiguredAppRole.Hidden to stringResource(R.string.settings_role_hidden),
+        )
+    val roleText = app.roles.joinToString(", ") { roleLabels.getValue(it) }
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = app.packageName,
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = FontFamily.Monospace,
+            )
+            Text(
+                text = roleText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        TextButton(onClick = onRemove, enabled = !saving) {
+            Text(stringResource(R.string.settings_unavailable_configured_remove))
+        }
+    }
 }
 
 private fun writeAutoHideSetting(
@@ -790,6 +1117,29 @@ private fun writeAutoHideSetting(
     if (exit == 0) {
         RootSnapshotCache.invalidate()
         DashboardCache.invalidate()
+    }
+    return exit
+}
+
+private fun writeRemoveUnavailableConfiguredApps(
+    context: android.content.Context,
+    packages: Set<String>,
+): Int {
+    if (packages.isEmpty()) return 0
+    val snapshot = TargetsCache.snapshot.value ?: return 1
+    val base = buildCanonicalConfigFromTargetsSnapshot(snapshot)
+    val canonical = removeConfiguredPackages(base, packages, context.packageName)
+    val cmd =
+        listOf(
+            buildCanonicalConfigWriteCommand(canonical),
+            ConfigChannels.reconcileCommand(),
+            "if [ -x $PORTS_ACTIVATOR ]; then $PORTS_ACTIVATOR; fi",
+        ).joinToString(" ; ")
+    val (exit, _) = suExec(cmd)
+    if (exit == 0) {
+        RootSnapshotCache.invalidate()
+        DashboardCache.invalidate()
+        StatisticsCache.invalidate()
     }
     return exit
 }
