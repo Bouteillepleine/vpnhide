@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.RoundedCorner
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Update
 import androidx.compose.material.icons.filled.Vibration
@@ -344,9 +345,21 @@ private fun DeveloperSettingsSection() {
             subtitle = stringResource(R.string.settings_suppress_version_warnings_sub),
             icon = Icons.Default.Update,
             index = 0,
-            count = 1,
+            count = 2,
             checked = settings.suppressVersionWarnings,
             onCheckedChange = interactor::setSuppressVersionWarnings,
+        )
+        // Off by default. The bridge ships in release too (the user develops on
+        // release builds) — when on it opens a loopback control port, which the
+        // dashboard surfaces as an info note so it isn't left running unnoticed.
+        PreferenceRowSwitch(
+            title = stringResource(R.string.settings_agent_control),
+            subtitle = stringResource(R.string.settings_agent_control_sub),
+            icon = Icons.Default.Settings,
+            index = 1,
+            count = 2,
+            checked = settings.agentControlEnabled,
+            onCheckedChange = interactor::setAgentControlEnabled,
         )
     }
 }
