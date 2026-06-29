@@ -562,29 +562,44 @@ private fun AppProbeDetailDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // Grouped by surface (Java API / Native / Packages) with a
+                // coloured header, so it's clear which hooks are framework-level
+                // vs native syscall/libc.
                 app.byHook.entries
-                    .sortedByDescending { it.value }
-                    .forEach { (hook, hookCount) ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    text = stringResource(DetectionMethod.of(hook).labelRes),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium,
-                                )
-                                Text(
-                                    text = hook.note,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Spacer(Modifier.width(10.dp))
+                    .groupBy { DetectionMethod.of(it.key).surface }
+                    .entries
+                    .sortedByDescending { (_, hooks) -> hooks.sumOf { it.value } }
+                    .forEach { (surface, hooks) ->
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
-                                text = formatStatCount(hookCount),
-                                style = MaterialTheme.typography.titleSmall,
+                                text = surfaceLabel(surface),
+                                style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = StatusColors.infoAccent,
+                                color = surfaceAccentColor(surface),
                             )
+                            hooks.sortedByDescending { it.value }.forEach { (hook, hookCount) ->
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            text = stringResource(DetectionMethod.of(hook).labelRes),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                        Text(
+                                            text = hook.note,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        text = formatStatCount(hookCount),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = StatusColors.infoAccent,
+                                    )
+                                }
+                            }
                         }
                     }
             }
@@ -630,6 +645,24 @@ private fun surfaceContainerColor(surface: MethodSurface): Color =
         MethodSurface.Native -> StatusColors.successContainer()
         MethodSurface.Package -> StatusColors.neutralContainer()
     }
+
+@Composable
+private fun surfaceAccentColor(surface: MethodSurface): Color =
+    when (surface) {
+        MethodSurface.Java -> StatusColors.infoAccent
+        MethodSurface.Native -> StatusColors.successDot
+        MethodSurface.Package -> StatusColors.neutralAccent
+    }
+
+@Composable
+private fun surfaceLabel(surface: MethodSurface): String =
+    stringResource(
+        when (surface) {
+            MethodSurface.Java -> R.string.surface_java
+            MethodSurface.Native -> R.string.surface_native
+            MethodSurface.Package -> R.string.surface_package
+        },
+    )
 
 @Composable
 private fun appLabel(app: AppProbeStats): String =

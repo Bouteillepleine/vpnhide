@@ -136,7 +136,7 @@
     <string name="statistics_apps_header">Приложения, проверявшие VPN</string>
     <string name="statistics_apps_caption">Накопительно с момента загрузки. Нажмите приложение для полной разбивки по хукам.</string>
     <string name="statistics_capture_title">Сессия захвата</string>
-    <string name="statistics_capture_intro">Снимок счётчиков, затем откройте и потыкайте целевое приложение и нажмите «Обновить», чтобы увидеть, что именно оно проверяло за это окно.</string>
+    <string name="statistics_capture_intro">Начните захват, затем откройте целевое приложение и попользуйтесь им. Нажмите «Обновить» — увидите, какие проверки VPN оно сделало за это время.</string>
     <string name="statistics_capture_start">Начать захват</string>
     <string name="statistics_capture_active">Идёт захват · %1$s · приложений: %2$d</string>
     <string name="statistics_capture_stop">Стоп</string>

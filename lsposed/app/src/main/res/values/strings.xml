@@ -167,7 +167,7 @@
     <string name="statistics_apps_header">Apps probing VPN</string>
     <string name="statistics_apps_caption">Cumulative since boot. Tap an app for the full per-hook breakdown.</string>
     <string name="statistics_capture_title">Capture session</string>
-    <string name="statistics_capture_intro">Snapshot the counters, open and use a target app, then Refresh to see exactly what it probed in this window.</string>
+    <string name="statistics_capture_intro">Start a capture, then open and use a target app. Tap Refresh to see which VPN checks it ran during that time.</string>
     <string name="statistics_capture_start">Start capture</string>
     <string name="statistics_capture_active">Capturing · %1$s · %2$d apps</string>
     <string name="statistics_capture_stop">Stop</string>
