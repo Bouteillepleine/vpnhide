@@ -237,11 +237,11 @@ fun SettingsScreen(
             AutoHideSettingsSection()
             DiagnosticsSettingsSection(onOpen = { diagnosticsOpen = true })
             DebugToolsSettingsSection(selfNeedsRestart = selfNeedsRestart)
-            DeveloperSettingsSection()
             ConfigBackupSection()
             SuperkeySettingsSection()
             CommunitySettingsSection()
             ResetSettingsSection(selfNeedsRestart = selfNeedsRestart)
+            DeveloperSettingsSection()
         }
     }
 }
