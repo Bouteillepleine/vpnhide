@@ -74,6 +74,7 @@ internal object StatusColors {
     val errorDot = Color(0xFFD92D4B)
     val errorAccent = Color(0xFFC9184A)
     val infoAccent = Color(0xFF2E7CF6)
+    val neutralAccent = Color(0xFF64748B)
 }
 
 /**

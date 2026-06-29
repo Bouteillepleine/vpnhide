@@ -1,0 +1,128 @@
+package dev.okhsunrog.vpnhide
+
+import dev.okhsunrog.vpnhide.generated.HookIds
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+class StatisticsDataTest {
+    @Test
+    fun `extracts status and stats blocks from combined runtime state`() {
+        val raw =
+            """
+            # vpnhide v1 readback
+            vpnhide 1 status
+            backend 0x3
+            kver 0x0
+            hooks 0x3fc00
+            error 0x0
+            meta version 1.2.3
+            vpnhide 1 stats
+            0x278b 0xb:0x7
+            """.trimIndent()
+
+        assertEquals(
+            Protocol.Status(
+                backend =
+                    HookIds.Backend.LSPOSED.id
+                        .toLong(),
+                kver = 0,
+                hooks = HookIds.LSPOSED_HOOK_MASK.toLong(),
+                error = 0,
+            ),
+            parseProtocolStatusBlock(raw),
+        )
+        assertEquals(
+            listOf(
+                Protocol.StatEntry(
+                    uid = 10123,
+                    hookId =
+                        HookIds.Hook.LSPOSED_NETWORK_CAPABILITIES.id
+                            .toLong(),
+                    count = 7,
+                ),
+            ),
+            parseProtocolStatsBlock(raw),
+        )
+        assertNull(extractProtocolBlock("not protocol\n", Protocol.Kind.STATS))
+    }
+
+    @Test
+    fun `builds backend rows with uid package names and hook registry data`() {
+        val state = buildStatisticsState(statisticsFixtureSnapshot())
+
+        val kmod = state.backends.single { it.backend == HookIds.Backend.KMOD }
+        assertEquals(2, kmod.rows.size)
+        assertEquals(3uL, kmod.totalCount)
+        assertEquals("com.example.one", kmod.rows[0].packageNames.single())
+        assertEquals(HookIds.Hook.SOCK_IOCTL, kmod.rows[0].hook)
+        assertEquals(99L, kmod.rows[1].hookId)
+        assertNull(kmod.rows[1].hook)
+
+        val kpm = state.backends.single { it.backend == HookIds.Backend.KPM }
+        assertEquals(
+            HookIds.Backend.KPM.id
+                .toLong(),
+            kpm.status?.backend,
+        )
+        assertEquals(
+            "com.example.two",
+            kpm.rows
+                .single()
+                .packageNames
+                .single(),
+        )
+
+        val lsposed = state.backends.single { it.backend == HookIds.Backend.LSPOSED }
+        assertEquals("1.2.3", lsposed.metadata["version"])
+        assertEquals(HookIds.Hook.LSPOSED_NETWORK_CAPABILITIES, lsposed.rows.single().hook)
+    }
+
+    @Test
+    fun `formats unsigned counters with grouping`() {
+        assertEquals("0", formatStatCount(0uL))
+        assertEquals("12,345", formatStatCount(12_345uL))
+        assertEquals("18,446,744,073,709,551,615", formatStatCount(-1L))
+    }
+
+    private fun statisticsFixtureSnapshot(): RootSnapshot =
+        RootSnapshot(
+            mapOf(
+                "pm_packages" to
+                    "package:com.example.one uid:10123\n" +
+                    "package:com.example.two uid:10234,1010234\n",
+                "kmod_state" to
+                    """
+                    # folded kmod read
+                    vpnhide 1 status
+                    backend 0x0
+                    kver 0x6019d
+                    hooks 0x3ff
+                    error 0x0
+                    vpnhide 1 stats
+                    0x278b 0x6:0x2 0x63:0x1
+                    """.trimIndent(),
+                "kpm_state" to
+                    """
+                    vpnhide 1 status
+                    backend 0x1
+                    kver 0x6019d
+                    hooks 0x3ff
+                    error 0x0
+                    vpnhide 1 stats
+                    0x27fa 0x0:0x5
+                    """.trimIndent(),
+                "lsposed_state" to
+                    """
+                    vpnhide 1 status
+                    backend 0x3
+                    kver 0x0
+                    hooks 0x3fc00
+                    error 0x0
+                    meta version 1.2.3
+                    vpnhide 1 stats
+                    0x278b 0xb:0x7
+                    """.trimIndent(),
+            ),
+        )
+}
