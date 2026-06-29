@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Forum
@@ -238,7 +239,25 @@ fun SettingsScreen(
             ConfigBackupSection()
             SuperkeySettingsSection()
             CommunitySettingsSection()
+            ResetSettingsSection(selfNeedsRestart = selfNeedsRestart)
         }
+    }
+}
+
+@Composable
+private fun ResetSettingsSection(selfNeedsRestart: Boolean?) {
+    var open by remember { mutableStateOf(false) }
+    if (open) {
+        FullResetDialog(selfNeedsRestart = selfNeedsRestart == true, onDismiss = { open = false })
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        SettingsSectionHeader(stringResource(R.string.settings_reset_section))
+        PreferenceRow(
+            title = stringResource(R.string.reset_button),
+            subtitle = stringResource(R.string.reset_button_sub),
+            icon = Icons.Default.DeleteForever,
+            onClick = { open = true },
+        )
     }
 }
 
