@@ -192,6 +192,27 @@
     <string name="settings_community_section">Сообщество</string>
     <string name="settings_community">Сообщество и обратная связь</string>
     <string name="settings_community_sub">Контакты автора: GitHub, Telegram, 4PDA</string>
+    <!-- Full reset / leftover cleanup -->
+    <string name="settings_reset_section">Сброс</string>
+    <string name="reset_button">Удалить оставшиеся файлы</string>
+    <string name="reset_button_sub">Удалить все файлы конфигов, состояния и таргетов, которые VPN Hide оставил на устройстве</string>
+    <string name="reset_title">Удалить оставшиеся файлы</string>
+    <string name="reset_warning">Будут безвозвратно удалены все файлы конфигов, состояния, статистики и таргетов, которые VPN Hide и его модули писали вне своих модульных каталогов. Действие необратимо.</string>
+    <string name="reset_instructions">Делайте это только после того, как: удалили все модули VPN Hide в root-менеджере, выключили LSPosed-модуль VPN Hide и перезагрузились. Каталоги модулей, само приложение и runtime-состояние здесь не трогаются — они уходят сами после шагов выше.</string>
+    <string name="reset_checking">Проверка состояния модулей…</string>
+    <string name="reset_running">Удаление файлов…</string>
+    <string name="reset_blocked_intro">Пока нельзя — VPN Hide ещё активен. Сначала удалите это и перезагрузитесь:</string>
+    <string name="reset_blocker_kmod">Модуль ядра (.ko) ещё установлен</string>
+    <string name="reset_blocker_kpm">KPM ещё установлен</string>
+    <string name="reset_blocker_zygisk">Модуль Zygisk ещё установлен</string>
+    <string name="reset_blocker_ports">Модуль портов ещё установлен</string>
+    <string name="reset_blocker_kernel">Хук ядра ещё загружен — нужна перезагрузка</string>
+    <string name="reset_blocker_lsposed">LSPosed-хук ещё активен</string>
+    <string name="reset_confirm">Удалить всё</string>
+    <string name="reset_done_body">Готово. Все оставшиеся файлы удалены. Теперь можно удалить VPN Hide.</string>
+    <string name="reset_failed_body">Не удалось удалить файлы. Убедитесь, что предоставлен root-доступ, и попробуйте снова.</string>
+    <string name="reset_uninstall">Удалить VPN Hide</string>
+    <string name="reset_close">Закрыть</string>
     <string name="dashboard_issues">Ошибки (%d)</string>
     <string name="dashboard_warnings">Предупреждения (%d)</string>
     <string name="dashboard_info">Информация (%d)</string>

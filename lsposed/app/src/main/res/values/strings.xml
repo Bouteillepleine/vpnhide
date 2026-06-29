@@ -231,6 +231,27 @@
     <string name="settings_community_section">Community</string>
     <string name="settings_community">Community &amp; feedback</string>
     <string name="settings_community_sub">Author contacts: GitHub, Telegram, 4PDA</string>
+    <!-- Full reset / leftover cleanup -->
+    <string name="settings_reset_section">Reset</string>
+    <string name="reset_button">Remove leftover files</string>
+    <string name="reset_button_sub">Delete all config, state and target files VPN Hide left on the device</string>
+    <string name="reset_title">Remove leftover files</string>
+    <string name="reset_warning">This permanently deletes every config, state, statistics and target file VPN Hide and its modules wrote outside their module folders. This cannot be undone.</string>
+    <string name="reset_instructions">Do this only after you have: removed all VPN Hide modules in your root manager, disabled the VPN Hide LSPosed module, and rebooted. Module folders, the app itself and runtime state are not touched here — they go away with the steps above.</string>
+    <string name="reset_checking">Checking module state…</string>
+    <string name="reset_running">Deleting files…</string>
+    <string name="reset_blocked_intro">Not ready yet — VPN Hide is still active. Remove these and reboot first:</string>
+    <string name="reset_blocker_kmod">Kernel module (.ko) is still installed</string>
+    <string name="reset_blocker_kpm">KPM is still installed</string>
+    <string name="reset_blocker_zygisk">Zygisk module is still installed</string>
+    <string name="reset_blocker_ports">Ports module is still installed</string>
+    <string name="reset_blocker_kernel">Kernel hook is still loaded — reboot needed</string>
+    <string name="reset_blocker_lsposed">LSPosed hook is still active</string>
+    <string name="reset_confirm">Delete everything</string>
+    <string name="reset_done_body">Done. All leftover files were removed. You can now uninstall VPN Hide.</string>
+    <string name="reset_failed_body">Could not remove the files. Make sure root access is granted and try again.</string>
+    <string name="reset_uninstall">Uninstall VPN Hide</string>
+    <string name="reset_close">Close</string>
     <string name="dashboard_issues">Errors (%d)</string>
     <string name="dashboard_warnings">Warnings (%d)</string>
     <string name="dashboard_info">Info (%d)</string>
