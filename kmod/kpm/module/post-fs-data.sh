@@ -14,8 +14,17 @@
 #
 # Single-active guard (protocol §1.5): if the .ko backend is installed, do NOT
 # load the KPM. They wrap the same kernel functions and co-residence freezes
-# the kernel — this is the userspace half of the guard (the kernel half is the
-# in-module conflict check).
+# the kernel. The guard is layered in userspace, fail-safe at every step:
+#   1. here (post-fs-data): defer before loading the .kpm at all;
+#   2. service.sh: re-checks before configuring, and honours the activator's
+#      EXIT_DEFERRED_CONFLICT (3);
+#   3. the activator's kmod_backend_present() — a superset that also catches a
+#      live /proc/vpnhide_ctl — gates the config-delivery path.
+# There is deliberately NO kernel-side mutual exclusion: the two modules load
+# in the same post-fs-data window with no ordering guarantee, so an in-kernel
+# check could itself race into the freeze it means to prevent. Detection-by-
+# installation (a directory check, not a load check) is ordering-independent
+# and keeps the decision in userspace where it can fail safe.
 
 MODDIR="${0%/*}"
 KPM="$MODDIR/vpnhide.kpm"

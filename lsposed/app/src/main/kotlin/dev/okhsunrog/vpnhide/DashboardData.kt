@@ -120,6 +120,28 @@ internal fun classifyMultiNative(
     }
 }
 
+/**
+ * True when the KPM boot script recorded that it deliberately stood down this
+ * boot because the .ko backend is present (`load_status` runtime=conflict for
+ * the current boot_id — see protocol §1.5 and kmod/kpm/module/post-fs-data.sh).
+ *
+ * This is the only reliable way to surface the .ko+KPM co-installation: the
+ * [classifyMultiNative] Error needs *both* backends active, but two active
+ * kernel hookers would already have frozen the device, so that state is never
+ * actually observed. The deferred KPM (loaded=0) is the real, safe-but-
+ * redundant state worth warning about so the user removes one.
+ */
+internal fun kpmDeferredForConflict(
+    loadStatusSection: String,
+    currentBootId: String,
+): Boolean {
+    val load = parseKeyValueLines(loadStatusSection)
+    val bootId = load["boot_id"]?.trim()
+    return load["runtime"]?.trim() == "conflict" &&
+        !bootId.isNullOrEmpty() &&
+        bootId == currentBootId.trim()
+}
+
 internal data class ModuleMismatch(
     val kind: FlashableModuleKind,
     val moduleVersion: String,
@@ -1254,9 +1276,23 @@ internal suspend fun loadDashboardState(
             zygiskActive = moduleActive(zygisk),
         )
     ) {
-        MultiNativeSeverity.Error -> err(res.getString(R.string.dashboard_issue_native_conflict_kernel))
-        MultiNativeSeverity.Warning -> warn(res.getString(R.string.dashboard_issue_multiple_native))
-        MultiNativeSeverity.None -> Unit
+        MultiNativeSeverity.Error -> {
+            err(res.getString(R.string.dashboard_issue_native_conflict_kernel))
+        }
+
+        MultiNativeSeverity.Warning -> {
+            warn(res.getString(R.string.dashboard_issue_multiple_native))
+        }
+
+        MultiNativeSeverity.None -> {
+            // The active-pair Error above is effectively unobservable (two live
+            // kernel hookers freeze the device). The KPM standing down for a
+            // co-installed .ko is the real state to surface — warn so the user
+            // removes one of the two kernel backends.
+            if (kpmDeferredForConflict(shellSnapshot["kpm_load_status"].orEmpty(), currentBootId)) {
+                warn(res.getString(R.string.dashboard_issue_native_conflict_deferred))
+            }
+        }
     }
 
     // W3: user has debug logging turned on — VPN Hide is writing verbose lines

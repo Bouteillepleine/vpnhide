@@ -139,6 +139,27 @@ class NativeBackendTest {
         assertEquals(MultiNativeSeverity.Warning, classifyMultiNative(kmodActive = false, kpmActive = true, zygiskActive = true))
     }
 
+    // ── kpmDeferredForConflict ───────────────────────────────────────────
+
+    @Test
+    fun `kpm deferred-conflict detected for current boot`() {
+        val status = "runtime=conflict\nloaded=0\nboot_id=boot-1\ndetail=vpnhide_kmod present\n"
+        assertEquals(true, kpmDeferredForConflict(status, currentBootId = "boot-1"))
+    }
+
+    @Test
+    fun `kpm deferred-conflict ignored for a stale boot`() {
+        val status = "runtime=conflict\nloaded=0\nboot_id=boot-0\n"
+        assertEquals(false, kpmDeferredForConflict(status, currentBootId = "boot-1"))
+    }
+
+    @Test
+    fun `kpm deferred-conflict false for non-conflict runtimes and empty status`() {
+        assertEquals(false, kpmDeferredForConflict("runtime=activator\nloaded=1\nboot_id=boot-1\n", "boot-1"))
+        assertEquals(false, kpmDeferredForConflict("runtime=conflict\nloaded=0\n", "boot-1"))
+        assertEquals(false, kpmDeferredForConflict("", "boot-1"))
+    }
+
     // ── detectKpmModule ──────────────────────────────────────────────────
 
     @Test
