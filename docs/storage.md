@@ -70,7 +70,20 @@ Shape (illustrative):
   "debug": false,
   "apps": {
     "com.example.bank":  { "java": true, "native": true,  "appHiding": false, "ports": false },
-    "org.example.proxy": { "java": ["lsposed_network_capabilities"], "native": true, "appHiding": true, "ports": true }
+    "org.example.proxy": {
+      "java": ["lsposed_network_capabilities"],
+      "native": true,
+      "appHiding": true,
+      "ports": true,
+      "portPolicy": {
+        "mode": "preset",
+        "preset": "common_proxy",
+        "rules": [
+          { "protocol": "both", "start": 1080 },
+          { "protocol": "both", "start": 7890, "end": 7892 }
+        ]
+      }
+    }
   },
   "settings": {
     "rememberSuperkey": false
@@ -91,6 +104,15 @@ carries the resolved `hookmask`.
 
 The `rememberSuperkey` boolean lives here (it is a preference, not a secret). The
 superkey itself does **not** (§6).
+
+Ports are intentionally controlled in the canonical JSON, not in the native text
+protocol. `"ports": true` with no `portPolicy` is the legacy/default behavior:
+the ports activator blocks all TCP/UDP connections from that app UID to
+`127.0.0.1` and `::1`. When `portPolicy` is present, `rules` are the materialized
+source of truth for import/export and activation; `mode`/`preset` are UI metadata.
+Each rule uses `protocol: "both" | "tcp" | "udp"`, `start`, and optional `end`
+(inclusive, `1..65535`). Presets may change in later app versions, but an exported
+config remains stable because it carries the resolved `rules`.
 
 ---
 

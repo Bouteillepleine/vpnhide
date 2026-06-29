@@ -18,6 +18,8 @@ iptables -A vpnhide_out -m owner --uid-owner <UID> -d 127.0.0.1 -p udp -j REJECT
 
 ...for every UID whose package has `"ports": true` in
 `/data/system/vpnhide_config.json`, plus the same for `::1` via `ip6tables`.
+If the app also has a `portPolicy.rules` list, the activator adds `--dport`
+matches for those TCP/UDP ports instead of blocking the whole loopback range.
 A jump from `OUTPUT` into the dedicated chain is inserted exactly once
 (`iptables -C` guarded).
 
@@ -34,11 +36,23 @@ Hide app (it invokes the ports activator via `su`).
 
 ## Configuration
 
-Managed by the VPN Hide app (Protection -> Ports). Direct shell alternative:
+Managed by the VPN Hide app (Protection -> P, tune icon). Direct shell
+alternative:
 
 ```
 # Edit /data/system/vpnhide_config.json:
 # "com.example.app": { "java": false, "native": false, "appHiding": false, "ports": true }
+# or with ranges:
+# "com.example.app": {
+#   "ports": true,
+#   "portPolicy": {
+#     "mode": "custom",
+#     "rules": [
+#       { "protocol": "both", "start": 1080 },
+#       { "protocol": "tcp", "start": 7890, "end": 7892 }
+#     ]
+#   }
+# }
 ```
 
 Then:
@@ -53,10 +67,12 @@ su -c /data/adb/modules/vpnhide_ports/activator
   `127.0.0.1:1080`, `127.0.0.1:8080` etc. Blocking these globally
   would break the VPN client itself (it needs to bind / use them).
   Per-UID REJECT gives surgical control.
-- Blocking **all** ports on loopback for observers (rather than a
-  port list) is safe for typical observer apps: banks, госуслуги,
-  marketplaces, non-browser Yandex apps, VK — none legitimately use
-  localhost.
+- Blocking **all** ports on loopback for observers is still the default and is
+  safe for typical observer apps: banks, госуслуги, marketplaces, non-browser
+  Yandex apps, VK — none legitimately use localhost.
+- Per-app port ranges are available for apps where the full loopback block is
+  too broad. Presets are stored as materialized rules, so imported/exported
+  configs keep their exact behavior.
 - Browsers (Chromium-based) are the only category with some
   legitimate localhost use (dev tools, PWAs). Just don't add them as
   observers.

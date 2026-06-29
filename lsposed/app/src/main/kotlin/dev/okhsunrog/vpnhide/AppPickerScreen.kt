@@ -16,7 +16,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
@@ -26,7 +29,10 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -41,6 +47,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import dev.okhsunrog.vpnhide.generated.HookIds
 import dev.okhsunrog.vpnhide.settings.LocalSettingsState
@@ -58,7 +65,7 @@ import dev.okhsunrog.vpnhide.settings.LocalSettingsState
  *                       hidden is auto-detected; see autoDetectHiddenPackages).
  *  - [ports]     "P" — localhost-port blocking observer.
  */
-data class AppEntry(
+internal data class AppEntry(
     override val packageName: String,
     override val label: String,
     override val icon: Drawable?,
@@ -70,6 +77,7 @@ data class AppEntry(
     val nativeHooks: List<String>? = null,
     val appHiding: Boolean = false,
     val ports: Boolean = false,
+    val portPolicy: PortPolicy? = null,
     val declaresVpnService: Boolean = false,
     val nameContainsVpn: Boolean = false,
 ) : TargetEntry {
@@ -126,6 +134,7 @@ internal fun AppPickerScreen(
                             nativeHooks = nativeRole?.hooks?.takeIf { it.isNotEmpty() },
                             appHiding = app.packageName in observers,
                             ports = app.packageName in t.portsObservers,
+                            portPolicy = canonicalApp?.takeIf { it.ports }?.portPolicy,
                             declaresVpnService = app.declaresVpnService,
                             nameContainsVpn = app.nameContainsVpn,
                         )
@@ -175,6 +184,14 @@ internal fun AppPickerScreen(
                     app.copy(
                         native = hooks == null || hooks.isNotEmpty(),
                         nativeHooks = hooks?.takeIf { it.isNotEmpty() },
+                    ),
+                )
+            },
+            onPortPolicyChange = { policy ->
+                onChange(
+                    app.copy(
+                        ports = true,
+                        portPolicy = policy,
                     ),
                 )
             },
@@ -363,6 +380,7 @@ private fun AppEntry.toRoleSelection(): AppRoleSelection =
         nativeHooks = nativeHooks,
         appHiding = appHiding,
         ports = ports,
+        portPolicy = portPolicy,
     )
 
 private fun AppEntry.toAutoHideSignal(): AppAutoHideSignal =
@@ -381,10 +399,12 @@ private fun AppRow(
     onToggle: (Layer) -> Unit,
     onJavaHooksChange: (List<String>?) -> Unit,
     onNativeHooksChange: (List<String>?) -> Unit,
+    onPortPolicyChange: (PortPolicy?) -> Unit,
     onToggleAll: () -> Unit,
 ) {
     var javaHookDialogOpen by remember { mutableStateOf(false) }
     var nativeHookDialogOpen by remember { mutableStateOf(false) }
+    var portsDialogOpen by remember { mutableStateOf(false) }
     val fullRoleLabels = LocalSettingsState.current.fullProtectionRoleLabels
     TargetRowShell(
         label = app.label,
@@ -434,17 +454,19 @@ private fun AppRow(
             onToggle(Layer.APP_HIDING)
         }
         if (portsInstalled) {
-            TargetChip(
+            HookTargetChip(
                 label =
-                    if (fullRoleLabels) {
-                        stringResource(R.string.chip_ports_full)
-                    } else {
-                        stringResource(R.string.chip_ports)
-                    },
+                    roleLabel(
+                        compact = stringResource(R.string.chip_ports),
+                        full = stringResource(R.string.chip_ports_full),
+                        partial = app.ports && app.portPolicy != null,
+                        fullLabels = fullRoleLabels,
+                    ),
                 enabled = app.ports,
-            ) {
-                onToggle(Layer.PORTS)
-            }
+                onToggle = { onToggle(Layer.PORTS) },
+                onConfigure = { portsDialogOpen = true },
+                contentDescription = stringResource(R.string.ports_policy_title),
+            )
         }
     }
 
@@ -475,6 +497,18 @@ private fun AppRow(
             },
         )
     }
+
+    if (portsDialogOpen) {
+        PortsPolicyDialog(
+            app = app,
+            portPolicy = app.portPolicy,
+            onDismiss = { portsDialogOpen = false },
+            onSave = { policy ->
+                onPortPolicyChange(policy)
+                portsDialogOpen = false
+            },
+        )
+    }
 }
 
 private fun roleLabel(
@@ -483,6 +517,14 @@ private fun roleLabel(
     partial: Boolean,
     fullLabels: Boolean,
 ): String = (if (fullLabels) full else compact) + if (partial) "*" else ""
+
+private enum class PortPolicyUiMode { All, Preset, Custom }
+
+private data class EditablePortRule(
+    val protocol: PortProtocol = PortProtocol.Both,
+    val start: String = "",
+    val end: String = "",
+)
 
 @Composable
 private fun HookTargetChip(
@@ -526,6 +568,271 @@ private fun HookTargetChip(
         }
     }
 }
+
+@Composable
+private fun PortsPolicyDialog(
+    app: AppEntry,
+    portPolicy: PortPolicy?,
+    onDismiss: () -> Unit,
+    onSave: (PortPolicy?) -> Unit,
+) {
+    val initialMode = remember(app.packageName, portPolicy) { portPolicy.toUiMode() }
+    var mode by remember(app.packageName, portPolicy) { mutableStateOf(initialMode) }
+    val defaultPreset = PORT_PRESET_COMMON_PROXY
+    var selectedPreset by remember(app.packageName, portPolicy) {
+        mutableStateOf(portPolicy?.preset?.takeIf { portPreset(it) != null } ?: defaultPreset)
+    }
+    var customRules by remember(app.packageName, portPolicy) {
+        mutableStateOf(
+            (
+                portPolicy?.takeIf { it.toUiMode() == PortPolicyUiMode.Custom }?.rules
+                    ?: portPreset(selectedPreset)?.rules
+                    ?: listOf(PortRule(start = 1080))
+            ).map(PortRule::toEditable),
+        )
+    }
+
+    val parsedCustomRules = customRules.mapNotNull(EditablePortRule::toPortRuleOrNull)
+    val customRulesValid = parsedCustomRules.size == customRules.size && parsedCustomRules.isNotEmpty()
+    val policyToSave =
+        when (mode) {
+            PortPolicyUiMode.All -> {
+                null
+            }
+
+            PortPolicyUiMode.Preset -> {
+                portPolicyForPreset(selectedPreset)
+            }
+
+            PortPolicyUiMode.Custom -> {
+                if (customRulesValid) {
+                    PortPolicy(mode = PortPolicyMode.Custom, rules = normalizedPortRules(parsedCustomRules))
+                } else {
+                    null
+                }
+            }
+        }
+    val canSave = mode != PortPolicyUiMode.Custom || customRulesValid
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.ports_policy_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = app.label,
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    text = app.packageName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                PortPolicyModeOption(
+                    title = stringResource(R.string.ports_policy_all_title),
+                    body = stringResource(R.string.ports_policy_all_body),
+                    selected = mode == PortPolicyUiMode.All,
+                    onClick = { mode = PortPolicyUiMode.All },
+                )
+                PortPolicyModeOption(
+                    title = stringResource(R.string.ports_policy_preset_title),
+                    body =
+                        stringResource(
+                            R.string.ports_policy_preset_body,
+                            stringResource(R.string.ports_policy_common_proxy),
+                            portRulesSummary(portPreset(defaultPreset)?.rules.orEmpty()),
+                        ),
+                    selected = mode == PortPolicyUiMode.Preset,
+                    onClick = {
+                        selectedPreset = defaultPreset
+                        mode = PortPolicyUiMode.Preset
+                    },
+                )
+                PortPolicyModeOption(
+                    title = stringResource(R.string.ports_policy_custom_title),
+                    body = stringResource(R.string.ports_policy_custom_body),
+                    selected = mode == PortPolicyUiMode.Custom,
+                    onClick = { mode = PortPolicyUiMode.Custom },
+                )
+                if (mode == PortPolicyUiMode.Custom) {
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 260.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(customRules.indices.toList(), key = { it }) { index ->
+                            PortRuleEditorRow(
+                                rule = customRules[index],
+                                onChange = { updated ->
+                                    customRules = customRules.toMutableList().also { it[index] = updated }
+                                },
+                                onDelete = {
+                                    customRules = customRules.filterIndexed { idx, _ -> idx != index }
+                                },
+                            )
+                        }
+                    }
+                    TextButton(
+                        onClick = { customRules = customRules + EditablePortRule(start = "1080") },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(stringResource(R.string.ports_policy_add_rule))
+                    }
+                    if (!customRulesValid) {
+                        Text(
+                            text = stringResource(R.string.ports_policy_invalid),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = canSave,
+                onClick = { if (canSave) onSave(policyToSave) },
+            ) {
+                Text(stringResource(R.string.btn_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.btn_cancel))
+            }
+        },
+    )
+}
+
+@Composable
+private fun PortPolicyModeOption(
+    title: String,
+    body: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(6.dp),
+        color = if (selected) color.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, color.copy(alpha = if (selected) 0.55f else 0.25f)),
+    ) {
+        Row(
+            modifier =
+                Modifier
+                    .clickable(onClick = onClick)
+                    .padding(10.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            RadioButton(selected = selected, onClick = onClick)
+            Column(
+                modifier = Modifier.padding(start = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = body,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PortRuleEditorRow(
+    rule: EditablePortRule,
+    onChange: (EditablePortRule) -> Unit,
+    onDelete: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TextButton(onClick = { onChange(rule.copy(protocol = rule.protocol.next())) }) {
+            Text(protocolLabel(rule.protocol))
+        }
+        OutlinedTextField(
+            value = rule.start,
+            onValueChange = { onChange(rule.copy(start = it.filter { ch -> ch.isDigit() })) },
+            label = { Text(stringResource(R.string.ports_policy_start)) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+        )
+        OutlinedTextField(
+            value = rule.end,
+            onValueChange = { onChange(rule.copy(end = it.filter { ch -> ch.isDigit() })) },
+            label = { Text(stringResource(R.string.ports_policy_end)) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(onClick = onDelete) {
+            Icon(
+                imageVector = Icons.Default.Delete,
+                contentDescription = stringResource(R.string.ports_policy_delete_rule),
+            )
+        }
+    }
+}
+
+private fun PortPolicy?.toUiMode(): PortPolicyUiMode =
+    when {
+        this == null -> PortPolicyUiMode.All
+        mode == PortPolicyMode.Preset && portPreset(preset) != null -> PortPolicyUiMode.Preset
+        else -> PortPolicyUiMode.Custom
+    }
+
+private fun PortRule.toEditable(): EditablePortRule =
+    EditablePortRule(
+        protocol = protocol,
+        start = start.toString(),
+        end = if (end == start) "" else end.toString(),
+    )
+
+private fun EditablePortRule.toPortRuleOrNull(): PortRule? {
+    val startPort = start.toIntOrNull() ?: return null
+    val endPort = end.takeIf { it.isNotBlank() }?.toIntOrNull() ?: startPort
+    return runCatching {
+        PortRule(
+            protocol = protocol,
+            start = startPort,
+            end = endPort,
+        )
+    }.getOrNull()
+}
+
+private fun PortProtocol.next(): PortProtocol =
+    when (this) {
+        PortProtocol.Both -> PortProtocol.Tcp
+        PortProtocol.Tcp -> PortProtocol.Udp
+        PortProtocol.Udp -> PortProtocol.Both
+    }
+
+private fun protocolLabel(protocol: PortProtocol): String =
+    when (protocol) {
+        PortProtocol.Both -> "TCP/UDP"
+        PortProtocol.Tcp -> "TCP"
+        PortProtocol.Udp -> "UDP"
+    }
+
+private fun portRulesSummary(rules: List<PortRule>): String =
+    rules.joinToString(", ") { rule ->
+        val ports = if (rule.start == rule.end) "${rule.start}" else "${rule.start}-${rule.end}"
+        "${protocolLabel(rule.protocol)} $ports"
+    }
 
 @Composable
 private fun HooksDialog(

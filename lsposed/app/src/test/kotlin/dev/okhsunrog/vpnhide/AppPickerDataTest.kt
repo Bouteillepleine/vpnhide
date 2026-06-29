@@ -47,6 +47,7 @@ class AppPickerDataTest {
 
     @Test
     fun `save preserves selected apps missing from current picker list`() {
+        val policy = requireNotNull(portPolicyForPreset(PORT_PRESET_COMMON_PROXY))
         val snapshot =
             snapshotWithCanonical(
                 "com.frozen" to
@@ -56,6 +57,7 @@ class AppPickerDataTest {
                         native = NativeRole.All,
                         appHiding = true,
                         ports = true,
+                        portPolicy = policy,
                     ),
             )
 
@@ -76,6 +78,7 @@ class AppPickerDataTest {
         assertEquals(NativeRole.All, frozen.native)
         assertEquals(true, frozen.appHiding)
         assertEquals(true, frozen.ports)
+        assertEquals(policy, frozen.portPolicy)
     }
 
     @Test
@@ -148,6 +151,54 @@ class AppPickerDataTest {
 
         assertEquals(customJava, cfg.apps.getValue("com.visible").javaHooks)
         assertEquals(customJava, cfg.apps.getValue("com.frozen").javaHooks)
+    }
+
+    @Test
+    fun `save preserves ports policy for missing and still selected apps`() {
+        val policy = requireNotNull(portPolicyForPreset(PORT_PRESET_COMMON_PROXY))
+        val snapshot =
+            snapshotWithCanonical(
+                "com.visible" to CanonicalApp(ports = true, portPolicy = policy),
+                "com.frozen" to CanonicalApp(ports = true, portPolicy = policy),
+            )
+
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections =
+                    listOf(
+                        AppRoleSelection(packageName = "com.visible", ports = true, portPolicy = policy),
+                    ),
+                snapshot = snapshot,
+            )
+
+        assertEquals(policy, cfg.apps.getValue("com.visible").portPolicy)
+        assertEquals(policy, cfg.apps.getValue("com.frozen").portPolicy)
+    }
+
+    @Test
+    fun `save clears visible ports policy when ports role is disabled`() {
+        val policy = requireNotNull(portPolicyForPreset(PORT_PRESET_COMMON_PROXY))
+        val snapshot =
+            snapshotWithCanonical(
+                "com.visible" to CanonicalApp(java = true, ports = true, portPolicy = policy),
+            )
+
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections =
+                    listOf(
+                        AppRoleSelection(packageName = "com.visible", java = true),
+                    ),
+                snapshot = snapshot,
+            )
+
+        assertEquals(true, cfg.apps.getValue("com.visible").java)
+        assertEquals(false, cfg.apps.getValue("com.visible").ports)
+        assertEquals(null, cfg.apps.getValue("com.visible").portPolicy)
     }
 
     @Test

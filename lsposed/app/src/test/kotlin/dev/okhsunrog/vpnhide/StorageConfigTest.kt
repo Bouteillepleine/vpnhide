@@ -52,6 +52,44 @@ class StorageConfigTest {
     }
 
     @Test
+    fun `canonical config parses custom ports policy`() {
+        val cfg =
+            requireNotNull(
+                parseCanonicalConfig(
+                    """
+                    {
+                      "version": 1,
+                      "apps": {
+                        "com.bank": {
+                          "ports": true,
+                          "portPolicy": {
+                            "mode": "custom",
+                            "rules": [
+                              { "protocol": "tcp", "start": 7890, "end": 7892 },
+                              { "start": 1080 }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                    """.trimIndent(),
+                ),
+            )
+
+        assertEquals(
+            PortPolicy(
+                mode = PortPolicyMode.Custom,
+                rules =
+                    listOf(
+                        PortRule(start = 1080),
+                        PortRule(protocol = PortProtocol.Tcp, start = 7890, end = 7892),
+                    ),
+            ),
+            cfg.apps.getValue("com.bank").portPolicy,
+        )
+    }
+
+    @Test
     fun `canonical config defaults new auto hide settings for old json`() {
         val cfg =
             requireNotNull(
@@ -146,15 +184,52 @@ class StorageConfigTest {
     }
 
     @Test
-    fun `canonical JSON is deterministic and round trips through parser`() {
+    fun `builder preserves an existing ports policy when role remains enabled`() {
+        val policy = requireNotNull(portPolicyForPreset(PORT_PRESET_COMMON_PROXY))
+        val existing =
+            CanonicalConfig(
+                apps =
+                    mapOf(
+                        "com.proxy" to CanonicalApp(ports = true, portPolicy = policy),
+                    ),
+            )
+
         val cfg =
             buildCanonicalConfig(
+                debug = false,
+                javaPkgs = emptySet(),
+                nativePkgs = emptySet(),
+                hiddenPkgs = emptySet(),
+                observerPkgs = emptySet(),
+                portsPkgs = setOf("com.proxy", "com.new"),
+                existing = existing,
+            )
+
+        assertEquals(policy, cfg.apps.getValue("com.proxy").portPolicy)
+        assertEquals(null, cfg.apps.getValue("com.new").portPolicy)
+    }
+
+    @Test
+    fun `canonical JSON is deterministic and round trips through parser`() {
+        val cfg =
+            CanonicalConfig(
                 debug = true,
-                javaPkgs = setOf("com.java"),
-                nativePkgs = setOf("com.native"),
-                hiddenPkgs = setOf("dev.okhsunrog.vpnhide"),
-                observerPkgs = setOf("com.observer"),
-                portsPkgs = setOf("com.ports"),
+                apps =
+                    buildCanonicalConfig(
+                        debug = true,
+                        javaPkgs = setOf("com.java"),
+                        nativePkgs = setOf("com.native"),
+                        hiddenPkgs = setOf("dev.okhsunrog.vpnhide"),
+                        observerPkgs = setOf("com.observer"),
+                        portsPkgs = setOf("com.ports"),
+                    ).apps +
+                        (
+                            "com.ports.preset" to
+                                CanonicalApp(
+                                    ports = true,
+                                    portPolicy = requireNotNull(portPolicyForPreset(PORT_PRESET_COMMON_PROXY)),
+                                )
+                        ),
             )
 
         val reparsed = requireNotNull(parseCanonicalConfig(canonicalConfigJson(cfg)))

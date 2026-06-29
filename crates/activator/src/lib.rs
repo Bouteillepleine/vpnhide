@@ -92,6 +92,55 @@ pub struct AppConfig {
     pub app_hiding: bool,
     #[serde(default)]
     pub ports: bool,
+    #[serde(default)]
+    pub port_policy: Option<PortPolicy>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PortPolicy {
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub preset: Option<String>,
+    #[serde(default)]
+    pub rules: Vec<PortRule>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub struct PortRule {
+    pub start: u16,
+    #[serde(default)]
+    pub end: Option<u16>,
+    #[serde(default = "default_port_protocol")]
+    pub protocol: PortProtocol,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum PortProtocol {
+    Both,
+    Tcp,
+    Udp,
+}
+
+impl PortRule {
+    fn end_port(self) -> u16 {
+        self.end.unwrap_or(self.start)
+    }
+
+    fn normalized(self) -> Self {
+        if self.end_port() == self.start {
+            Self { end: None, ..self }
+        } else {
+            self
+        }
+    }
+}
+
+fn default_port_protocol() -> PortProtocol {
+    PortProtocol::Both
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -185,7 +234,29 @@ pub fn parse_canonical(json: &str) -> Result<CanonicalConfig> {
     if cfg.version > schema_version() {
         return Err(format!("unsupported vpnhide config version {}", cfg.version).into());
     }
+    validate_port_policies(&cfg)?;
     Ok(cfg)
+}
+
+fn validate_port_policies(cfg: &CanonicalConfig) -> Result<()> {
+    for (pkg, app) in &cfg.apps {
+        let Some(policy) = &app.port_policy else {
+            continue;
+        };
+        if policy.rules.is_empty() {
+            return Err(format!("{pkg}: portPolicy.rules must not be empty").into());
+        }
+        for rule in &policy.rules {
+            let end = rule.end_port();
+            if rule.start == 0 || end == 0 {
+                return Err(format!("{pkg}: port ranges must be within 1..65535").into());
+            }
+            if rule.start > end {
+                return Err(format!("{pkg}: port range start must not exceed end").into());
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn project_native(json: &str) -> Result<String> {
@@ -229,6 +300,27 @@ pub struct PortsRuleset {
     pub target_count: usize,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct PortUidPolicy {
+    all_ports: bool,
+    rules: BTreeSet<PortRule>,
+}
+
+impl PortUidPolicy {
+    fn merge_app(&mut self, app: &AppConfig) {
+        if self.all_ports {
+            return;
+        }
+        let Some(policy) = &app.port_policy else {
+            self.all_ports = true;
+            self.rules.clear();
+            return;
+        };
+        self.rules
+            .extend(policy.rules.iter().copied().map(PortRule::normalized));
+    }
+}
+
 pub fn project_ports(json: &str) -> Result<PortsRuleset> {
     project_ports_with_pm_wait(json, PmReadyWait::Bounded(PM_READY_ATTEMPTS))
 }
@@ -246,21 +338,21 @@ pub fn project_ports_with_resolver(
     cfg: &CanonicalConfig,
     resolver: &PackageUidMap,
 ) -> PortsRuleset {
-    let mut uids = BTreeSet::<u32>::new();
+    let mut targets = BTreeMap::<u32, PortUidPolicy>::new();
     for (pkg, app) in &cfg.apps {
         if !app.ports {
             continue;
         }
         for uid in resolver.uids_for(pkg) {
             if *uid >= 10_000 {
-                uids.insert(*uid);
+                targets.entry(*uid).or_default().merge_app(app);
             }
         }
     }
     PortsRuleset {
-        ipv4: build_ports_ruleset(PORTS_CHAIN4, "127.0.0.1", "icmp-port-unreachable", &uids),
-        ipv6: build_ports_ruleset(PORTS_CHAIN6, "::1", "icmp6-port-unreachable", &uids),
-        target_count: uids.len(),
+        ipv4: build_ports_ruleset(PORTS_CHAIN4, "127.0.0.1", "icmp-port-unreachable", &targets),
+        ipv6: build_ports_ruleset(PORTS_CHAIN6, "::1", "icmp6-port-unreachable", &targets),
+        target_count: targets.len(),
     }
 }
 
@@ -797,22 +889,84 @@ fn build_ports_ruleset(
     chain: &str,
     loopback: &str,
     udp_reject: &str,
-    uids: &BTreeSet<u32>,
+    targets: &BTreeMap<u32, PortUidPolicy>,
 ) -> String {
     let mut out = String::new();
     out.push_str("*filter\n");
     out.push_str(&format!(":{chain} - [0:0]\n"));
-    for uid in uids {
-        out.push_str(&format!(
-            "-A {chain} -m owner --uid-owner {uid} -d {loopback} -p tcp -j REJECT --reject-with tcp-reset\n",
-        ));
-        out.push_str(&format!(
-            "-A {chain} -m owner --uid-owner {uid} -d {loopback} -p udp -j REJECT --reject-with {udp_reject}\n",
-        ));
+    for (uid, policy) in targets {
+        if policy.all_ports {
+            append_full_ports_rules(&mut out, chain, loopback, udp_reject, *uid);
+        } else {
+            for rule in &policy.rules {
+                append_port_rule(&mut out, chain, loopback, udp_reject, *uid, *rule);
+            }
+        }
     }
     out.push_str(&format!("-A {chain} -j RETURN\n"));
     out.push_str("COMMIT\n");
     out
+}
+
+fn append_full_ports_rules(
+    out: &mut String,
+    chain: &str,
+    loopback: &str,
+    udp_reject: &str,
+    uid: u32,
+) {
+    out.push_str(&format!(
+        "-A {chain} -m owner --uid-owner {uid} -d {loopback} -p tcp -j REJECT --reject-with tcp-reset\n",
+    ));
+    out.push_str(&format!(
+        "-A {chain} -m owner --uid-owner {uid} -d {loopback} -p udp -j REJECT --reject-with {udp_reject}\n",
+    ));
+}
+
+fn append_port_rule(
+    out: &mut String,
+    chain: &str,
+    loopback: &str,
+    udp_reject: &str,
+    uid: u32,
+    rule: PortRule,
+) {
+    match rule.protocol {
+        PortProtocol::Both => {
+            append_protocol_port_rule(out, chain, loopback, "tcp", "tcp-reset", uid, rule);
+            append_protocol_port_rule(out, chain, loopback, "udp", udp_reject, uid, rule);
+        }
+        PortProtocol::Tcp => {
+            append_protocol_port_rule(out, chain, loopback, "tcp", "tcp-reset", uid, rule);
+        }
+        PortProtocol::Udp => {
+            append_protocol_port_rule(out, chain, loopback, "udp", udp_reject, uid, rule);
+        }
+    }
+}
+
+fn append_protocol_port_rule(
+    out: &mut String,
+    chain: &str,
+    loopback: &str,
+    proto: &str,
+    reject: &str,
+    uid: u32,
+    rule: PortRule,
+) {
+    out.push_str(&format!(
+        "-A {chain} -m owner --uid-owner {uid} -d {loopback} -p {proto} --dport {} -j REJECT --reject-with {reject}\n",
+        port_match(rule),
+    ));
+}
+
+fn port_match(rule: PortRule) -> String {
+    let end = rule.end_port();
+    if rule.start == end {
+        rule.start.to_string()
+    } else {
+        format!("{}:{end}", rule.start)
+    }
 }
 
 fn apply_ports_rules(rules: &PortsRuleset) -> Result<()> {
@@ -991,6 +1145,117 @@ mod tests {
              -A vpnhide_out6 -m owner --uid-owner 1010123 -d ::1 -p udp -j REJECT --reject-with icmp6-port-unreachable\n\
              -A vpnhide_out6 -j RETURN\n\
              COMMIT\n",
+        );
+    }
+
+    #[test]
+    fn projects_custom_ports_policy_to_dport_rules() {
+        let cfg = parse_canonical(
+            r#"{
+              "version": 1,
+              "apps": {
+                "com.example.proxy": {
+                  "ports": true,
+                  "portPolicy": {
+                    "mode": "custom",
+                    "rules": [
+                      { "protocol": "tcp", "start": 7890, "end": 7892 },
+                      { "protocol": "udp", "start": 5353 },
+                      { "start": 1080 }
+                    ]
+                  }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let resolver = parse_pm_packages("package:com.example.proxy uid:10123\n");
+
+        let rules = project_ports_with_resolver(&cfg, &resolver);
+
+        assert_eq!(rules.target_count, 1);
+        assert_eq!(
+            rules.ipv4,
+            "*filter\n\
+             :vpnhide_out - [0:0]\n\
+             -A vpnhide_out -m owner --uid-owner 10123 -d 127.0.0.1 -p tcp --dport 1080 -j REJECT --reject-with tcp-reset\n\
+             -A vpnhide_out -m owner --uid-owner 10123 -d 127.0.0.1 -p udp --dport 1080 -j REJECT --reject-with icmp-port-unreachable\n\
+             -A vpnhide_out -m owner --uid-owner 10123 -d 127.0.0.1 -p udp --dport 5353 -j REJECT --reject-with icmp-port-unreachable\n\
+             -A vpnhide_out -m owner --uid-owner 10123 -d 127.0.0.1 -p tcp --dport 7890:7892 -j REJECT --reject-with tcp-reset\n\
+             -A vpnhide_out -j RETURN\n\
+             COMMIT\n",
+        );
+    }
+
+    #[test]
+    fn shared_uid_full_ports_policy_wins_over_ranges() {
+        let cfg = parse_canonical(
+            r#"{
+              "version": 1,
+              "apps": {
+                "com.example.full": { "ports": true },
+                "com.example.range": {
+                  "ports": true,
+                  "portPolicy": {
+                    "mode": "custom",
+                    "rules": [{ "protocol": "tcp", "start": 7890 }]
+                  }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let resolver = parse_pm_packages(
+            "package:com.example.full uid:10123\n\
+             package:com.example.range uid:10123\n",
+        );
+
+        let rules = project_ports_with_resolver(&cfg, &resolver);
+
+        assert_eq!(rules.target_count, 1);
+        assert!(
+            rules
+                .ipv4
+                .contains("-p tcp -j REJECT --reject-with tcp-reset")
+        );
+        assert!(!rules.ipv4.contains("--dport"));
+    }
+
+    #[test]
+    fn rejects_invalid_ports_policy_ranges() {
+        assert!(
+            parse_canonical(
+                r#"{
+                  "version": 1,
+                  "apps": {
+                    "com.example.bad": {
+                      "ports": true,
+                      "portPolicy": {
+                        "mode": "custom",
+                        "rules": [{ "start": 0 }]
+                      }
+                    }
+                  }
+                }"#,
+            )
+            .is_err(),
+        );
+        assert!(
+            parse_canonical(
+                r#"{
+                  "version": 1,
+                  "apps": {
+                    "com.example.bad": {
+                      "ports": true,
+                      "portPolicy": {
+                        "mode": "custom",
+                        "rules": [{ "start": 9000, "end": 8000 }]
+                      }
+                    }
+                  }
+                }"#,
+            )
+            .is_err(),
         );
     }
 
