@@ -7,19 +7,26 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -28,17 +35,30 @@ import androidx.compose.ui.unit.dp
 import dev.okhsunrog.vpnhide.generated.HookIds
 import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
 import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
+import dev.okhsunrog.vpnhide.ui.components.EnhancedOutlinedButton
 import dev.okhsunrog.vpnhide.ui.components.GroupedCard
 import dev.okhsunrog.vpnhide.ui.theme.AppColors
+import kotlinx.coroutines.delay
 
 @Composable
 fun StatisticsScreen(modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val state by StatisticsCache.state.collectAsState()
     val loadError by StatisticsCache.error.collectAsState()
+    var detailApp by remember { mutableStateOf<AppProbeStats?>(null) }
+    var captureBaseline by remember { mutableStateOf<Map<Pair<Long, Long>, Long>?>(null) }
+    var captureStartMs by remember { mutableLongStateOf(0L) }
+    var nowMs by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(Unit) {
         StatisticsCache.ensureLoaded(scope)
+    }
+    // Tick the elapsed clock while a capture session is active.
+    LaunchedEffect(captureBaseline != null) {
+        while (captureBaseline != null) {
+            nowMs = System.currentTimeMillis()
+            delay(1000)
+        }
     }
 
     Column(
@@ -68,7 +88,42 @@ fun StatisticsScreen(modifier: Modifier = Modifier) {
             return@Column
         }
 
-        StatisticsHeroCard(s)
+        val selfPackage = LocalContext.current.packageName
+        val appStats = remember(s, selfPackage) { buildAppProbeStats(s, selfPackage) }
+        val methodCount = remember(appStats) { appStats.flatMap { it.byMethod.keys }.toSet().size }
+
+        val capturing = captureBaseline != null
+        val capture = captureBaseline?.let { diffCapture(it, s, selfPackage) }
+        val backendReset = capture?.backendReset == true
+        // Backend restarted mid-session (a counter dropped): re-baseline so the
+        // deltas restart from the fresh counter values instead of going negative.
+        LaunchedEffect(backendReset) {
+            if (backendReset) {
+                captureBaseline = snapshotCounters(s)
+                captureStartMs = System.currentTimeMillis()
+            }
+        }
+        val shownApps = capture?.apps ?: appStats
+
+        detailApp?.let { app ->
+            AppProbeDetailDialog(app = app, onDismiss = { detailApp = null })
+        }
+
+        StatisticsHeroCard(state = s, appCount = appStats.size, methodCount = methodCount)
+        Spacer(Modifier.height(20.dp))
+
+        CaptureControlCard(
+            capturing = capturing,
+            elapsedMs = if (capturing) (nowMs - captureStartMs).coerceAtLeast(0L) else 0L,
+            capturedAppCount = capture?.apps?.size ?: 0,
+            onStart = {
+                captureBaseline = snapshotCounters(s)
+                captureStartMs = System.currentTimeMillis()
+                nowMs = captureStartMs
+            },
+            onStop = { captureBaseline = null },
+            onRefresh = { StatisticsCache.refresh(scope) },
+        )
         Spacer(Modifier.height(20.dp))
 
         SectionHeader(stringResource(R.string.statistics_backends))
@@ -95,31 +150,50 @@ fun StatisticsScreen(modifier: Modifier = Modifier) {
             )
         }
 
-        s.backends
-            .filter { it.isActive }
-            .forEach { backend ->
-                Spacer(Modifier.height(20.dp))
-                SectionHeader(backendName(backend.backend))
-                Spacer(Modifier.height(8.dp))
-                if (backend.unavailableReason != null) {
-                    StatusBanner(
-                        text = statisticsUnavailableText(backend.unavailableReason),
-                        containerColor = StatusColors.infoContainer(),
-                        contentColor = MaterialTheme.colorScheme.onSurface,
-                    )
-                } else if (backend.rows.isEmpty()) {
-                    StatusBanner(
-                        text = stringResource(R.string.statistics_no_counters),
-                        containerColor = StatusColors.infoContainer(),
-                        contentColor = MaterialTheme.colorScheme.onSurface,
-                    )
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        backend.rows.forEachIndexed { index, row ->
-                            StatisticsRowCard(row, index = index, count = backend.rows.size)
-                        }
+        if (capturing || shownApps.isNotEmpty()) {
+            Spacer(Modifier.height(20.dp))
+            SectionHeader(
+                stringResource(
+                    if (capturing) R.string.statistics_capture_apps_header else R.string.statistics_apps_header,
+                ),
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text =
+                    stringResource(
+                        if (capturing) R.string.statistics_capture_hint else R.string.statistics_apps_caption,
+                    ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            if (capturing && shownApps.isEmpty()) {
+                StatusBanner(
+                    text = stringResource(R.string.statistics_capture_empty),
+                    containerColor = StatusColors.infoContainer(),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    shownApps.forEachIndexed { index, app ->
+                        AppProbeCard(app, index = index, count = shownApps.size, onClick = { detailApp = app })
                     }
                 }
+            }
+        }
+
+        // The active native backend can't report counters (Zygisk): keep the
+        // explanatory note so the per-app list reading "Java only" makes sense.
+        s.backends
+            .firstOrNull { it.unavailableReason != null }
+            ?.unavailableReason
+            ?.let { reason ->
+                Spacer(Modifier.height(12.dp))
+                StatusBanner(
+                    text = statisticsUnavailableText(reason),
+                    containerColor = StatusColors.infoContainer(),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                )
             }
 
         Spacer(Modifier.height(16.dp))
@@ -164,7 +238,11 @@ private fun StatisticsLoadErrorCard(
 }
 
 @Composable
-private fun StatisticsHeroCard(state: StatisticsState) {
+private fun StatisticsHeroCard(
+    state: StatisticsState,
+    appCount: Int,
+    methodCount: Int,
+) {
     EnhancedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.extraLarge,
@@ -212,14 +290,14 @@ private fun StatisticsHeroCard(state: StatisticsState) {
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StatisticsMetric(
-                        label = stringResource(R.string.statistics_counter_rows),
-                        value = state.totalRows.toString(),
+                        label = stringResource(R.string.statistics_apps_metric),
+                        value = appCount.toString(),
                         accent = StatusColors.successDot,
                         modifier = Modifier.weight(1f),
                     )
                     StatisticsMetric(
-                        label = stringResource(R.string.statistics_hooks),
-                        value = state.backends.sumOf { it.hookedCount }.toString(),
+                        label = stringResource(R.string.statistics_methods_metric),
+                        value = methodCount.toString(),
                         accent = StatusColors.successDot,
                         modifier = Modifier.weight(1f),
                     )
@@ -227,6 +305,63 @@ private fun StatisticsHeroCard(state: StatisticsState) {
             }
         }
     }
+}
+
+@Composable
+private fun CaptureControlCard(
+    capturing: Boolean,
+    elapsedMs: Long,
+    capturedAppCount: Int,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onRefresh: () -> Unit,
+) {
+    EnhancedCard(modifier = Modifier.fillMaxWidth(), color = AppColors.cardContainer) {
+        Column(
+            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.statistics_capture_title),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            if (!capturing) {
+                Text(
+                    text = stringResource(R.string.statistics_capture_intro),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                EnhancedButton(onClick = onStart, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.statistics_capture_start))
+                }
+            } else {
+                Text(
+                    text =
+                        stringResource(
+                            R.string.statistics_capture_active,
+                            formatElapsed(elapsedMs),
+                            capturedAppCount,
+                        ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    EnhancedButton(onClick = onRefresh, modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.action_refresh))
+                    }
+                    EnhancedOutlinedButton(onClick = onStop, modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.statistics_capture_stop))
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatElapsed(ms: Long): String {
+    val totalSeconds = ms / 1000
+    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
 
 @Composable
@@ -342,58 +477,240 @@ private fun BackendSummaryCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun StatisticsRowCard(
-    row: StatisticsRow,
+private fun AppProbeCard(
+    app: AppProbeStats,
     index: Int,
     count: Int,
+    onClick: () -> Unit,
 ) {
     GroupedCard(
         index = index,
         count = count,
         modifier = Modifier.fillMaxWidth(),
         color = AppColors.cardContainer,
+        onClick = onClick,
     ) {
-        Row(
-            modifier = Modifier.padding(14.dp).fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = rowTargetText(row),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    text = rowHookText(row),
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                row.hook?.note?.takeIf { it.isNotBlank() }?.let { note ->
+        Column(modifier = Modifier.padding(14.dp).fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
                     Text(
-                        text = note,
-                        style = MaterialTheme.typography.labelSmall,
+                        text = appLabel(app),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = appSurfacesText(app),
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    text = formatStatCount(app.total),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = StatusColors.infoAccent,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-            Spacer(Modifier.width(12.dp))
+            if (app.byMethod.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    app.byMethod.entries
+                        .sortedByDescending { it.value }
+                        .forEach { (method, methodCount) ->
+                            MethodChip(method = method, count = methodCount)
+                        }
+                }
+            }
+        }
+    }
+}
+
+// Tap-through detail: the exact per-hook breakdown the backends report, so a
+// user can see precisely which VPN-detection techniques an app uses (the card
+// only shows the folded methods). The friendly method label is the primary
+// line; the hook's technical note is the precise secondary line.
+@Composable
+private fun AppProbeDetailDialog(
+    app: AppProbeStats,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(appLabel(app)) },
+        text = {
+            Column(
+                modifier =
+                    Modifier
+                        .heightIn(max = 480.dp)
+                        .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                // Grouped: surface (Java API / Native / Packages, coloured) →
+                // detection method (with an explanation of how it reveals a VPN)
+                // → the exact hooks behind it when a method folds several.
+                app.byHook.entries
+                    .groupBy { DetectionMethod.of(it.key).surface }
+                    .entries
+                    .sortedByDescending { (_, hooks) -> hooks.sumOf { it.value } }
+                    .forEach { (surface, surfaceHooks) ->
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                text = surfaceLabel(surface),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = surfaceAccentColor(surface),
+                            )
+                            surfaceHooks
+                                .groupBy { DetectionMethod.of(it.key) }
+                                .entries
+                                .sortedByDescending { (_, hooks) -> hooks.sumOf { it.value } }
+                                .forEach { (method, methodHooks) ->
+                                    MethodDetailBlock(method = method, hooks = methodHooks)
+                                }
+                        }
+                    }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.contact_close)) }
+        },
+    )
+}
+
+@Composable
+private fun MethodDetailBlock(
+    method: DetectionMethod,
+    hooks: List<Map.Entry<HookIds.Hook, Long>>,
+) {
+    val total = hooks.sumOf { it.value }
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = formatStatCount(row.count),
-                style = MaterialTheme.typography.titleMedium,
+                text = stringResource(method.labelRes),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = formatStatCount(total),
+                style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
                 color = StatusColors.infoAccent,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
+        }
+        Text(
+            text = stringResource(method.descriptionRes),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        // When a method folds several hooks, list the exact ones behind it.
+        if (hooks.size > 1) {
+            hooks.sortedByDescending { it.value }.forEach { (hook, count) ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "·  ${hook.note}",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = formatStatCount(count),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MethodChip(
+    method: DetectionMethod,
+    count: Long,
+) {
+    Row(
+        modifier =
+            Modifier
+                .clip(MaterialTheme.shapes.small)
+                .background(surfaceContainerColor(method.surface))
+                .padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(method.labelRes),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = formatStatCount(count),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+@Composable
+private fun surfaceContainerColor(surface: MethodSurface): Color =
+    when (surface) {
+        MethodSurface.Java -> StatusColors.infoContainer()
+        MethodSurface.Native -> StatusColors.successContainer()
+        MethodSurface.Package -> StatusColors.neutralContainer()
+    }
+
+@Composable
+private fun surfaceAccentColor(surface: MethodSurface): Color =
+    when (surface) {
+        MethodSurface.Java -> StatusColors.infoAccent
+        MethodSurface.Native -> StatusColors.successDot
+        MethodSurface.Package -> StatusColors.neutralAccent
+    }
+
+@Composable
+private fun surfaceLabel(surface: MethodSurface): String =
+    stringResource(
+        when (surface) {
+            MethodSurface.Java -> R.string.surface_java
+            MethodSurface.Native -> R.string.surface_native
+            MethodSurface.Package -> R.string.surface_package
+        },
+    )
+
+@Composable
+private fun appLabel(app: AppProbeStats): String =
+    app.packageNames
+        .takeIf { it.isNotEmpty() }
+        ?.joinToString(", ")
+        ?: stringResource(R.string.statistics_unknown_uid, app.uid)
+
+@Composable
+private fun appSurfacesText(app: AppProbeStats): String {
+    // Resolve labels up front: stringResource can't be called inside the
+    // joinToString transform (not a @Composable context).
+    val java = stringResource(R.string.surface_java)
+    val native = stringResource(R.string.surface_native)
+    val pkg = stringResource(R.string.surface_package)
+    return app.surfaces.sorted().joinToString(" · ") { surface ->
+        when (surface) {
+            MethodSurface.Java -> java
+            MethodSurface.Native -> native
+            MethodSurface.Package -> pkg
         }
     }
 }
@@ -450,16 +767,6 @@ private fun backendBadge(backend: HookIds.Backend): String =
         HookIds.Backend.ZYGISK -> "Z"
         HookIds.Backend.LSPOSED -> "J"
     }
-
-@Composable
-private fun rowTargetText(row: StatisticsRow): String =
-    row.packageNames
-        .takeIf { it.isNotEmpty() }
-        ?.joinToString(", ")
-        ?: stringResource(R.string.statistics_unknown_uid, row.uid)
-
-@Composable
-private fun rowHookText(row: StatisticsRow): String = row.hook?.hookName ?: stringResource(R.string.statistics_unknown_hook, row.hookId)
 
 private enum class BackendHealth { Ok, Partial, Error, NoData, Unavailable }
 

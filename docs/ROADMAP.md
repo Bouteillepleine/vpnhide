@@ -88,6 +88,33 @@ Follow-up work (low priority):
 - Keep install-time hook status detailed enough to diagnose Android framework
   drift, especially private-field changes in new Android releases.
 
+### Per-app probe statistics
+
+The Statistics screen surfaces the per-uid × per-hook interception counters
+every active backend already reports (Java + the one installed native backend),
+aggregated per app and labelled by detection method. A capture-session mode
+baselines the counters and shows live deltas while the user exercises a target
+app — "start capture → open the app → see which methods it probed", without any
+per-event timestamps or persistence (counters are u64; a backend restart that
+drops counts below the baseline is detected and re-baselined).
+
+This is intentionally scoped to **target apps only** — the apps the user already
+protects, which are the only ones the hooks currently count. That is where the
+value is: confirming the hiding works and seeing which protected apps probe
+hardest.
+
+Follow-up work (low priority):
+
+- Monitoring / capture of **non-target** apps — counting probes from callers the
+  user has *not* added, to discover new apps attempting VPN detection
+  ([issue 119](https://github.com/okhsunrog/vpnhide/issues/119)). This needs an
+  opt-in "observe" mode in the Java backend (system_server sees every caller;
+  kernel backends only count their target UIDs, and Zygisk is only injected into
+  its own targets), plus write-coalescing on the hot path. Deferred until the
+  target-app statistics prove their value.
+- Fill the Zygisk stats channel (protocol §7) so an active Zygisk backend isn't
+  blank on the Statistics screen.
+
 ## Configuration
 
 - Consider user-defined VPN interface prefixes for uncommon tunnels or renamed

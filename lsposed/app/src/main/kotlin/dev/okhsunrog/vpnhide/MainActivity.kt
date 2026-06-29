@@ -124,7 +124,7 @@ fun VpnHideApp() {
     }
 }
 
-private enum class Tab { Dashboard, Statistics, Protection }
+private enum class Tab { Dashboard, Protection, Statistics }
 
 private data class RefreshContext(
     val loading: Boolean,
@@ -518,15 +518,6 @@ private fun MainScreen() {
                     label = { Text(stringResource(R.string.tab_dashboard)) },
                 )
                 NavigationBarItem(
-                    selected = currentTab == Tab.Statistics,
-                    onClick = {
-                        tabHaptic()
-                        currentTab = Tab.Statistics
-                    },
-                    icon = { Icon(Icons.Default.BarChart, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_statistics)) },
-                )
-                NavigationBarItem(
                     selected = currentTab == Tab.Protection,
                     onClick = {
                         tabHaptic()
@@ -534,6 +525,15 @@ private fun MainScreen() {
                     },
                     icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
                     label = { Text(stringResource(R.string.tab_protection)) },
+                )
+                NavigationBarItem(
+                    selected = currentTab == Tab.Statistics,
+                    onClick = {
+                        tabHaptic()
+                        currentTab = Tab.Statistics
+                    },
+                    icon = { Icon(Icons.Default.BarChart, contentDescription = null) },
+                    label = { Text(stringResource(R.string.tab_statistics)) },
                 )
             }
         },

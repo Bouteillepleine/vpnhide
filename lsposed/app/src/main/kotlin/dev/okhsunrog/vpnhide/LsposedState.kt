@@ -1,10 +1,13 @@
 package dev.okhsunrog.vpnhide
 
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.Process
 import dev.okhsunrog.vpnhide.generated.HookIds
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 internal const val LSPOSED_STATE_FILE = "/data/system/vpnhide_lsposed_state"
@@ -48,7 +51,25 @@ internal fun formatLsposedState(
     }
 
 internal object LsposedStats {
+    // Coalesce disk writes. record() runs on the hot path inside system_server
+    // (potentially every NetworkCapabilities/connectivity call from a probing
+    // app); a full state-file rewrite per call is write-amplification + lock
+    // contention. Counters stay live in memory and the file is flushed at most
+    // once per WRITE_DEBOUNCE_MS on a dedicated thread. setStatus() (rare) still
+    // flushes promptly so install status is published without delay.
+    private const val WRITE_DEBOUNCE_MS = 1_000L
+
     private val counts = ConcurrentHashMap<Int, ConcurrentHashMap<Int, AtomicLong>>()
+
+    private val writeHandler: Handler by lazy {
+        Handler(HandlerThread("vpnhide-stats-writer").apply { start() }.looper)
+    }
+    private val flushPending = AtomicBoolean(false)
+    private val flushRunnable =
+        Runnable {
+            flushPending.set(false)
+            writeState()
+        }
 
     @Volatile private var installedHooks: Int = 0
 
@@ -60,7 +81,10 @@ internal object LsposedStats {
     ) {
         installedHooks = installedHookMask
         brokenFields = broken
-        writeState()
+        // Supersede any coalesced counter write with an immediate flush.
+        writeHandler.removeCallbacks(flushRunnable)
+        flushPending.set(false)
+        writeHandler.post(flushRunnable)
     }
 
     fun record(
@@ -72,7 +96,13 @@ internal object LsposedStats {
             .computeIfAbsent(uid) { ConcurrentHashMap() }
             .computeIfAbsent(hook.id) { AtomicLong() }
             .incrementAndGet()
-        writeState()
+        scheduleWrite()
+    }
+
+    private fun scheduleWrite() {
+        if (flushPending.compareAndSet(false, true)) {
+            writeHandler.postDelayed(flushRunnable, WRITE_DEBOUNCE_MS)
+        }
     }
 
     @Synchronized
