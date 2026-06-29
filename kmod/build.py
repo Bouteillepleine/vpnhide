@@ -242,6 +242,7 @@ def find_runtime() -> tuple[str, bool]:
 def container_build_one(runtime: str, is_podman: bool, repo_root: Path, kmi: str) -> None:
     image = f"ghcr.io/ylarod/ddk-min:{kmi}-{DDK_IMAGE_TAG}"
     mount_spec = f"{repo_root}:/work"
+    build_version = get_build_version(repo_root)
     cmd = [runtime, "run", "--rm"]
     if is_podman:
         # Rootless podman + Fedora SELinux: keep host UID inside so the
@@ -250,6 +251,8 @@ def container_build_one(runtime: str, is_podman: bool, repo_root: Path, kmi: str
         cmd += ["--userns=keep-id"]
         mount_spec += ":Z"
     cmd += [
+        "-e",
+        f"VPNHIDE_BUILD_VERSION={build_version}",
         "-v",
         mount_spec,
         "-w",
