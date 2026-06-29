@@ -135,31 +135,57 @@ class BuildNativeInstallRecommendationTest {
         assertEquals("Android 14", r.kernelBranch)
     }
 
-    // ── 5. Pre-GKI / unsupported → zygisk ─────────────────────────────────
+    // ── 5. Non-GKI kernels KernelPatch covers (4.14 / 4.19 / 5.4) → KPM ────
 
     @Test
-    fun `pre-GKI 4_14 recommends zygisk`() {
+    fun `non-GKI 4_14 recommends KPM, not zygisk`() {
+        // 4.14 has no GKI KMI and no DDK kmod build, but it's in the KPM kver
+        // offset table — recommend the universal KPM (beta) instead of the
+        // detectable zygisk fallback.
         val r = buildNativeInstallRecommendation("4.14.302-g92e0d94b6cba", "Android 13")!!
+        assertEquals(RecommendedBackend.Kpm, r.recommended)
         assertFalse(r.preferKmod)
         assertFalse(r.variantAmbiguous)
-        assertEquals("vpnhide-zygisk.zip", r.recommendedArtifact)
+        assertEquals("vpnhide-kpm.zip", r.recommendedArtifact)
         assertNull(r.recommendedGkiVariant)
         assertEquals("Android 13", r.androidVersion)
     }
 
     @Test
-    fun `5_4 recommends zygisk`() {
+    fun `non-GKI 5_4 recommends KPM`() {
         val r = buildNativeInstallRecommendation("5.4.188-custom", "Android 12")!!
+        assertEquals(RecommendedBackend.Kpm, r.recommended)
+        assertEquals("vpnhide-kpm.zip", r.recommendedArtifact)
+    }
+
+    @Test
+    fun `KPM recommendation carries the detected runtime flag through`() {
+        val withRuntime = buildNativeInstallRecommendation("4.19.157-perf", "Android 11", kpatchRuntimeAvailable = true)!!
+        assertEquals(RecommendedBackend.Kpm, withRuntime.recommended)
+        assertTrue(withRuntime.kpatchRuntimeAvailable)
+        val withoutRuntime = buildNativeInstallRecommendation("4.19.157-perf", "Android 11")!!
+        assertEquals(RecommendedBackend.Kpm, withoutRuntime.recommended)
+        assertFalse(withoutRuntime.kpatchRuntimeAvailable)
+    }
+
+    // ── 6. Older than KernelPatch's range / unsupported → zygisk ──────────
+
+    @Test
+    fun `pre-4_14 kernel recommends zygisk`() {
+        // Below 4.14 the KPM kver offset table has no entry — fall back to zygisk.
+        val r = buildNativeInstallRecommendation("4.9.186-perf", "Android 10")!!
+        assertEquals(RecommendedBackend.Zygisk, r.recommended)
         assertFalse(r.preferKmod)
         assertEquals("vpnhide-zygisk.zip", r.recommendedArtifact)
+        assertNull(r.recommendedGkiVariant)
     }
 
     @Test
     fun `6_3 recommends zygisk — no shipping variant for this series`() {
-        // We only ship for 6.1, 6.6, 6.12 — a 6.3 kernel is rare but
-        // shouldn't silently pick one of those.
+        // We only ship kmod for 6.1, 6.6, 6.12 and KPM for 4.14/4.19/5.4 — a 6.3
+        // kernel is rare but shouldn't silently pick one of those.
         val r = buildNativeInstallRecommendation("6.3.0-something", "Android 14")!!
-        assertFalse(r.preferKmod)
+        assertEquals(RecommendedBackend.Zygisk, r.recommended)
         assertEquals("vpnhide-zygisk.zip", r.recommendedArtifact)
     }
 
@@ -168,11 +194,11 @@ class BuildNativeInstallRecommendationTest {
         // parseKernelSeries would not find a `\d+\.\d+` token — the
         // function must not crash, just recommend zygisk.
         val r = buildNativeInstallRecommendation("garbage-no-numbers", "Android 12")!!
-        assertFalse(r.preferKmod)
+        assertEquals(RecommendedBackend.Zygisk, r.recommended)
         assertEquals("vpnhide-zygisk.zip", r.recommendedArtifact)
     }
 
-    // ── 6. Null / blank input ─────────────────────────────────────────────
+    // ── 7. Null / blank input ─────────────────────────────────────────────
 
     @Test
     fun `empty kernel string returns null`() {
@@ -184,7 +210,7 @@ class BuildNativeInstallRecommendationTest {
         assertNull(buildNativeInstallRecommendation("   \n  ", "Android 14"))
     }
 
-    // ── 7. Helper parsers ─────────────────────────────────────────────────
+    // ── 8. Helper parsers ─────────────────────────────────────────────────
 
     @Test
     fun `parseKernelSeries extracts major minor`() {

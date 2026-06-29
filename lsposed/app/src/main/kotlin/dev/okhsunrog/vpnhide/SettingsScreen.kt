@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
@@ -230,7 +231,25 @@ fun SettingsScreen(
             DebugToolsSettingsSection(selfNeedsRestart = selfNeedsRestart)
             ConfigBackupSection()
             SuperkeySettingsSection()
+            CommunitySettingsSection()
         }
+    }
+}
+
+@Composable
+private fun CommunitySettingsSection() {
+    var showContact by remember { mutableStateOf(false) }
+    if (showContact) {
+        ContactModal(onDismiss = { showContact = false })
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        SettingsSectionHeader(stringResource(R.string.settings_community_section))
+        PreferenceRow(
+            title = stringResource(R.string.settings_community),
+            subtitle = stringResource(R.string.settings_community_sub),
+            icon = Icons.Default.Forum,
+            onClick = { showContact = true },
+        )
     }
 }
 

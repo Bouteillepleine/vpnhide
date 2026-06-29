@@ -209,6 +209,27 @@
     <string name="dashboard_install_recommendation_kmod_ambiguous">Kernel module is recommended. Your kernel\'s GKI branch isn\'t identifiable from uname -r, so try %1$s first; if it doesn\'t load after reboot, install %2$s instead.</string>
     <string name="dashboard_install_recommendation_zygisk">Kernel module is not supported for your device. Install %1$s.</string>
     <string name="dashboard_install_recommendation_zygisk_warning">Banking and payment apps detect Zygisk hooks and crash when Z is enabled for them. Leave Z off for those apps and rely on LSPosed (Java-level) hiding — native-level hiding won\'t work for them on a kernel without kmod support.</string>
+    <string name="dashboard_install_recommendation_kpm">KPM (beta) is recommended for your kernel — a single universal module that hides at the kernel level, invisible to anti-tamper. Download %1$s.</string>
+    <string name="dashboard_install_recommendation_kpm_needs_runtime">KPM (beta) is recommended for your kernel — kernel-level hiding, invisible to anti-tamper. It needs the KPatch-Next-Module (APatch already includes it). If you\'d rather not install that, use vpnhide-zygisk.zip instead. KPM artifact: %1$s.</string>
+    <string name="dashboard_install_recommendation_kpm_beta_note">KPM is experimental (beta). If something doesn\'t work, you can fall back to Zygisk and contact the author.</string>
+    <string name="dashboard_install_recommendation_kmod_kpm_alt">The kernel module is the stable, most-tested choice. KPM (beta) is an alternative — one universal module, no GKI variant to match — useful if the kmod zip won\'t load.</string>
+    <string name="dashboard_issue_kpm_capable_but_zygisk">Your kernel supports the stealthier KPM (beta), but only Zygisk is installed. Zygisk is detectable by banking/payment apps; KPM hides at the kernel level. Consider installing %1$s.</string>
+    <string name="dashboard_issue_kpm_experimental_kmod">The KPM backend is experimental (beta) and currently active. If you hit problems, try the kernel module (kmod) instead, and please contact the author.</string>
+    <string name="dashboard_issue_kpm_experimental_zygisk">The KPM backend is experimental (beta) and currently active. If you hit problems, try Zygisk instead, and please contact the author.</string>
+    <!-- Community / contact modal -->
+    <string name="contact_title">Community &amp; feedback</string>
+    <string name="contact_body">Questions, bug reports, or feedback? Reach the author here.</string>
+    <string name="contact_github">GitHub Issues</string>
+    <string name="contact_github_sub">Report bugs and request features</string>
+    <string name="contact_telegram">Telegram group</string>
+    <string name="contact_telegram_sub">Chat with the community and the author</string>
+    <string name="contact_4pda">4PDA thread</string>
+    <string name="contact_4pda_sub">Discussion on the 4PDA forum</string>
+    <string name="contact_button">Contact the author</string>
+    <string name="contact_close">Close</string>
+    <string name="settings_community_section">Community</string>
+    <string name="settings_community">Community &amp; feedback</string>
+    <string name="settings_community_sub">Author contacts: GitHub, Telegram, 4PDA</string>
     <string name="dashboard_issues">Errors (%d)</string>
     <string name="dashboard_warnings">Warnings (%d)</string>
     <string name="dashboard_info">Info (%d)</string>

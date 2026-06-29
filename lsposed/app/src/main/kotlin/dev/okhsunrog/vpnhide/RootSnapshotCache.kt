@@ -50,6 +50,7 @@ internal val REQUIRED_ROOT_SNAPSHOT_SECTIONS =
         "lsposed_state",
         "debug_logging",
         "getenforce",
+        "kpatch_runtime",
         "pm_packages",
         "proc_exists",
         "ports_chain",
@@ -239,6 +240,10 @@ internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): S
       emit_file lsposed_state $LSPOSED_STATE_FILE
       emit_file debug_logging /data/system/vpnhide_debug_logging
       emit_cmd getenforce getenforce
+      # Is a KPM runtime present? (APatch's native KernelPatch, or the
+      # KPatch-Next-Module on any manager.) Mirrors find_kpatch() in the Rust
+      # activator. Drives whether the install recommendation can suggest KPM.
+      emit_eval kpatch_runtime 'if [ -d /data/adb/ap ] || command -v kpatch >/dev/null 2>&1 || [ -x /data/adb/ksu/bin/kpatch ] || [ -x /data/adb/modules/KPatch-Next/bin/kpatch ] || [ -x /data/adb/modules/kpatch-next/bin/kpatch ]; then echo 1; else echo 0; fi'
       phase_end
     }
     __VPNHIDE_PM_PACKAGES_FUNCTION__

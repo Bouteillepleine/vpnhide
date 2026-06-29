@@ -5,10 +5,12 @@ import android.content.Intent
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -92,6 +94,7 @@ internal fun StatusBanner(
     containerColor: Color,
     contentColor: Color,
     modifier: Modifier = Modifier,
+    action: (@Composable () -> Unit)? = null,
 ) {
     Box(
         modifier =
@@ -104,12 +107,17 @@ internal fun StatusBanner(
                     shadowElevation = 0.dp,
                 ),
     ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = contentColor,
-            modifier = Modifier.padding(12.dp),
-        )
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = contentColor,
+            )
+            if (action != null) {
+                Spacer(Modifier.height(8.dp))
+                action()
+            }
+        }
     }
 }
 

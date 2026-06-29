@@ -170,6 +170,27 @@
     <string name="dashboard_install_recommendation_kmod_ambiguous">Рекомендуется модуль ядра. GKI-ветку вашего ядра не удаётся определить из uname -r, поэтому сначала попробуйте %1$s; если после ребута он не загрузится — установите %2$s.</string>
     <string name="dashboard_install_recommendation_zygisk">Для вашего устройства модуль ядра не поддерживается. Установите %1$s.</string>
     <string name="dashboard_install_recommendation_zygisk_warning">Банковские и платёжные приложения обнаруживают Zygisk-хуки и крашатся при включённом Z. Для таких приложений оставьте Z выключенным и полагайтесь на LSPosed (Java-уровень) — native-уровень защиты для них работать не будет без поддержки kmod в ядре.</string>
+    <string name="dashboard_install_recommendation_kpm">Для вашего ядра рекомендуется KPM (бета) — единый универсальный модуль, скрывающий VPN на уровне ядра, невидимый для анти-тампер проверок. Скачайте %1$s.</string>
+    <string name="dashboard_install_recommendation_kpm_needs_runtime">Для вашего ядра рекомендуется KPM (бета) — скрытие на уровне ядра, невидимое для анти-тампер проверок. Ему нужен KPatch-Next-Module (в APatch он уже встроен). Если не хотите его ставить — используйте vpnhide-zygisk.zip. Артефакт KPM: %1$s.</string>
+    <string name="dashboard_install_recommendation_kpm_beta_note">KPM экспериментальный (бета). Если что-то не работает — можно вернуться на Zygisk и связаться с автором.</string>
+    <string name="dashboard_install_recommendation_kmod_kpm_alt">Модуль ядра — стабильное и наиболее протестированное решение. KPM (бета) — альтернатива: один универсальный модуль без привязки к GKI-варианту, полезен, если kmod-zip не загружается.</string>
+    <string name="dashboard_issue_kpm_capable_but_zygisk">Ваше ядро поддерживает более скрытный KPM (бета), но установлен только Zygisk. Zygisk детектируется банковскими/платёжными приложениями; KPM скрывает на уровне ядра. Стоит установить %1$s.</string>
+    <string name="dashboard_issue_kpm_experimental_kmod">Бэкенд KPM экспериментальный (бета) и сейчас активен. При проблемах попробуйте модуль ядра (kmod) и, пожалуйста, свяжитесь с автором.</string>
+    <string name="dashboard_issue_kpm_experimental_zygisk">Бэкенд KPM экспериментальный (бета) и сейчас активен. При проблемах попробуйте Zygisk и, пожалуйста, свяжитесь с автором.</string>
+    <!-- Community / contact modal -->
+    <string name="contact_title">Сообщество и обратная связь</string>
+    <string name="contact_body">Вопросы, баг-репорты или обратная связь? Свяжитесь с автором.</string>
+    <string name="contact_github">GitHub Issues</string>
+    <string name="contact_github_sub">Сообщить о баге или предложить функцию</string>
+    <string name="contact_telegram">Группа в Telegram</string>
+    <string name="contact_telegram_sub">Чат с сообществом и автором</string>
+    <string name="contact_4pda">Тема на 4PDA</string>
+    <string name="contact_4pda_sub">Обсуждение на форуме 4PDA</string>
+    <string name="contact_button">Связаться с автором</string>
+    <string name="contact_close">Закрыть</string>
+    <string name="settings_community_section">Сообщество</string>
+    <string name="settings_community">Сообщество и обратная связь</string>
+    <string name="settings_community_sub">Контакты автора: GitHub, Telegram, 4PDA</string>
     <string name="dashboard_issues">Ошибки (%d)</string>
     <string name="dashboard_warnings">Предупреждения (%d)</string>
     <string name="dashboard_info">Информация (%d)</string>

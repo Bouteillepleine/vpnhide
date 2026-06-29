@@ -188,9 +188,14 @@ internal sealed interface LsposedConfig {
 
 internal enum class DashboardMessageSeverity { ERROR, WARNING, INFO }
 
+// Optional call-to-action rendered on a message banner. ContactAuthor opens the
+// shared community/feedback modal (GitHub / Telegram / 4PDA).
+internal enum class DashboardMessageAction { ContactAuthor, }
+
 internal data class DashboardMessage(
     val severity: DashboardMessageSeverity,
     val text: String,
+    val action: DashboardMessageAction? = null,
 )
 
 internal data class DashboardState(
@@ -265,13 +270,24 @@ internal fun activeModuleCount(state: DashboardState): Int =
 
 internal fun moduleActive(state: ModuleState): Boolean = (state as? ModuleState.Installed)?.active == true
 
+// Which native backend to recommend installing for this device (protocol §1.5).
+// kmod is the battle-tested default on GKI kernels; KPM (beta) is a single
+// universal binary that covers non-GKI / old kernels (4.14–5.4) where no kmod
+// build exists; zygisk is the detectable last resort.
+internal enum class RecommendedBackend { Kmod, Kpm, Zygisk }
+
 internal data class NativeInstallRecommendation(
     val androidVersion: String,
     val kernelVersion: String,
     val kernelBranch: String?,
+    val recommended: RecommendedBackend,
     val recommendedArtifact: String,
     val recommendedGkiVariant: String?,
-    val preferKmod: Boolean,
+    // For a KPM recommendation: whether a KPatch runtime (APatch or the
+    // KPatch-Next-Module on any manager) was detected. When false the UI also
+    // tells the user to install that module first, and offers zygisk as the
+    // no-extra-setup fallback.
+    val kpatchRuntimeAvailable: Boolean = false,
     // Set when the kernel's GKI KMI couldn't be parsed from uname -r but the
     // kernel series ships with multiple KMI variants (5.10: android12 / 13;
     // 5.15: android13 / 14). Both candidates are valid picks — the UI shows
@@ -281,7 +297,12 @@ internal data class NativeInstallRecommendation(
     val variantAmbiguous: Boolean = false,
     val alternativeArtifact: String? = null,
     val alternativeGkiVariant: String? = null,
-)
+) {
+    // True when the recommended backend is the .ko. The kmod-problem classifier
+    // reuses this to decide whether a wrong-variant / unsupported-kernel
+    // diagnosis applies to an installed-but-inactive kmod.
+    val preferKmod: Boolean get() = recommended == RecommendedBackend.Kmod
+}
 
 // Boot-time diagnostics written by kmod/module/post-fs-data.sh into
 // /data/adb/vpnhide_kmod/load_status. Stays valid across reboots,
@@ -305,6 +326,12 @@ internal data class KmodLoadStatus(
 
 private const val TAG = "VpnHide-Dashboard"
 
+// Non-GKI kernel series KernelPatch (the KPM runtime) supports but the .ko does
+// not: no GKI KMI, no DDK build. Mirrors the sub-5.10 rows of the KPM kver
+// offset table in kmod/kpm/kver_offsets.h. GKI series (5.10+) prefer the .ko;
+// anything below 4.14 isn't in the table and falls back to zygisk.
+internal val KPM_NON_GKI_SERIES = setOf("4.14", "4.19", "5.4")
+
 internal fun parseKernelSeries(raw: String): String? = Regex("""\b(\d+\.\d+)""").find(raw)?.groupValues?.get(1)
 
 internal fun parseKernelAndroidBranch(raw: String): String? =
@@ -323,17 +350,21 @@ internal fun parseKernelAndroidBranch(raw: String): String? =
  *
  * Strategy, in order:
  *  1. Exact `(GKI KMI × kernel series)` match from the supported
- *     shipping matrix → specific kmod zip, preferKmod=true.
+ *     shipping matrix → specific kmod zip, recommended=Kmod.
  *  2. KMI tag missing from `uname -r` (custom kernel stripped it)
  *     but the kernel series is GKI-shipping:
  *       - 6.1 / 6.6 / 6.12 have a single shipping variant each →
- *         deterministic kmod recommendation, preferKmod=true.
+ *         deterministic kmod recommendation, recommended=Kmod.
  *       - 5.10 / 5.15 have two shipping variants each → return the
  *         primary plus an alternative via `variantAmbiguous=true`;
  *         the UI shows "try primary, if it doesn't load try alt".
- *  3. Pre-GKI series (<5.10) or unparseable kernel version → fall
- *     back to zygisk (preferKmod=false) since we have no kmod
- *     binaries that can load against such kernels' Module.symvers.
+ *  3. Non-GKI kernels that KernelPatch covers (4.14 / 4.19 / 5.4 —
+ *     no GKI KMI, no DDK kmod build) → KPM (beta), the single
+ *     universal binary. [kpatchRuntimeAvailable] decides whether the
+ *     UI also asks the user to install the KPatch-Next-Module first.
+ *  4. Pre-4.14 series or unparseable kernel version → fall back to
+ *     zygisk (recommended=Zygisk); KernelPatch's kver offset table
+ *     starts at 4.14, and no kmod build loads against such kernels.
  *
  * Returns `null` only if [kernelRaw] is blank (no uname output).
  * `deviceAndroidLabel` is only reflected back in the returned
@@ -348,6 +379,7 @@ internal fun parseKernelAndroidBranch(raw: String): String? =
 internal fun buildNativeInstallRecommendation(
     kernelRaw: String,
     deviceAndroidLabel: String,
+    kpatchRuntimeAvailable: Boolean = false,
 ): NativeInstallRecommendation? {
     val kernelVersion = kernelRaw.trim().ifBlank { return null }
     val kernelSeries = parseKernelSeries(kernelVersion)
@@ -374,9 +406,9 @@ internal fun buildNativeInstallRecommendation(
             androidVersion = deviceAndroidLabel,
             kernelVersion = kernelVersion,
             kernelBranch = kernelBranch,
+            recommended = RecommendedBackend.Kmod,
             recommendedArtifact = exact.zip,
             recommendedGkiVariant = exact.kmi,
-            preferKmod = true,
         )
     }
 
@@ -414,12 +446,27 @@ internal fun buildNativeInstallRecommendation(
             androidVersion = deviceAndroidLabel,
             kernelVersion = kernelVersion,
             kernelBranch = kernelBranch,
+            recommended = RecommendedBackend.Kmod,
             recommendedArtifact = primary.zip,
             recommendedGkiVariant = primary.kmi,
-            preferKmod = true,
             variantAmbiguous = alternative != null,
             alternativeArtifact = alternative?.zip,
             alternativeGkiVariant = alternative?.kmi,
+        )
+    }
+
+    // Non-GKI kernels KernelPatch supports (4.14 / 4.19 / 5.4) — no GKI KMI and
+    // no DDK kmod build, but they're in the KPM kver offset table
+    // (kmod/kpm/kver_offsets.h). Recommend the universal KPM (beta).
+    if (kernelSeries in KPM_NON_GKI_SERIES) {
+        return NativeInstallRecommendation(
+            androidVersion = deviceAndroidLabel,
+            kernelVersion = kernelVersion,
+            kernelBranch = kernelBranch,
+            recommended = RecommendedBackend.Kpm,
+            recommendedArtifact = "vpnhide-kpm.zip",
+            recommendedGkiVariant = null,
+            kpatchRuntimeAvailable = kpatchRuntimeAvailable,
         )
     }
 
@@ -427,9 +474,9 @@ internal fun buildNativeInstallRecommendation(
         androidVersion = deviceAndroidLabel,
         kernelVersion = kernelVersion,
         kernelBranch = kernelBranch,
+        recommended = RecommendedBackend.Zygisk,
         recommendedArtifact = "vpnhide-zygisk.zip",
         recommendedGkiVariant = null,
-        preferKmod = false,
     )
 }
 
@@ -1033,8 +1080,11 @@ internal suspend fun loadDashboardState(
         messages += DashboardMessage(DashboardMessageSeverity.WARNING, text)
     }
 
-    fun info(text: String) {
-        messages += DashboardMessage(DashboardMessageSeverity.INFO, text)
+    fun info(
+        text: String,
+        action: DashboardMessageAction? = null,
+    ) {
+        messages += DashboardMessage(DashboardMessageSeverity.INFO, text, action)
     }
 
     VpnHideLog.i(TAG, "=== Loading dashboard state ===")
@@ -1068,7 +1118,9 @@ internal suspend fun loadDashboardState(
     // the "kmod-capable kernel, only zygisk installed" warning (W1), and the
     // wrong-variant detection below.
     val kernelRaw = shellSnapshot["kernel_release"].orEmpty()
-    val kernelRecommendation = buildNativeInstallRecommendation(kernelRaw, androidMajorVersionLabel())
+    val kpatchRuntimeAvailable = shellSnapshot["kpatch_runtime"].orEmpty().trim() == "1"
+    val kernelRecommendation =
+        buildNativeInstallRecommendation(kernelRaw, androidMajorVersionLabel(), kpatchRuntimeAvailable)
     val kmodLoadStatus =
         readKmodLoadStatus(
             currentBootId.trim(),
@@ -1260,20 +1312,55 @@ internal suspend fun loadDashboardState(
 
     // ── Low-priority info: suboptimal-but-working setups ──
 
-    // I1: kernel supports kmod, but user only installed zygisk. Zygisk is
-    // detected by banking / payment apps, so a user has to remember Z-off
-    // per such app; kmod is invisible to anti-tamper.
-    if (kernelRecommendation?.preferKmod == true &&
-        zygisk is ModuleState.Installed &&
+    // I1: a stealthier kernel backend fits this kernel, but the user only
+    // installed zygisk. Zygisk is detected by banking / payment apps (Z-off per
+    // app), whereas kmod/KPM are invisible to anti-tamper. Only nudge when the
+    // better backend is actually installable now: kmod always is; KPM only when
+    // a KPatch runtime is already present (else replacing a working zygisk would
+    // mean installing two more things — too pushy for a low-priority hint).
+    if (zygisk is ModuleState.Installed &&
         kmod is ModuleState.NotInstalled &&
         kpm is ModuleState.NotInstalled
     ) {
-        info(
-            res.getString(
-                R.string.dashboard_issue_kmod_capable_but_zygisk,
-                kernelRecommendation.recommendedArtifact,
-            ),
-        )
+        when (kernelRecommendation?.recommended) {
+            RecommendedBackend.Kmod -> {
+                info(
+                    res.getString(
+                        R.string.dashboard_issue_kmod_capable_but_zygisk,
+                        kernelRecommendation.recommendedArtifact,
+                    ),
+                )
+            }
+
+            RecommendedBackend.Kpm -> {
+                if (kernelRecommendation.kpatchRuntimeAvailable) {
+                    info(
+                        res.getString(
+                            R.string.dashboard_issue_kpm_capable_but_zygisk,
+                            kernelRecommendation.recommendedArtifact,
+                        ),
+                    )
+                }
+            }
+
+            else -> {
+                Unit
+            }
+        }
+    }
+
+    // I2: the KPM backend is experimental (beta). When it's the active native
+    // backend, surface a neutral note with a contact-author action so users can
+    // reach the author if something misbehaves, and point them at the more
+    // battle-tested alternative for their kernel (kmod on GKI, else Zygisk).
+    if (moduleActive(kpm)) {
+        val experimentalText =
+            if (kernelRecommendation?.recommended == RecommendedBackend.Kmod) {
+                res.getString(R.string.dashboard_issue_kpm_experimental_kmod)
+            } else {
+                res.getString(R.string.dashboard_issue_kpm_experimental_zygisk)
+            }
+        info(experimentalText, action = DashboardMessageAction.ContactAuthor)
     }
 
     // W2: more than one native backend active. Disabled / inactive modules may
