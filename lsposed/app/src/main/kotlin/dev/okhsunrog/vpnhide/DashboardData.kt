@@ -99,39 +99,6 @@ sealed interface JavaResult {
 
 internal enum class FlashableModuleKind { Kmod, Kpm, Zygisk, Ports }
 
-// The native layer is exactly ONE of these at runtime (protocol §1.5). The
-// dashboard shows a single "Native backend" card for whichever is selected.
-internal enum class NativeBackendId { Kmod, Kpm, Zygisk }
-
-/**
- * The one native backend to surface on the dashboard, chosen among the
- * *installed* backends: an active one wins, otherwise the highest-priority
- * installed (kmod > KPM > Zygisk, protocol §1.5). [id] is null when no native
- * backend is installed at all.
- */
-internal data class NativeBackendSelection(
-    val id: NativeBackendId?,
-    val state: ModuleState,
-)
-
-internal fun selectNativeBackend(
-    kmod: ModuleState,
-    kpm: ModuleState,
-    zygisk: ModuleState,
-): NativeBackendSelection {
-    // List order encodes the kmod > KPM > Zygisk priority.
-    val ordered =
-        listOf(
-            NativeBackendId.Kmod to kmod,
-            NativeBackendId.Kpm to kpm,
-            NativeBackendId.Zygisk to zygisk,
-        )
-    val installed = ordered.filter { it.second is ModuleState.Installed }
-    if (installed.isEmpty()) return NativeBackendSelection(null, ModuleState.NotInstalled)
-    val chosen = installed.firstOrNull { moduleActive(it.second) } ?: installed.first()
-    return NativeBackendSelection(chosen.first, chosen.second)
-}
-
 internal enum class MultiNativeSeverity { None, Warning, Error }
 
 /**
@@ -211,7 +178,7 @@ internal data class DashboardState(
     val lsposed: LsposedState,
     val ports: ModuleState,
     // The one native backend surfaced on the dashboard (kmod > KPM > Zygisk).
-    val nativeBackend: NativeBackendSelection,
+    val nativeBackend: DisplayNativeBackend,
     val nativeInstallRecommendation: NativeInstallRecommendation?,
     val kmodLoadStatus: KmodLoadStatus?,
     val protection: ProtectionCheck,
@@ -1054,10 +1021,11 @@ internal suspend fun loadDashboardState(
     // load status are known (classifyKmodProblem).
     val currentBootId = shellSnapshot["current_boot_id"].orEmpty()
     val nativeTargetCount = countPackages(targetsSnapshot.nativeTargets)
-    val kmodRaw = detectKmodModule(shellSnapshot, selfPkg).withTargetCount(nativeTargetCount)
+    val rawNativeBackends = detectNativeBackendStates(shellSnapshot, selfPkg, currentBootId)
+    val kmodRaw = rawNativeBackends.kmod.withTargetCount(nativeTargetCount)
     val zygiskStatusRaw = shellSnapshot["zygisk_status"].orEmpty()
-    val zygisk = detectZygiskModule(shellSnapshot, zygiskStatusRaw, selfPkg, currentBootId).withTargetCount(nativeTargetCount)
-    val kpm = detectKpmModule(shellSnapshot, selfPkg, currentBootId).withTargetCount(nativeTargetCount)
+    val zygisk = rawNativeBackends.zygisk.withTargetCount(nativeTargetCount)
+    val kpm = rawNativeBackends.kpm.withTargetCount(nativeTargetCount)
     val ports = detectPortsModule(shellSnapshot, selfPkg).withTargetCount(countPackages(targetsSnapshot.portsObservers))
     val kmodTargetCount = (kmodRaw as? ModuleState.Installed)?.targetCount ?: 0
     val kpmTargetCount = (kpm as? ModuleState.Installed)?.targetCount ?: 0
@@ -1095,7 +1063,7 @@ internal suspend fun loadDashboardState(
         }
     VpnHideLog.i(TAG, "kmod (with brokenReason): $kmod")
     // The single native backend the dashboard shows (kmod > KPM > Zygisk).
-    val nativeBackend = selectNativeBackend(kmod, kpm, zygisk)
+    val nativeBackend = displayNativeBackend(NativeBackendStates(kmod = kmod, kpm = kpm, zygisk = zygisk))
     VpnHideLog.i(TAG, "nativeBackend=$nativeBackend")
     // Only surface the blue "what to install" card when nothing is
     // installed yet. Wrong-variant / broken / unsupported-kernel cases

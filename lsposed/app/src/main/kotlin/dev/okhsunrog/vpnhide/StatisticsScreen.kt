@@ -82,19 +82,32 @@ fun StatisticsScreen(modifier: Modifier = Modifier) {
         if (!s.hasAnyData) {
             Spacer(Modifier.height(12.dp))
             StatusBanner(
-                text = stringResource(R.string.statistics_no_data),
+                text =
+                    stringResource(
+                        if (s.backends.any { it.unavailableReason != null }) {
+                            R.string.statistics_no_data_supported_backends
+                        } else {
+                            R.string.statistics_no_data
+                        },
+                    ),
                 containerColor = StatusColors.infoContainer(),
                 contentColor = MaterialTheme.colorScheme.onSurface,
             )
         }
 
         s.backends
-            .filter { it.hasData }
+            .filter { it.isActive }
             .forEach { backend ->
                 Spacer(Modifier.height(20.dp))
                 SectionHeader(backendName(backend.backend))
                 Spacer(Modifier.height(8.dp))
-                if (backend.rows.isEmpty()) {
+                if (backend.unavailableReason != null) {
+                    StatusBanner(
+                        text = statisticsUnavailableText(backend.unavailableReason),
+                        containerColor = StatusColors.infoContainer(),
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                    )
+                } else if (backend.rows.isEmpty()) {
                     StatusBanner(
                         text = stringResource(R.string.statistics_no_counters),
                         containerColor = StatusColors.infoContainer(),
@@ -304,12 +317,7 @@ private fun BackendSummaryCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text =
-                        stringResource(
-                            R.string.statistics_backend_detail,
-                            visual.label,
-                            backend.hookedCount,
-                        ),
+                    text = backendDetailText(backend, visual),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -453,11 +461,13 @@ private fun rowTargetText(row: StatisticsRow): String =
 @Composable
 private fun rowHookText(row: StatisticsRow): String = row.hook?.hookName ?: stringResource(R.string.statistics_unknown_hook, row.hookId)
 
-private enum class BackendHealth { Ok, Partial, Error, NoData }
+private enum class BackendHealth { Ok, Partial, Error, NoData, Unavailable }
 
 private fun backendHealth(backend: BackendStatistics): BackendHealth {
     val status = backend.status
     return when {
+        backend.unavailableReason != null -> BackendHealth.Unavailable
+
         status == null && backend.rows.isEmpty() -> BackendHealth.NoData
 
         status == null -> BackendHealth.Partial
@@ -475,6 +485,24 @@ private fun backendHealth(backend: BackendStatistics): BackendHealth {
         else -> BackendHealth.Error
     }
 }
+
+@Composable
+private fun backendDetailText(
+    backend: BackendStatistics,
+    visual: HealthVisual,
+): String =
+    backend.unavailableReason?.let { stringResource(R.string.statistics_backend_unavailable_detail) }
+        ?: stringResource(
+            R.string.statistics_backend_detail,
+            visual.label,
+            backend.hookedCount,
+        )
+
+@Composable
+private fun statisticsUnavailableText(reason: StatisticsUnavailableReason): String =
+    when (reason) {
+        StatisticsUnavailableReason.ZygiskNativeStats -> stringResource(R.string.statistics_zygisk_native_unavailable)
+    }
 
 private data class HealthVisual(
     val label: String,
@@ -514,6 +542,14 @@ private fun backendHealthVisual(health: BackendHealth): HealthVisual =
                 label = stringResource(R.string.statistics_status_no_data),
                 accent = StatusColors.neutralAccent,
                 container = AppColors.neutralAccentContainer,
+            )
+        }
+
+        BackendHealth.Unavailable -> {
+            HealthVisual(
+                label = stringResource(R.string.statistics_status_unavailable),
+                accent = StatusColors.infoAccent,
+                container = StatusColors.infoContainer(),
             )
         }
     }

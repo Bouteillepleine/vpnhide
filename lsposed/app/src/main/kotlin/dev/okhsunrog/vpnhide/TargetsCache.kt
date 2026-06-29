@@ -123,7 +123,7 @@ internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
     }
 
     fun uidsFor(pkgs: Set<String>): Set<Int> = pkgs.flatMap { pkgToUids[it].orEmpty() }.toSet()
-    val activeNativeBackendId = detectActiveNativeBackend(sections)
+    val activeNativeBackendId = detectNativeBackendStates(sections).activeId
 
     if (canonical != null) {
         val javaTargets = canonical.apps.filterValues { it.java }.keys
@@ -169,21 +169,4 @@ internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
         apatchSuperkeySaved = sections["superkey_saved"]?.trim() == "1",
         activeNativeBackendId = activeNativeBackendId,
     )
-}
-
-private fun detectActiveNativeBackend(sections: Map<String, String>): NativeBackendId? {
-    val currentBootId = sections["current_boot_id"].orEmpty()
-    val ordered =
-        listOf(
-            NativeBackendId.Kmod to detectKmodModule(sections, APP_PACKAGE_NAME),
-            NativeBackendId.Kpm to detectKpmModule(sections, APP_PACKAGE_NAME, currentBootId),
-            NativeBackendId.Zygisk to
-                detectZygiskModule(
-                    sections = sections,
-                    zygiskStatusRaw = sections["zygisk_status"].orEmpty(),
-                    selfPkg = APP_PACKAGE_NAME,
-                    currentBootId = currentBootId,
-                ),
-        )
-    return ordered.firstOrNull { moduleActive(it.second) }?.first
 }

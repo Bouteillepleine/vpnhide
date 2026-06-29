@@ -141,7 +141,7 @@ class DashboardUiStateTest {
             zygisk = zygisk,
             lsposed = lsposed,
             ports = ports,
-            nativeBackend = selectNativeBackend(kmod, kpm, zygisk),
+            nativeBackend = displayNativeBackend(NativeBackendStates(kmod = kmod, kpm = kpm, zygisk = zygisk)),
             nativeInstallRecommendation = null,
             kmodLoadStatus = null,
             protection = protection,

@@ -7,54 +7,102 @@ import org.junit.Test
 class NativeBackendTest {
     private fun installed(active: Boolean) = ModuleState.Installed(version = "1.0", active = active, targetCount = 1)
 
-    // ── selectNativeBackend ──────────────────────────────────────────────
+    private fun states(
+        kmod: ModuleState,
+        kpm: ModuleState,
+        zygisk: ModuleState,
+    ) = NativeBackendStates(kmod = kmod, kpm = kpm, zygisk = zygisk)
+
+    // ── activeNativeBackendId / displayNativeBackend ─────────────────────
 
     @Test
-    fun `no native installed selects none`() {
-        val sel = selectNativeBackend(ModuleState.NotInstalled, ModuleState.NotInstalled, ModuleState.NotInstalled)
-        assertNull(sel.id)
-        assertEquals(ModuleState.NotInstalled, sel.state)
+    fun `no native installed has no active or display backend`() {
+        val states = states(ModuleState.NotInstalled, ModuleState.NotInstalled, ModuleState.NotInstalled)
+
+        assertNull(states.activeId)
+        assertNull(displayNativeBackend(states).id)
+        assertEquals(ModuleState.NotInstalled, displayNativeBackend(states).state)
     }
 
     @Test
-    fun `single installed backend is selected`() {
+    fun `single installed backend is displayed`() {
         assertEquals(
             NativeBackendId.Kpm,
-            selectNativeBackend(ModuleState.NotInstalled, installed(active = false), ModuleState.NotInstalled).id,
+            displayNativeBackend(states(ModuleState.NotInstalled, installed(active = false), ModuleState.NotInstalled)).id,
         )
         assertEquals(
             NativeBackendId.Zygisk,
-            selectNativeBackend(ModuleState.NotInstalled, ModuleState.NotInstalled, installed(active = true)).id,
+            displayNativeBackend(states(ModuleState.NotInstalled, ModuleState.NotInstalled, installed(active = true))).id,
         )
     }
 
     @Test
-    fun `active backend wins over higher-priority inactive one`() {
+    fun `active backend is reported and displayed over higher-priority inactive one`() {
         // kmod installed but inactive, zygisk active -> show the active zygisk.
-        val sel = selectNativeBackend(installed(active = false), ModuleState.NotInstalled, installed(active = true))
+        val states = states(installed(active = false), ModuleState.NotInstalled, installed(active = true))
+        val sel = displayNativeBackend(states)
+        assertEquals(NativeBackendId.Zygisk, states.activeId)
         assertEquals(NativeBackendId.Zygisk, sel.id)
         assertEquals(true, moduleActive(sel.state))
     }
 
     @Test
-    fun `with none active, priority order kmod over kpm over zygisk wins`() {
+    fun `with none active display priority order kmod over kpm over zygisk wins`() {
         assertEquals(
             NativeBackendId.Kmod,
-            selectNativeBackend(installed(active = false), installed(active = false), installed(active = false)).id,
+            displayNativeBackend(states(installed(active = false), installed(active = false), installed(active = false))).id,
         )
         assertEquals(
             NativeBackendId.Kpm,
-            selectNativeBackend(ModuleState.NotInstalled, installed(active = false), installed(active = false)).id,
+            displayNativeBackend(states(ModuleState.NotInstalled, installed(active = false), installed(active = false))).id,
         )
     }
 
     @Test
     fun `among multiple active, priority order decides`() {
         // both kmod and zygisk active -> kmod (higher priority).
+        val states = states(installed(active = true), ModuleState.NotInstalled, installed(active = true))
         assertEquals(
             NativeBackendId.Kmod,
-            selectNativeBackend(installed(active = true), ModuleState.NotInstalled, installed(active = true)).id,
+            states.activeId,
         )
+        assertEquals(
+            NativeBackendId.Kmod,
+            displayNativeBackend(states).id,
+        )
+    }
+
+    @Test
+    fun `detect native backend states wires section map to all detectors`() {
+        val states =
+            detectNativeBackendStates(
+                sections =
+                    mapOf(
+                        "kmod_prop" to "version=v1.2.3\ngkiVariant=android14-6.1\n",
+                        "proc_exists" to "1",
+                        "kmod_targets" to "$APP_PACKAGE_NAME\ncom.native.one\n",
+                        "kpm_prop" to "version=v2.0.0\n",
+                        "kpm_load_status" to "loaded=1\nboot_id=boot-1\n",
+                        "kpm_targets" to "$APP_PACKAGE_NAME\ncom.native.two\ncom.native.three\n",
+                        "zygisk_prop" to "version=v3.0.0\n",
+                        "zygisk_status" to "boot_id=boot-1\n",
+                        "zygisk_targets" to "$APP_PACKAGE_NAME\ncom.native.four\n",
+                        "current_boot_id" to "boot-1",
+                    ),
+            )
+
+        assertEquals(
+            ModuleState.Installed(
+                version = "1.2.3",
+                active = true,
+                targetCount = 1,
+                gkiVariant = "android14-6.1",
+            ),
+            states.kmod,
+        )
+        assertEquals(ModuleState.Installed(version = "2.0.0", active = true, targetCount = 2), states.kpm)
+        assertEquals(ModuleState.Installed(version = "3.0.0", active = true, targetCount = 1), states.zygisk)
+        assertEquals(NativeBackendId.Kmod, states.activeId)
     }
 
     // ── classifyMultiNative ──────────────────────────────────────────────

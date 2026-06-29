@@ -154,13 +154,14 @@ internal fun <T : TargetEntry> TargetPickerScreen(
     var saving by remember { mutableStateOf(false) }
     var dirty by remember { mutableStateOf(false) }
     var snackMessage by remember { mutableStateOf<String?>(null) }
+    var snackDuration by remember { mutableStateOf(SnackbarDuration.Long) }
     val snackbarHostState = remember { SnackbarHostState() }
 
-    LaunchedEffect(snackMessage) {
+    LaunchedEffect(snackMessage, snackDuration) {
         snackMessage?.let {
             snackbarHostState.showSnackbar(
                 message = it,
-                duration = SnackbarDuration.Long,
+                duration = snackDuration,
             )
             snackMessage = null
         }
@@ -276,39 +277,36 @@ internal fun <T : TargetEntry> TargetPickerScreen(
                     },
                 )
             }
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+            )
             Surface(tonalElevation = 3.dp) {
-                Box {
-                    Row(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = countText(allApps, resources),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f),
-                        )
-                        EnhancedButton(
-                            onClick = {
-                                saving = true
-                                dirty = false
-                            },
-                            enabled = dirty && !saving,
-                        ) {
-                            Text(stringResource(R.string.btn_save))
-                        }
-                    }
-
-                    SnackbarHost(
-                        hostState = snackbarHostState,
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .align(Alignment.TopCenter),
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = countText(allApps, resources),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
                     )
+                    EnhancedButton(
+                        onClick = {
+                            saving = true
+                            dirty = false
+                        },
+                        enabled = dirty && !saving,
+                    ) {
+                        Text(stringResource(R.string.btn_save))
+                    }
                 }
             }
         }
@@ -324,21 +322,25 @@ internal fun <T : TargetEntry> TargetPickerScreen(
                     suExecAsync(buildSaveCommand(entries, ctx))
                 when (exitCode) {
                     0 -> {
+                        snackDuration = SnackbarDuration.Short
                         snackMessage = successMessage(entries, resources)
                         TargetsCache.refreshAfterSave(scope, context)
                     }
 
                     -1 -> {
+                        snackDuration = SnackbarDuration.Long
                         snackMessage = resources.getString(R.string.save_failed_root)
                         dirty = true
                     }
 
                     else -> {
+                        snackDuration = SnackbarDuration.Long
                         snackMessage = resources.getString(R.string.save_failed_exit, exitCode)
                         dirty = true
                     }
                 }
             } catch (e: Exception) {
+                snackDuration = SnackbarDuration.Long
                 snackMessage = resources.getString(R.string.save_failed_error, e.message ?: "")
                 dirty = true
             }
