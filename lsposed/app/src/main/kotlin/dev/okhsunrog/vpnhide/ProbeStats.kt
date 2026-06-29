@@ -80,12 +80,20 @@ internal enum class DetectionMethod(
 
 // Per-app rollup of probe counts, aggregated across every active backend (the
 // one native backend + Java). Counts are cumulative since each backend started.
+// [byHook] is the exact per-hook breakdown the backends report (for the detail
+// modal); [byMethod] folds those hooks into the user-facing taxonomy (for the
+// card chips).
 internal data class AppProbeStats(
     val uid: Long,
     val packageNames: List<String>,
     val total: ULong,
-    val byMethod: Map<DetectionMethod, Long>,
+    val byHook: Map<HookIds.Hook, Long>,
 ) {
+    val byMethod: Map<DetectionMethod, Long> =
+        byHook.entries
+            .groupBy({ DetectionMethod.of(it.key) }, { it.value })
+            .mapValues { (_, counts) -> counts.sum() }
+
     val surfaces: Set<MethodSurface> = byMethod.keys.map { it.surface }.toSet()
 }
 
@@ -103,7 +111,7 @@ internal fun buildAppProbeStats(
     class Acc {
         var total: ULong = 0uL
         var packages: List<String> = emptyList()
-        val byMethod = linkedMapOf<DetectionMethod, Long>()
+        val byHook = linkedMapOf<HookIds.Hook, Long>()
     }
 
     val byUid = linkedMapOf<Long, Acc>()
@@ -114,8 +122,8 @@ internal fun buildAppProbeStats(
             val acc = byUid.getOrPut(row.uid) { Acc() }
             acc.total += row.count.toULong()
             if (row.packageNames.isNotEmpty()) acc.packages = row.packageNames
-            val method = row.hook?.let(DetectionMethod::of) ?: return@forEach
-            acc.byMethod[method] = (acc.byMethod[method] ?: 0L) + row.count
+            val hook = row.hook ?: return@forEach
+            acc.byHook[hook] = (acc.byHook[hook] ?: 0L) + row.count
         }
 
     return byUid
@@ -124,7 +132,7 @@ internal fun buildAppProbeStats(
                 uid = uid,
                 packageNames = acc.packages,
                 total = acc.total,
-                byMethod = acc.byMethod.toMap(),
+                byHook = acc.byHook.toMap(),
             )
         }.filterNot { selfPackage != null && selfPackage in it.packageNames }
         .sortedWith(
