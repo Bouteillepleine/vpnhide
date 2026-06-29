@@ -35,16 +35,35 @@
     <string name="filter_system">System</string>
     <string name="filter_show_system">Show system apps</string>
     <string name="filter_russian_only">Russian apps only</string>
+    <string name="filter_configured_only">Configured only</string>
+    <string name="sort_configured_first">Configured first</string>
+    <string name="sort_alphabetical">Alphabetical</string>
+    <string name="target_group_configured">Configured</string>
+    <string name="target_group_other_apps">Other apps</string>
+    <string name="target_group_header">%1$s · %2$d</string>
     <string name="apps_help_title">How it works</string>
     <string name="chip_java" translatable="false">J</string>
     <string name="chip_native" translatable="false">N</string>
-    <string name="chip_native_partial" translatable="false">N*</string>
     <string name="chip_app_hiding" translatable="false">A</string>
     <string name="chip_ports" translatable="false">P</string>
+    <string name="chip_java_full" translatable="false">Java</string>
+    <string name="chip_native_full" translatable="false">Native</string>
+    <string name="chip_app_hiding_full" translatable="false">Apps</string>
+    <string name="chip_ports_full" translatable="false">Ports</string>
+    <string name="java_hooks_title">Java hooks</string>
     <string name="native_hooks_title">Native hooks</string>
-    <string name="apps_hint_roles">Tap a chip to toggle that role for an app, or tap the row to toggle all of them. J = LSPosed (Java-level hiding). N = the native backend (kernel-level hiding via kmod/KPM, or Zygisk). A = app hiding (this app sees a sanitized package list). P = block this app from reaching localhost ports. N and P only appear when a native backend / the ports module is installed.</string>
-    <string name="apps_hint_restart_target">After Save: J (LSPosed) and a kernel native backend (kmod/KPM) apply to the target immediately — no restart needed. If your native backend is Zygisk, or you changed P (ports), the target app must be force-stopped and reopened for the change to take effect for it.</string>
-    <string name="apps_hint_zygisk">If your native backend is Zygisk, banking and payment apps can detect its in-process hooks and crash when N is on for them — leave N off for such apps and rely on J (LSPosed). The kmod and KPM native backends hook in kernel space and are invisible to those checks.</string>
+    <string name="apps_help_role_java_body">LSPosed hides VPN signals exposed through Android Java APIs such as NetworkCapabilities, NetworkInfo, LinkProperties, and NetworkInterface.</string>
+    <string name="apps_help_role_native_body">The active native backend hides VPN signals visible through kernel or libc probes. VPN Hide writes one native selection to every installed native backend; only the active backend acts.</string>
+    <string name="apps_help_role_apps_body">App-hiding observer mode. This app receives a sanitized package-manager view and cannot list, resolve, or query packages that VPN Hide marks as hidden.</string>
+    <string name="apps_help_role_ports_body">Ports observer mode. The ports module makes localhost VPN/proxy daemon probes look like closed ports for this app. This role appears only when the ports module is installed.</string>
+    <string name="apps_help_hook_settings_title">Per-hook settings</string>
+    <string name="apps_help_hook_settings_body">For Java and Native, tap the settings edge of the combined chip to choose exact hooks for this app. A chip marked with * means only part of that backend is enabled.</string>
+    <string name="apps_help_apps_hiding_title">Apps hiding</string>
+    <string name="apps_help_apps_hiding_body">VPN Hide auto-detects packages that should be hidden from observers, including apps declaring a VPN service and optional name heuristics. Manual hidden-package choices live in Settings → Advanced protection. System callers stay exempt so Android can keep installing and launching apps.</string>
+    <string name="apps_help_apply_title">Applying changes</string>
+    <string name="apps_help_apply_body">After Save, Java and kernel native backends (kmod/KPM) apply immediately. Zygisk native hooks and ports rules are picked up by a target app after force-stop and reopen.</string>
+    <string name="apps_help_zygisk_warning_title">Zygisk and banking apps</string>
+    <string name="apps_help_zygisk_warning_body">Zygisk hooks run inside the target process. Banking and payment apps may detect that when Native is enabled for them; leave Native off for those apps and rely on Java where possible.</string>
 
     <!-- App hiding -->
     <string name="hiding_chip_hidden" translatable="false">H</string>
@@ -178,7 +197,7 @@
     <string name="dashboard_issue_kmod_capable_but_zygisk">Your kernel supports the kernel module — it hooks in kernel space and is invisible to anti-tamper checks. Zygisk works too, but its hooks can be detected by banking and payment apps, so you\'d have to keep Z off for those apps individually. Install %1$s and uninstall the Zygisk module for cleaner coverage.</string>
     <string name="dashboard_issue_native_conflict_kernel">The kernel module (.ko) and the KPM are both installed. They hook the same kernel functions, and having both active can hard-freeze the device. Keep only one — uninstall either the kernel module or the KPM.</string>
     <string name="dashboard_issue_multiple_native">More than one native backend is installed. Only one can be active at a time (priority: kernel module, then KPM, then Zygisk); the others sit idle. Uninstall the ones you don\'t use to keep things clean.</string>
-    <string name="dashboard_issue_debug_logging_on">Debug logging is enabled. VPN Hide is writing verbose lines to logcat that anyone with root can read. Turn it off in Diagnostics after you\'ve finished collecting a bug report.</string>
+    <string name="dashboard_issue_debug_logging_on">Debug logging is enabled. VPN Hide is writing verbose lines to logcat that anyone with root can read. Turn it off in Settings → Debugging after you\'ve finished collecting a bug report.</string>
     <string name="dashboard_issue_selinux_permissive">SELinux is Permissive. Six detection vectors VPN Hide relies on the kernel to block (RTM_GETROUTE, /proc/net/{tcp,udp,dev,fib_trie}, /sys/class/net) are reachable to target apps. Run `setenforce 1` and investigate what disabled it.</string>
     <string name="dashboard_issue_self_multi_profile">VPN Hide is installed in %1$d profiles. The main-profile copy is the one that matters — LSPosed hooks system_server, which runs in the main profile only, and the picker there already sees apps from every profile and applies filters to all of them. Extra copies in secondary profiles are redundant and race each other\'s Saves to the shared config. Uninstall from work profile / Second Space / other secondary profiles.</string>
     <string name="dashboard_issue_no_native">No native module installed. Install kmod or zygisk for full protection.</string>
@@ -210,7 +229,7 @@
     <string name="dashboard_issue_kmod_wrong_variant">Wrong kernel module variant: installed %1$s, your kernel needs %2$s. Uninstall the current kmod and install %3$s from the latest release.</string>
     <string name="dashboard_issue_kmod_unknown_variant">Kernel module is installed but not loading, and the zip doesn\'t identify which GKI variant it was built for. Reinstall %1$s from the latest release to make sure it matches your kernel.</string>
     <string name="dashboard_issue_kmod_ambiguous_try_alternative">Kernel module %1$s failed to load this boot. Your kernel\'s GKI branch isn\'t identifiable from uname -r, so install %2$s instead.</string>
-    <string name="dashboard_issue_kmod_load_failed">Kernel module failed to load. insmod error: %1$s. Use Diagnostics → Collect debug log to attach the full boot-time insmod output to a bug report.</string>
+    <string name="dashboard_issue_kmod_load_failed">Kernel module failed to load. insmod error: %1$s. Use Settings → Debugging → Collect debug log to attach the full boot-time insmod output to a bug report.</string>
     <string name="dashboard_issue_kmod_signature_enforced">Your kernel enforces module signature verification, so the unsigned kernel module can\'t load (insmod failed with EKEYREJECTED — \"Key was rejected by service\"). Magisk can\'t disable this. Switch to KernelSU Next in GKI mode — it removes the enforcement and the kmod loads. On GKI kernels the kernel module is the right tool; don\'t fall back to Zygisk, whose in-process hooks are easily detected by banking and anti-fraud apps.</string>
     <string name="dashboard_issue_kmod_not_supported_kernel">Your kernel (%1$s) has no matching vpnhide-kmod variant. Uninstall the kmod module and install %2$s instead.</string>
     <string name="dashboard_issue_kprobes_missing">Your kernel was built without CONFIG_KRETPROBES. The VPN Hide kernel module cannot work on this kernel. Uninstall kmod and use vpnhide-zygisk.zip instead.</string>
@@ -283,6 +302,12 @@
     <string name="settings_haptics_sub">Vibrate on taps and toggles</string>
     <string name="settings_animations">Animations</string>
     <string name="settings_animations_sub">Springy transitions and shape morphing</string>
+    <string name="settings_full_role_labels">Full role labels</string>
+    <string name="settings_full_role_labels_sub">Show Java / Native / Apps / Ports instead of J / N / A / P</string>
+    <string name="settings_diagnostics_section">Diagnostics</string>
+    <string name="settings_diagnostics_title">Detailed diagnostics</string>
+    <string name="settings_diagnostics_sub">Run the full protection check suite</string>
+    <string name="settings_debug_section">Debugging</string>
     <string name="settings_config_section">Configuration</string>
     <string name="settings_config_backup_title">Config backup</string>
     <string name="settings_config_backup_sub">Save or restore the canonical JSON config</string>

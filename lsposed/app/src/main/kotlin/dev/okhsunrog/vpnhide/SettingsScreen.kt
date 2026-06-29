@@ -1,10 +1,12 @@
 package dev.okhsunrog.vpnhide
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Animation
 import androidx.compose.material.icons.filled.BrightnessMedium
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
@@ -77,9 +80,21 @@ import java.nio.charset.StandardCharsets
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(
+    selfNeedsRestart: Boolean?,
+    onBack: () -> Unit,
+) {
     val settings = LocalSettingsState.current
     val interactor = LocalSettingsInteractor.current
+    var diagnosticsOpen by remember { mutableStateOf(false) }
+
+    if (diagnosticsOpen) {
+        DiagnosticsSettingsScreen(
+            selfNeedsRestart = selfNeedsRestart,
+            onBack = { diagnosticsOpen = false },
+        )
+        return
+    }
 
     Scaffold(
         containerColor = AppColors.screenBackground,
@@ -178,7 +193,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
-            // ── Interaction ── grouped block of two rows.
+            // ── Interaction ── grouped block of three rows.
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 SettingsSectionHeader(stringResource(R.string.settings_interaction))
                 PreferenceRowSwitch(
@@ -186,7 +201,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     subtitle = stringResource(R.string.settings_haptics_sub),
                     icon = Icons.Default.Vibration,
                     index = 0,
-                    count = 2,
+                    count = 3,
                     checked = settings.hapticsEnabled,
                     onCheckedChange = interactor::setHapticsEnabled,
                 )
@@ -195,16 +210,93 @@ fun SettingsScreen(onBack: () -> Unit) {
                     subtitle = stringResource(R.string.settings_animations_sub),
                     icon = Icons.Default.Animation,
                     index = 1,
-                    count = 2,
+                    count = 3,
                     checked = settings.animationsEnabled,
                     onCheckedChange = interactor::setAnimationsEnabled,
+                )
+                PreferenceRowSwitch(
+                    title = stringResource(R.string.settings_full_role_labels),
+                    subtitle = stringResource(R.string.settings_full_role_labels_sub),
+                    icon = Icons.Default.TextFields,
+                    index = 2,
+                    count = 3,
+                    checked = settings.fullProtectionRoleLabels,
+                    onCheckedChange = interactor::setFullProtectionRoleLabels,
                 )
             }
 
             AutoHideSettingsSection()
+            DiagnosticsSettingsSection(onOpen = { diagnosticsOpen = true })
+            DebugToolsSettingsSection(selfNeedsRestart = selfNeedsRestart)
             ConfigBackupSection()
             SuperkeySettingsSection()
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DiagnosticsSettingsScreen(
+    selfNeedsRestart: Boolean?,
+    onBack: () -> Unit,
+) {
+    BackHandler(onBack = onBack)
+    Scaffold(
+        containerColor = AppColors.screenBackground,
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.settings_diagnostics_title)) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.action_back),
+                        )
+                    }
+                },
+                colors =
+                    TopAppBarDefaults.topAppBarColors(
+                        containerColor = AppColors.topBarContainer,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ),
+            )
+        },
+    ) { padding ->
+        if (selfNeedsRestart == null) {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator()
+            }
+        } else {
+            DiagnosticsScreen(
+                selfNeedsRestart = selfNeedsRestart,
+                modifier = Modifier.padding(padding),
+            )
+        }
+    }
+}
+
+@Composable
+private fun DebugToolsSettingsSection(selfNeedsRestart: Boolean?) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        SettingsSectionHeader(stringResource(R.string.settings_debug_section))
+        DebugToolsSection(selfNeedsRestart = selfNeedsRestart)
+    }
+}
+
+@Composable
+private fun DiagnosticsSettingsSection(onOpen: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        SettingsSectionHeader(stringResource(R.string.settings_diagnostics_section))
+        PreferenceRow(
+            title = stringResource(R.string.settings_diagnostics_title),
+            subtitle = stringResource(R.string.settings_diagnostics_sub),
+            icon = Icons.Default.CheckCircle,
+            onClick = onOpen,
+        )
     }
 }
 

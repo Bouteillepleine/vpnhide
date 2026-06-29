@@ -31,7 +31,9 @@ internal const val KMOD_MODULE_DIR = "/data/adb/modules/vpnhide_kmod"
 internal const val KMOD_LOAD_STATUS_FILE = "/data/adb/vpnhide_kmod/load_status"
 internal const val KMOD_LOAD_DMESG_FILE = "/data/adb/vpnhide_kmod/load_dmesg"
 internal const val ZYGISK_MODULE_DIR = "/data/adb/modules/vpnhide_zygisk"
+internal const val APP_PACKAGE_NAME = "dev.okhsunrog.vpnhide"
 internal const val ZYGISK_STATUS_FILE_NAME = "vpnhide_zygisk_active"
+internal const val ZYGISK_STATUS_FILE = "/data/user/0/dev.okhsunrog.vpnhide/files/vpnhide_zygisk_active"
 
 // KPM (KernelPatch Module) backend — the third native backend. The KPM has no
 // /proc node; its runtime channel is the kpatch ctl0 supercall, so the app reads
@@ -315,7 +317,11 @@ private fun buildCanonicalSelfUpdate(
         targets.canonicalConfig
             ?: buildCanonicalConfigFromTargetsSnapshot(targets, debug = legacyDebug)
     val previousSelf = baseCanonical.apps[selfPkg]
-    val selfNeedsRestart = previousSelf == null || !previousSelf.java || !previousSelf.native.enabled
+    val selfNeedsRestart =
+        previousSelf == null ||
+            !previousSelf.java ||
+            previousSelf.javaHooks != null ||
+            previousSelf.native != NativeRole.All
     val updatedCanonical = canonicalConfigWithSelfTarget(baseCanonical, selfPkg)
     return CanonicalSelfUpdate(
         canonical = updatedCanonical,

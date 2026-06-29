@@ -11,8 +11,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -105,7 +106,7 @@ internal data class SaveContext(
 /**
  * Shared scaffold for the three Protection picker screens. Owns all the
  * machinery they had copy-pasted: the cached-apps / targets subscription,
- * the dirty-guarded merge, search+system+russian filtering, the alphabetical
+ * the dirty-guarded merge, search/system/Russian/configured filtering, the alphabetical
  * fast-scrollbar, the bottom save bar, the snackbar, and the save lifecycle
  * (including the exit-code → message mapping). Screens supply only what is
  * genuinely screen-specific via the parameters below.
@@ -125,10 +126,12 @@ internal fun <T : TargetEntry> TargetPickerScreen(
     searchQuery: String,
     showSystem: Boolean,
     showRussianOnly: Boolean,
+    showConfiguredOnly: Boolean,
+    sortMode: TargetListSortMode,
     modifier: Modifier,
     helpPrefKey: String,
     helpTitle: String,
-    help: @Composable () -> Unit,
+    help: @Composable (TargetsSnapshot) -> Unit,
     merge: (apps: List<AppSummary>, targets: TargetsSnapshot, selfPkg: String) -> MergeResult<T>,
     countText: (entries: List<T>, resources: Resources) -> String,
     buildSaveCommand: (entries: List<T>, ctx: SaveContext) -> String,
@@ -206,15 +209,18 @@ internal fun <T : TargetEntry> TargetPickerScreen(
         }
     }
 
-    val filteredApps =
-        remember(allApps, searchQuery, showSystem, showRussianOnly) {
-            val q = searchQuery.trim().lowercase()
-            allApps.filter { app ->
-                (showSystem || !app.isSystem || app.anySelected) &&
-                    (!showRussianOnly || isRussianApp(app.packageName, app.label)) &&
-                    (q.isEmpty() || app.label.lowercase().contains(q) || app.packageName.lowercase().contains(q))
-            }
+    val visibleApps =
+        remember(allApps, searchQuery, showSystem, showRussianOnly, showConfiguredOnly, sortMode) {
+            visibleTargetEntries(
+                entries = allApps,
+                searchQuery = searchQuery,
+                showSystem = showSystem,
+                showRussianOnly = showRussianOnly,
+                showConfiguredOnly = showConfiguredOnly,
+                sortMode = sortMode,
+            )
         }
+    val visibleSections = remember(visibleApps, sortMode) { targetListSections(visibleApps, sortMode) }
 
     val onChange: (T) -> Unit = { updated ->
         allApps = allApps.map { if (it.packageName == updated.packageName) updated else it }
@@ -232,32 +238,41 @@ internal fun <T : TargetEntry> TargetPickerScreen(
         } else {
             val listState = rememberLazyListState()
             val currentTargets = targets
+            val indexLabels =
+                remember(visibleSections, currentTargets) {
+                    targetListIndexLabels(visibleSections, hasHelpItem = currentTargets != null)
+                }
             Box(modifier = Modifier.weight(1f)) {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    item {
-                        Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                            HelpAccordion(prefKey = helpPrefKey, title = helpTitle) {
-                                help()
+                    if (currentTargets != null) {
+                        item(key = "help") {
+                            Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                HelpAccordion(prefKey = helpPrefKey, title = helpTitle) {
+                                    help(currentTargets)
+                                }
                             }
                         }
                     }
-                    items(filteredApps, key = { it.packageName }) { app ->
-                        if (currentTargets != null) {
-                            row(app, userNames, currentTargets, onChange)
+                    visibleSections.forEach { section ->
+                        section.group?.let { group ->
+                            item(key = "group_${group.name}") {
+                                TargetGroupHeader(group = group, count = section.entries.size)
+                            }
+                        }
+                        items(section.entries, key = { it.packageName }) { app ->
+                            if (currentTargets != null) {
+                                row(app, userNames, currentTargets, onChange)
+                            }
                         }
                     }
                 }
                 AppListScrollbar(
                     listState = listState,
                     firstVisibleLabel = {
-                        filteredApps
-                            .getOrNull(listState.firstVisibleItemIndex)
-                            ?.label
-                            ?.firstOrNull()
-                            ?.uppercase() ?: ""
+                        firstVisibleTargetLabel(indexLabels, listState.firstVisibleItemIndex)
                     },
                 )
             }
@@ -330,6 +345,28 @@ internal fun <T : TargetEntry> TargetPickerScreen(
             saving = false
         }
     }
+}
+
+@Composable
+private fun TargetGroupHeader(
+    group: TargetListGroup,
+    count: Int,
+) {
+    val title =
+        when (group) {
+            TargetListGroup.Configured -> stringResource(R.string.target_group_configured)
+            TargetListGroup.OtherApps -> stringResource(R.string.target_group_other_apps)
+        }
+    Text(
+        text = stringResource(R.string.target_group_header, title, count),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        fontWeight = FontWeight.SemiBold,
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, top = 14.dp, end = 16.dp, bottom = 6.dp),
+    )
 }
 
 /**
@@ -407,6 +444,7 @@ internal fun BoxScope.AppListScrollbar(
  * package name, and a chip strip. The per-screen `chips` slot and the
  * row-level click behaviour (passed via [modifier]) are all that differ.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun TargetRowShell(
     label: String,
@@ -415,7 +453,7 @@ internal fun TargetRowShell(
     userIds: List<Int>,
     userNames: Map<Int, String>,
     modifier: Modifier = Modifier,
-    chips: @Composable RowScope.() -> Unit,
+    chips: @Composable () -> Unit,
 ) {
     Row(
         modifier =
@@ -446,7 +484,10 @@ internal fun TargetRowShell(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 chips()
             }
         }

@@ -12,9 +12,9 @@ import de.robv.android.xposed.XposedBridge
  * Source of truth is the canonical JSON config. We read it on [install] and via an
  * inotify watcher so a flip takes effect without restarting system_server.
  *
- * The logcat sink makes Diagnostics → Debug logging visible through ordinary
- * bug-report captures. The Xposed sink is kept for framework UIs / files that
- * expose `XposedBridge.log` separately.
+ * The logcat sink makes Settings → Debugging → Debug logging visible through
+ * ordinary bug-report captures. The Xposed sink is kept for framework UIs /
+ * files that expose `XposedBridge.log` separately.
  *
  * Only per-request / hot-path logs should go through [i]. Hook install failures
  * and other one-time errors use [e], which always prints — losing those would

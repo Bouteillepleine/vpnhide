@@ -67,9 +67,12 @@ class HookEntry : IXposedHookLoadPackage {
         return if (uid == SYSTEM_UID) currentCallbackUid.get() ?: uid else uid
     }
 
-    private fun isTargetCallerOrUid(uid: Int? = null): Boolean =
-        SystemServerConfigCache.isTargetUid(effectiveCallerUid()) ||
-            (uid != null && SystemServerConfigCache.isTargetUid(uid))
+    private fun isTargetCallerOrUid(
+        hook: HookIds.Hook,
+        uid: Int? = null,
+    ): Boolean =
+        SystemServerConfigCache.isHookEnabledForUid(effectiveCallerUid(), hook) ||
+            (uid != null && SystemServerConfigCache.isHookEnabledForUid(uid, hook))
 
     private fun rememberConnectivityService(instance: Any?) {
         if (instance != null) connectivityServiceInstance = instance
@@ -419,7 +422,7 @@ class HookEntry : IXposedHookLoadPackage {
         explicitUid: Int? = null,
     ) {
         if (bypassConnectivitySanitize.get() == true) return
-        if (!isTargetCallerOrUid(explicitUid)) return
+        if (!isTargetCallerOrUid(HookIds.Hook.LSPOSED_CONNECTIVITY_RESULT, explicitUid)) return
         try {
             val original = param.result
             val sanitized = sanitizedValue(original)
@@ -464,7 +467,10 @@ class HookEntry : IXposedHookLoadPackage {
 
     @Volatile private var canonicalConfigFileObserver: android.os.FileObserver? = null
 
-    private fun isTargetUid(uid: Int): Boolean = SystemServerConfigCache.isTargetUid(uid)
+    private fun isTargetUid(
+        uid: Int,
+        hook: HookIds.Hook,
+    ): Boolean = SystemServerConfigCache.isHookEnabledForUid(uid, hook)
 
     // Smoke-check at install time: every private AOSP field/ctor we touch
     // by reflection in the writeToParcel hooks. Returns the keys that
@@ -612,7 +618,7 @@ class HookEntry : IXposedHookLoadPackage {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     if (writingCopy.get() == true) return
                     val callerUid = effectiveCallerUid()
-                    val isTarget = isTargetUid(callerUid)
+                    val isTarget = isTargetUid(callerUid, HookIds.Hook.LSPOSED_NETWORK_CAPABILITIES)
                     val nc = param.thisObject as NetworkCapabilities
                     val hasVpn = nc.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
                     // Per-request diagnostic line. Gated by the debug-logging
@@ -658,7 +664,7 @@ class HookEntry : IXposedHookLoadPackage {
             Integer.TYPE,
             object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
-                    if (writingCopy.get() == true || !isTargetCallerOrUid()) return
+                    if (writingCopy.get() == true || !isTargetCallerOrUid(HookIds.Hook.LSPOSED_NETWORK)) return
                     val cs = connectivityServiceInstance ?: return
                     val network = param.thisObject as Network
                     try {
@@ -700,7 +706,7 @@ class HookEntry : IXposedHookLoadPackage {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     if (writingCopy.get() == true) return
                     val callerUid = effectiveCallerUid()
-                    val isTarget = isTargetUid(callerUid)
+                    val isTarget = isTargetUid(callerUid, HookIds.Hook.LSPOSED_NETWORK_INFO)
                     val ni = param.thisObject as NetworkInfo
                     val type = XposedHelpers.getIntField(ni, "mNetworkType")
                     val isVpn = type == ConnectivityManager.TYPE_VPN
@@ -748,7 +754,7 @@ class HookEntry : IXposedHookLoadPackage {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     if (writingCopy.get() == true) return
                     val callerUid = effectiveCallerUid()
-                    val isTarget = isTargetUid(callerUid)
+                    val isTarget = isTargetUid(callerUid, HookIds.Hook.LSPOSED_LINK_PROPERTIES)
                     val lp = param.thisObject as LinkProperties
                     val ifname = XposedHelpers.getObjectField(lp, "mIfaceName") as? String
                     HookLog.i("VpnHide-LP: uid=$callerUid target=$isTarget ifname=$ifname")
@@ -875,7 +881,7 @@ class HookEntry : IXposedHookLoadPackage {
                     val nri = param.args.firstOrNull() ?: return
                     rememberConnectivityService(param.thisObject)
                     val uid = extractRecipientUid(nri)
-                    if (uid < 0 || !isTargetUid(uid)) return
+                    if (uid < 0 || !isTargetUid(uid, HookIds.Hook.LSPOSED_CONNECTIVITY_CALLBACK)) return
 
                     val request = extractNetworkRequest(nri)
                     if (request != null && request.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
@@ -957,7 +963,7 @@ class HookEntry : IXposedHookLoadPackage {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         rememberConnectivityService(param.thisObject)
                         if (bypassConnectivitySanitize.get() == true) return
-                        if (!isTargetCallerOrUid()) return
+                        if (!isTargetCallerOrUid(HookIds.Hook.LSPOSED_CONNECTIVITY_NETWORK)) return
                         sanitizer(param)
                     }
                 },
@@ -1016,7 +1022,7 @@ class HookEntry : IXposedHookLoadPackage {
         val type = param.args.getOrNull(0) as? Int ?: return false
         if (type != ConnectivityManager.TYPE_VPN) return false
         if (param.result == null) return true
-        if (!isTargetCallerOrUid()) return false
+        if (!isTargetCallerOrUid(HookIds.Hook.LSPOSED_CONNECTIVITY_RESULT)) return false
         param.result = null
         LsposedStats.record(effectiveCallerUid(), HookIds.Hook.LSPOSED_CONNECTIVITY_RESULT)
         HookLog.i("VpnHide: suppressed getNetworkInfo(TYPE_VPN) for uid=${effectiveCallerUid()}")

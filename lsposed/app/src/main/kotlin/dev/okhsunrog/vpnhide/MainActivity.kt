@@ -3,7 +3,6 @@ package dev.okhsunrog.vpnhide
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedContent
@@ -20,7 +19,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Home
@@ -37,11 +35,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.lifecycleScope
 import dev.okhsunrog.vpnhide.settings.AppSettings
 import dev.okhsunrog.vpnhide.settings.LocalSettingsInteractor
 import dev.okhsunrog.vpnhide.settings.LocalSettingsState
@@ -57,37 +53,17 @@ import dev.okhsunrog.vpnhide.ui.theme.VpnHideTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : ComponentActivity() {
-    private val splashReady = AtomicBoolean(false)
-
     override fun onCreate(savedInstanceState: Bundle?) {
         StartupTrace.mark("activity_on_create")
-        installSplashScreen().setKeepOnScreenCondition { !splashReady.get() }
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         // Load the user's debug-logging preference before anything else
         // runs so the first suExec + Dashboard reload honor it.
         VpnHideLog.init(applicationContext)
         setContent {
-            VpnHideApp(
-                onDashboardReady = {
-                    if (splashReady.compareAndSet(false, true)) {
-                        StartupTrace.dashboardReady()
-                        // Re-propagate the persisted flag to the on-disk sinks as a
-                        // safety-net, but keep it off the cold-start critical path.
-                        lifecycleScope.launch(Dispatchers.IO) {
-                            applyDebugLoggingRuntime(VpnHideLog.enabled)
-                        }
-                    }
-                },
-                onRootDeniedReady = {
-                    if (splashReady.compareAndSet(false, true)) {
-                        StartupTrace.rootDeniedReady()
-                    }
-                },
-            )
+            VpnHideApp()
         }
     }
 }
@@ -105,10 +81,7 @@ private fun checkRootAccess(): Boolean {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VpnHideApp(
-    onDashboardReady: () -> Unit = {},
-    onRootDeniedReady: () -> Unit = {},
-) {
+fun VpnHideApp() {
     val context = LocalContext.current
     val settingsRepository = remember(context) { SettingsRepository(context.applicationContext) }
     val settings by settingsRepository.settings.collectAsState(initial = AppSettings())
@@ -134,25 +107,24 @@ fun VpnHideApp(
             }
 
             when (rootState) {
-                // splash holds until root check completes
                 null -> {
+                    StartupLoadingScreen()
                 }
 
                 RootState.Denied -> {
-                    // Drop splash — RootDeniedScreen has no async prerequisites.
-                    LaunchedEffect(Unit) { onRootDeniedReady() }
+                    LaunchedEffect(Unit) { StartupTrace.rootDeniedReady() }
                     RootDeniedScreen()
                 }
 
                 RootState.Granted -> {
-                    MainScreen(onReady = onDashboardReady)
+                    MainScreen()
                 }
             }
         }
     }
 }
 
-private enum class Tab { Dashboard, Statistics, Protection, Diagnostics }
+private enum class Tab { Dashboard, Statistics, Protection }
 
 private data class RefreshContext(
     val loading: Boolean,
@@ -166,7 +138,6 @@ private fun AppTopBarTitle(currentTab: Tab) {
             Tab.Dashboard -> stringResource(R.string.tab_dashboard)
             Tab.Statistics -> stringResource(R.string.tab_statistics)
             Tab.Protection -> stringResource(R.string.tab_protection)
-            Tab.Diagnostics -> stringResource(R.string.tab_diagnostics)
         }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(
@@ -228,7 +199,7 @@ private fun TopBarActionButton(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MainScreen(onReady: () -> Unit = {}) {
+private fun MainScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val appContext = context.applicationContext
@@ -240,6 +211,8 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     var searchActive by remember { mutableStateOf(false) }
     var showSystem by remember { mutableStateOf(false) }
     var showRussianOnly by remember { mutableStateOf(false) }
+    var showConfiguredOnly by remember { mutableStateOf(false) }
+    var targetSortMode by remember { mutableStateOf(TargetListSortMode.ConfiguredFirst) }
     var showFilterMenu by remember { mutableStateOf(false) }
     val appListLoading by AppListCache.loading.collectAsState()
     val targetsLoading by TargetsCache.loading.collectAsState()
@@ -263,7 +236,8 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     // is resolved. Keep that preparation first: it migrates/updates canonical
     // config and determines whether this app process needs a restart, so Dashboard
     // must not derive protection state from a stale answer. Protection still
-    // prewarms during splash, but without racing the self-target root shell.
+    // prewarms before a normal tab switch, but without racing the self-target
+    // root shell.
     LaunchedEffect(selfNeedsRestart) {
         val r = selfNeedsRestart ?: return@LaunchedEffect
         startupCoordinator.ensureInitialCaches(scope, r)
@@ -278,18 +252,20 @@ private fun MainScreen(onReady: () -> Unit = {}) {
         startupCoordinator.ensureProtectionCacheAfterRootSnapshot(scope, selfNeedsRestart, rootSnapshot)
     }
 
-    // Hold the splash screen until the first Dashboard frame can render
-    // with real content. Without this, the user sees splash → brief
-    // selfNeedsRestart-null spinner → brief Dashboard state-null spinner
-    // → content, with each spinner swap being visible flicker.
+    // Mark startup readiness once the main shell has shown either usable
+    // dashboard data or a terminal load error. Users see the dashboard loading
+    // state in place while this happens.
     val uiReady = startupCoordinator.isUiReady(dashboardState, dashboardError)
-    var fullyDrawnReady by remember { mutableStateOf(false) }
-    ReportDrawnWhen { fullyDrawnReady }
+    var startupTraceMarked by remember { mutableStateOf(false) }
     LaunchedEffect(uiReady) {
-        if (uiReady) {
-            withFrameNanos { }
-            fullyDrawnReady = true
-            onReady()
+        if (uiReady && !startupTraceMarked) {
+            startupTraceMarked = true
+            StartupTrace.dashboardReady()
+            scope.launch(Dispatchers.IO) {
+                // Re-propagate the persisted flag to the on-disk sinks as a
+                // safety-net, but keep it off the cold-start critical path.
+                applyDebugLoggingRuntime(VpnHideLog.enabled)
+            }
         }
     }
 
@@ -318,7 +294,10 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     var showSettings by remember { mutableStateOf(false) }
     if (showSettings) {
         BackHandler { showSettings = false }
-        SettingsScreen(onBack = { showSettings = false })
+        SettingsScreen(
+            selfNeedsRestart = selfNeedsRestart,
+            onBack = { showSettings = false },
+        )
         return
     }
 
@@ -368,9 +347,7 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                         ) {
                             // Refresh is contextual: Protection refreshes
                             // the app list, Dashboard refreshes the dashboard
-                            // state + update check. Diagnostics has its own
-                            // run buttons per-check, no top-bar refresh. Keep
-                            // it immediately before Settings when present.
+                            // state + update check.
                             val refreshContext =
                                 when (currentTab) {
                                     Tab.Dashboard -> {
@@ -399,10 +376,6 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                                             },
                                         )
                                     }
-
-                                    Tab.Diagnostics -> {
-                                        null
-                                    }
                                 }
                             if (currentTab == Tab.Protection) {
                                 TopBarActionButton(onClick = { searchActive = true }) {
@@ -412,7 +385,11 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                                     )
                                 }
                                 Box {
-                                    val anyFilterActive = showSystem || showRussianOnly
+                                    val anyFilterActive =
+                                        showSystem ||
+                                            showRussianOnly ||
+                                            showConfiguredOnly ||
+                                            targetSortMode != TargetListSortMode.ConfiguredFirst
                                     TopBarActionButton(
                                         onClick = { showFilterMenu = true },
                                         active = anyFilterActive,
@@ -446,26 +423,55 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                                                 )
                                             },
                                         )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.filter_configured_only)) },
+                                            onClick = { showConfiguredOnly = !showConfiguredOnly },
+                                            leadingIcon = {
+                                                Checkbox(
+                                                    checked = showConfiguredOnly,
+                                                    onCheckedChange = null,
+                                                )
+                                            },
+                                        )
+                                        HorizontalDivider()
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.sort_configured_first)) },
+                                            onClick = { targetSortMode = TargetListSortMode.ConfiguredFirst },
+                                            leadingIcon = {
+                                                RadioButton(
+                                                    selected = targetSortMode == TargetListSortMode.ConfiguredFirst,
+                                                    onClick = null,
+                                                )
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.sort_alphabetical)) },
+                                            onClick = { targetSortMode = TargetListSortMode.Alphabetical },
+                                            leadingIcon = {
+                                                RadioButton(
+                                                    selected = targetSortMode == TargetListSortMode.Alphabetical,
+                                                    onClick = null,
+                                                )
+                                            },
+                                        )
                                     }
                                 }
                             }
-                            refreshContext?.let { rc ->
-                                TopBarActionButton(
-                                    onClick = rc.onRefresh,
-                                    enabled = !rc.loading,
-                                ) {
-                                    if (rc.loading) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(20.dp),
-                                            strokeWidth = 2.dp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    } else {
-                                        Icon(
-                                            Icons.Default.Refresh,
-                                            contentDescription = stringResource(R.string.action_refresh),
-                                        )
-                                    }
+                            TopBarActionButton(
+                                onClick = refreshContext.onRefresh,
+                                enabled = !refreshContext.loading,
+                            ) {
+                                if (refreshContext.loading) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                } else {
+                                    Icon(
+                                        Icons.Default.Refresh,
+                                        contentDescription = stringResource(R.string.action_refresh),
+                                    )
                                 }
                             }
                             TopBarActionButton(
@@ -523,15 +529,6 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                     icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
                     label = { Text(stringResource(R.string.tab_protection)) },
                 )
-                NavigationBarItem(
-                    selected = currentTab == Tab.Diagnostics,
-                    onClick = {
-                        tabHaptic()
-                        currentTab = Tab.Diagnostics
-                    },
-                    icon = { Icon(Icons.Default.CheckCircle, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_diagnostics)) },
-                )
             }
         },
     ) { innerPadding ->
@@ -543,12 +540,7 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                 onRetry = { startupCoordinator.retrySelfTargets(scope) },
             )
         } else if (restart == null) {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(innerPadding),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator()
-            }
+            DashboardLoadingState(modifier = Modifier.padding(innerPadding))
         } else {
             AnimatedContent(
                 targetState = currentTab,
@@ -591,19 +583,35 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                             searchQuery = searchQuery,
                             showSystem = showSystem,
                             showRussianOnly = showRussianOnly,
-                            modifier = Modifier.padding(innerPadding),
-                        )
-                    }
-
-                    Tab.Diagnostics -> {
-                        DiagnosticsScreen(
-                            selfNeedsRestart = restart,
+                            showConfiguredOnly = showConfiguredOnly,
+                            sortMode = targetSortMode,
                             modifier = Modifier.padding(innerPadding),
                         )
                     }
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StartupLoadingScreen() {
+    Scaffold(
+        containerColor = AppColors.screenBackground,
+        topBar = {
+            LargeTopAppBar(
+                title = { AppTopBarTitle(Tab.Dashboard) },
+                colors =
+                    TopAppBarDefaults.topAppBarColors(
+                        containerColor = AppColors.topBarContainer,
+                        scrolledContainerColor = AppColors.topBarScrolledContainer,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    ),
+            )
+        },
+    ) { innerPadding ->
+        DashboardLoadingState(modifier = Modifier.padding(innerPadding))
     }
 }
 

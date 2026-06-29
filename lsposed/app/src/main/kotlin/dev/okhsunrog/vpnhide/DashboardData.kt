@@ -1055,13 +1055,7 @@ internal suspend fun loadDashboardState(
     val currentBootId = shellSnapshot["current_boot_id"].orEmpty()
     val nativeTargetCount = countPackages(targetsSnapshot.nativeTargets)
     val kmodRaw = detectKmodModule(shellSnapshot, selfPkg).withTargetCount(nativeTargetCount)
-    val zygiskStatusRaw =
-        try {
-            File(context.filesDir, ZYGISK_STATUS_FILE_NAME).takeIf { it.isFile }?.readText().orEmpty()
-        } catch (e: Exception) {
-            VpnHideLog.w(TAG, "failed to read zygisk status heartbeat: ${e.message}")
-            ""
-        }
+    val zygiskStatusRaw = shellSnapshot["zygisk_status"].orEmpty()
     val zygisk = detectZygiskModule(shellSnapshot, zygiskStatusRaw, selfPkg, currentBootId).withTargetCount(nativeTargetCount)
     val kpm = detectKpmModule(shellSnapshot, selfPkg, currentBootId).withTargetCount(nativeTargetCount)
     val ports = detectPortsModule(shellSnapshot, selfPkg).withTargetCount(countPackages(targetsSnapshot.portsObservers))
@@ -1299,7 +1293,7 @@ internal suspend fun loadDashboardState(
 
     // W3: user has debug logging turned on — VPN Hide is writing verbose lines
     // to logcat that a forensic reader with root can see. The flag file is
-    // written by the Diagnostics → Debug logging toggle; absent file ⇒
+    // written by the Settings → Debugging → Debug logging toggle; absent file ⇒
     // default off ⇒ no warning.
     val debugEnabled =
         targetsSnapshot.canonicalConfig?.debug
@@ -1356,19 +1350,19 @@ internal suspend fun loadDashboardState(
 
             else -> {
                 // Single source of truth: reuse the cached check run instead of
-                // probing again here. Wait only for the fast core phase — the
-                // slow Diagnostics-only probes don't feed this summary.
-                val core = DiagnosticsCache.awaitCoreResults(context)
-                if (core == null) {
+                // probing again here. Dashboard waits for the full Diagnostics
+                // result so its "OK" state means every protection probe passed.
+                val checks = DiagnosticsCache.awaitFullResults(context)
+                if (checks == null) {
                     // No active VPN per the check run (or it failed) — nothing to
                     // summarize; fall back to the same retry path as no-VPN.
                     ProtectionCheck.NoVpn
                 } else {
                     val native =
-                        if (hasNative) core.native.toNativeResult() else NativeResult.NoModule
+                        if (hasNative) checks.nativeAll.toNativeResult() else NativeResult.NoModule
                     val java =
                         if (lsposed is LsposedState.Active) {
-                            core.coreJava.toJavaResult()
+                            checks.java.toJavaResult()
                         } else {
                             JavaResult.HooksInactive
                         }

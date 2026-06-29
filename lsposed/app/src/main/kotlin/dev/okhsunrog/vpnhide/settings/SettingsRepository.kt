@@ -34,6 +34,7 @@ class SettingsRepository(
         val CONTAINER_SHADOWS = booleanPreferencesKey("container_shadows")
         val ANIMATIONS = booleanPreferencesKey("animations_enabled")
         val HAPTICS = booleanPreferencesKey("haptics_enabled")
+        val FULL_PROTECTION_ROLE_LABELS = booleanPreferencesKey("full_protection_role_labels")
         val SETTINGS_HINT_SEEN = booleanPreferencesKey("settings_hint_seen")
     }
 
@@ -50,6 +51,8 @@ class SettingsRepository(
                 drawContainerShadows = p[Keys.CONTAINER_SHADOWS] ?: defaults.drawContainerShadows,
                 animationsEnabled = p[Keys.ANIMATIONS] ?: defaults.animationsEnabled,
                 hapticsEnabled = p[Keys.HAPTICS] ?: defaults.hapticsEnabled,
+                fullProtectionRoleLabels =
+                    p[Keys.FULL_PROTECTION_ROLE_LABELS] ?: defaults.fullProtectionRoleLabels,
                 settingsHintSeen = p[Keys.SETTINGS_HINT_SEEN] ?: defaults.settingsHintSeen,
             )
         }
@@ -71,6 +74,8 @@ class SettingsRepository(
     suspend fun setAnimationsEnabled(value: Boolean) = edit { it[Keys.ANIMATIONS] = value }
 
     suspend fun setHapticsEnabled(value: Boolean) = edit { it[Keys.HAPTICS] = value }
+
+    suspend fun setFullProtectionRoleLabels(value: Boolean) = edit { it[Keys.FULL_PROTECTION_ROLE_LABELS] = value }
 
     suspend fun setSettingsHintSeen(value: Boolean) = edit { it[Keys.SETTINGS_HINT_SEEN] = value }
 

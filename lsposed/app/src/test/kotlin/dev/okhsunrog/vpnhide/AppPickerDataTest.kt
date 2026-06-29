@@ -49,7 +49,14 @@ class AppPickerDataTest {
     fun `save preserves selected apps missing from current picker list`() {
         val snapshot =
             snapshotWithCanonical(
-                "com.frozen" to CanonicalApp(java = true, native = NativeRole.All, appHiding = true, ports = true),
+                "com.frozen" to
+                    CanonicalApp(
+                        java = true,
+                        javaHooks = listOf("lsposed_network_capabilities"),
+                        native = NativeRole.All,
+                        appHiding = true,
+                        ports = true,
+                    ),
             )
 
         val cfg =
@@ -65,6 +72,7 @@ class AppPickerDataTest {
 
         val frozen = cfg.apps.getValue("com.frozen")
         assertEquals(true, frozen.java)
+        assertEquals(listOf("lsposed_network_capabilities"), frozen.javaHooks)
         assertEquals(NativeRole.All, frozen.native)
         assertEquals(true, frozen.appHiding)
         assertEquals(true, frozen.ports)
@@ -116,6 +124,53 @@ class AppPickerDataTest {
 
         assertEquals(customNative, cfg.apps.getValue("com.visible").native)
         assertEquals(customNative, cfg.apps.getValue("com.frozen").native)
+    }
+
+    @Test
+    fun `save preserves custom java hooks for missing and still selected apps`() {
+        val customJava = listOf("lsposed_network_capabilities")
+        val snapshot =
+            snapshotWithCanonical(
+                "com.visible" to CanonicalApp(java = true, javaHooks = customJava),
+                "com.frozen" to CanonicalApp(java = true, javaHooks = customJava),
+            )
+
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections =
+                    listOf(
+                        AppRoleSelection(packageName = "com.visible", java = true, javaHooks = customJava),
+                    ),
+                snapshot = snapshot,
+            )
+
+        assertEquals(customJava, cfg.apps.getValue("com.visible").javaHooks)
+        assertEquals(customJava, cfg.apps.getValue("com.frozen").javaHooks)
+    }
+
+    @Test
+    fun `save converts enabled java role without hook list to all hooks`() {
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections =
+                    listOf(
+                        AppRoleSelection(packageName = "com.visible", java = true),
+                    ),
+                snapshot =
+                    snapshotWithCanonical(
+                        "com.visible" to
+                            CanonicalApp(
+                                java = true,
+                                javaHooks = listOf("lsposed_network_capabilities"),
+                            ),
+                    ),
+            )
+
+        assertEquals(null, cfg.apps.getValue("com.visible").javaHooks)
     }
 
     @Test

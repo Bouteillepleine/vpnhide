@@ -2,6 +2,7 @@ package dev.okhsunrog.vpnhide
 
 import dev.okhsunrog.vpnhide.generated.HookIds
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -59,6 +60,24 @@ class StatisticsDataTest {
         assertEquals(99L, kmod.rows[1].hookId)
         assertNull(kmod.rows[1].hook)
 
+        assertFalse(state.backends.any { it.backend == HookIds.Backend.KPM })
+
+        val lsposed = state.backends.single { it.backend == HookIds.Backend.LSPOSED }
+        assertEquals("1.2.3", lsposed.metadata["version"])
+        assertEquals(HookIds.Hook.LSPOSED_NETWORK_CAPABILITIES, lsposed.rows.single().hook)
+    }
+
+    @Test
+    fun `shows kpm native statistics when kmod is not active`() {
+        val state =
+            buildStatisticsState(
+                RootSnapshot(
+                    statisticsFixtureSnapshot()
+                        .sections + ("kmod_state" to ""),
+                ),
+            )
+
+        assertFalse(state.backends.any { it.backend == HookIds.Backend.KMOD })
         val kpm = state.backends.single { it.backend == HookIds.Backend.KPM }
         assertEquals(
             HookIds.Backend.KPM.id
@@ -72,10 +91,6 @@ class StatisticsDataTest {
                 .packageNames
                 .single(),
         )
-
-        val lsposed = state.backends.single { it.backend == HookIds.Backend.LSPOSED }
-        assertEquals("1.2.3", lsposed.metadata["version"])
-        assertEquals(HookIds.Hook.LSPOSED_NETWORK_CAPABILITIES, lsposed.rows.single().hook)
     }
 
     @Test

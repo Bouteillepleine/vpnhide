@@ -29,12 +29,13 @@ import kotlinx.coroutines.withContext
  * - [State.Running] — a run is in flight.
  * - [State.VpnOff] — last run aborted because no active VPN was
  *   detected. User gets a "turn on VPN, then retry" banner.
- * - [State.Ready] — results captured; exposed to both the Dashboard
- *   protection panel and the Diagnostics screen.
+ * - [State.Ready] — at least the fast phase is captured; [State.Ready.complete]
+ *   flips to true when the slow Java probes have filled in too. Dashboard waits
+ *   for the complete result, while Diagnostics can show the fast result first.
  *
- * Once [State.Ready] is reached, [run] becomes a no-op — results don't
- * change mid-process. The only path back to "please retry" is killing the
- * process (a new launch starts with a fresh cache).
+ * Once a complete [State.Ready] is reached, [run] becomes a no-op — results
+ * don't change mid-process. The only path back to "please retry" is killing
+ * the process (a new launch starts with a fresh cache).
  */
 internal object DiagnosticsCache {
     sealed interface State {
@@ -47,8 +48,8 @@ internal object DiagnosticsCache {
         data class Ready(
             val results: CheckResults,
             // false after the fast core phase (native + VPN-presence Java) —
-            // enough for the Dashboard summary; true once the slow Diagnostics-
-            // only probes (push callback etc.) have filled in too.
+            // enough for early Diagnostics UI; true once the slow Java probes
+            // (push callback etc.) have filled in too.
             val complete: Boolean,
         ) : State
     }
@@ -70,9 +71,10 @@ internal object DiagnosticsCache {
         scope: CoroutineScope,
         context: Context,
     ) {
-        when (_state.value) {
+        val current = _state.value
+        when (current) {
             is State.Ready -> {
-                return
+                if (current.complete) return
             }
 
             State.Running -> {
@@ -95,15 +97,14 @@ internal object DiagnosticsCache {
     ) = run(scope, context)
 
     /**
-     * Suspend until the fast core phase is available, returning its results
-     * (native + VPN-presence Java) — the Dashboard protection summary's source.
-     * Returns null if there's no active VPN (or the run failed): nothing to
-     * summarize. Ensures a run is in flight, so it's safe to call standalone.
-     * Does not wait for the slow Diagnostics-only phase.
+     * Suspend until the full Diagnostics result is available. Dashboard uses
+     * this path so the top-level "OK" state is backed by every protection
+     * probe shown in Settings → Detailed diagnostics, including the slow push-callback
+     * and route/proxy Java checks.
      */
-    suspend fun awaitCoreResults(context: Context): CheckResults? {
+    suspend fun awaitFullResults(context: Context): CheckResults? {
         run(cacheScope, context)
-        val terminal = state.first { it is State.Ready || it is State.VpnOff }
+        val terminal = state.first { it is State.VpnOff || (it is State.Ready && it.complete) }
         return (terminal as? State.Ready)?.results
     }
 
@@ -119,13 +120,13 @@ internal object DiagnosticsCache {
             }
             val cm = appContext.getSystemService(ConnectivityManager::class.java)
             // Phase 1 (fast): native + VPN-presence Java probes. Publish
-            // immediately so the Dashboard summary can render without waiting
-            // for the slow phase below.
+            // immediately so Settings → Detailed diagnostics can show progress without
+            // waiting for the slow phase below.
             val core = withContext(Dispatchers.IO) { runCoreChecks(cm, appContext) }
             _state.value = State.Ready(core, complete = false)
             StartupTrace.mark("diagnostics_cache_core_done")
-            // Phase 2 (slow): Diagnostics-only Java probes, incl. the push
-            // callback that blocks for up to 3s.
+            // Phase 2 (slow): remaining Java probes, incl. the push callback
+            // that blocks for up to 3s. Dashboard waits for this full result.
             val extraJava = withContext(Dispatchers.IO) { runExtraJavaChecks(cm, appContext) }
             _state.value = State.Ready(core.copy(extraJava = extraJava), complete = true)
             StartupTrace.mark("diagnostics_cache_done")

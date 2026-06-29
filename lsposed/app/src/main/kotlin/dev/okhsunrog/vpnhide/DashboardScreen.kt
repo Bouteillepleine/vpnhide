@@ -2,6 +2,11 @@ package dev.okhsunrog.vpnhide
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.Box
@@ -20,6 +25,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -81,6 +87,11 @@ fun DashboardScreen(
         )
     }
 
+    if (state == null && loadError == null) {
+        DashboardLoadingState(modifier = modifier)
+        return
+    }
+
     Column(
         modifier =
             modifier
@@ -124,22 +135,16 @@ fun DashboardScreen(
             Spacer(Modifier.height(12.dp))
             if (s == null) return@Column
         }
-
-        if (s == null) {
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-            return@Column
-        }
+        val loadedState = s ?: return@Column
 
         // Issues split by severity — computed up front so the hero card can
         // summarize them. Errors = user attention, warnings = working-but-
         // suboptimal. Their banner sections render further down.
-        val errors = s.issues.filter { it.severity == IssueSeverity.ERROR }
-        val warnings = s.issues.filter { it.severity == IssueSeverity.WARNING }
+        val errors = loadedState.issues.filter { it.severity == IssueSeverity.ERROR }
+        val warnings = loadedState.issues.filter { it.severity == IssueSeverity.WARNING }
 
         // Hero: the whole setup's health at a glance.
-        DashboardHeroCard(state = s, errorCount = errors.size, warningCount = warnings.size)
+        DashboardHeroCard(state = loadedState, errorCount = errors.size, warningCount = warnings.size)
         Spacer(Modifier.height(20.dp))
 
         // Module status cards — one grouped block (byIndex corners).
@@ -149,11 +154,11 @@ fun DashboardScreen(
         // active native backend (kmod / KPM / Zygisk, §1.5), then the separate
         // ports feature.
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            JavaBackendCard(s.lsposed, index = 0, count = 3)
-            NativeBackendCard(s.nativeBackend, selfNeedsRestart, index = 1, count = 3)
-            ModuleCard(stringResource(R.string.dashboard_ports), "P", s.ports, index = 2, count = 3)
+            JavaBackendCard(loadedState.lsposed, index = 0, count = 3)
+            NativeBackendCard(loadedState.nativeBackend, selfNeedsRestart, index = 1, count = 3)
+            ModuleCard(stringResource(R.string.dashboard_ports), "P", loadedState.ports, index = 2, count = 3)
         }
-        s.nativeInstallRecommendation?.let { recommendation ->
+        loadedState.nativeInstallRecommendation?.let { recommendation ->
             Spacer(Modifier.height(8.dp))
             NativeInstallRecommendationCard(recommendation)
         }
@@ -167,7 +172,7 @@ fun DashboardScreen(
         SectionHeader(stringResource(R.string.dashboard_protection))
         Spacer(Modifier.height(8.dp))
 
-        when (val p = s.protection) {
+        when (val p = loadedState.protection) {
             is ProtectionCheck.NoVpn -> {
                 VpnOffPrompt(
                     onRetry = {
@@ -230,6 +235,175 @@ fun DashboardScreen(
 }
 
 // ── UI Components ────────────────────────────────────────────────────────
+
+@Composable
+internal fun DashboardLoadingState(modifier: Modifier = Modifier) {
+    val animations = LocalSettingsState.current.animationsEnabled
+    val alpha =
+        if (animations) {
+            val transition = rememberInfiniteTransition(label = "dashboardLoading")
+            val pulseAlpha by
+                transition.animateFloat(
+                    initialValue = 0.42f,
+                    targetValue = 0.88f,
+                    animationSpec =
+                        infiniteRepeatable(
+                            animation = tween(durationMillis = 900),
+                            repeatMode = RepeatMode.Reverse,
+                        ),
+                    label = "dashboardLoadingAlpha",
+                )
+            pulseAlpha
+        } else {
+            0.72f
+        }
+
+    Column(
+        modifier =
+            modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+    ) {
+        Spacer(Modifier.height(12.dp))
+        EnhancedCard(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = AppColors.cardContainer,
+        ) {
+            Column(modifier = Modifier.padding(18.dp).fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    LoadingBlock(
+                        modifier = Modifier.size(58.dp).clip(CircleShape),
+                        alpha = alpha,
+                    )
+                    Spacer(Modifier.width(16.dp))
+                    Column(Modifier.weight(1f)) {
+                        LoadingBlock(
+                            modifier = Modifier.fillMaxWidth(0.56f).height(24.dp),
+                            alpha = alpha,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        LoadingBlock(
+                            modifier = Modifier.fillMaxWidth(0.82f).height(14.dp),
+                            alpha = alpha,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(18.dp))
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(18.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LoadingMetric(alpha = alpha, modifier = Modifier.weight(1f))
+                    LoadingMetric(alpha = alpha, modifier = Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LoadingMetric(alpha = alpha, modifier = Modifier.weight(1f))
+                    LoadingMetric(alpha = alpha, modifier = Modifier.weight(1f))
+                }
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+        LoadingSection(alpha = alpha, rows = 3)
+        Spacer(Modifier.height(20.dp))
+        LoadingSection(alpha = alpha, rows = 2)
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun LoadingMetric(
+    alpha: Float,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier =
+            modifier
+                .clip(MaterialTheme.shapes.medium)
+                .background(AppColors.cardContainerStrong)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        LoadingBlock(
+            modifier = Modifier.fillMaxWidth(0.68f).height(12.dp),
+            alpha = alpha,
+        )
+        Spacer(Modifier.height(8.dp))
+        LoadingBlock(
+            modifier = Modifier.fillMaxWidth(0.42f).height(18.dp),
+            alpha = alpha,
+        )
+    }
+}
+
+@Composable
+private fun LoadingSection(
+    alpha: Float,
+    rows: Int,
+) {
+    LoadingBlock(
+        modifier = Modifier.fillMaxWidth(0.42f).height(18.dp),
+        alpha = alpha,
+    )
+    Spacer(Modifier.height(8.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        repeat(rows) { index ->
+            LoadingRow(index = index, count = rows, alpha = alpha)
+        }
+    }
+}
+
+@Composable
+private fun LoadingRow(
+    index: Int,
+    count: Int,
+    alpha: Float,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(MaterialTheme.shapes.medium)
+                .background(AppColors.cardContainer)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        LoadingBlock(
+            modifier = Modifier.size(40.dp),
+            alpha = alpha,
+        )
+        Spacer(Modifier.width(16.dp))
+        Column(Modifier.weight(1f)) {
+            LoadingBlock(
+                modifier = Modifier.fillMaxWidth(if (index == count - 1) 0.48f else 0.62f).height(16.dp),
+                alpha = alpha,
+            )
+            Spacer(Modifier.height(8.dp))
+            LoadingBlock(
+                modifier = Modifier.fillMaxWidth(if (index == 0) 0.78f else 0.68f).height(12.dp),
+                alpha = alpha,
+            )
+        }
+    }
+}
+
+@Composable
+private fun LoadingBlock(
+    alpha: Float,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier =
+            modifier
+                .clip(MaterialTheme.shapes.medium)
+                .alpha(alpha)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)),
+    )
+}
 
 /** A bold section title. Pass [color] for the colored issue/warning headers. */
 @Composable

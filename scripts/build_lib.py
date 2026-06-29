@@ -41,11 +41,16 @@ def version_sort_key(name: str) -> tuple[int, ...]:
 def get_build_version(repo_root: Path | None = None) -> str:
     """Get the effective build version for vpnhide artifacts.
 
+    - VPNHIDE_BUILD_VERSION set    -> that exact value
     - HEAD on a tag vX.Y.Z        -> "X.Y.Z"          (release build)
     - N commits after tag vX.Y.Z  -> "X.Y.Z-N-gSHA"   (dev build)
     - working tree dirty          -> additional "-dirty" suffix
     - no git / no matching tag    -> falls back to VERSION file
     """
+    override = os.environ.get("VPNHIDE_BUILD_VERSION")
+    if override and override.strip():
+        return override.strip().removeprefix("v")
+
     if repo_root is None:
         repo_root = Path(__file__).resolve().parent.parent
 

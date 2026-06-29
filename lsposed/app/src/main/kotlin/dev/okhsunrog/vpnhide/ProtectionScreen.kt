@@ -6,20 +6,24 @@ import androidx.compose.ui.Modifier
 /**
  * The Protection tab. Formerly a segmented Tun / App-hiding / Ports switcher;
  * those three pickers are now one unified list ([AppPickerScreen]) where each
- * app row carries all four role chips (J / N / A / P) and a single Save writes
+ * app row carries all four role chips (J / N / A / P, optionally full labels) and a single Save writes
  * every backend at once.
  */
 @Composable
-fun ProtectionScreen(
+internal fun ProtectionScreen(
     searchQuery: String,
     showSystem: Boolean,
     showRussianOnly: Boolean,
+    showConfiguredOnly: Boolean,
+    sortMode: TargetListSortMode,
     modifier: Modifier = Modifier,
 ) {
     AppPickerScreen(
         searchQuery = searchQuery,
         showSystem = showSystem,
         showRussianOnly = showRussianOnly,
+        showConfiguredOnly = showConfiguredOnly,
+        sortMode = sortMode,
         modifier = modifier,
     )
 }
