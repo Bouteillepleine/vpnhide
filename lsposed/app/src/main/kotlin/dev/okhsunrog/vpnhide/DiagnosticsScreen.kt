@@ -57,17 +57,16 @@ data class CheckResult(
 )
 
 internal data class CheckResults(
-    // UniFFI native probes — the Dashboard "Native level" summary rolls up
-    // exactly this group.
+    // UniFFI native probes from the fast phase.
     val native: List<CheckResult>,
     // Java-implemented native-level probes (NetworkInterface enum, /proc/net/route)
-    // — shown under "Native level" on Diagnostics, not part of any summary.
+    // — shown under "Native level" and included in Dashboard once the full
+    // diagnostics result is ready.
     val nativeExtra: List<CheckResult> = emptyList(),
-    // VPN-presence probes — the Dashboard "Java API level" summary rolls up
-    // exactly this group.
+    // VPN-presence probes from the fast phase.
     val coreJava: List<CheckResult> = emptyList(),
-    // Diagnostics-only Java probes (active-network, push callback, routes, proxy)
-    // — the slow push-callback check lives here, so it runs in a second phase.
+    // Remaining Java probes (active-network, push callback, routes, proxy) —
+    // the slow push-callback check lives here, so it runs in a second phase.
     val extraJava: List<CheckResult> = emptyList(),
 ) {
     val nativeAll get() = native + nativeExtra
@@ -543,12 +542,11 @@ private fun CheckCard(
 // ==========================================================================
 
 /**
- * The checks split into two phases so the Dashboard can show its protection
- * summary without waiting for the slow probes. [runCoreChecks] runs everything
- * the Dashboard summary needs (UniFFI native + the VPN-presence Java probes)
- * plus the cheap native-extra probes; [runExtraJavaChecks] runs the
- * Diagnostics-only Java probes, including the push-callback probe that blocks
- * for up to 3s. DiagnosticsCache publishes after each phase.
+ * The checks split into two phases so Settings → Diagnostics can show progress
+ * before the slow probes finish. [runCoreChecks] runs the fast native and
+ * VPN-presence Java probes; [runExtraJavaChecks] runs the remaining Java probes,
+ * including the push-callback probe that blocks for up to 3s. Dashboard waits
+ * for the complete DiagnosticsCache result before summarizing protection.
  */
 internal fun runCoreChecks(
     cm: ConnectivityManager,
@@ -610,7 +608,7 @@ private fun List<CheckResult>.logged(): List<CheckResult> =
 
 /** Run both phases and return the complete results. Used where blocking on the
  * slow probes is fine (debug export); the live cache runs the phased builders
- * directly so the Dashboard summary needn't wait for the slow phase. */
+ * directly so Settings → Diagnostics can show the fast phase first. */
 internal fun runAllChecks(
     cm: ConnectivityManager,
     context: android.content.Context,

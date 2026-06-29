@@ -176,9 +176,6 @@ dependencies {
     // Xposed API — compileOnly so it's not bundled into the APK.
     compileOnly("de.robv.android.xposed:api:82")
 
-    // Android 12 SplashScreen API, backported to API 23+.
-    implementation("androidx.core:core-splashscreen:1.2.0")
-
     // Compose UI
     implementation(libs.core.ktx)
     implementation(libs.activity.compose)

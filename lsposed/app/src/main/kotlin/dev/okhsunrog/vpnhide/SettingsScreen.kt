@@ -1,10 +1,12 @@
 package dev.okhsunrog.vpnhide
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Animation
 import androidx.compose.material.icons.filled.BrightnessMedium
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
@@ -77,9 +80,21 @@ import java.nio.charset.StandardCharsets
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(
+    selfNeedsRestart: Boolean?,
+    onBack: () -> Unit,
+) {
     val settings = LocalSettingsState.current
     val interactor = LocalSettingsInteractor.current
+    var diagnosticsOpen by remember { mutableStateOf(false) }
+
+    if (diagnosticsOpen) {
+        DiagnosticsSettingsScreen(
+            selfNeedsRestart = selfNeedsRestart,
+            onBack = { diagnosticsOpen = false },
+        )
+        return
+    }
 
     Scaffold(
         containerColor = AppColors.screenBackground,
@@ -202,9 +217,68 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
 
             AutoHideSettingsSection()
+            DiagnosticsSettingsSection(onOpen = { diagnosticsOpen = true })
             ConfigBackupSection()
             SuperkeySettingsSection()
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DiagnosticsSettingsScreen(
+    selfNeedsRestart: Boolean?,
+    onBack: () -> Unit,
+) {
+    BackHandler(onBack = onBack)
+    Scaffold(
+        containerColor = AppColors.screenBackground,
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.tab_diagnostics)) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.action_back),
+                        )
+                    }
+                },
+                colors =
+                    TopAppBarDefaults.topAppBarColors(
+                        containerColor = AppColors.topBarContainer,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ),
+            )
+        },
+    ) { padding ->
+        if (selfNeedsRestart == null) {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator()
+            }
+        } else {
+            DiagnosticsScreen(
+                selfNeedsRestart = selfNeedsRestart,
+                modifier = Modifier.padding(padding),
+            )
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticsSettingsSection(onOpen: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        SettingsSectionHeader(stringResource(R.string.settings_diagnostics_section))
+        PreferenceRow(
+            title = stringResource(R.string.settings_diagnostics_title),
+            subtitle = stringResource(R.string.settings_diagnostics_sub),
+            icon = Icons.Default.CheckCircle,
+            onClick = onOpen,
+        )
     }
 }
 
