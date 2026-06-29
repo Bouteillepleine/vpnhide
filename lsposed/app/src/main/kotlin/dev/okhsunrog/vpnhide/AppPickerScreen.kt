@@ -834,21 +834,32 @@ private fun HooksDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
-                    items(hookEntries, key = { it.hookName }) { hook ->
-                        val checked = hook.hookName in selected
-                        HookRow(
-                            hook = hook,
-                            checked = checked,
-                            onCheckedChange = { enabled ->
-                                selected =
-                                    if (enabled) {
-                                        selected + hook.hookName
-                                    } else {
-                                        selected - hook.hookName
-                                    }
-                            },
-                        )
+                // Group hooks by detection method, with a header explaining what
+                // the method is and how an app uses it to detect a VPN — same
+                // taxonomy/wording as the Statistics per-hook detail.
+                val grouped =
+                    remember(hookEntries) {
+                        hookEntries.groupBy { DetectionMethod.of(it) }.toSortedMap(compareBy { it.ordinal })
+                    }
+                LazyColumn(modifier = Modifier.heightIn(max = 460.dp)) {
+                    grouped.forEach { (method, hooks) ->
+                        item(key = "header_${method.name}") {
+                            MethodHeader(method)
+                        }
+                        items(hooks, key = { it.hookName }) { hook ->
+                            HookRow(
+                                hook = hook,
+                                checked = hook.hookName in selected,
+                                onCheckedChange = { enabled ->
+                                    selected =
+                                        if (enabled) {
+                                            selected + hook.hookName
+                                        } else {
+                                            selected - hook.hookName
+                                        }
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -871,6 +882,22 @@ private fun HooksDialog(
 }
 
 @Composable
+private fun MethodHeader(method: DetectionMethod) {
+    Column(modifier = Modifier.padding(top = 10.dp, bottom = 2.dp)) {
+        Text(
+            text = stringResource(method.labelRes),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+        )
+        Text(
+            text = stringResource(method.descriptionRes),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
 private fun HookRow(
     hook: HookIds.Hook,
     checked: Boolean,
@@ -881,19 +908,16 @@ private fun HookRow(
             Modifier
                 .clickable { onCheckedChange(!checked) }
                 .fillMaxWidth()
-                .padding(vertical = 6.dp),
+                .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Checkbox(checked = checked, onCheckedChange = onCheckedChange)
-        Column(modifier = Modifier.padding(start = 8.dp)) {
-            Text(
-                text = hook.hookName,
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                text = hook.note,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        // The friendly method name + explanation live in the group header; the
+        // row just needs the precise hook (its technical note) to disambiguate.
+        Text(
+            text = hook.note,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(start = 8.dp),
+        )
     }
 }
