@@ -164,10 +164,10 @@ internal sealed interface LsposedConfig {
     ) : LsposedConfig
 }
 
-internal enum class IssueSeverity { ERROR, WARNING }
+internal enum class DashboardMessageSeverity { ERROR, WARNING, INFO }
 
-internal data class Issue(
-    val severity: IssueSeverity,
+internal data class DashboardMessage(
+    val severity: DashboardMessageSeverity,
     val text: String,
 )
 
@@ -182,7 +182,7 @@ internal data class DashboardState(
     val nativeInstallRecommendation: NativeInstallRecommendation?,
     val kmodLoadStatus: KmodLoadStatus?,
     val protection: ProtectionCheck,
-    val issues: List<Issue>,
+    val messages: List<DashboardMessage>,
 )
 
 internal enum class HeroStatus { Protected, Attention, Unprotected, VpnOff }
@@ -985,7 +985,7 @@ private fun readLsposedConfig(
 }
 
 // Linear orchestrator: pure detectors above produce the module/lsposed state,
-// then a flat list of independent issue guards builds the warning/error banners.
+// then a flat list of independent guards builds the dashboard message banners.
 // Kept as one top-to-bottom narrative — splitting the flat guard list behind a
 // parameter bundle would add indirection without improving clarity.
 @Suppress("LongMethod", "CyclomaticComplexMethod")
@@ -994,16 +994,16 @@ internal suspend fun loadDashboardState(
     selfNeedsRestart: Boolean,
     rootSnapshot: RootSnapshot,
 ): DashboardState {
-    val issues = mutableListOf<Issue>()
+    val messages = mutableListOf<DashboardMessage>()
     val res = context.resources
     val selfPkg = context.packageName
 
     fun err(text: String) {
-        issues += Issue(IssueSeverity.ERROR, text)
+        messages += DashboardMessage(DashboardMessageSeverity.ERROR, text)
     }
 
     fun warn(text: String) {
-        issues += Issue(IssueSeverity.WARNING, text)
+        messages += DashboardMessage(DashboardMessageSeverity.WARNING, text)
     }
 
     VpnHideLog.i(TAG, "=== Loading dashboard state ===")
@@ -1133,7 +1133,7 @@ internal suspend fun loadDashboardState(
     )
     StartupTrace.mark("dashboard_lsposed_done")
 
-    // ── Issues ──
+    // ── Messages ──
     val hasNative =
         kmod is ModuleState.Installed ||
             kpm is ModuleState.Installed ||
@@ -1292,7 +1292,7 @@ internal suspend fun loadDashboardState(
     if (selfUidCount > 1) {
         warn(res.getString(R.string.dashboard_issue_self_multi_profile, selfUidCount))
     }
-    StartupTrace.mark("dashboard_issues_done")
+    StartupTrace.mark("dashboard_messages_done")
 
     // ── Errors: kmod variant / load problems ──
     // The diagnosis (reason + banner text) was computed once above as
@@ -1340,7 +1340,7 @@ internal suspend fun loadDashboardState(
             }
         }
 
-    VpnHideLog.i(TAG, "protection=$protection issues=$issues")
+    VpnHideLog.i(TAG, "protection=$protection messages=$messages")
     StartupTrace.mark("dashboard_protection_done")
     VpnHideLog.i(TAG, "=== Dashboard state loaded ===")
 
@@ -1354,7 +1354,7 @@ internal suspend fun loadDashboardState(
         nativeInstallRecommendation = nativeInstallRecommendation,
         kmodLoadStatus = kmodLoadStatus,
         protection = protection,
-        issues = issues,
+        messages = messages,
     )
 }
 

@@ -22,6 +22,24 @@ class DashboardUiStateTest {
     }
 
     @Test
+    fun `computeHeroStatus ignores info messages`() {
+        val state =
+            dashboardState(
+                protection = ProtectionCheck.Checked(NativeResult.Ok, JavaResult.Ok),
+                messages = listOf(DashboardMessage(DashboardMessageSeverity.INFO, "note")),
+            )
+
+        assertEquals(
+            HeroStatus.Protected,
+            computeHeroStatus(
+                state = state,
+                errorCount = 0,
+                warningCount = 0,
+            ),
+        )
+    }
+
+    @Test
     fun `computeHeroStatus returns vpn off before issue ranking`() {
         assertEquals(
             HeroStatus.VpnOff,
@@ -133,7 +151,7 @@ class DashboardUiStateTest {
         lsposed: LsposedState = LsposedState.NotInstalled,
         ports: ModuleState = ModuleState.NotInstalled,
         protection: ProtectionCheck = ProtectionCheck.Checked(NativeResult.Ok, JavaResult.Ok),
-        issues: List<Issue> = emptyList(),
+        messages: List<DashboardMessage> = emptyList(),
     ): DashboardState =
         DashboardState(
             kmod = kmod,
@@ -145,6 +163,6 @@ class DashboardUiStateTest {
             nativeInstallRecommendation = null,
             kmodLoadStatus = null,
             protection = protection,
-            issues = issues,
+            messages = messages,
         )
 }
