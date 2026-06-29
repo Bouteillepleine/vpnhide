@@ -54,6 +54,14 @@ internal data class PortPolicyPreset(
     val rules: List<PortRule>,
 )
 
+internal enum class PortPolicyUiMode { All, Preset, Custom }
+
+internal data class EditablePortRule(
+    val protocol: PortProtocol = PortProtocol.Both,
+    val start: String = "",
+    val end: String = "",
+)
+
 internal const val PORT_PRESET_COMMON_PROXY = "common_proxy"
 
 internal val PortPolicyPresets: List<PortPolicyPreset> =
@@ -93,3 +101,49 @@ internal fun normalizedPortRules(rules: List<PortRule>): List<PortRule> =
     rules
         .distinct()
         .sortedWith(compareBy<PortRule> { it.start }.thenBy { it.end }.thenBy { it.protocol.ordinal })
+
+internal fun PortPolicy?.toUiMode(): PortPolicyUiMode =
+    when {
+        this == null -> PortPolicyUiMode.All
+        mode == PortPolicyMode.Preset && portPreset(preset) != null -> PortPolicyUiMode.Preset
+        else -> PortPolicyUiMode.Custom
+    }
+
+internal fun PortRule.toEditable(): EditablePortRule =
+    EditablePortRule(
+        protocol = protocol,
+        start = start.toString(),
+        end = if (end == start) "" else end.toString(),
+    )
+
+internal fun EditablePortRule.toPortRuleOrNull(): PortRule? {
+    val startPort = start.toIntOrNull() ?: return null
+    val endPort = end.takeIf { it.isNotBlank() }?.toIntOrNull() ?: startPort
+    return runCatching {
+        PortRule(
+            protocol = protocol,
+            start = startPort,
+            end = endPort,
+        )
+    }.getOrNull()
+}
+
+internal fun PortProtocol.next(): PortProtocol =
+    when (this) {
+        PortProtocol.Both -> PortProtocol.Tcp
+        PortProtocol.Tcp -> PortProtocol.Udp
+        PortProtocol.Udp -> PortProtocol.Both
+    }
+
+internal fun protocolLabel(protocol: PortProtocol): String =
+    when (protocol) {
+        PortProtocol.Both -> "TCP/UDP"
+        PortProtocol.Tcp -> "TCP"
+        PortProtocol.Udp -> "UDP"
+    }
+
+internal fun portRulesSummary(rules: List<PortRule>): String =
+    rules.joinToString(", ") { rule ->
+        val ports = if (rule.start == rule.end) "${rule.start}" else "${rule.start}-${rule.end}"
+        "${protocolLabel(rule.protocol)} $ports"
+    }

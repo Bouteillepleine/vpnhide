@@ -518,14 +518,6 @@ private fun roleLabel(
     fullLabels: Boolean,
 ): String = (if (fullLabels) full else compact) + if (partial) "*" else ""
 
-private enum class PortPolicyUiMode { All, Preset, Custom }
-
-private data class EditablePortRule(
-    val protocol: PortProtocol = PortProtocol.Both,
-    val start: String = "",
-    val end: String = "",
-)
-
 @Composable
 private fun HookTargetChip(
     label: String,
@@ -787,52 +779,6 @@ private fun PortRuleEditorRow(
         }
     }
 }
-
-private fun PortPolicy?.toUiMode(): PortPolicyUiMode =
-    when {
-        this == null -> PortPolicyUiMode.All
-        mode == PortPolicyMode.Preset && portPreset(preset) != null -> PortPolicyUiMode.Preset
-        else -> PortPolicyUiMode.Custom
-    }
-
-private fun PortRule.toEditable(): EditablePortRule =
-    EditablePortRule(
-        protocol = protocol,
-        start = start.toString(),
-        end = if (end == start) "" else end.toString(),
-    )
-
-private fun EditablePortRule.toPortRuleOrNull(): PortRule? {
-    val startPort = start.toIntOrNull() ?: return null
-    val endPort = end.takeIf { it.isNotBlank() }?.toIntOrNull() ?: startPort
-    return runCatching {
-        PortRule(
-            protocol = protocol,
-            start = startPort,
-            end = endPort,
-        )
-    }.getOrNull()
-}
-
-private fun PortProtocol.next(): PortProtocol =
-    when (this) {
-        PortProtocol.Both -> PortProtocol.Tcp
-        PortProtocol.Tcp -> PortProtocol.Udp
-        PortProtocol.Udp -> PortProtocol.Both
-    }
-
-private fun protocolLabel(protocol: PortProtocol): String =
-    when (protocol) {
-        PortProtocol.Both -> "TCP/UDP"
-        PortProtocol.Tcp -> "TCP"
-        PortProtocol.Udp -> "UDP"
-    }
-
-private fun portRulesSummary(rules: List<PortRule>): String =
-    rules.joinToString(", ") { rule ->
-        val ports = if (rule.start == rule.end) "${rule.start}" else "${rule.start}-${rule.end}"
-        "${protocolLabel(rule.protocol)} $ports"
-    }
 
 @Composable
 private fun HooksDialog(
