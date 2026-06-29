@@ -72,6 +72,39 @@ class NativeBackendTest {
         )
     }
 
+    @Test
+    fun `detect native backend states wires section map to all detectors`() {
+        val states =
+            detectNativeBackendStates(
+                sections =
+                    mapOf(
+                        "kmod_prop" to "version=v1.2.3\ngkiVariant=android14-6.1\n",
+                        "proc_exists" to "1",
+                        "kmod_targets" to "$APP_PACKAGE_NAME\ncom.native.one\n",
+                        "kpm_prop" to "version=v2.0.0\n",
+                        "kpm_load_status" to "loaded=1\nboot_id=boot-1\n",
+                        "kpm_targets" to "$APP_PACKAGE_NAME\ncom.native.two\ncom.native.three\n",
+                        "zygisk_prop" to "version=v3.0.0\n",
+                        "zygisk_status" to "boot_id=boot-1\n",
+                        "zygisk_targets" to "$APP_PACKAGE_NAME\ncom.native.four\n",
+                        "current_boot_id" to "boot-1",
+                    ),
+            )
+
+        assertEquals(
+            ModuleState.Installed(
+                version = "1.2.3",
+                active = true,
+                targetCount = 1,
+                gkiVariant = "android14-6.1",
+            ),
+            states.kmod,
+        )
+        assertEquals(ModuleState.Installed(version = "2.0.0", active = true, targetCount = 2), states.kpm)
+        assertEquals(ModuleState.Installed(version = "3.0.0", active = true, targetCount = 1), states.zygisk)
+        assertEquals(NativeBackendId.Kmod, states.activeId)
+    }
+
     // ── classifyMultiNative ──────────────────────────────────────────────
 
     @Test
