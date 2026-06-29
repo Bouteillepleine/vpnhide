@@ -394,11 +394,27 @@ fn activate_zygisk_with_pm_wait(wait: PmReadyWait) -> Result<()> {
     write_atomic(Path::new(ZYGISK_RUNTIME_CONFIG), wire.as_bytes(), 0o644)
 }
 
-pub fn activate_kpm() -> Result<()> {
-    activate_kpm_with_pm_wait(PmReadyWait::Bounded(PM_READY_ATTEMPTS), true)
+/// Outcome of a KPM boot activation. A kmod conflict is a legitimate,
+/// non-error result (the KPM deliberately stands down — see §1.5), so it must
+/// be distinguishable from a successful configure: the boot script reports
+/// each as a different `load_status`, and reporting a deferral as "configured"
+/// would lie to the diagnostics screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KpmBootOutcome {
+    /// Wire snapshot was delivered to the KPM over ctl0.
+    Configured,
+    /// The .ko backend is present, so the KPM stood down without loading or
+    /// configuring (co-residence freezes the kernel — protocol §1.5).
+    DeferredConflict,
 }
 
-pub fn activate_kpm_boot() -> Result<()> {
+pub fn activate_kpm() -> Result<()> {
+    // App / manual path: a conflict is a hard error (conflict_is_error=true),
+    // so this only ever returns Configured on success.
+    activate_kpm_with_pm_wait(PmReadyWait::Bounded(PM_READY_ATTEMPTS), true).map(|_| ())
+}
+
+pub fn activate_kpm_boot() -> Result<KpmBootOutcome> {
     activate_kpm_with_pm_wait(PmReadyWait::Forever, false)
 }
 
@@ -422,17 +438,20 @@ fn read_kpm_payload(wire: &str) -> Result<String> {
     client.ctl0_read(wire)
 }
 
-fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Result<()> {
+fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Result<KpmBootOutcome> {
     if skip_kpm_for_kmod_conflict(conflict_is_error)? {
-        return Ok(());
+        return Ok(KpmBootOutcome::DeferredConflict);
     }
     let wire = project_native_with_pm_wait(&read_canonical()?, wait)?;
+    // Re-check after the (possibly long) PackageManager wait: the .ko may have
+    // been loaded meanwhile, in which case we must not configure the KPM.
     if skip_kpm_for_kmod_conflict(conflict_is_error)? {
-        return Ok(());
+        return Ok(KpmBootOutcome::DeferredConflict);
     }
     let client = KpmClient::detect()?;
     client.ensure_loaded()?;
-    client.ctl0_config(&wire)
+    client.ctl0_config(&wire)?;
+    Ok(KpmBootOutcome::Configured)
 }
 
 pub fn activate_ports() -> Result<()> {
@@ -514,7 +533,14 @@ fn pm_output_has_package(output: &str, package: &str) -> bool {
         .any(|line| line.split_whitespace().next() == Some(expected.as_str()))
 }
 
-fn kmod_backend_present() -> bool {
+/// True when the .ko backend is present and not disabled. This is the most
+/// complete of the project's "is the kmod here?" checks: it catches both an
+/// installed-and-enabled module directory *and* a live `/proc/vpnhide_ctl`
+/// (e.g. a manually-loaded .ko whose module dir is gone). The boot scripts
+/// keep a cheaper directory-only check as a fail-safe floor (it cannot error
+/// and is ordering-independent); this superset is the authoritative gate on
+/// the config-delivery path. See protocol §1.5.
+pub fn kmod_backend_present() -> bool {
     Path::new(KMOD_CTL).exists()
         || (Path::new(KMOD_MODULE_DIR).is_dir()
             && !Path::new(KMOD_MODULE_DIR).join("disable").exists())
@@ -524,6 +550,8 @@ fn skip_kpm_for_kmod_conflict(conflict_is_error: bool) -> Result<bool> {
     if !kmod_backend_present() {
         return Ok(false);
     }
+    // .ko present. App/manual path treats this as a hard error; boot path
+    // signals a (non-error) deferral to the caller.
     if conflict_is_error {
         return Err("kmod backend present; refusing to load/configure KPM".into());
     }

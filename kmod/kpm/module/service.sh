@@ -26,6 +26,16 @@ write_status() {
 }
 
 apply_at_boot() {
+    # Single-active guard (§1.5), checked before the APatch superkey branch so
+    # a co-installed .ko isn't masked as `awaiting_superkey`. Cheap, fail-safe,
+    # ordering-independent floor; the activator re-checks (a superset, incl. a
+    # live /proc/vpnhide_ctl) below and exits 3 if it still sees the .ko.
+    if [ -d /data/adb/modules/vpnhide_kmod ] && \
+       [ ! -f /data/adb/modules/vpnhide_kmod/disable ]; then
+        log -t vpnhide "kpm: .ko backend present — not configuring KPM (single-active)"
+        write_status conflict 0 "vpnhide_kmod present"
+        return 0
+    fi
     if [ ! -x "$ACTIVATOR" ]; then
         log -t vpnhide "kpm: activator missing at $ACTIVATOR"
         write_status activator 0 "activator missing at $ACTIVATOR"
@@ -39,14 +49,24 @@ apply_at_boot() {
 
     out="$("$ACTIVATOR" --boot-wait 2>&1)"
     rc=$?
-    if [ "$rc" -eq 0 ]; then
-        log -t vpnhide "kpm: activator finished boot config"
-        write_status activator 1 configured
-    else
-        log -t vpnhide "kpm: activator failed rc=$rc"
-        write_status activator 0 "rc=$rc $out"
-        return "$rc"
-    fi
+    case "$rc" in
+        0)
+            log -t vpnhide "kpm: activator finished boot config"
+            write_status activator 1 configured
+            ;;
+        3)
+            # EXIT_DEFERRED_CONFLICT: the activator found the .ko present (e.g.
+            # it loaded during the PackageManager wait) and stood down. Record
+            # the truthful conflict status rather than a false `configured`.
+            log -t vpnhide "kpm: activator deferred to .ko (single-active)"
+            write_status conflict 0 "vpnhide_kmod present"
+            ;;
+        *)
+            log -t vpnhide "kpm: activator failed rc=$rc"
+            write_status activator 0 "rc=$rc $out"
+            return "$rc"
+            ;;
+    esac
 }
 
 apply_at_boot &
