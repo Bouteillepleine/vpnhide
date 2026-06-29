@@ -193,7 +193,7 @@ fun SettingsScreen(
                 )
             }
 
-            // ── Interaction ── grouped block of two rows.
+            // ── Interaction ── grouped block of three rows.
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 SettingsSectionHeader(stringResource(R.string.settings_interaction))
                 PreferenceRowSwitch(
@@ -201,7 +201,7 @@ fun SettingsScreen(
                     subtitle = stringResource(R.string.settings_haptics_sub),
                     icon = Icons.Default.Vibration,
                     index = 0,
-                    count = 2,
+                    count = 3,
                     checked = settings.hapticsEnabled,
                     onCheckedChange = interactor::setHapticsEnabled,
                 )
@@ -210,14 +210,24 @@ fun SettingsScreen(
                     subtitle = stringResource(R.string.settings_animations_sub),
                     icon = Icons.Default.Animation,
                     index = 1,
-                    count = 2,
+                    count = 3,
                     checked = settings.animationsEnabled,
                     onCheckedChange = interactor::setAnimationsEnabled,
+                )
+                PreferenceRowSwitch(
+                    title = stringResource(R.string.settings_full_role_labels),
+                    subtitle = stringResource(R.string.settings_full_role_labels_sub),
+                    icon = Icons.Default.TextFields,
+                    index = 2,
+                    count = 3,
+                    checked = settings.fullProtectionRoleLabels,
+                    onCheckedChange = interactor::setFullProtectionRoleLabels,
                 )
             }
 
             AutoHideSettingsSection()
             DiagnosticsSettingsSection(onOpen = { diagnosticsOpen = true })
+            DebugToolsSettingsSection(selfNeedsRestart = selfNeedsRestart)
             ConfigBackupSection()
             SuperkeySettingsSection()
         }
@@ -235,7 +245,7 @@ private fun DiagnosticsSettingsScreen(
         containerColor = AppColors.screenBackground,
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.tab_diagnostics)) },
+                title = { Text(stringResource(R.string.settings_diagnostics_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -266,6 +276,14 @@ private fun DiagnosticsSettingsScreen(
                 modifier = Modifier.padding(padding),
             )
         }
+    }
+}
+
+@Composable
+private fun DebugToolsSettingsSection(selfNeedsRestart: Boolean?) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        SettingsSectionHeader(stringResource(R.string.settings_debug_section))
+        DebugToolsSection(selfNeedsRestart = selfNeedsRestart)
     }
 }
 

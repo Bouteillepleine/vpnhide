@@ -11,8 +11,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -407,6 +408,7 @@ internal fun BoxScope.AppListScrollbar(
  * package name, and a chip strip. The per-screen `chips` slot and the
  * row-level click behaviour (passed via [modifier]) are all that differ.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun TargetRowShell(
     label: String,
@@ -415,7 +417,7 @@ internal fun TargetRowShell(
     userIds: List<Int>,
     userNames: Map<Int, String>,
     modifier: Modifier = Modifier,
-    chips: @Composable RowScope.() -> Unit,
+    chips: @Composable () -> Unit,
 ) {
     Row(
         modifier =
@@ -446,7 +448,10 @@ internal fun TargetRowShell(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 chips()
             }
         }

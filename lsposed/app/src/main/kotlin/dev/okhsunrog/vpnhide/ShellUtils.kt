@@ -315,7 +315,11 @@ private fun buildCanonicalSelfUpdate(
         targets.canonicalConfig
             ?: buildCanonicalConfigFromTargetsSnapshot(targets, debug = legacyDebug)
     val previousSelf = baseCanonical.apps[selfPkg]
-    val selfNeedsRestart = previousSelf == null || !previousSelf.java || !previousSelf.native.enabled
+    val selfNeedsRestart =
+        previousSelf == null ||
+            !previousSelf.java ||
+            previousSelf.javaHooks != null ||
+            previousSelf.native != NativeRole.All
     val updatedCanonical = canonicalConfigWithSelfTarget(baseCanonical, selfPkg)
     return CanonicalSelfUpdate(
         canonical = updatedCanonical,

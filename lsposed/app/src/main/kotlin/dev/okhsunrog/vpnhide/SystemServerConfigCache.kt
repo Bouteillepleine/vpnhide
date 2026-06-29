@@ -1,14 +1,18 @@
 package dev.okhsunrog.vpnhide
 
 import android.os.SystemClock
+import dev.okhsunrog.vpnhide.generated.HookIds
 import java.io.File
 
 internal data class SystemServerConfig(
-    val javaTargetAppIds: Set<Int> = emptySet(),
+    val javaTargetHookMasksByAppId: Map<Int, Long> = emptyMap(),
     val observerAppIds: Set<Int> = emptySet(),
     val hiddenPackages: Set<String> = emptySet(),
     val debug: Boolean = false,
-)
+) {
+    val javaTargetAppIds: Set<Int>
+        get() = javaTargetHookMasksByAppId.keys
+}
 
 /**
  * Canonical config reader for hooks running inside system_server.
@@ -83,6 +87,16 @@ internal object SystemServerConfigCache {
         return load().javaTargetAppIds.contains(appId(uid))
     }
 
+    fun isHookEnabledForUid(
+        uid: Int,
+        hook: HookIds.Hook,
+    ): Boolean {
+        if (uid < android.os.Process.FIRST_APPLICATION_UID) return false
+        return load().javaTargetHookMasksByAppId[appId(uid)]?.let { mask ->
+            mask and (1L shl hook.id) != 0L
+        } == true
+    }
+
     fun appId(uid: Int): Int = uid % USER_ID_MODULO
 
     private fun Cache.withNextCheck(now: Long): Cache = copy(nextStatCheckUptimeMs = nextStatCheck(now))
@@ -95,11 +109,18 @@ internal object SystemServerConfigCache {
                 parseCanonicalConfig(configFile.takeIf(File::isFile)?.readText().orEmpty())
                     ?: return SystemServerConfig()
             val packageAppIds = parsePackagesListAppIds(packagesListFile.takeIf(File::isFile)?.readText().orEmpty())
-            val javaTargets =
+            val javaTargetHookMasks =
                 canonical.apps
-                    .filterValues { it.java }
-                    .keys
-                    .resolveAppIds(packageAppIds)
+                    .mapNotNull { (pkg, app) ->
+                        val appId = packageAppIds[pkg] ?: return@mapNotNull null
+                        val mask =
+                            hookSelectionMask(
+                                enabled = app.java,
+                                hooks = app.javaHooks,
+                                entries = LsposedJavaHookEntries,
+                            )
+                        if (mask == 0L) null else appId to mask
+                    }.toMap()
             val observers =
                 canonical.apps
                     .filterValues { it.appHiding }
@@ -107,7 +128,7 @@ internal object SystemServerConfigCache {
                     .resolveAppIds(packageAppIds)
             val hidden = canonical.apps.filterValues { it.hidden }.keys
             SystemServerConfig(
-                javaTargetAppIds = javaTargets,
+                javaTargetHookMasksByAppId = javaTargetHookMasks,
                 observerAppIds = observers,
                 hiddenPackages = hidden,
                 debug = canonical.debug,

@@ -70,7 +70,7 @@ Shape (illustrative):
   "debug": false,
   "apps": {
     "com.example.bank":  { "java": true, "native": true,  "appHiding": false, "ports": false },
-    "org.example.proxy": { "java": true, "native": true,  "appHiding": true,  "ports": true }
+    "org.example.proxy": { "java": ["lsposed_network_capabilities"], "native": true, "appHiding": true, "ports": true }
   },
   "settings": {
     "rememberSuperkey": false
@@ -78,12 +78,16 @@ Shape (illustrative):
 }
 ```
 
-Per-hook granularity ("раздельное управление хуками"): the coarse `"native": true`
-is the common case (enable every native hook for the app). When the UI exposes
-per-hook control, `native` grows into an explicit hook list, e.g.
-`"native": ["fib_route_seq_show", "sock_ioctl"]`; the activator maps that to the
-protocol `hookmask` bits. An absent/`true` value means "all native hooks". The JSON
-is the *desired* selection; the wire carries the resolved `hookmask`.
+Per-hook granularity ("раздельное управление хуками"): the coarse `"java": true`
+or `"native": true` is the common case (enable every hook in that role for the
+app). When the UI exposes per-hook control, the role grows into an explicit hook
+list, e.g. `"java": ["lsposed_network_capabilities"]` or
+`"native": ["fib_route_seq_show", "sock_ioctl"]`. The native activator maps the
+native list to protocol `hookmask` bits. LSPosed reads the Java list directly in
+`system_server`; app-hiding package visibility is still controlled by
+`appHiding`, not by the Java VPN hook list. An absent/`true` value means "all
+hooks for this role". The JSON is the *desired* selection; the native wire
+carries the resolved `hookmask`.
 
 The `rememberSuperkey` boolean lives here (it is a preference, not a secret). The
 superkey itself does **not** (§6).

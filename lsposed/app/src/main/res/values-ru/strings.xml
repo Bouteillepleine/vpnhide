@@ -34,6 +34,7 @@
     <string name="filter_show_system">Показать системные приложения</string>
     <string name="filter_russian_only">Только российские</string>
     <string name="apps_help_title">Как это работает</string>
+    <string name="java_hooks_title">Java-хуки</string>
     <string name="native_hooks_title">Нативные хуки</string>
     <string name="apps_hint_roles">Нажмите чип, чтобы переключить роль для приложения, или нажмите на строку — переключатся все сразу. J = LSPosed (скрытие на уровне Java). N = нативный бэкенд (скрытие на уровне ядра через kmod/KPM или Zygisk). A = скрытие приложений (это приложение видит очищенный список пакетов). P = блокировать этому приложению доступ к localhost-портам. N и P показываются только когда установлен нативный бэкенд / модуль портов.</string>
     <string name="apps_hint_restart_target">После Save: J (LSPosed) и нативный бэкенд на уровне ядра (kmod/KPM) применяются к цели мгновенно — рестарт не нужен. Если ваш нативный бэкенд — Zygisk, или вы изменили P (порты), целевое приложение нужно force-stop\'нуть и открыть заново, чтобы изменение для него вступило в силу.</string>
@@ -142,7 +143,7 @@
     <string name="dashboard_issue_kmod_capable_but_zygisk">Ваше ядро поддерживает модуль ядра — он работает в пространстве ядра и невидим для анти-тампер проверок. Zygisk тоже работает, но его хуки обнаруживаются банковскими и платёжными приложениями, так что Z для них придётся вручную держать выключенным. Установите %1$s и удалите Zygisk-модуль.</string>
     <string name="dashboard_issue_native_conflict_kernel">Модуль ядра (.ko) и KPM установлены одновременно. Они хукают одни и те же функции ядра, и работа обоих может намертво подвесить устройство. Оставьте только один — удалите либо модуль ядра, либо KPM.</string>
     <string name="dashboard_issue_multiple_native">Установлено больше одного нативного бэкенда. Активным может быть только один (приоритет: модуль ядра, затем KPM, затем Zygisk), остальные простаивают. Удалите неиспользуемые, чтобы не захламлять систему.</string>
-    <string name="dashboard_issue_debug_logging_on">Отладочные логи включены. VPN Hide пишет подробные строки в logcat, которые может прочитать любой с root-доступом. Выключите переключатель в Настройки → Диагностика после сбора багрепорта.</string>
+    <string name="dashboard_issue_debug_logging_on">Отладочные логи включены. VPN Hide пишет подробные строки в logcat, которые может прочитать любой с root-доступом. Выключите переключатель в Настройки → Отладка после сбора багрепорта.</string>
     <string name="dashboard_issue_selinux_permissive">SELinux в режиме Permissive. Шесть векторов детекции, которые VPN Hide рассчитывает на блокировку ядром (RTM_GETROUTE, /proc/net/{tcp,udp,dev,fib_trie}, /sys/class/net), стали доступны целевым приложениям. Выполните `setenforce 1` и разберитесь, что его переключило.</string>
     <string name="dashboard_issue_self_multi_profile">VPN Hide установлен в %1$d профилях. Значимая копия — в основном профиле: LSPosed хукает system_server, а он запущен только в основном профиле; picker там уже видит приложения из всех профилей и применяет фильтры ко всем. Копии в дополнительных профилях избыточны и конкурируют за Save в общий конфиг. Удалите VPN Hide из рабочего профиля / Second Space / других дополнительных профилей.</string>
     <string name="dashboard_issue_no_native">Нативный модуль не установлен. Установите kmod или zygisk для полной защиты.</string>
@@ -174,7 +175,7 @@
     <string name="dashboard_issue_kmod_wrong_variant">Неправильный вариант модуля ядра: установлен %1$s, вашему ядру нужен %2$s. Удалите текущий kmod и установите %3$s из последнего релиза.</string>
     <string name="dashboard_issue_kmod_unknown_variant">Модуль ядра установлен, но не загружается, и в zip не указано, под какой GKI-вариант он собран. Переустановите %1$s из последнего релиза, чтобы убедиться, что он подходит вашему ядру.</string>
     <string name="dashboard_issue_kmod_ambiguous_try_alternative">Модуль ядра %1$s не загрузился при текущей загрузке. GKI-ветку вашего ядра не удаётся определить из uname -r — установите %2$s вместо него.</string>
-    <string name="dashboard_issue_kmod_load_failed">Модуль ядра не загрузился. Ошибка insmod: %1$s. Чтобы приложить полный вывод insmod к багрепорту, нажмите Настройки → Диагностика → Собрать отладочный лог.</string>
+    <string name="dashboard_issue_kmod_load_failed">Модуль ядра не загрузился. Ошибка insmod: %1$s. Чтобы приложить полный вывод insmod к багрепорту, нажмите Настройки → Отладка → Собрать отладочный лог.</string>
     <string name="dashboard_issue_kmod_signature_enforced">Ваше ядро требует подписанные модули, поэтому неподписанный модуль ядра не загружается (insmod вернул EKEYREJECTED — \"Key was rejected by service\"). Magisk это не отключает. Перейдите на KernelSU Next в режиме GKI — он снимает проверку подписи, и kmod загрузится. На GKI-ядрах правильный инструмент — именно модуль ядра; не откатывайтесь на Zygisk: его хуки в процессе легко детектят банковские и антифрод-приложения.</string>
     <string name="dashboard_issue_kmod_not_supported_kernel">Для вашего ядра (%1$s) нет подходящего варианта vpnhide-kmod. Удалите модуль kmod и установите вместо него %2$s.</string>
     <string name="dashboard_issue_kprobes_missing">Ваше ядро собрано без CONFIG_KRETPROBES. Модуль ядра VPN Hide не может работать на таком ядре. Удалите kmod и используйте vpnhide-zygisk.zip.</string>
@@ -239,9 +240,12 @@
     <string name="settings_haptics_sub">Вибрация при нажатиях и переключениях</string>
     <string name="settings_animations">Анимации</string>
     <string name="settings_animations_sub">Пружинные переходы и морфинг форм</string>
+    <string name="settings_full_role_labels">Полные названия ролей</string>
+    <string name="settings_full_role_labels_sub">Показывать Java / Native / Apps / Ports вместо J / N / A / P</string>
     <string name="settings_diagnostics_section">Диагностика</string>
-    <string name="settings_diagnostics_title">Проверки защиты и отладочные логи</string>
-    <string name="settings_diagnostics_sub">Подробные проверки, запись logcat и сбор архива для багрепорта</string>
+    <string name="settings_diagnostics_title">Подробная диагностика</string>
+    <string name="settings_diagnostics_sub">Полный набор проверок защиты</string>
+    <string name="settings_debug_section">Отладка</string>
     <string name="settings_config_section">Конфигурация</string>
     <string name="settings_config_backup_title">Резервная копия конфига</string>
     <string name="settings_config_backup_sub">Сохранить или восстановить канонический JSON-конфиг</string>

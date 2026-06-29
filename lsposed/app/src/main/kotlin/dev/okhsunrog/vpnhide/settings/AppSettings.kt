@@ -43,6 +43,8 @@ data class AppSettings(
     val animationsEnabled: Boolean = true,
     /** Subtle haptic feedback on taps/toggles. */
     val hapticsEnabled: Boolean = true,
+    /** Use full role labels in the unified Protection picker instead of single-letter chips. */
+    val fullProtectionRoleLabels: Boolean = false,
     /** Whether the user has opened Settings at least once (gates the gear hint). */
     val settingsHintSeen: Boolean = false,
 ) {

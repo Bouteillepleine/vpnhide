@@ -7,7 +7,7 @@ import java.io.File
 
 class StorageConfigTest {
     @Test
-    fun `canonical config parses roles settings and native hook lists`() {
+    fun `canonical config parses roles settings and hook lists`() {
         val cfg =
             requireNotNull(
                 parseCanonicalConfig(
@@ -16,7 +16,12 @@ class StorageConfigTest {
                       "version": 1,
                       "debug": true,
                       "apps": {
-                        "com.bank": { "java": true, "native": ["sock_ioctl"], "appHiding": false, "ports": true },
+                        "com.bank": {
+                          "java": ["lsposed_network_capabilities"],
+                          "native": ["sock_ioctl"],
+                          "appHiding": false,
+                          "ports": true
+                        },
                         "dev.okhsunrog.vpnhide": { "hidden": true }
                       },
                       "settings": {
@@ -40,6 +45,8 @@ class StorageConfigTest {
             ),
             cfg.settings,
         )
+        assertTrue(cfg.apps.getValue("com.bank").java)
+        assertEquals(listOf("lsposed_network_capabilities"), cfg.apps.getValue("com.bank").javaHooks)
         assertEquals(NativeRole(enabled = true, hooks = listOf("sock_ioctl")), cfg.apps.getValue("com.bank").native)
         assertTrue(cfg.apps.getValue("dev.okhsunrog.vpnhide").hidden)
     }
@@ -110,6 +117,35 @@ class StorageConfigTest {
     }
 
     @Test
+    fun `builder preserves an existing java hook list when role remains enabled`() {
+        val existing =
+            CanonicalConfig(
+                apps =
+                    mapOf(
+                        "com.bank" to
+                            CanonicalApp(
+                                java = true,
+                                javaHooks = listOf("lsposed_network_capabilities"),
+                            ),
+                    ),
+            )
+
+        val cfg =
+            buildCanonicalConfig(
+                debug = false,
+                javaPkgs = setOf("com.bank", "com.new"),
+                nativePkgs = emptySet(),
+                hiddenPkgs = emptySet(),
+                observerPkgs = emptySet(),
+                portsPkgs = emptySet(),
+                existing = existing,
+            )
+
+        assertEquals(listOf("lsposed_network_capabilities"), cfg.apps.getValue("com.bank").javaHooks)
+        assertEquals(null, cfg.apps.getValue("com.new").javaHooks)
+    }
+
+    @Test
     fun `canonical JSON is deterministic and round trips through parser`() {
         val cfg =
             buildCanonicalConfig(
@@ -144,6 +180,29 @@ class StorageConfigTest {
     }
 
     @Test
+    fun `self target merge forces full hook roles`() {
+        val cfg =
+            CanonicalConfig(
+                apps =
+                    mapOf(
+                        "dev.okhsunrog.vpnhide" to
+                            CanonicalApp(
+                                java = true,
+                                javaHooks = listOf("lsposed_network_capabilities"),
+                                native = NativeRole(enabled = true, hooks = listOf("sock_ioctl")),
+                            ),
+                    ),
+            )
+
+        val updated = canonicalConfigWithSelfTarget(cfg, "dev.okhsunrog.vpnhide")
+
+        assertEquals(
+            CanonicalApp(java = true, native = NativeRole.All, hidden = true),
+            updated.apps.getValue("dev.okhsunrog.vpnhide"),
+        )
+    }
+
+    @Test
     fun `import parser accepts canonical json and adds self target`() {
         val cfg =
             requireNotNull(
@@ -168,6 +227,23 @@ class StorageConfigTest {
         assertEquals(
             CanonicalApp(java = true, native = NativeRole.All, hidden = true),
             cfg.apps.getValue("dev.okhsunrog.vpnhide"),
+        )
+    }
+
+    @Test
+    fun `hook role masks honor partial java hook selections`() {
+        val mask =
+            hookSelectionMask(
+                enabled = true,
+                hooks = listOf("lsposed_network_capabilities", "unknown_hook"),
+                entries = LsposedJavaHookEntries,
+            )
+
+        assertEquals(1L shl 11, mask)
+        assertEquals(
+            (1L shl 10) or (1L shl 11) or (1L shl 12) or (1L shl 13) or
+                (1L shl 14) or (1L shl 15) or (1L shl 16),
+            hookSelectionMask(enabled = true, hooks = null, entries = LsposedJavaHookEntries),
         )
     }
 

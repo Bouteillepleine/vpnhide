@@ -3,6 +3,7 @@ package dev.okhsunrog.vpnhide
 import android.graphics.drawable.Drawable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,13 +12,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -25,17 +27,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.okhsunrog.vpnhide.generated.HookIds
+import dev.okhsunrog.vpnhide.settings.LocalSettingsState
 
 /**
  * One row per app across every protection role. The three old tabs (Tun /
  * App-hiding / Ports) are merged into this single list so a target is
  * configured once, in one place, and saved once. Roles:
  *
- *  - [java]      "J" — LSPosed (the always-on Java layer)
+ *  - [java]      "J" — LSPosed (the Java layer)
  *  - [native]    "N" — the one active native backend (kmod / KPM / Zygisk, §1.5);
  *                       written to every installed native backend, only the
  *                       active one acts.
@@ -50,6 +55,7 @@ data class AppEntry(
     override val isSystem: Boolean,
     override val userIds: List<Int> = emptyList(),
     val java: Boolean = false,
+    val javaHooks: List<String>? = null,
     val native: Boolean = false,
     val nativeHooks: List<String>? = null,
     val appHiding: Boolean = false,
@@ -107,14 +113,16 @@ fun AppPickerScreen(
                 apps
                     .filter { it.packageName != selfPkg }
                     .map { app ->
-                        val nativeRole = baseCanonical.apps[app.packageName]?.native
+                        val canonicalApp = baseCanonical.apps[app.packageName]
+                        val nativeRole = canonicalApp?.native
                         AppEntry(
                             packageName = app.packageName,
                             label = app.label,
                             icon = app.icon,
                             isSystem = app.isSystem,
                             userIds = app.userIds,
-                            java = app.packageName in t.lsposedTargets,
+                            java = canonicalApp?.java ?: (app.packageName in t.lsposedTargets),
+                            javaHooks = canonicalApp?.takeIf { it.java }?.javaHooks?.takeIf { it.isNotEmpty() },
                             native = app.packageName in nativeTargets,
                             nativeHooks = nativeRole?.hooks?.takeIf { it.isNotEmpty() },
                             appHiding = app.packageName in observers,
@@ -148,11 +156,19 @@ fun AppPickerScreen(
             onToggle = { layer ->
                 onChange(
                     when (layer) {
-                        Layer.JAVA -> app.copy(java = !app.java)
+                        Layer.JAVA -> app.copy(java = !app.java, javaHooks = null)
                         Layer.NATIVE -> app.copy(native = !app.native, nativeHooks = null)
                         Layer.APP_HIDING -> app.copy(appHiding = !app.appHiding)
                         Layer.PORTS -> app.copy(ports = !app.ports)
                     },
+                )
+            },
+            onJavaHooksChange = { hooks ->
+                onChange(
+                    app.copy(
+                        java = hooks == null || hooks.isNotEmpty(),
+                        javaHooks = hooks?.takeIf { it.isNotEmpty() },
+                    ),
                 )
             },
             onNativeHooksChange = { hooks ->
@@ -168,6 +184,7 @@ fun AppPickerScreen(
                 onChange(
                     app.copy(
                         java = newState,
+                        javaHooks = null,
                         native = if (targets.anyNativeInstalled) newState else false,
                         nativeHooks = null,
                         appHiding = newState,
@@ -213,6 +230,7 @@ private fun AppEntry.toRoleSelection(): AppRoleSelection =
     AppRoleSelection(
         packageName = packageName,
         java = java,
+        javaHooks = javaHooks,
         native = native,
         nativeHooks = nativeHooks,
         appHiding = appHiding,
@@ -233,10 +251,13 @@ private fun AppRow(
     anyNativeInstalled: Boolean,
     portsInstalled: Boolean,
     onToggle: (Layer) -> Unit,
+    onJavaHooksChange: (List<String>?) -> Unit,
     onNativeHooksChange: (List<String>?) -> Unit,
     onToggleAll: () -> Unit,
 ) {
-    var hookDialogOpen by remember { mutableStateOf(false) }
+    var javaHookDialogOpen by remember { mutableStateOf(false) }
+    var nativeHookDialogOpen by remember { mutableStateOf(false) }
+    val fullRoleLabels = LocalSettingsState.current.fullProtectionRoleLabels
     TargetRowShell(
         label = app.label,
         packageName = app.packageName,
@@ -245,61 +266,156 @@ private fun AppRow(
         userNames = userNames,
         modifier = Modifier.clickable(onClick = onToggleAll),
     ) {
-        TargetChip(stringResource(R.string.chip_java), app.java) { onToggle(Layer.JAVA) }
+        HookTargetChip(
+            label =
+                roleLabel(
+                    compact = stringResource(R.string.chip_java),
+                    full = stringResource(R.string.chip_java_full),
+                    partial = app.javaHooks != null,
+                    fullLabels = fullRoleLabels,
+                ),
+            enabled = app.java,
+            onToggle = { onToggle(Layer.JAVA) },
+            onConfigure = { javaHookDialogOpen = true },
+            contentDescription = stringResource(R.string.java_hooks_title),
+        )
         if (anyNativeInstalled) {
-            TargetChip(
-                if (app.nativeHooks == null) {
-                    stringResource(R.string.chip_native)
-                } else {
-                    stringResource(R.string.chip_native_partial)
-                },
-                app.native,
-            ) { onToggle(Layer.NATIVE) }
-            if (app.native) {
-                IconButton(
-                    onClick = { hookDialogOpen = true },
-                    modifier = Modifier.size(30.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Tune,
-                        contentDescription = stringResource(R.string.native_hooks_title),
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-            }
+            HookTargetChip(
+                label =
+                    roleLabel(
+                        compact = stringResource(R.string.chip_native),
+                        full = stringResource(R.string.chip_native_full),
+                        partial = app.nativeHooks != null,
+                        fullLabels = fullRoleLabels,
+                    ),
+                enabled = app.native,
+                onToggle = { onToggle(Layer.NATIVE) },
+                onConfigure = { nativeHookDialogOpen = true },
+                contentDescription = stringResource(R.string.native_hooks_title),
+            )
         }
-        TargetChip(stringResource(R.string.chip_app_hiding), app.appHiding) { onToggle(Layer.APP_HIDING) }
+        TargetChip(
+            label =
+                if (fullRoleLabels) {
+                    stringResource(R.string.chip_app_hiding_full)
+                } else {
+                    stringResource(R.string.chip_app_hiding)
+                },
+            enabled = app.appHiding,
+        ) {
+            onToggle(Layer.APP_HIDING)
+        }
         if (portsInstalled) {
-            TargetChip(stringResource(R.string.chip_ports), app.ports) { onToggle(Layer.PORTS) }
+            TargetChip(
+                label =
+                    if (fullRoleLabels) {
+                        stringResource(R.string.chip_ports_full)
+                    } else {
+                        stringResource(R.string.chip_ports)
+                    },
+                enabled = app.ports,
+            ) {
+                onToggle(Layer.PORTS)
+            }
         }
     }
 
-    if (hookDialogOpen) {
-        NativeHooksDialog(
+    if (javaHookDialogOpen) {
+        HooksDialog(
             app = app,
-            onDismiss = { hookDialogOpen = false },
+            title = stringResource(R.string.java_hooks_title),
+            hookEntries = LsposedJavaHookEntries,
+            selectedHooks = app.javaHooks,
+            onDismiss = { javaHookDialogOpen = false },
+            onSave = { hooks ->
+                onJavaHooksChange(hooks)
+                javaHookDialogOpen = false
+            },
+        )
+    }
+
+    if (nativeHookDialogOpen) {
+        HooksDialog(
+            app = app,
+            title = stringResource(R.string.native_hooks_title),
+            hookEntries = NativeHookEntries,
+            selectedHooks = app.nativeHooks,
+            onDismiss = { nativeHookDialogOpen = false },
             onSave = { hooks ->
                 onNativeHooksChange(hooks)
-                hookDialogOpen = false
+                nativeHookDialogOpen = false
             },
         )
     }
 }
 
+private fun roleLabel(
+    compact: String,
+    full: String,
+    partial: Boolean,
+    fullLabels: Boolean,
+): String = (if (fullLabels) full else compact) + if (partial) "*" else ""
+
 @Composable
-private fun NativeHooksDialog(
+private fun HookTargetChip(
+    label: String,
+    enabled: Boolean,
+    onToggle: () -> Unit,
+    onConfigure: () -> Unit,
+    contentDescription: String,
+) {
+    val containerColor = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
+    val contentColor = if (enabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+    Surface(
+        shape = RoundedCornerShape(4.dp),
+        color = containerColor,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = contentColor,
+                modifier =
+                    Modifier
+                        .clickable(onClick = onToggle)
+                        .padding(start = 8.dp, top = 4.dp, end = 6.dp, bottom = 4.dp),
+            )
+            Box(
+                modifier =
+                    Modifier
+                        .clickable(onClick = onConfigure)
+                        .padding(start = 4.dp, top = 3.dp, end = 7.dp, bottom = 3.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Tune,
+                    contentDescription = contentDescription,
+                    tint = contentColor,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HooksDialog(
     app: AppEntry,
+    title: String,
+    hookEntries: List<HookIds.Hook>,
+    selectedHooks: List<String>?,
     onDismiss: () -> Unit,
     onSave: (List<String>?) -> Unit,
 ) {
-    val hookNames = remember { HookIds.Hook.entries.map { it.hookName } }
-    var selected by remember(app.packageName, app.nativeHooks) {
-        mutableStateOf(app.nativeHooks?.toSet() ?: hookNames.toSet())
+    val hookNames = remember(hookEntries) { hookEntries.map { it.hookName } }
+    var selected by remember(app.packageName, selectedHooks, hookNames) {
+        mutableStateOf(selectedHooks?.toSet() ?: hookNames.toSet())
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.native_hooks_title)) },
+        title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
@@ -312,9 +428,9 @@ private fun NativeHooksDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
-                    items(HookIds.Hook.entries, key = { it.hookName }) { hook ->
+                    items(hookEntries, key = { it.hookName }) { hook ->
                         val checked = hook.hookName in selected
-                        NativeHookRow(
+                        HookRow(
                             hook = hook,
                             checked = checked,
                             onCheckedChange = { enabled ->
@@ -333,7 +449,7 @@ private fun NativeHooksDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    onSave(resolveNativeHookSelection(hookNames, selected))
+                    onSave(resolveHookSelection(hookNames, selected))
                 },
             ) {
                 Text(stringResource(R.string.btn_save))
@@ -348,7 +464,7 @@ private fun NativeHooksDialog(
 }
 
 @Composable
-private fun NativeHookRow(
+private fun HookRow(
     hook: HookIds.Hook,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,

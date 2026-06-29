@@ -199,7 +199,10 @@ activator write, but it is derived state, not user storage.
 The LSPosed hooks read canonical JSON directly in `system_server` and resolve
 package names to appIds through `/data/system/packages.list`, never through
 PackageManager. Caller matching uses `callingUid % 100000`, so all Android user
-profiles for the same appId are covered.
+profiles for the same appId are covered. `java: true` enables every LSPosed VPN
+sanitizer for that app; `java: ["hook_name", ...]` enables only the named
+LSPosed Java hooks for the app. App-hiding package visibility is controlled by
+`appHiding`, not by the Java VPN hook list.
 
 Inotify watches `/data/system/vpnhide_config.json`; package reinstall UID/appId
 changes are picked up by a periodic fingerprint of `/data/system/packages.list`.

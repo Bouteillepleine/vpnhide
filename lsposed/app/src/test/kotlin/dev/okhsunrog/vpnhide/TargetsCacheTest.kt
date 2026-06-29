@@ -58,7 +58,7 @@ class TargetsCacheTest {
                             {
                               "version": 1,
                               "apps": {
-                                "com.java": { "java": true },
+                                "com.java": { "java": ["lsposed_network_capabilities"] },
                                 "com.native": { "native": true },
                                 "com.observer": { "appHiding": true },
                                 "com.ports": { "ports": true },
@@ -79,6 +79,13 @@ class TargetsCacheTest {
         val targets = parseTargetsSnapshot(rootSnapshot)
 
         assertEquals(setOf("com.java"), targets.lsposedTargets)
+        assertEquals(
+            listOf("lsposed_network_capabilities"),
+            targets.canonicalConfig
+                ?.apps
+                ?.get("com.java")
+                ?.javaHooks,
+        )
         assertEquals(setOf("com.native"), targets.nativeTargets)
         assertEquals(setOf("com.hidden"), targets.hiddenPkgs)
         assertEquals(setOf(10123, 1010123), targets.observerUids)

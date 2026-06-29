@@ -1299,7 +1299,7 @@ internal suspend fun loadDashboardState(
 
     // W3: user has debug logging turned on — VPN Hide is writing verbose lines
     // to logcat that a forensic reader with root can see. The flag file is
-    // written by the Settings → Diagnostics → Debug logging toggle; absent file ⇒
+    // written by the Settings → Debugging → Debug logging toggle; absent file ⇒
     // default off ⇒ no warning.
     val debugEnabled =
         targetsSnapshot.canonicalConfig?.debug

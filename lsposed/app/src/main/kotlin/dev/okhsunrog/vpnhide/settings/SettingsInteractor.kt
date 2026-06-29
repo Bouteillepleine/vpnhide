@@ -38,6 +38,8 @@ interface SettingsInteractor {
 
     fun setHapticsEnabled(value: Boolean)
 
+    fun setFullProtectionRoleLabels(value: Boolean)
+
     fun setSettingsHintSeen(value: Boolean)
 }
 
@@ -66,6 +68,8 @@ class RepositorySettingsInteractor(
     override fun setAnimationsEnabled(value: Boolean) = launch { repository.setAnimationsEnabled(value) }
 
     override fun setHapticsEnabled(value: Boolean) = launch { repository.setHapticsEnabled(value) }
+
+    override fun setFullProtectionRoleLabels(value: Boolean) = launch { repository.setFullProtectionRoleLabels(value) }
 
     override fun setSettingsHintSeen(value: Boolean) = launch { repository.setSettingsHintSeen(value) }
 

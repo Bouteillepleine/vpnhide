@@ -9,9 +9,9 @@ import dev.okhsunrog.vpnhide.generated.HookIds
  * canonical JSON, then runs the installed native module's activator.
  */
 internal object ConfigChannels {
-    // The hookmask written for every target: the full kernel hook mask. Kernel
-    // backends gate per-hook on it; zygisk/lsposed own no registry bits yet, so
-    // they act on target *presence* and ignore it (protocol §6 note).
+    // The hookmask written for legacy native config snapshots. The canonical
+    // JSON stores per-app native hook lists; installed native activators fold
+    // those into this protocol mask.
     private val FULL_MASK = HookIds.KERNEL_HOOK_MASK.toLong()
 
     /** A `vpnhide 1 config` snapshot for [uids] with [debug] folded in (§4.3). */

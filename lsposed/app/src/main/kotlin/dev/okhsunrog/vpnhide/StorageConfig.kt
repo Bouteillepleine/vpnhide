@@ -1,5 +1,6 @@
 package dev.okhsunrog.vpnhide
 
+import dev.okhsunrog.vpnhide.generated.HookIds
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -22,6 +23,7 @@ internal data class CanonicalSettings(
 
 internal data class CanonicalApp(
     val java: Boolean = false,
+    val javaHooks: List<String>? = null,
     val native: NativeRole = NativeRole.Disabled,
     val appHiding: Boolean = false,
     val ports: Boolean = false,
@@ -40,6 +42,34 @@ internal data class NativeRole(
         val All = NativeRole(enabled = true)
     }
 }
+
+private data class ParsedHookRole(
+    val enabled: Boolean,
+    val hooks: List<String>? = null,
+)
+
+internal val NativeHookEntries: List<HookIds.Hook> =
+    HookIds.Hook.entries.filter { hookBit(it) and HookIds.KERNEL_HOOK_MASK.toLong() != 0L }
+
+internal val LsposedJavaHookEntries: List<HookIds.Hook> =
+    HookIds.Hook.entries.filter {
+        hookBit(it) and HookIds.LSPOSED_HOOK_MASK.toLong() != 0L &&
+            it != HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY
+    }
+
+internal fun hookSelectionMask(
+    enabled: Boolean,
+    hooks: List<String>?,
+    entries: List<HookIds.Hook>,
+): Long {
+    if (!enabled) return 0L
+    val allMask = entries.fold(0L) { acc, hook -> acc or hookBit(hook) }
+    if (hooks == null) return allMask
+    val allowedByName = entries.associateBy { it.hookName }
+    return hooks.fold(0L) { acc, name -> acc or (allowedByName[name]?.let(::hookBit) ?: 0L) }
+}
+
+private fun hookBit(hook: HookIds.Hook): Long = 1L shl hook.id
 
 internal fun parseCanonicalConfig(raw: String): CanonicalConfig? {
     if (raw.isBlank()) return null
@@ -77,8 +107,10 @@ internal fun parseCanonicalConfig(raw: String): CanonicalConfig? {
 
 private fun parseCanonicalApp(obj: JSONObject?): CanonicalApp {
     if (obj == null) return CanonicalApp()
+    val java = parseHookRole(obj.opt("java"))
     return CanonicalApp(
-        java = obj.optBoolean("java", false),
+        java = java.enabled,
+        javaHooks = java.hooks,
         native = parseNativeRole(obj.opt("native")),
         appHiding = obj.optBoolean("appHiding", false),
         ports = obj.optBoolean("ports", false),
@@ -87,20 +119,25 @@ private fun parseCanonicalApp(obj: JSONObject?): CanonicalApp {
 }
 
 private fun parseNativeRole(value: Any?): NativeRole =
+    parseHookRole(value).let { role ->
+        if (role.enabled) NativeRole(enabled = true, hooks = role.hooks) else NativeRole.Disabled
+    }
+
+private fun parseHookRole(value: Any?): ParsedHookRole =
     when (value) {
         is Boolean -> {
-            if (value) NativeRole.All else NativeRole.Disabled
+            if (value) ParsedHookRole(enabled = true) else ParsedHookRole(enabled = false)
         }
 
         is JSONArray -> {
             val hooks =
                 (0 until value.length())
                     .mapNotNull { idx -> value.optString(idx).takeIf { it.isNotBlank() } }
-            if (hooks.isEmpty()) NativeRole.Disabled else NativeRole(enabled = true, hooks = hooks)
+            if (hooks.isEmpty()) ParsedHookRole(enabled = false) else ParsedHookRole(enabled = true, hooks = hooks)
         }
 
         else -> {
-            NativeRole.Disabled
+            ParsedHookRole(enabled = false)
         }
     }
 
@@ -127,9 +164,11 @@ internal fun buildCanonicalConfig(
     val apps =
         packages
             .associateWith { pkg ->
+                val previous = existing?.apps?.get(pkg)
                 val previousNative = existing?.apps?.get(pkg)?.native
                 CanonicalApp(
                     java = pkg in java,
+                    javaHooks = previous?.javaHooks?.takeIf { pkg in java && previous.java },
                     native = if (pkg in native) previousNative?.takeIf { it.enabled } ?: NativeRole.All else NativeRole.Disabled,
                     appHiding = pkg in observers,
                     ports = pkg in ports,
@@ -166,7 +205,8 @@ internal fun canonicalConfigWithSelfTarget(
     val updated =
         current.copy(
             java = true,
-            native = current.native.takeIf { it.enabled } ?: NativeRole.All,
+            javaHooks = null,
+            native = NativeRole.All,
             hidden = true,
         )
     if (updated == current && config.apps.containsKey(selfPkg)) return config
@@ -227,7 +267,7 @@ internal fun canonicalConfigJson(config: CanonicalConfig): String =
 private fun StringBuilder.appendCanonicalApp(app: CanonicalApp) {
     append("{ ")
     append("\"java\": ")
-    append(app.java)
+    appendHookRole(app.java, app.javaHooks)
     append(", \"native\": ")
     appendNativeRole(app.native)
     append(", \"appHiding\": ")
@@ -241,24 +281,27 @@ private fun StringBuilder.appendCanonicalApp(app: CanonicalApp) {
 }
 
 private fun StringBuilder.appendNativeRole(native: NativeRole) {
+    appendHookRole(native.enabled, native.hooks)
+}
+
+private fun StringBuilder.appendHookRole(
+    enabled: Boolean,
+    hooks: List<String>?,
+) {
     when {
-        !native.enabled -> {
-            append("false")
-        }
-
-        native.hooks == null -> {
-            append("true")
-        }
-
-        else -> {
-            append('[')
-            native.hooks.forEachIndexed { index, hook ->
-                if (index != 0) append(", ")
-                appendJsonString(hook)
-            }
-            append(']')
-        }
+        !enabled -> append("false")
+        hooks == null -> append("true")
+        else -> appendStringArray(hooks)
     }
+}
+
+private fun StringBuilder.appendStringArray(values: List<String>) {
+    append('[')
+    values.forEachIndexed { index, value ->
+        if (index != 0) append(", ")
+        appendJsonString(value)
+    }
+    append(']')
 }
 
 private fun StringBuilder.appendJsonString(value: String) {

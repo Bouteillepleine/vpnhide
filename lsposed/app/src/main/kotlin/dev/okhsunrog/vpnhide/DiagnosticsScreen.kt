@@ -97,12 +97,9 @@ fun DiagnosticsScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val cm = context.getSystemService(ConnectivityManager::class.java)
     val scope = rememberCoroutineScope()
 
     val diagState by DiagnosticsCache.state.collectAsState()
-    var exporting by remember { mutableStateOf(false) }
-    var debugZipFile by remember { mutableStateOf<File?>(null) }
     val summaryFmt = stringResource(R.string.summary_format)
 
     // Kick off the diagnostics run once per process. If selfNeedsRestart
@@ -114,18 +111,6 @@ fun DiagnosticsScreen(
             DiagnosticsCache.run(scope, context)
         }
     }
-
-    val saveLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.CreateDocument("application/zip"),
-        ) { uri: Uri? ->
-            val zip = debugZipFile ?: return@rememberLauncherForActivityResult
-            if (uri != null) {
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    zip.inputStream().use { it.copyTo(out) }
-                }
-            }
-        }
 
     val results = (diagState as? DiagnosticsCache.State.Ready)?.results
     // Native probes that couldn't run (ECONNREFUSED from socket()) are
@@ -148,10 +133,6 @@ fun DiagnosticsScreen(
     ) {
         Spacer(Modifier.height(8.dp))
 
-        // Protection check section — its content depends on cache state,
-        // but the bottom debug-tools section always renders below so
-        // users can collect logs / toggle verbose logging even when
-        // VPN is off or a run is in flight.
         when {
             selfNeedsRestart -> {
                 StatusBanner(
@@ -230,7 +211,35 @@ fun DiagnosticsScreen(
         }
 
         Spacer(Modifier.height(16.dp))
+    }
+}
 
+@Composable
+fun DebugToolsSection(
+    selfNeedsRestart: Boolean?,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val cm = context.getSystemService(ConnectivityManager::class.java)
+    val scope = rememberCoroutineScope()
+    var exporting by remember { mutableStateOf(false) }
+    var debugZipFile by remember { mutableStateOf<File?>(null) }
+
+    val saveLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.CreateDocument("application/zip"),
+        ) { uri: Uri? ->
+            val zip = debugZipFile ?: return@rememberLauncherForActivityResult
+            if (uri != null) {
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    zip.inputStream().use { it.copyTo(out) }
+                }
+            }
+        }
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+    ) {
         DebugLoggingCard()
 
         Spacer(Modifier.height(16.dp))
@@ -240,16 +249,18 @@ fun DiagnosticsScreen(
         Spacer(Modifier.height(16.dp))
 
         // Collect button
-        if (debugZipFile == null) {
+        val zip = debugZipFile
+        if (zip == null) {
             EnhancedButton(
                 onClick = {
+                    val restartState = selfNeedsRestart ?: return@EnhancedButton
                     exporting = true
                     scope.launch {
-                        debugZipFile = exportDebugZip(cm, context, selfNeedsRestart)
+                        debugZipFile = exportDebugZip(cm, context, restartState)
                         exporting = false
                     }
                 },
-                enabled = !exporting,
+                enabled = !exporting && selfNeedsRestart != null,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 if (exporting) {
@@ -273,12 +284,10 @@ fun DiagnosticsScreen(
                 saveLabel = stringResource(R.string.btn_save_debug),
                 shareLabel = stringResource(R.string.btn_share_debug),
                 sharePrimary = true,
-                onSave = { saveLauncher.launch(debugZipFile!!.name) },
-                onShare = { shareFileViaProvider(context, debugZipFile!!, "application/zip") },
+                onSave = { saveLauncher.launch(zip.name) },
+                onShare = { shareFileViaProvider(context, zip, "application/zip") },
             )
         }
-
-        Spacer(Modifier.height(16.dp))
     }
 }
 
@@ -406,14 +415,13 @@ private fun LogcatRecordCard() {
 
                 is LogcatRecorder.State.Stopped -> {
                     val last = s.lastFile
-                    val hasLast = last != null && last.exists()
-                    if (hasLast) {
+                    if (last != null && last.exists()) {
                         Text(
                             text =
                                 stringResource(
                                     R.string.logcat_last_recording,
                                     formatElapsed(s.lastDurationMs / 1000),
-                                    formatSize(last!!.length()),
+                                    formatSize(last.length()),
                                 ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -542,7 +550,7 @@ private fun CheckCard(
 // ==========================================================================
 
 /**
- * The checks split into two phases so Settings → Diagnostics can show progress
+ * The checks split into two phases so Settings → Detailed diagnostics can show progress
  * before the slow probes finish. [runCoreChecks] runs the fast native and
  * VPN-presence Java probes; [runExtraJavaChecks] runs the remaining Java probes,
  * including the push-callback probe that blocks for up to 3s. Dashboard waits
@@ -608,7 +616,7 @@ private fun List<CheckResult>.logged(): List<CheckResult> =
 
 /** Run both phases and return the complete results. Used where blocking on the
  * slow probes is fine (debug export); the live cache runs the phased builders
- * directly so Settings → Diagnostics can show the fast phase first. */
+ * directly so Settings → Detailed diagnostics can show the fast phase first. */
 internal fun runAllChecks(
     cm: ConnectivityManager,
     context: android.content.Context,
@@ -951,14 +959,14 @@ private fun checkProcNetRouteJava(name: String): CheckResult =
         val allLines = mutableListOf<String>()
         val vpnLines = mutableListOf<String>()
         BufferedReader(InputStreamReader(java.io.FileInputStream("/proc/net/route"))).use { br ->
-            var line: String?
-            while (br.readLine().also { line = it } != null) {
-                allLines.add(line!!)
+            while (true) {
+                val line = br.readLine() ?: break
+                allLines.add(line)
                 // /proc/net/route is whitespace-separated; check
                 // each token instead of just startsWith on the raw
                 // line so we don't match e.g. an IP-as-hex by chance.
-                if (line!!.split(Regex("\\s+")).any(IfaceLists::isVpnIface)) {
-                    vpnLines.add(line!!.take(60))
+                if (line.split(Regex("\\s+")).any(IfaceLists::isVpnIface)) {
+                    vpnLines.add(line.take(60))
                 }
             }
         }

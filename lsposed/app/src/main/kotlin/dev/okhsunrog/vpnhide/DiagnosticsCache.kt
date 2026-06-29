@@ -99,7 +99,7 @@ internal object DiagnosticsCache {
     /**
      * Suspend until the full Diagnostics result is available. Dashboard uses
      * this path so the top-level "OK" state is backed by every protection
-     * probe shown in Settings → Diagnostics, including the slow push-callback
+     * probe shown in Settings → Detailed diagnostics, including the slow push-callback
      * and route/proxy Java checks.
      */
     suspend fun awaitFullResults(context: Context): CheckResults? {
@@ -120,7 +120,7 @@ internal object DiagnosticsCache {
             }
             val cm = appContext.getSystemService(ConnectivityManager::class.java)
             // Phase 1 (fast): native + VPN-presence Java probes. Publish
-            // immediately so Settings → Diagnostics can show progress without
+            // immediately so Settings → Detailed diagnostics can show progress without
             // waiting for the slow phase below.
             val core = withContext(Dispatchers.IO) { runCoreChecks(cm, appContext) }
             _state.value = State.Ready(core, complete = false)

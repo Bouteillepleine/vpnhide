@@ -43,6 +43,7 @@ internal fun resolveAutoHiddenPackages(
 internal data class AppRoleSelection(
     val packageName: String,
     val java: Boolean = false,
+    val javaHooks: List<String>? = null,
     val native: Boolean = false,
     val nativeHooks: List<String>? = null,
     val appHiding: Boolean = false,
@@ -50,6 +51,11 @@ internal data class AppRoleSelection(
 )
 
 internal fun resolveNativeHookSelection(
+    hookNames: List<String>,
+    selectedHookNames: Set<String>,
+): List<String>? = resolveHookSelection(hookNames, selectedHookNames)
+
+internal fun resolveHookSelection(
     hookNames: List<String>,
     selectedHookNames: Set<String>,
 ): List<String>? {
@@ -78,6 +84,7 @@ internal fun buildCanonicalConfigForAppPickerSave(
 
     val javaPkgs = preserved { it.java } + selections.selectedPkgs { it.java } + selfPkg
     val nativePkgs = preserved { it.native.enabled } + selections.selectedPkgs { it.native } + selfPkg
+    val selectedJavaHooks = selections.selectedJavaHooks()
     val selectedNativeRoles = selections.selectedNativeRoles()
     val observerPkgs = preserved { it.appHiding } + selections.selectedPkgs { it.appHiding }
     val portsPkgs = preserved { it.ports } + selections.selectedPkgs { it.ports }
@@ -89,7 +96,7 @@ internal fun buildCanonicalConfigForAppPickerSave(
             selfPkg = selfPkg,
         )
 
-    val canonical =
+    val canonicalWithJavaHooks =
         buildCanonicalConfig(
             debug = debug,
             javaPkgs = javaPkgs,
@@ -98,7 +105,8 @@ internal fun buildCanonicalConfigForAppPickerSave(
             observerPkgs = observerPkgs,
             portsPkgs = portsPkgs,
             existing = base,
-        ).withNativeRoles(selectedNativeRoles)
+        ).withJavaHooks(selectedJavaHooks)
+    val canonical = canonicalWithJavaHooks.withNativeRoles(selectedNativeRoles)
     return applyAutoHiddenPackages(
         config = canonical,
         selfPkg = selfPkg,
@@ -183,6 +191,22 @@ private fun Collection<AppRoleSelection>.selectedNativeRoles(): Map<String, Nati
             val hooks = selection.nativeHooks?.takeIf { it.isNotEmpty() }
             selection.packageName to (hooks?.let { NativeRole(enabled = true, hooks = it) } ?: NativeRole.All)
         }
+
+private fun Collection<AppRoleSelection>.selectedJavaHooks(): Map<String, List<String>?> =
+    filter { it.java }
+        .associate { selection ->
+            selection.packageName to selection.javaHooks?.takeIf { it.isNotEmpty() }
+        }
+
+private fun CanonicalConfig.withJavaHooks(hooks: Map<String, List<String>?>): CanonicalConfig {
+    if (hooks.isEmpty()) return this
+    val updated =
+        apps
+            .mapValues { (pkg, app) ->
+                if (pkg in hooks) app.copy(javaHooks = hooks[pkg]) else app
+            }.toSortedMap()
+    return copy(apps = updated)
+}
 
 private fun CanonicalConfig.withNativeRoles(roles: Map<String, NativeRole>): CanonicalConfig {
     if (roles.isEmpty()) return this
