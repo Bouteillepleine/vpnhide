@@ -163,6 +163,12 @@ android {
     // build still catches R8/ProGuard-specific issues like MissingRules.
     lint {
         checkTestSources = false
+        // Fail the build on unused resources. The detector already runs in the
+        // CI `:app:lintDebug` step (as a warning), so gating on it costs no
+        // extra time and stops dead strings/resources from accumulating. The
+        // app has no dynamic resource lookups (getIdentifier / by-name), so the
+        // analysis is exhaustive and false-positive-free here.
+        error += "UnusedResources"
     }
 }
 
