@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.FilterList
@@ -151,7 +152,7 @@ fun VpnHideApp(
     }
 }
 
-private enum class Tab { Dashboard, Protection, Diagnostics }
+private enum class Tab { Dashboard, Statistics, Protection, Diagnostics }
 
 private data class RefreshContext(
     val loading: Boolean,
@@ -163,6 +164,7 @@ private fun AppTopBarTitle(currentTab: Tab) {
     val tabLabel =
         when (currentTab) {
             Tab.Dashboard -> stringResource(R.string.tab_dashboard)
+            Tab.Statistics -> stringResource(R.string.tab_statistics)
             Tab.Protection -> stringResource(R.string.tab_protection)
             Tab.Diagnostics -> stringResource(R.string.tab_diagnostics)
         }
@@ -242,6 +244,7 @@ private fun MainScreen(onReady: () -> Unit = {}) {
     val appListLoading by AppListCache.loading.collectAsState()
     val targetsLoading by TargetsCache.loading.collectAsState()
     val dashboardLoading by DashboardCache.loading.collectAsState()
+    val statisticsLoading by StatisticsCache.loading.collectAsState()
     val dashboardState by DashboardCache.state.collectAsState()
     val dashboardError by DashboardCache.error.collectAsState()
     val rootSnapshot by RootSnapshotCache.snapshot.collectAsState()
@@ -379,6 +382,15 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                                         )
                                     }
 
+                                    Tab.Statistics -> {
+                                        RefreshContext(
+                                            loading = statisticsLoading,
+                                            onRefresh = {
+                                                StatisticsCache.refresh(scope)
+                                            },
+                                        )
+                                    }
+
                                     Tab.Protection -> {
                                         RefreshContext(
                                             loading = appListLoading || targetsLoading,
@@ -451,7 +463,7 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                                     } else {
                                         Icon(
                                             Icons.Default.Refresh,
-                                            contentDescription = stringResource(R.string.action_refresh_apps),
+                                            contentDescription = stringResource(R.string.action_refresh),
                                         )
                                     }
                                 }
@@ -492,6 +504,15 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                     },
                     icon = { Icon(Icons.Default.Home, contentDescription = null) },
                     label = { Text(stringResource(R.string.tab_dashboard)) },
+                )
+                NavigationBarItem(
+                    selected = currentTab == Tab.Statistics,
+                    onClick = {
+                        tabHaptic()
+                        currentTab = Tab.Statistics
+                    },
+                    icon = { Icon(Icons.Default.BarChart, contentDescription = null) },
+                    label = { Text(stringResource(R.string.tab_statistics)) },
                 )
                 NavigationBarItem(
                     selected = currentTab == Tab.Protection,
@@ -555,6 +576,12 @@ private fun MainScreen(onReady: () -> Unit = {}) {
                     Tab.Dashboard -> {
                         DashboardScreen(
                             selfNeedsRestart = restart,
+                            modifier = Modifier.padding(innerPadding),
+                        )
+                    }
+
+                    Tab.Statistics -> {
+                        StatisticsScreen(
                             modifier = Modifier.padding(innerPadding),
                         )
                     }

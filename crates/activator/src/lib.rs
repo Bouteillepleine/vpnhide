@@ -310,6 +310,26 @@ pub fn activate_kpm_boot() -> Result<()> {
     activate_kpm_with_pm_wait(PmReadyWait::Forever, false)
 }
 
+pub fn read_kpm_status() -> Result<String> {
+    read_kpm_payload("vpnhide 1 status")
+}
+
+pub fn read_kpm_stats() -> Result<String> {
+    read_kpm_payload("vpnhide 1 stats")
+}
+
+pub fn read_kpm_state() -> Result<String> {
+    let client = KpmClient::detect()?;
+    let mut out = client.ctl0_read("vpnhide 1 status")?;
+    out.push_str(&client.ctl0_read("vpnhide 1 stats")?);
+    Ok(out)
+}
+
+fn read_kpm_payload(wire: &str) -> Result<String> {
+    let client = KpmClient::detect()?;
+    client.ctl0_read(wire)
+}
+
 fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Result<()> {
     if skip_kpm_for_kmod_conflict(conflict_is_error)? {
         return Ok(());
@@ -320,7 +340,7 @@ fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Resu
     }
     let client = KpmClient::detect()?;
     client.ensure_loaded()?;
-    client.ctl0(&wire)
+    client.ctl0_config(&wire)
 }
 
 pub fn activate_ports() -> Result<()> {
@@ -543,10 +563,17 @@ impl KpmClient {
         }
     }
 
-    fn ctl0(&self, wire: &str) -> Result<()> {
+    fn ctl0_config(&self, wire: &str) -> Result<()> {
         match self {
-            Self::KpatchCli { path } => run_kpatch_kpm_ctl0(path, wire),
-            Self::ApatchSupercall { key, style } => apatch_kpm_ctl0(key, *style, wire),
+            Self::KpatchCli { path } => run_kpatch_kpm_ctl0_config(path, wire),
+            Self::ApatchSupercall { key, style } => apatch_kpm_ctl0_config(key, *style, wire),
+        }
+    }
+
+    fn ctl0_read(&self, wire: &str) -> Result<String> {
+        match self {
+            Self::KpatchCli { path } => run_kpatch_kpm_ctl0_read(path, wire),
+            Self::ApatchSupercall { key, style } => apatch_kpm_ctl0_read(key, *style, wire),
         }
     }
 }
@@ -577,7 +604,7 @@ fn kpatch_hello(kpatch: &Path) -> Result<()> {
     }
 }
 
-fn run_kpatch_kpm_ctl0(kpatch: &Path, wire: &str) -> Result<()> {
+fn run_kpatch_kpm_ctl0_config(kpatch: &Path, wire: &str) -> Result<()> {
     let mut cmd = Command::new(kpatch);
     cmd.args(["kpm", "ctl0", KPM_NAME, wire]);
     let out = cmd.output()?;
@@ -585,6 +612,17 @@ fn run_kpatch_kpm_ctl0(kpatch: &Path, wire: &str) -> Result<()> {
         Ok(())
     } else {
         Err(format!("kpm ctl0 failed with status {}", out.status).into())
+    }
+}
+
+fn run_kpatch_kpm_ctl0_read(kpatch: &Path, wire: &str) -> Result<String> {
+    let mut cmd = Command::new(kpatch);
+    cmd.args(["kpm", "ctl0", KPM_NAME, wire]);
+    let out = cmd.output()?;
+    if out.status.success() {
+        Ok(String::from_utf8(out.stdout)?)
+    } else {
+        Err(format!("kpm ctl0 read failed with status {}", out.status).into())
     }
 }
 
@@ -646,7 +684,23 @@ fn apatch_kpm_list(key: &str, style: ApatchCommandStyle) -> Result<String> {
     Ok(String::from_utf8_lossy(&buf[..len]).into_owned())
 }
 
-fn apatch_kpm_ctl0(key: &str, style: ApatchCommandStyle, wire: &str) -> Result<()> {
+fn apatch_kpm_ctl0_config(key: &str, style: ApatchCommandStyle, wire: &str) -> Result<()> {
+    let (rc, _) = apatch_kpm_ctl0_raw(key, style, wire)?;
+    supercall_ok(rc, "kpm ctl0")
+}
+
+fn apatch_kpm_ctl0_read(key: &str, style: ApatchCommandStyle, wire: &str) -> Result<String> {
+    let (rc, out) = apatch_kpm_ctl0_raw(key, style, wire)?;
+    supercall_ok(rc, "kpm ctl0")?;
+    let len = apatch_output_len(rc, &out);
+    Ok(String::from_utf8_lossy(&out[..len]).into_owned())
+}
+
+fn apatch_kpm_ctl0_raw(
+    key: &str,
+    style: ApatchCommandStyle,
+    wire: &str,
+) -> Result<(c_long, [u8; 4096])> {
     let key = CString::new(key)?;
     let name = CString::new(KPM_NAME)?;
     let wire = CString::new(wire)?;
@@ -662,7 +716,14 @@ fn apatch_kpm_ctl0(key: &str, style: ApatchCommandStyle, wire: &str) -> Result<(
             out.len() as c_long,
         )
     };
-    supercall_ok(rc, "kpm ctl0")
+    Ok((rc, out))
+}
+
+fn apatch_output_len(rc: c_long, out: &[u8]) -> usize {
+    if rc > 0 {
+        return usize::try_from(rc).unwrap_or(out.len()).min(out.len());
+    }
+    out.iter().position(|b| *b == 0).unwrap_or(0)
 }
 
 fn apatch_command_candidates() -> Vec<ApatchCommandStyle> {

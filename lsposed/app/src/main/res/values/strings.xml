@@ -4,6 +4,7 @@
 
     <!-- Navigation -->
     <string name="tab_dashboard">Dashboard</string>
+    <string name="tab_statistics">Statistics</string>
     <string name="tab_protection">Protection</string>
     <string name="tab_diagnostics">Diagnostics</string>
 
@@ -28,6 +29,7 @@
     <string name="selected_count">%d selected</string>
     <string name="btn_save">Save</string>
     <string name="btn_cancel">Cancel</string>
+    <string name="action_refresh">Refresh</string>
     <string name="action_refresh_apps">Refresh app list</string>
     <string name="search_placeholder">Search apps&#8230;</string>
     <string name="filter_system">System</string>
@@ -141,6 +143,29 @@
     <string name="dashboard_no_vpn">No active VPN. Turn on VPN to check protection status.</string>
     <string name="vpn_off_prompt">No active VPN. Turn it on, then tap Retry to run the protection checks. Results are cached until VPN Hide is restarted — no need to re-run later in the same session.</string>
     <string name="vpn_off_retry">Retry</string>
+
+    <!-- Statistics -->
+    <string name="statistics_title">Interception counters</string>
+    <string name="statistics_subtitle">Runtime events reported by active backends</string>
+    <string name="statistics_backends">Backends</string>
+    <string name="statistics_total_events">Events</string>
+    <string name="statistics_active_backends">Active backends</string>
+    <string name="statistics_counter_rows">Counter rows</string>
+    <string name="statistics_hooks">Hooks</string>
+    <string name="statistics_backend_detail">%1$s · hooks: %2$d</string>
+    <string name="statistics_events">events</string>
+    <string name="statistics_no_data">No runtime statistics yet. Counters appear after a protected app hits an installed hook.</string>
+    <string name="statistics_no_counters">No counters yet.</string>
+    <string name="statistics_unknown_uid">uid %1$d</string>
+    <string name="statistics_unknown_hook">unknown hook %1$d</string>
+    <string name="statistics_status_ok">OK</string>
+    <string name="statistics_status_partial">Partial</string>
+    <string name="statistics_status_error">Error</string>
+    <string name="statistics_status_no_data">No data</string>
+    <string name="statistics_load_failed_title">Statistics unavailable</string>
+    <string name="statistics_load_failed_message">VPN Hide could not collect the root state needed for this tab. Check your root manager if permission was interrupted, then tap Retry.</string>
+    <string name="statistics_refresh_failed_message">Refresh failed. Showing the previous statistics data.</string>
+
     <string name="dashboard_install_recommendation_title">Installation recommendation</string>
     <string name="dashboard_install_recommendation_device">Your device: %1$s, kernel %2$s</string>
     <string name="dashboard_install_recommendation_kmi_note">\"%1$s\" in the kernel version is the GKI Kernel Module Interface tag — it identifies the kernel\'s binary interface to modules, not your Android OS release.</string>

@@ -4,6 +4,7 @@
 
     <!-- Navigation -->
     <string name="tab_dashboard">Обзор</string>
+    <string name="tab_statistics">Статистика</string>
     <string name="tab_protection">Защита</string>
     <string name="tab_diagnostics">Диагностика</string>
 
@@ -26,6 +27,7 @@
     <string name="selected_count">%d выбрано</string>
     <string name="btn_save">Сохранить</string>
     <string name="btn_cancel">Отмена</string>
+    <string name="action_refresh">Обновить</string>
     <string name="action_refresh_apps">Обновить список приложений</string>
     <string name="search_placeholder">Поиск приложений&#8230;</string>
     <string name="filter_system">Системные</string>
@@ -105,6 +107,29 @@
     <string name="dashboard_no_vpn">VPN не активен. Включите VPN для проверки защиты.</string>
     <string name="vpn_off_prompt">VPN не активен. Включите его и нажмите «Повторить», чтобы запустить проверку защиты. Результаты кэшируются до перезапуска VPN Hide — повторно гонять в рамках сессии не нужно.</string>
     <string name="vpn_off_retry">Повторить</string>
+
+    <!-- Statistics -->
+    <string name="statistics_title">Счётчики перехватов</string>
+    <string name="statistics_subtitle">Runtime-события от активных бэкендов</string>
+    <string name="statistics_backends">Бэкенды</string>
+    <string name="statistics_total_events">События</string>
+    <string name="statistics_active_backends">Активные бэкенды</string>
+    <string name="statistics_counter_rows">Строки счётчиков</string>
+    <string name="statistics_hooks">Хуки</string>
+    <string name="statistics_backend_detail">%1$s · хуков: %2$d</string>
+    <string name="statistics_events">события</string>
+    <string name="statistics_no_data">Runtime-статистики пока нет. Счётчики появятся после того, как защищённое приложение попадёт в установленный хук.</string>
+    <string name="statistics_no_counters">Счётчиков пока нет.</string>
+    <string name="statistics_unknown_uid">uid %1$d</string>
+    <string name="statistics_unknown_hook">неизвестный хук %1$d</string>
+    <string name="statistics_status_ok">ОК</string>
+    <string name="statistics_status_partial">Частично</string>
+    <string name="statistics_status_error">Ошибка</string>
+    <string name="statistics_status_no_data">Нет данных</string>
+    <string name="statistics_load_failed_title">Статистика недоступна</string>
+    <string name="statistics_load_failed_message">VPN Hide не смог собрать root-состояние для этой вкладки. Проверьте менеджер root, если разрешение было прервано, затем нажмите «Повторить».</string>
+    <string name="statistics_refresh_failed_message">Обновление не удалось. Показываются предыдущие данные статистики.</string>
+
     <string name="dashboard_install_recommendation_title">Рекомендация по установке</string>
     <string name="dashboard_install_recommendation_device">Ваше устройство: %1$s, ядро %2$s</string>
     <string name="dashboard_install_recommendation_kmi_note">«%1$s» в версии ядра — это GKI Kernel Module Interface, обозначающий бинарный интерфейс ядра для модулей, а не версию Android на устройстве.</string>

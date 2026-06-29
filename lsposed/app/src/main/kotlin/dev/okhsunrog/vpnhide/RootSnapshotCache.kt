@@ -44,6 +44,8 @@ internal val REQUIRED_ROOT_SNAPSHOT_SECTIONS =
         "kmod_load_status",
         "kmod_load_dmesg",
         "kernel_release",
+        "kmod_state",
+        "kpm_state",
         "lsposed_state",
         "debug_logging",
         "getenforce",
@@ -230,6 +232,8 @@ internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): S
     phase_runtime_status_files() {
       phase_start runtime_status_files
       emit_cmd kernel_release uname -r
+      emit_eval kmod_state '[ -e $PROC_CTL ] && cat $PROC_CTL || true'
+      emit_eval kpm_state 'if [ -x $KPM_ACTIVATOR ] && [ ! -f $KPM_MODULE_DIR/disable ]; then $KPM_ACTIVATOR state; fi'
       emit_file lsposed_state $LSPOSED_STATE_FILE
       emit_file debug_logging /data/system/vpnhide_debug_logging
       emit_cmd getenforce getenforce
