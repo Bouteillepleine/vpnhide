@@ -186,10 +186,10 @@ internal sealed interface LsposedConfig {
     ) : LsposedConfig
 }
 
-internal enum class IssueSeverity { ERROR, WARNING }
+internal enum class DashboardMessageSeverity { ERROR, WARNING, INFO }
 
-internal data class Issue(
-    val severity: IssueSeverity,
+internal data class DashboardMessage(
+    val severity: DashboardMessageSeverity,
     val text: String,
 )
 
@@ -204,12 +204,17 @@ internal data class DashboardState(
     val nativeInstallRecommendation: NativeInstallRecommendation?,
     val kmodLoadStatus: KmodLoadStatus?,
     val protection: ProtectionCheck,
-    val issues: List<Issue>,
+    val messages: List<DashboardMessage>,
 )
 
 internal enum class HeroStatus { Protected, Attention, Unprotected, VpnOff }
 
-/** Overall health, ranked worst-signal-wins from protection state + issues. */
+internal fun protectionFullyPassed(protection: ProtectionCheck): Boolean =
+    protection is ProtectionCheck.Checked &&
+        protection.native is NativeResult.Ok &&
+        protection.java is JavaResult.Ok
+
+/** Overall health, ranked worst-signal-wins from protection state + errors/warnings. */
 internal fun computeHeroStatus(
     state: DashboardState,
     errorCount: Int,
@@ -1007,7 +1012,7 @@ private fun readLsposedConfig(
 }
 
 // Linear orchestrator: pure detectors above produce the module/lsposed state,
-// then a flat list of independent issue guards builds the warning/error banners.
+// then a flat list of independent guards builds the dashboard message banners.
 // Kept as one top-to-bottom narrative — splitting the flat guard list behind a
 // parameter bundle would add indirection without improving clarity.
 @Suppress("LongMethod", "CyclomaticComplexMethod")
@@ -1016,16 +1021,20 @@ internal suspend fun loadDashboardState(
     selfNeedsRestart: Boolean,
     rootSnapshot: RootSnapshot,
 ): DashboardState {
-    val issues = mutableListOf<Issue>()
+    val messages = mutableListOf<DashboardMessage>()
     val res = context.resources
     val selfPkg = context.packageName
 
     fun err(text: String) {
-        issues += Issue(IssueSeverity.ERROR, text)
+        messages += DashboardMessage(DashboardMessageSeverity.ERROR, text)
     }
 
     fun warn(text: String) {
-        issues += Issue(IssueSeverity.WARNING, text)
+        messages += DashboardMessage(DashboardMessageSeverity.WARNING, text)
+    }
+
+    fun info(text: String) {
+        messages += DashboardMessage(DashboardMessageSeverity.INFO, text)
     }
 
     VpnHideLog.i(TAG, "=== Loading dashboard state ===")
@@ -1155,7 +1164,7 @@ internal suspend fun loadDashboardState(
     )
     StartupTrace.mark("dashboard_lsposed_done")
 
-    // ── Issues ──
+    // ── Messages ──
     val hasNative =
         kmod is ModuleState.Installed ||
             kpm is ModuleState.Installed ||
@@ -1238,19 +1247,20 @@ internal suspend fun loadDashboardState(
         err(res.getString(R.string.dashboard_issue_no_targets))
     }
     if (ports is ModuleState.Installed && ports.targetCount == 0) {
-        warn(res.getString(R.string.dashboard_issue_ports_no_observers))
+        info(res.getString(R.string.dashboard_issue_ports_no_observers))
     }
+    var lsposedVersionMismatch: String? = null
     if (lsposed is LsposedState.Active) {
         val runningVersion = lsposed.version
         if (versionsMismatch(runningVersion, appVersion)) {
             VpnHideLog.w(TAG, "version mismatch: running=$runningVersion app=$appVersion")
-            warn(res.getString(R.string.dashboard_issue_version_mismatch, runningVersion, appVersion))
+            lsposedVersionMismatch = res.getString(R.string.dashboard_issue_version_mismatch, runningVersion, appVersion)
         }
     }
 
-    // ── Warnings: suboptimal-but-working setups ──
+    // ── Low-priority info: suboptimal-but-working setups ──
 
-    // W1: kernel supports kmod, but user only installed zygisk. Zygisk is
+    // I1: kernel supports kmod, but user only installed zygisk. Zygisk is
     // detected by banking / payment apps, so a user has to remember Z-off
     // per such app; kmod is invisible to anti-tamper.
     if (kernelRecommendation?.preferKmod == true &&
@@ -1258,7 +1268,7 @@ internal suspend fun loadDashboardState(
         kmod is ModuleState.NotInstalled &&
         kpm is ModuleState.NotInstalled
     ) {
-        warn(
+        info(
             res.getString(
                 R.string.dashboard_issue_kmod_capable_but_zygisk,
                 kernelRecommendation.recommendedArtifact,
@@ -1295,15 +1305,13 @@ internal suspend fun loadDashboardState(
         }
     }
 
-    // W3: user has debug logging turned on — VPN Hide is writing verbose lines
-    // to logcat that a forensic reader with root can see. The flag file is
-    // written by the Settings → Debugging → Debug logging toggle; absent file ⇒
-    // default off ⇒ no warning.
+    // I2: user has debug logging turned on. Only adb/root can read those
+    // verbose lines, so this is a neutral dashboard note rather than an issue.
     val debugEnabled =
         targetsSnapshot.canonicalConfig?.debug
             ?: (shellSnapshot["debug_logging"].orEmpty().trim() == "1")
     if (debugEnabled) {
-        warn(res.getString(R.string.dashboard_issue_debug_logging_on))
+        info(res.getString(R.string.dashboard_issue_debug_logging_on))
     }
 
     // W4: SELinux Permissive exposes six detection vectors we rely on SELinux
@@ -1328,7 +1336,6 @@ internal suspend fun loadDashboardState(
     if (selfUidCount > 1) {
         warn(res.getString(R.string.dashboard_issue_self_multi_profile, selfUidCount))
     }
-    StartupTrace.mark("dashboard_issues_done")
 
     // ── Errors: kmod variant / load problems ──
     // The diagnosis (reason + banner text) was computed once above as
@@ -1376,7 +1383,16 @@ internal suspend fun loadDashboardState(
             }
         }
 
-    VpnHideLog.i(TAG, "protection=$protection issues=$issues")
+    lsposedVersionMismatch?.let { text ->
+        if (protectionFullyPassed(protection)) {
+            info(text)
+        } else {
+            warn(text)
+        }
+    }
+
+    StartupTrace.mark("dashboard_messages_done")
+    VpnHideLog.i(TAG, "protection=$protection messages=$messages")
     StartupTrace.mark("dashboard_protection_done")
     VpnHideLog.i(TAG, "=== Dashboard state loaded ===")
 
@@ -1390,7 +1406,7 @@ internal suspend fun loadDashboardState(
         nativeInstallRecommendation = nativeInstallRecommendation,
         kmodLoadStatus = kmodLoadStatus,
         protection = protection,
-        issues = issues,
+        messages = messages,
     )
 }
 

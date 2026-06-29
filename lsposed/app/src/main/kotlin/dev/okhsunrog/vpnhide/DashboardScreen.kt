@@ -112,6 +112,8 @@ fun DashboardScreen(
         val errorHeader = StatusColors.errorHeader()
         val warningBg = StatusColors.warningContainer()
         val warningHeader = StatusColors.warningHeader()
+        val infoBg = StatusColors.neutralContainer()
+        val infoHeader = StatusColors.neutralHeader()
         val onBannerColor = MaterialTheme.colorScheme.onSurface
 
         val s = state
@@ -137,11 +139,12 @@ fun DashboardScreen(
         }
         val loadedState = s ?: return@Column
 
-        // Issues split by severity — computed up front so the hero card can
-        // summarize them. Errors = user attention, warnings = working-but-
-        // suboptimal. Their banner sections render further down.
-        val errors = loadedState.issues.filter { it.severity == IssueSeverity.ERROR }
-        val warnings = loadedState.issues.filter { it.severity == IssueSeverity.WARNING }
+        // Messages split by severity. Only errors/warnings affect the hero:
+        // info messages are neutral notes rendered below without changing the
+        // overall "Protected" state or issue count.
+        val errors = loadedState.messages.filter { it.severity == DashboardMessageSeverity.ERROR }
+        val warnings = loadedState.messages.filter { it.severity == DashboardMessageSeverity.WARNING }
+        val infos = loadedState.messages.filter { it.severity == DashboardMessageSeverity.INFO }
 
         // Hero: the whole setup's health at a glance.
         DashboardHeroCard(state = loadedState, errorCount = errors.size, warningCount = warnings.size)
@@ -224,6 +227,20 @@ fun DashboardScreen(
                 StatusBanner(
                     text = issue.text,
                     containerColor = warningBg,
+                    contentColor = onBannerColor,
+                )
+                Spacer(Modifier.height(6.dp))
+            }
+        }
+
+        if (infos.isNotEmpty()) {
+            Spacer(Modifier.height(20.dp))
+            SectionHeader(stringResource(R.string.dashboard_info, infos.size), color = infoHeader)
+            Spacer(Modifier.height(8.dp))
+            for (message in infos) {
+                StatusBanner(
+                    text = message.text,
+                    containerColor = infoBg,
                     contentColor = onBannerColor,
                 )
                 Spacer(Modifier.height(6.dp))

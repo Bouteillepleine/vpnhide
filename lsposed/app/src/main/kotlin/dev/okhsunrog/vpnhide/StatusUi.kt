@@ -58,6 +58,8 @@ internal object StatusColors {
 
     @Composable fun infoContainer() = container(0xFF124A73, 0.34f, 0xFFE6F3FF)
 
+    @Composable fun neutralContainer() = container(0xFF334155, 0.28f, 0xFFF1F5F9)
+
     // Distinct from warning only in dark mode — the "install zygisk instead"
     // recommendation card uses a brown tint where warnings use orange.
     @Composable fun zygiskRecommendContainer() = container(0xFF4A3A2A, 0.34f, 0xFFFFF0DC)
@@ -65,6 +67,8 @@ internal object StatusColors {
     @Composable fun errorHeader() = if (isSystemInDarkTheme()) Color(0xFFFFB3C0) else Color(0xFFC9184A)
 
     @Composable fun warningHeader() = if (isSystemInDarkTheme()) Color(0xFFFFC56D) else Color(0xFFC96A00)
+
+    @Composable fun neutralHeader() = if (isSystemInDarkTheme()) Color(0xFFCBD5E1) else Color(0xFF475569)
 
     // Accent colors (status dots / status text / pass-fail badges). These are
     // fixed regardless of theme — they sit on the tinted containers above.
