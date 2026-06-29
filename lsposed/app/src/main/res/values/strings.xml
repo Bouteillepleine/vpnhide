@@ -6,33 +6,13 @@
     <string name="tab_dashboard">Dashboard</string>
     <string name="tab_statistics">Statistics</string>
     <string name="tab_protection">Protection</string>
-    <string name="tab_diagnostics">Diagnostics</string>
-
-    <!-- Protection modes (segmented button) -->
-    <string name="mode_vpn_targets">Tun</string>
-    <string name="mode_app_hiding">Apps</string>
-    <string name="mode_port_hiding">Ports</string>
-    <string name="port_hiding_coming_soon">Coming soon</string>
-
-    <!-- Port hiding -->
-    <string name="ports_chip" translatable="false">P</string>
-    <string name="ports_module_not_installed_title">Ports module not installed</string>
-    <string name="ports_module_not_installed_body">Install vpnhide-ports.zip via KernelSU-Next or Magisk to block selected apps from reaching localhost ports. This hides locally-bound VPN/proxy daemons from apps that probe them via connect(127.0.0.1, PORT).</string>
-    <string name="ports_help_title">How port hiding works</string>
-    <string name="ports_hint_role">Tap P to mark an app as a proxy-hide observer. Observer apps receive ECONNREFUSED when they try to connect to any port on 127.0.0.1 or ::1 — indistinguishable from a real closed port.</string>
-    <string name="ports_hint_safe">Safe for banks, госуслуги, marketplaces, non-browser apps. Chromium-based browsers use localhost for dev/PWA features — avoid adding them as observers.</string>
-    <string name="ports_hint_reboot">Rules are re-applied on every Save. After reboot, the module restores them automatically via service.sh.</string>
-    <string name="ports_save_success">Saved · %1$d observer(s)</string>
-    <string name="ports_count" translatable="false">P: %d</string>
 
     <!-- App picker -->
     <string name="selected_count">%d selected</string>
     <string name="btn_save">Save</string>
     <string name="btn_cancel">Cancel</string>
     <string name="action_refresh">Refresh</string>
-    <string name="action_refresh_apps">Refresh app list</string>
     <string name="search_placeholder">Search apps&#8230;</string>
-    <string name="filter_system">System</string>
     <string name="filter_show_system">Show system apps</string>
     <string name="filter_russian_only">Russian apps only</string>
     <string name="filter_configured_only">Configured only</string>
@@ -79,15 +59,6 @@
     <string name="apps_help_zygisk_warning_title">Zygisk and banking apps</string>
     <string name="apps_help_zygisk_warning_body">Zygisk hooks run inside the target process. Banking and payment apps may detect that when Native is enabled for them; leave Native off for those apps and rely on Java where possible.</string>
 
-    <!-- App hiding -->
-    <string name="hiding_chip_hidden" translatable="false">H</string>
-    <string name="hiding_chip_observer" translatable="false">O</string>
-    <string name="hiding_help_title">How app hiding works</string>
-    <string name="hiding_hint_roles">Mark apps as H (Hidden) to remove them from the package manager for O (Observer) apps. Observers cannot list, resolve, or query any Hidden app.</string>
-    <string name="hiding_hint_system">System callers (installer, launcher, system services) are always exempt so core OS functionality keeps working.</string>
-    <string name="hiding_hint_reboot">Changes take effect immediately, but observer apps may cache the package list — force-stop and restart them to see results.</string>
-    <string name="hiding_save_success">Saved · %1$d hidden, %2$d observers</string>
-
     <!-- Root status -->
     <string name="root_error_title">Root access required</string>
     <string name="root_error_message">VPN Hide needs root access to manage target apps. Grant root permissions to this app in your root manager (Magisk, KernelSU, etc.) and reopen the app.</string>
@@ -97,7 +68,6 @@
     <string name="save_failed_exit">Save failed (exit code %d)</string>
     <string name="save_failed_error">Save failed: %s</string>
     <string name="save_failed_root">Save failed: root access denied</string>
-    <string name="save_header_comment" translatable="false"># Managed by VPN Hide app</string>
 
     <!-- Diagnostics -->
     <string name="summary_format">%1$d/%2$d passed</string>
@@ -111,16 +81,13 @@
     <string name="logcat_card_description">Records unfiltered logs from all buffers (main/system/crash/events/radio) for debugging issues that aren\'t visible in the standard checks. Start recording, reproduce the bug, then stop.</string>
     <string name="logcat_btn_start">Start recording</string>
     <string name="logcat_btn_stop">Stop and save</string>
-    <string name="logcat_btn_share_last">Share last (%1$s)</string>
     <string name="logcat_recording_status">● Recording · %1$s · %2$s</string>
     <string name="logcat_last_recording">Last recording · %1$s · %2$s</string>
     <string name="badge_pass">PASS</string>
     <string name="badge_fail">FAIL</string>
     <string name="badge_info">INFO</string>
-    <string name="banner_no_vpn">No active VPN detected. Turn on your VPN connection before running checks.</string>
     <string name="banner_ready">VPN is active. This app is in the protection config. Results below.</string>
     <string name="banner_added_self">Added VPN Hide to the protection config. Restart VPN Hide (force-stop and reopen) for native-level checks to take effect — no device reboot needed.</string>
-    <string name="banner_adding_self">Adding this app to protection config&#8230;</string>
     <string name="banner_network_blocked">Network access is disabled for this app. ioctl checks (SIOCGIFFLAGS, SIOCGIFMTU, SIOCGIFCONF) cannot run without it. Enable in Settings → Apps → VPN Hide → Mobile data &amp; Wi-Fi.</string>
     <string name="section_native">Native level (kmod / zygisk)</string>
     <string name="section_java">Java API level (LSPosed)</string>
@@ -173,7 +140,6 @@
     <string name="dashboard_protection_no_module">No module</string>
     <string name="dashboard_protection_hooks_inactive">Hooks inactive</string>
     <string name="dashboard_needs_restart">VPN Hide was just added to its own protection config. Restart VPN Hide (force-stop and reopen) to check protection — no device reboot needed.</string>
-    <string name="dashboard_no_vpn">No active VPN. Turn on VPN to check protection status.</string>
     <string name="vpn_off_prompt">No active VPN. Turn it on, then tap Retry to run the protection checks. Results are cached until VPN Hide is restarted — no need to re-run later in the same session.</string>
     <string name="vpn_off_retry">Retry</string>
 

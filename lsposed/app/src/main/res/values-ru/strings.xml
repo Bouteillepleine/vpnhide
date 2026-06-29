@@ -6,31 +6,13 @@
     <string name="tab_dashboard">Обзор</string>
     <string name="tab_statistics">Статистика</string>
     <string name="tab_protection">Защита</string>
-    <string name="tab_diagnostics">Диагностика</string>
-
-    <!-- Protection modes (segmented button) -->
-    <string name="mode_vpn_targets">Туннели</string>
-    <string name="mode_app_hiding">Приложения</string>
-    <string name="mode_port_hiding">Порты</string>
-    <string name="port_hiding_coming_soon">Скоро</string>
-
-    <!-- Port hiding -->
-    <string name="ports_module_not_installed_title">Модуль портов не установлен</string>
-    <string name="ports_module_not_installed_body">Установите vpnhide-ports.zip через KernelSU-Next или Magisk, чтобы блокировать подключения выбранных приложений к localhost-портам. Это скрывает локально поднятые VPN/прокси-демоны от приложений, которые пробуют connect(127.0.0.1, PORT).</string>
-    <string name="ports_help_title">Как работает скрытие портов</string>
-    <string name="ports_hint_role">Нажмите P, чтобы отметить приложение как observer для proxy-hide. Observer получит ECONNREFUSED при попытке подключения к любому порту на 127.0.0.1 или ::1 — неотличимо от реально закрытого порта.</string>
-    <string name="ports_hint_safe">Безопасно для банков, госуслуг, маркетплейсов, не-браузерных приложений. Chromium-браузеры используют localhost для dev/PWA — их не стоит делать observer\'ами.</string>
-    <string name="ports_hint_reboot">Правила перезаписываются при каждом Save. После ребута модуль восстанавливает их автоматически через service.sh.</string>
-    <string name="ports_save_success">Сохранено · наблюдателей: %1$d</string>
 
     <!-- App picker -->
     <string name="selected_count">%d выбрано</string>
     <string name="btn_save">Сохранить</string>
     <string name="btn_cancel">Отмена</string>
     <string name="action_refresh">Обновить</string>
-    <string name="action_refresh_apps">Обновить список приложений</string>
     <string name="search_placeholder">Поиск приложений&#8230;</string>
-    <string name="filter_system">Системные</string>
     <string name="filter_show_system">Показать системные приложения</string>
     <string name="filter_russian_only">Только российские</string>
     <string name="filter_configured_only">Только настроенные</string>
@@ -68,13 +50,6 @@
     <string name="apps_help_apply_body">После Save Java и нативные бэкенды уровня ядра (kmod/KPM) применяются сразу. Zygisk-хуки и правила портов подхватываются целевым приложением после force-stop и повторного открытия.</string>
     <string name="apps_help_zygisk_warning_title">Zygisk и банковские приложения</string>
     <string name="apps_help_zygisk_warning_body">Zygisk-хуки работают внутри процесса целевого приложения. Банковские и платёжные приложения могут это обнаружить при включённом Native; для таких приложений оставьте Native выключенным и по возможности используйте Java.</string>
-
-    <!-- App hiding -->
-    <string name="hiding_help_title">Как работает скрытие приложений</string>
-    <string name="hiding_hint_roles">Отметьте приложения как H (Hidden — скрытые) — приложения с меткой O (Observer — наблюдатели) не смогут их видеть. Наблюдатель не получит скрытое приложение ни в списке установленных, ни через intent-запросы, ни через resolve.</string>
-    <string name="hiding_hint_system">Системные вызовы (установщик, лаунчер, системные сервисы) всегда исключены — иначе сломается базовая функциональность Android.</string>
-    <string name="hiding_hint_reboot">Изменения применяются мгновенно, но приложения-наблюдатели могут кэшировать список — сделайте force-stop и перезапустите их, чтобы увидеть результат.</string>
-    <string name="hiding_save_success">Сохранено · %1$d скрыто, %2$d наблюдателей</string>
 
     <!-- Root status -->
     <string name="root_error_title">Требуется root-доступ</string>
@@ -134,7 +109,6 @@
     <string name="dashboard_protection_no_module">Нет модуля</string>
     <string name="dashboard_protection_hooks_inactive">Хуки неактивны</string>
     <string name="dashboard_needs_restart">VPN Hide только что добавил себя в конфиг защиты. Перезапустите VPN Hide (force-stop и откройте заново) для проверки защиты — перезагрузка устройства не нужна.</string>
-    <string name="dashboard_no_vpn">VPN не активен. Включите VPN для проверки защиты.</string>
     <string name="vpn_off_prompt">VPN не активен. Включите его и нажмите «Повторить», чтобы запустить проверку защиты. Результаты кэшируются до перезапуска VPN Hide — повторно гонять в рамках сессии не нужно.</string>
     <string name="vpn_off_retry">Повторить</string>
 
@@ -259,17 +233,14 @@
     <string name="logcat_card_description">Записывает неотфильтрованные логи из всех буферов (main/system/crash/events/radio) для диагностики проблем, которые не видны в стандартных проверках. Начните запись, воспроизведите баг, затем остановите.</string>
     <string name="logcat_btn_start">Начать запись</string>
     <string name="logcat_btn_stop">Остановить и сохранить</string>
-    <string name="logcat_btn_share_last">Последний (%1$s)</string>
     <string name="logcat_recording_status">● Запись · %1$s · %2$s</string>
     <string name="logcat_last_recording">Последняя запись · %1$s · %2$s</string>
     <string name="summary_format">%1$d/%2$d пройдено</string>
     <string name="badge_pass">ОК</string>
     <string name="badge_fail">ПРОВАЛ</string>
     <string name="badge_info">ИНФО</string>
-    <string name="banner_no_vpn">Активное VPN-соединение не обнаружено. Включите VPN перед запуском проверок.</string>
     <string name="banner_ready">VPN активен. Приложение в списке целевых. Результаты проверок ниже.</string>
     <string name="banner_added_self">VPN Hide добавлен в список целевых приложений. Перезапустите VPN Hide (force-stop и откройте заново) для работы нативных проверок — перезагрузка устройства не нужна.</string>
-    <string name="banner_adding_self">Добавление приложения в список целевых&#8230;</string>
     <string name="banner_network_blocked">Доступ к сети отключён для этого приложения. Проверки ioctl (SIOCGIFFLAGS, SIOCGIFMTU, SIOCGIFCONF) не могут быть выполнены. Включите в Настройки → Приложения → VPN Hide → Мобильный интернет и Wi-Fi.</string>
     <string name="section_native">Нативный уровень (kmod / zygisk)</string>
     <string name="section_java">Java API уровень (LSPosed)</string>
