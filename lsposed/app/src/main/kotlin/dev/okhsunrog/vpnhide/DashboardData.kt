@@ -187,7 +187,12 @@ internal data class DashboardState(
 
 internal enum class HeroStatus { Protected, Attention, Unprotected, VpnOff }
 
-/** Overall health, ranked worst-signal-wins from protection state + issues. */
+internal fun protectionFullyPassed(protection: ProtectionCheck): Boolean =
+    protection is ProtectionCheck.Checked &&
+        protection.native is NativeResult.Ok &&
+        protection.java is JavaResult.Ok
+
+/** Overall health, ranked worst-signal-wins from protection state + errors/warnings. */
 internal fun computeHeroStatus(
     state: DashboardState,
     errorCount: Int,
@@ -1006,6 +1011,10 @@ internal suspend fun loadDashboardState(
         messages += DashboardMessage(DashboardMessageSeverity.WARNING, text)
     }
 
+    fun info(text: String) {
+        messages += DashboardMessage(DashboardMessageSeverity.INFO, text)
+    }
+
     VpnHideLog.i(TAG, "=== Loading dashboard state ===")
     StartupTrace.mark("dashboard_derive_start")
     val shellSnapshot = rootSnapshot.sections
@@ -1216,19 +1225,20 @@ internal suspend fun loadDashboardState(
         err(res.getString(R.string.dashboard_issue_no_targets))
     }
     if (ports is ModuleState.Installed && ports.targetCount == 0) {
-        warn(res.getString(R.string.dashboard_issue_ports_no_observers))
+        info(res.getString(R.string.dashboard_issue_ports_no_observers))
     }
+    var lsposedVersionMismatch: String? = null
     if (lsposed is LsposedState.Active) {
         val runningVersion = lsposed.version
         if (versionsMismatch(runningVersion, appVersion)) {
             VpnHideLog.w(TAG, "version mismatch: running=$runningVersion app=$appVersion")
-            warn(res.getString(R.string.dashboard_issue_version_mismatch, runningVersion, appVersion))
+            lsposedVersionMismatch = res.getString(R.string.dashboard_issue_version_mismatch, runningVersion, appVersion)
         }
     }
 
-    // ── Warnings: suboptimal-but-working setups ──
+    // ── Low-priority info: suboptimal-but-working setups ──
 
-    // W1: kernel supports kmod, but user only installed zygisk. Zygisk is
+    // I1: kernel supports kmod, but user only installed zygisk. Zygisk is
     // detected by banking / payment apps, so a user has to remember Z-off
     // per such app; kmod is invisible to anti-tamper.
     if (kernelRecommendation?.preferKmod == true &&
@@ -1236,7 +1246,7 @@ internal suspend fun loadDashboardState(
         kmod is ModuleState.NotInstalled &&
         kpm is ModuleState.NotInstalled
     ) {
-        warn(
+        info(
             res.getString(
                 R.string.dashboard_issue_kmod_capable_but_zygisk,
                 kernelRecommendation.recommendedArtifact,
@@ -1259,15 +1269,13 @@ internal suspend fun loadDashboardState(
         MultiNativeSeverity.None -> Unit
     }
 
-    // W3: user has debug logging turned on — VPN Hide is writing verbose lines
-    // to logcat that a forensic reader with root can see. The flag file is
-    // written by the Settings → Debugging → Debug logging toggle; absent file ⇒
-    // default off ⇒ no warning.
+    // I2: user has debug logging turned on. Only adb/root can read those
+    // verbose lines, so this is a neutral dashboard note rather than an issue.
     val debugEnabled =
         targetsSnapshot.canonicalConfig?.debug
             ?: (shellSnapshot["debug_logging"].orEmpty().trim() == "1")
     if (debugEnabled) {
-        warn(res.getString(R.string.dashboard_issue_debug_logging_on))
+        info(res.getString(R.string.dashboard_issue_debug_logging_on))
     }
 
     // W4: SELinux Permissive exposes six detection vectors we rely on SELinux
@@ -1292,7 +1300,6 @@ internal suspend fun loadDashboardState(
     if (selfUidCount > 1) {
         warn(res.getString(R.string.dashboard_issue_self_multi_profile, selfUidCount))
     }
-    StartupTrace.mark("dashboard_messages_done")
 
     // ── Errors: kmod variant / load problems ──
     // The diagnosis (reason + banner text) was computed once above as
@@ -1340,6 +1347,15 @@ internal suspend fun loadDashboardState(
             }
         }
 
+    lsposedVersionMismatch?.let { text ->
+        if (protectionFullyPassed(protection)) {
+            info(text)
+        } else {
+            warn(text)
+        }
+    }
+
+    StartupTrace.mark("dashboard_messages_done")
     VpnHideLog.i(TAG, "protection=$protection messages=$messages")
     StartupTrace.mark("dashboard_protection_done")
     VpnHideLog.i(TAG, "=== Dashboard state loaded ===")

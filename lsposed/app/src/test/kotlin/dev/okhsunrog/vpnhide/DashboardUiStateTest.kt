@@ -40,6 +40,17 @@ class DashboardUiStateTest {
     }
 
     @Test
+    fun `protectionFullyPassed is true only when native and java checks pass`() {
+        assertTrue(protectionFullyPassed(ProtectionCheck.Checked(NativeResult.Ok, JavaResult.Ok)))
+        assertFalse(protectionFullyPassed(ProtectionCheck.NoVpn))
+        assertFalse(protectionFullyPassed(ProtectionCheck.NeedsRestart))
+        assertFalse(protectionFullyPassed(ProtectionCheck.Checked(NativeResult.NoModule, JavaResult.Ok)))
+        assertFalse(protectionFullyPassed(ProtectionCheck.Checked(NativeResult.Fail(passed = 2, failed = 1), JavaResult.Ok)))
+        assertFalse(protectionFullyPassed(ProtectionCheck.Checked(NativeResult.Ok, JavaResult.Fail(failedChecks = 1))))
+        assertFalse(protectionFullyPassed(ProtectionCheck.Checked(NativeResult.Ok, JavaResult.HooksInactive)))
+    }
+
+    @Test
     fun `computeHeroStatus returns vpn off before issue ranking`() {
         assertEquals(
             HeroStatus.VpnOff,
