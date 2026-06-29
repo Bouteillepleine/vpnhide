@@ -42,8 +42,10 @@ import java.lang.reflect.Array as JavaArray
  *
  * Single Xposed entry point for system_server hook wiring; splitting the hook
  * installer is a separate refactor from adding telemetry.
+ *
+ * Deprecated legacy connectivity APIs are still active detection surfaces.
  */
-@Suppress("LargeClass")
+@Suppress("DEPRECATION", "LargeClass")
 class HookEntry : IXposedHookLoadPackage {
     private val hookInstalled = AtomicBoolean(false)
 
