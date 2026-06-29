@@ -122,10 +122,15 @@ class StorageConfigTest {
         assertTrue(cfg.debug)
         assertEquals(CanonicalSettings(rememberSuperkey = true), cfg.settings)
         assertEquals(NativeRole.All, cfg.apps.getValue("com.example.bank").native)
+        val proxy = cfg.apps.getValue("org.example.proxy")
         assertEquals(
             NativeRole(enabled = true, hooks = listOf("fib_route_seq_show", "sock_ioctl")),
-            cfg.apps.getValue("org.example.proxy").native,
+            proxy.native,
         )
+        // Per-hook Java selection: the same array shape the native activator
+        // must tolerate (it parses but ignores Java; LSPosed self-read acts on it).
+        assertTrue(proxy.java)
+        assertEquals(listOf("lsposed_network_capabilities", "lsposed_network_info"), proxy.javaHooks)
         assertTrue(cfg.apps.getValue("dev.okhsunrog.vpnhide").hidden)
     }
 

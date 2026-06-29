@@ -84,7 +84,13 @@ pub struct Settings {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
-    #[serde(default)]
+    // `java` selects LSPosed (system_server) hooks and is owned entirely by the
+    // LSPosed self-read path; the native activator never inspects it. It must
+    // still *parse*: the app writes it as a bool (all / none) or — for a
+    // per-hook Java selection — a JSON array of hook names, the same shape as
+    // `native`. Accept both so a partial Java selection never breaks the native
+    // config read (a bool-only field would error on the array form).
+    #[serde(default, deserialize_with = "de_bool_or_hook_list")]
     pub java: bool,
     #[serde(default)]
     pub native: NativeSelection,
@@ -172,6 +178,26 @@ impl NativeSelection {
 
 fn schema_version() -> u32 {
     1
+}
+
+/// Deserialize a hook-role field that the app writes as either a bool (all /
+/// none) or a JSON array of hook names (partial selection), collapsing it to
+/// "is this role enabled". Used for `java`, which the native activator parses
+/// but does not act on — the LSPosed self-read path owns Java hook selection.
+fn de_bool_or_hook_list<'de, D>(deserializer: D) -> std::result::Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum BoolOrHookList {
+        Bool(bool),
+        Hooks(Vec<String>),
+    }
+    Ok(match BoolOrHookList::deserialize(deserializer)? {
+        BoolOrHookList::Bool(enabled) => enabled,
+        BoolOrHookList::Hooks(hooks) => !hooks.is_empty(),
+    })
 }
 
 fn hook_bit(name: &str) -> u32 {
@@ -1121,12 +1147,52 @@ mod tests {
             cfg.apps.get("com.example.bank").unwrap().native,
             NativeSelection::Enabled(true),
         );
+        let proxy = cfg.apps.get("org.example.proxy").unwrap();
         assert_eq!(
-            cfg.apps.get("org.example.proxy").unwrap().native,
+            proxy.native,
             NativeSelection::Hooks(vec![
                 "fib_route_seq_show".to_owned(),
                 "sock_ioctl".to_owned()
             ]),
+        );
+        // Per-hook Java selection in the fixture: the array form must parse and
+        // collapse to "java enabled" without breaking the native config read.
+        assert!(proxy.java);
+    }
+
+    #[test]
+    fn parses_per_hook_java_selection_without_breaking_native() {
+        // The canonical the app writes when a user picks individual Java hooks:
+        // "java" is a string array, not a bool. A bool-only field used to make
+        // serde reject the whole config, silently disabling every native target.
+        let cfg = parse_canonical(
+            r#"{
+              "version": 1,
+              "apps": {
+                "com.example.partialjava": {
+                  "java": ["lsposed_network", "lsposed_network_info"],
+                  "native": true
+                },
+                "com.example.emptyjava": { "java": [], "native": true }
+              }
+            }"#,
+        )
+        .unwrap();
+        assert!(cfg.apps.get("com.example.partialjava").unwrap().java);
+        // An empty array means no Java hooks -> role disabled.
+        assert!(!cfg.apps.get("com.example.emptyjava").unwrap().java);
+
+        let resolver = parse_pm_packages(
+            "package:com.example.partialjava uid:10123\n\
+             package:com.example.emptyjava uid:10124\n",
+        );
+        // Native projection is unaffected: both apps still get the kernel mask.
+        assert_eq!(
+            project_native_with_resolver(&cfg, &resolver),
+            "vpnhide 1 config\n\
+             debug 0\n\
+             target 0x278b 0x3ff\n\
+             target 0x278c 0x3ff\n",
         );
     }
 
