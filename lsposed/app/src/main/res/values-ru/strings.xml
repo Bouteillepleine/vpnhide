@@ -36,9 +36,18 @@
     <string name="apps_help_title">Как это работает</string>
     <string name="java_hooks_title">Java-хуки</string>
     <string name="native_hooks_title">Нативные хуки</string>
-    <string name="apps_hint_roles">Нажмите чип, чтобы переключить роль для приложения, или нажмите на строку — переключатся все сразу. J = LSPosed (скрытие на уровне Java). N = нативный бэкенд (скрытие на уровне ядра через kmod/KPM или Zygisk). A = скрытие приложений (это приложение видит очищенный список пакетов). P = блокировать этому приложению доступ к localhost-портам. N и P показываются только когда установлен нативный бэкенд / модуль портов.</string>
-    <string name="apps_hint_restart_target">После Save: J (LSPosed) и нативный бэкенд на уровне ядра (kmod/KPM) применяются к цели мгновенно — рестарт не нужен. Если ваш нативный бэкенд — Zygisk, или вы изменили P (порты), целевое приложение нужно force-stop\'нуть и открыть заново, чтобы изменение для него вступило в силу.</string>
-    <string name="apps_hint_zygisk">Если ваш нативный бэкенд — Zygisk, банковские и платёжные приложения могут обнаружить его внутрипроцессные хуки и крашиться при включённом N — держите N выключенным для таких приложений и полагайтесь на J (LSPosed). Бэкенды kmod и KPM работают в пространстве ядра и невидимы для таких проверок.</string>
+    <string name="apps_help_role_java_body">LSPosed скрывает VPN-сигналы в Java API Android: NetworkCapabilities, NetworkInfo, LinkProperties и NetworkInterface.</string>
+    <string name="apps_help_role_native_body">Активный нативный бэкенд скрывает VPN-сигналы, видимые через kernel/libc-проверки. VPN Hide пишет один native-выбор во все установленные нативные бэкенды; работает только активный.</string>
+    <string name="apps_help_role_apps_body">Режим observer для скрытия приложений. Это приложение получает очищенный вид PackageManager и не может перечислить, resolve\'нуть или query\'нуть пакеты, которые VPN Hide пометил скрытыми.</string>
+    <string name="apps_help_role_ports_body">Режим observer для портов. Модуль портов делает localhost-проверки VPN/прокси-демонов похожими на закрытые порты для этого приложения. Роль появляется только когда установлен модуль портов.</string>
+    <string name="apps_help_hook_settings_title">Настройки хуков</string>
+    <string name="apps_help_hook_settings_body">Для Java и Native нажмите край комбинированного чипа с иконкой настроек, чтобы выбрать точные хуки для этого приложения. Чип со звёздочкой * означает, что включена только часть бэкенда.</string>
+    <string name="apps_help_apps_hiding_title">Скрытие приложений</string>
+    <string name="apps_help_apps_hiding_body">VPN Hide автоматически находит пакеты, которые нужно скрывать от observer\'ов: приложения с VPN-сервисом и опционально эвристика по имени. Ручной выбор скрытых пакетов находится в Настройки → Расширенная защита. Системные вызовы исключены, чтобы Android мог продолжать устанавливать и запускать приложения.</string>
+    <string name="apps_help_apply_title">Применение изменений</string>
+    <string name="apps_help_apply_body">После Save Java и нативные бэкенды уровня ядра (kmod/KPM) применяются сразу. Zygisk-хуки и правила портов подхватываются целевым приложением после force-stop и повторного открытия.</string>
+    <string name="apps_help_zygisk_warning_title">Zygisk и банковские приложения</string>
+    <string name="apps_help_zygisk_warning_body">Zygisk-хуки работают внутри процесса целевого приложения. Банковские и платёжные приложения могут это обнаружить при включённом Native; для таких приложений оставьте Native выключенным и по возможности используйте Java.</string>
 
     <!-- App hiding -->
     <string name="hiding_help_title">Как работает скрытие приложений</string>

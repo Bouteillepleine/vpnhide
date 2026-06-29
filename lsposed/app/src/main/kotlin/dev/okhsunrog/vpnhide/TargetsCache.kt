@@ -36,6 +36,7 @@ internal data class TargetsSnapshot(
     val uidToPkg: Map<Int, String>,
     val canonicalConfig: CanonicalConfig?,
     val apatchSuperkeySaved: Boolean = false,
+    val activeNativeBackendId: NativeBackendId? = null,
 ) {
     /** True if any native backend is installed (kmod / KPM / Zygisk). The
      * picker's "N" toggle is meaningful only when at least one is present. */
@@ -122,6 +123,7 @@ internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
     }
 
     fun uidsFor(pkgs: Set<String>): Set<Int> = pkgs.flatMap { pkgToUids[it].orEmpty() }.toSet()
+    val activeNativeBackendId = detectActiveNativeBackend(sections)
 
     if (canonical != null) {
         val javaTargets = canonical.apps.filterValues { it.java }.keys
@@ -144,6 +146,7 @@ internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
             uidToPkg = uidToPkg,
             canonicalConfig = canonical,
             apatchSuperkeySaved = sections["superkey_saved"]?.trim() == "1",
+            activeNativeBackendId = activeNativeBackendId,
         )
     }
 
@@ -164,5 +167,23 @@ internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
         uidToPkg = uidToPkg,
         canonicalConfig = null,
         apatchSuperkeySaved = sections["superkey_saved"]?.trim() == "1",
+        activeNativeBackendId = activeNativeBackendId,
     )
+}
+
+private fun detectActiveNativeBackend(sections: Map<String, String>): NativeBackendId? {
+    val currentBootId = sections["current_boot_id"].orEmpty()
+    val ordered =
+        listOf(
+            NativeBackendId.Kmod to detectKmodModule(sections, APP_PACKAGE_NAME),
+            NativeBackendId.Kpm to detectKpmModule(sections, APP_PACKAGE_NAME, currentBootId),
+            NativeBackendId.Zygisk to
+                detectZygiskModule(
+                    sections = sections,
+                    zygiskStatusRaw = sections["zygisk_status"].orEmpty(),
+                    selfPkg = APP_PACKAGE_NAME,
+                    currentBootId = currentBootId,
+                ),
+        )
+    return ordered.firstOrNull { moduleActive(it.second) }?.first
 }

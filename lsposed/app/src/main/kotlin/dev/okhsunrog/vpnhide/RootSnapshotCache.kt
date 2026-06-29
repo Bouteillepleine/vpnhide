@@ -43,6 +43,7 @@ internal val REQUIRED_ROOT_SNAPSHOT_SECTIONS =
         "current_boot_id",
         "kmod_load_status",
         "kmod_load_dmesg",
+        "zygisk_status",
         "kernel_release",
         "kmod_state",
         "kpm_state",
@@ -226,6 +227,7 @@ internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): S
       emit_file current_boot_id /proc/sys/kernel/random/boot_id
       emit_file kmod_load_status $KMOD_LOAD_STATUS_FILE
       emit_file kmod_load_dmesg $KMOD_LOAD_DMESG_FILE
+      emit_file zygisk_status $ZYGISK_STATUS_FILE
       emit_file kpm_load_status $KPM_LOAD_STATUS_FILE
       phase_end
     }

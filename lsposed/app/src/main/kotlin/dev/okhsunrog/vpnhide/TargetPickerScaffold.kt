@@ -129,7 +129,7 @@ internal fun <T : TargetEntry> TargetPickerScreen(
     modifier: Modifier,
     helpPrefKey: String,
     helpTitle: String,
-    help: @Composable () -> Unit,
+    help: @Composable (TargetsSnapshot) -> Unit,
     merge: (apps: List<AppSummary>, targets: TargetsSnapshot, selfPkg: String) -> MergeResult<T>,
     countText: (entries: List<T>, resources: Resources) -> String,
     buildSaveCommand: (entries: List<T>, ctx: SaveContext) -> String,
@@ -238,10 +238,12 @@ internal fun <T : TargetEntry> TargetPickerScreen(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    item {
-                        Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                            HelpAccordion(prefKey = helpPrefKey, title = helpTitle) {
-                                help()
+                    if (currentTargets != null) {
+                        item {
+                            Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                HelpAccordion(prefKey = helpPrefKey, title = helpTitle) {
+                                    help(currentTargets)
+                                }
                             }
                         }
                     }

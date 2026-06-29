@@ -253,7 +253,7 @@ the app when Vector is active.
 
 - Format: `key=value`: `version`, `boot_id`, `pid`, `timestamp`.
 - Writer: Zygisk module when VPN Hide itself is forked under hooks.
-- Reader: app dashboard/startup cleanup.
+- Reader: app root snapshot/dashboard/startup cleanup.
 - Lifetime: per app launch, stale records removed when boot_id changes.
 
 ### `cacheDir`

@@ -1,20 +1,28 @@
 package dev.okhsunrog.vpnhide
 
 import android.graphics.drawable.Drawable
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
@@ -29,6 +37,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -82,22 +92,7 @@ fun AppPickerScreen(
         modifier = modifier,
         helpPrefKey = "apps_unified",
         helpTitle = stringResource(R.string.apps_help_title),
-        help = {
-            Text(
-                text = stringResource(R.string.apps_hint_roles),
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                text = stringResource(R.string.apps_hint_restart_target),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = stringResource(R.string.apps_hint_zygisk),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        },
+        help = { targets -> AppsHelpContent(targets) },
         merge = { apps, t, selfPkg ->
             val nativeTargets = t.nativeTargets
             val observers = t.observerNames
@@ -193,6 +188,135 @@ fun AppPickerScreen(
                 )
             },
         )
+    }
+}
+
+@Composable
+private fun AppsHelpContent(targets: TargetsSnapshot) {
+    val fullRoleLabels = LocalSettingsState.current.fullProtectionRoleLabels
+    val primary = MaterialTheme.colorScheme.primary
+    val secondary = MaterialTheme.colorScheme.secondary
+    val tertiary = MaterialTheme.colorScheme.tertiary
+    val error = MaterialTheme.colorScheme.error
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        HelpInfoBlock(
+            title =
+                roleHelpLabel(
+                    compact = stringResource(R.string.chip_java),
+                    full = stringResource(R.string.chip_java_full),
+                    fullLabels = fullRoleLabels,
+                ),
+            body = stringResource(R.string.apps_help_role_java_body),
+            icon = Icons.Default.TextFields,
+            color = primary,
+        )
+        HelpInfoBlock(
+            title =
+                roleHelpLabel(
+                    compact = stringResource(R.string.chip_native),
+                    full = stringResource(R.string.chip_native_full),
+                    fullLabels = fullRoleLabels,
+                ),
+            body = stringResource(R.string.apps_help_role_native_body),
+            icon = Icons.Default.VpnKey,
+            color = secondary,
+        )
+        HelpInfoBlock(
+            title =
+                roleHelpLabel(
+                    compact = stringResource(R.string.chip_app_hiding),
+                    full = stringResource(R.string.chip_app_hiding_full),
+                    fullLabels = fullRoleLabels,
+                ),
+            body = stringResource(R.string.apps_help_role_apps_body),
+            icon = Icons.Default.VisibilityOff,
+            color = tertiary,
+        )
+        HelpInfoBlock(
+            title =
+                roleHelpLabel(
+                    compact = stringResource(R.string.chip_ports),
+                    full = stringResource(R.string.chip_ports_full),
+                    fullLabels = fullRoleLabels,
+                ),
+            body = stringResource(R.string.apps_help_role_ports_body),
+            icon = Icons.Default.Layers,
+            color = primary,
+        )
+        HelpInfoBlock(
+            title = stringResource(R.string.apps_help_hook_settings_title),
+            body = stringResource(R.string.apps_help_hook_settings_body),
+            icon = Icons.Default.Tune,
+            color = secondary,
+        )
+        HelpInfoBlock(
+            title = stringResource(R.string.apps_help_apps_hiding_title),
+            body = stringResource(R.string.apps_help_apps_hiding_body),
+            icon = Icons.Default.VisibilityOff,
+            color = tertiary,
+        )
+        HelpInfoBlock(
+            title = stringResource(R.string.apps_help_apply_title),
+            body = stringResource(R.string.apps_help_apply_body),
+            icon = Icons.Default.Layers,
+            color = primary,
+        )
+        if (targets.activeNativeBackendId == NativeBackendId.Zygisk) {
+            HelpInfoBlock(
+                title = stringResource(R.string.apps_help_zygisk_warning_title),
+                body = stringResource(R.string.apps_help_zygisk_warning_body),
+                icon = Icons.Default.Warning,
+                color = error,
+            )
+        }
+    }
+}
+
+private fun roleHelpLabel(
+    compact: String,
+    full: String,
+    fullLabels: Boolean,
+): String = if (fullLabels) "$full ($compact)" else "$compact ($full)"
+
+@Composable
+private fun HelpInfoBlock(
+    title: String,
+    body: String,
+    icon: ImageVector,
+    color: Color,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(6.dp),
+        color = color.copy(alpha = 0.08f),
+        border = BorderStroke(1.dp, color.copy(alpha = 0.42f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = color,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = body,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 

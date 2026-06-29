@@ -76,6 +76,7 @@ class RootSnapshotCacheTest {
         assertTrue(command.contains("[ -s $SUPERKEY_FILE ] && echo 1 || echo 0"))
         assertTrue(command.contains("cat $PROC_CTL"))
         assertTrue(command.contains("$KPM_ACTIVATOR state"))
+        assertTrue(command.contains(ZYGISK_STATUS_FILE))
         assertTrue(command.contains("probe_ok=1"))
         assertTrue(command.contains("iptables -C OUTPUT -j vpnhide_out"))
         assertTrue(command.contains("ip6tables -C OUTPUT -j vpnhide_out6"))

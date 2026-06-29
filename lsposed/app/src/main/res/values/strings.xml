@@ -46,9 +46,18 @@
     <string name="chip_ports_full" translatable="false">Ports</string>
     <string name="java_hooks_title">Java hooks</string>
     <string name="native_hooks_title">Native hooks</string>
-    <string name="apps_hint_roles">Tap a chip to toggle that role for an app, or tap the row to toggle all of them. J = LSPosed (Java-level hiding). N = the native backend (kernel-level hiding via kmod/KPM, or Zygisk). A = app hiding (this app sees a sanitized package list). P = block this app from reaching localhost ports. N and P only appear when a native backend / the ports module is installed.</string>
-    <string name="apps_hint_restart_target">After Save: J (LSPosed) and a kernel native backend (kmod/KPM) apply to the target immediately — no restart needed. If your native backend is Zygisk, or you changed P (ports), the target app must be force-stopped and reopened for the change to take effect for it.</string>
-    <string name="apps_hint_zygisk">If your native backend is Zygisk, banking and payment apps can detect its in-process hooks and crash when N is on for them — leave N off for such apps and rely on J (LSPosed). The kmod and KPM native backends hook in kernel space and are invisible to those checks.</string>
+    <string name="apps_help_role_java_body">LSPosed hides VPN signals exposed through Android Java APIs such as NetworkCapabilities, NetworkInfo, LinkProperties, and NetworkInterface.</string>
+    <string name="apps_help_role_native_body">The active native backend hides VPN signals visible through kernel or libc probes. VPN Hide writes one native selection to every installed native backend; only the active backend acts.</string>
+    <string name="apps_help_role_apps_body">App-hiding observer mode. This app receives a sanitized package-manager view and cannot list, resolve, or query packages that VPN Hide marks as hidden.</string>
+    <string name="apps_help_role_ports_body">Ports observer mode. The ports module makes localhost VPN/proxy daemon probes look like closed ports for this app. This role appears only when the ports module is installed.</string>
+    <string name="apps_help_hook_settings_title">Per-hook settings</string>
+    <string name="apps_help_hook_settings_body">For Java and Native, tap the settings edge of the combined chip to choose exact hooks for this app. A chip marked with * means only part of that backend is enabled.</string>
+    <string name="apps_help_apps_hiding_title">Apps hiding</string>
+    <string name="apps_help_apps_hiding_body">VPN Hide auto-detects packages that should be hidden from observers, including apps declaring a VPN service and optional name heuristics. Manual hidden-package choices live in Settings → Advanced protection. System callers stay exempt so Android can keep installing and launching apps.</string>
+    <string name="apps_help_apply_title">Applying changes</string>
+    <string name="apps_help_apply_body">After Save, Java and kernel native backends (kmod/KPM) apply immediately. Zygisk native hooks and ports rules are picked up by a target app after force-stop and reopen.</string>
+    <string name="apps_help_zygisk_warning_title">Zygisk and banking apps</string>
+    <string name="apps_help_zygisk_warning_body">Zygisk hooks run inside the target process. Banking and payment apps may detect that when Native is enabled for them; leave Native off for those apps and rely on Java where possible.</string>
 
     <!-- App hiding -->
     <string name="hiding_chip_hidden" translatable="false">H</string>

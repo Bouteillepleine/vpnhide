@@ -1055,13 +1055,7 @@ internal suspend fun loadDashboardState(
     val currentBootId = shellSnapshot["current_boot_id"].orEmpty()
     val nativeTargetCount = countPackages(targetsSnapshot.nativeTargets)
     val kmodRaw = detectKmodModule(shellSnapshot, selfPkg).withTargetCount(nativeTargetCount)
-    val zygiskStatusRaw =
-        try {
-            File(context.filesDir, ZYGISK_STATUS_FILE_NAME).takeIf { it.isFile }?.readText().orEmpty()
-        } catch (e: Exception) {
-            VpnHideLog.w(TAG, "failed to read zygisk status heartbeat: ${e.message}")
-            ""
-        }
+    val zygiskStatusRaw = shellSnapshot["zygisk_status"].orEmpty()
     val zygisk = detectZygiskModule(shellSnapshot, zygiskStatusRaw, selfPkg, currentBootId).withTargetCount(nativeTargetCount)
     val kpm = detectKpmModule(shellSnapshot, selfPkg, currentBootId).withTargetCount(nativeTargetCount)
     val ports = detectPortsModule(shellSnapshot, selfPkg).withTargetCount(countPackages(targetsSnapshot.portsObservers))

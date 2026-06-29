@@ -91,4 +91,41 @@ class TargetsCacheTest {
         assertEquals(setOf(10123, 1010123), targets.observerUids)
         assertEquals(setOf("com.ports"), targets.portsObservers)
     }
+
+    @Test
+    fun `targets snapshot reports active zygisk only for current boot heartbeat`() {
+        val sections =
+            mapOf(
+                "kmod_module_dir" to "0",
+                "zygisk_module_dir" to "1",
+                "kpm_module_dir" to "0",
+                "ports_prop" to "",
+                "canonical_config" to "",
+                "kmod_targets" to "",
+                "zygisk_targets" to "dev.okhsunrog.vpnhide\ncom.target\n",
+                "kpm_targets" to "",
+                "lsposed_targets" to "",
+                "hidden_pkgs" to "",
+                "observer_uids" to "",
+                "ports_observers" to "",
+                "superkey_saved" to "0",
+                "pm_packages" to "",
+                "kmod_prop" to "",
+                "zygisk_prop" to "version=1.0",
+                "kpm_prop" to "",
+                "proc_exists" to "0",
+                "current_boot_id" to "boot-1",
+                "zygisk_status" to "boot_id=boot-1",
+                "kpm_load_status" to "",
+            )
+
+        assertEquals(
+            NativeBackendId.Zygisk,
+            parseTargetsSnapshot(RootSnapshot(sections)).activeNativeBackendId,
+        )
+        assertEquals(
+            null,
+            parseTargetsSnapshot(RootSnapshot(sections + ("zygisk_status" to "boot_id=old"))).activeNativeBackendId,
+        )
+    }
 }
