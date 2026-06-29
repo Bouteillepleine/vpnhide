@@ -94,6 +94,35 @@ class StatisticsDataTest {
     }
 
     @Test
+    fun `shows zygisk native statistics as unavailable when zygisk is active`() {
+        val state =
+            buildStatisticsState(
+                RootSnapshot(
+                    statisticsFixtureSnapshot().sections +
+                        mapOf(
+                            "kmod_module_dir" to "0",
+                            "kpm_module_dir" to "0",
+                            "zygisk_module_dir" to "1",
+                            "kmod_state" to "",
+                            "kpm_state" to "",
+                            "proc_exists" to "0",
+                            "current_boot_id" to "boot-1",
+                            "zygisk_status" to "boot_id=boot-1",
+                            "zygisk_prop" to "version=1.0",
+                            "kpm_load_status" to "",
+                        ),
+                ),
+            )
+
+        assertFalse(state.backends.any { it.backend == HookIds.Backend.KMOD })
+        assertFalse(state.backends.any { it.backend == HookIds.Backend.KPM })
+        val zygisk = state.backends.single { it.backend == HookIds.Backend.ZYGISK }
+        assertEquals(StatisticsUnavailableReason.ZygiskNativeStats, zygisk.unavailableReason)
+        assertEquals(emptyList<StatisticsRow>(), zygisk.rows)
+        assertEquals(2, state.activeBackendCount)
+    }
+
+    @Test
     fun `formats unsigned counters with grouping`() {
         assertEquals("0", formatStatCount(0uL))
         assertEquals("12,345", formatStatCount(12_345uL))

@@ -6,18 +6,22 @@ internal data class StatisticsState(
     val backends: List<BackendStatistics>,
 ) {
     val hasAnyData: Boolean = backends.any { it.hasData }
-    val activeBackendCount: Int = backends.count { it.hasData }
+    val activeBackendCount: Int = backends.count { it.isActive }
     val totalRows: Int = backends.sumOf { it.rows.size }
     val totalCount: ULong = backends.fold(0uL) { acc, backend -> acc + backend.totalCount }
 }
+
+internal enum class StatisticsUnavailableReason { ZygiskNativeStats }
 
 internal data class BackendStatistics(
     val backend: HookIds.Backend,
     val status: Protocol.Status?,
     val metadata: Map<String, String> = emptyMap(),
     val rows: List<StatisticsRow>,
+    val unavailableReason: StatisticsUnavailableReason? = null,
 ) {
     val hasData: Boolean = status != null || rows.isNotEmpty()
+    val isActive: Boolean = hasData || unavailableReason != null
     val totalCount: ULong = rows.fold(0uL) { acc, row -> acc + row.count.toULong() }
     val hookedCount: Int = status?.hooks?.let { java.lang.Long.bitCount(it) } ?: 0
 }
@@ -38,6 +42,7 @@ internal fun buildStatisticsState(snapshot: RootSnapshot): StatisticsState {
     val kmodRaw = snapshot.sections["kmod_state"].orEmpty()
     val kpmRaw = snapshot.sections["kpm_state"].orEmpty()
     val lsposedRaw = snapshot.sections["lsposed_state"].orEmpty()
+    val activeNativeBackendId = detectNativeBackendStates(snapshot.sections).activeId
     val nativeBackends =
         listOf(
             buildBackendStatistics(
@@ -63,7 +68,10 @@ internal fun buildStatisticsState(snapshot: RootSnapshot): StatisticsState {
         )
 
     return StatisticsState(
-        listOfNotNull(selectActiveNativeStatisticsBackend(nativeBackends), lsposed),
+        listOfNotNull(
+            selectActiveNativeStatisticsBackend(nativeBackends, activeNativeBackendId),
+            lsposed,
+        ),
     )
 }
 
@@ -106,12 +114,14 @@ private fun buildBackendStatistics(
     stats: List<Protocol.StatEntry>,
     uidPackages: Map<Long, List<String>>,
     metadata: Map<String, String> = emptyMap(),
+    unavailableReason: StatisticsUnavailableReason? = null,
 ): BackendStatistics =
     BackendStatistics(
         backend = backend,
         status = status,
         metadata = metadata,
         rows = buildStatisticsRows(stats, uidPackages),
+        unavailableReason = unavailableReason,
     )
 
 private val ACTIVE_NATIVE_STATUS_ERRORS =
@@ -122,8 +132,21 @@ private val ACTIVE_NATIVE_STATUS_ERRORS =
             .toLong(),
     )
 
-private fun selectActiveNativeStatisticsBackend(backends: List<BackendStatistics>): BackendStatistics? =
+private fun selectActiveNativeStatisticsBackend(
+    backends: List<BackendStatistics>,
+    activeNativeBackendId: NativeBackendId?,
+): BackendStatistics? =
     backends.firstOrNull(BackendStatistics::isActiveNativeStatisticsBackend)
+        ?: activeNativeBackendId
+            ?.takeIf { it == NativeBackendId.Zygisk }
+            ?.let {
+                BackendStatistics(
+                    backend = HookIds.Backend.ZYGISK,
+                    status = null,
+                    rows = emptyList(),
+                    unavailableReason = StatisticsUnavailableReason.ZygiskNativeStats,
+                )
+            }
 
 private fun BackendStatistics.isActiveNativeStatisticsBackend(): Boolean {
     if (rows.isNotEmpty()) return true

@@ -906,21 +906,20 @@ private fun JavaBackendCard(
 }
 
 /**
- * The one active native backend (kmod / KPM / Zygisk, §1.5). Badge "N";
- * subtitle is "<backend> · <status>", or "Not installed" when none of the three
- * is present. The restart-app hint only applies to Zygisk (the kernel backends
- * need a reboot, not an app restart).
+ * The native backend surfaced on Dashboard. It is the active backend when one
+ * exists, otherwise the highest-priority installed backend so inactive installs
+ * stay visible. The restart-app hint only applies to Zygisk.
  */
 @Composable
 private fun NativeBackendCard(
-    selection: NativeBackendSelection,
+    backend: DisplayNativeBackend,
     selfNeedsRestart: Boolean,
     index: Int = -1,
     count: Int = 1,
 ) {
     val name = stringResource(R.string.dashboard_native_backend)
-    val state = selection.state
-    if (selection.id == null || state !is ModuleState.Installed) {
+    val state = backend.state
+    if (backend.id == null || state !is ModuleState.Installed) {
         ModuleCardShell(
             name = name,
             badgeText = "N",
@@ -935,13 +934,13 @@ private fun NativeBackendCard(
     }
     val backendName =
         stringResource(
-            when (selection.id) {
+            when (backend.id) {
                 NativeBackendId.Kmod -> R.string.dashboard_backend_kmod
                 NativeBackendId.Kpm -> R.string.dashboard_backend_kpm
                 NativeBackendId.Zygisk -> R.string.dashboard_backend_zygisk
             },
         )
-    val v = installedVisual(state, selfNeedsRestart && selection.id == NativeBackendId.Zygisk)
+    val v = installedVisual(state, selfNeedsRestart && backend.id == NativeBackendId.Zygisk)
     ModuleCardShell(
         name = name,
         badgeText = "N",
