@@ -51,12 +51,13 @@ write_status() {
     chmod 0644 "$STATUS_FILE" 2>/dev/null
 }
 
-# Locate the KernelPatch-Next CLI (`kpatch`). Normally on PATH for boot scripts;
-# fall back to the KernelSU-Next bin dir.
+# Locate the KPatch-Next CLI (`kpatch`). It ships as the KPatch-Next-Module on
+# any manager (Magisk / KSU / KSU-Next — bin path confirmed on a Pixel 8 Pro);
+# also accept it on PATH. APatch is handled earlier (its own supercall branch),
+# not here.
 find_kpatch() {
     for c in \
         kpatch \
-        /data/adb/ksu/bin/kpatch \
         /data/adb/modules/KPatch-Next/bin/kpatch \
         /data/adb/modules/kpatch-next/bin/kpatch
     do

@@ -240,10 +240,14 @@ internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): S
       emit_file lsposed_state $LSPOSED_STATE_FILE
       emit_file debug_logging /data/system/vpnhide_debug_logging
       emit_cmd getenforce getenforce
-      # Is a KPM runtime present? (APatch's native KernelPatch, or the
-      # KPatch-Next-Module on any manager.) Mirrors find_kpatch() in the Rust
-      # activator. Drives whether the install recommendation can suggest KPM.
-      emit_eval kpatch_runtime 'if [ -d /data/adb/ap ] || command -v kpatch >/dev/null 2>&1 || [ -x /data/adb/ksu/bin/kpatch ] || [ -x /data/adb/modules/KPatch-Next/bin/kpatch ] || [ -x /data/adb/modules/kpatch-next/bin/kpatch ]; then echo 1; else echo 0; fi'
+      # Is a KPM runtime present? Either APatch's native KernelPatch (loads KPMs
+      # via supercall — detected by its /data/adb/ap dir; no kpatch CLI needed,
+      # APatch keeps it in the manager app's private libs), or the
+      # KPatch-Next-Module on any manager (Magisk / KSU / KSU-Next — ships the
+      # kpatch CLI at a fixed module path). Verified on a Pixel 4a (APatch) and a
+      # Pixel 8 Pro (KSU-Next + KPatch-Next-Module). Drives whether the install
+      # recommendation can suggest KPM.
+      emit_eval kpatch_runtime 'if [ -d /data/adb/ap ] || [ -x /data/adb/modules/KPatch-Next/bin/kpatch ] || [ -x /data/adb/modules/kpatch-next/bin/kpatch ]; then echo 1; else echo 0; fi'
       phase_end
     }
     __VPNHIDE_PM_PACKAGES_FUNCTION__
