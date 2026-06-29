@@ -112,8 +112,31 @@ Follow-up work (low priority):
   kernel backends only count their target UIDs, and Zygisk is only injected into
   its own targets), plus write-coalescing on the hot path. Deferred until the
   target-app statistics prove their value.
-- Fill the Zygisk stats channel (protocol §7) so an active Zygisk backend isn't
-  blank on the Statistics screen.
+### Zygisk per-app statistics — intentionally not supported
+
+The Statistics screen has no native per-app counters when Zygisk is the active
+backend (it shows an explanatory banner; the Java/LSPosed counters are still
+reported). This is a deliberate non-feature, not a gap to fill.
+
+Zygisk hooks run inside each target app's own process under that app's SELinux
+sandbox (`untrusted_app`, the app's UID). Such a process cannot write anywhere
+VPN Hide can read it back — not VPN Hide's private dir, not `/data/adb`. The
+existing zygisk heartbeat only works because VPN Hide targets *itself*, so its
+own injected process writes to its own data dir. Exporting per-app counters from
+*other* apps' injected processes would require one of:
+
+- writing a stats file into the **target app's own sandbox** — which that app
+  can list and use as a "I'm being hooked" detection signal, directly
+  undercutting the stealth this whole project exists for; or
+- a shared world-writable location plus a `sepolicy.rule` granting
+  `untrusted_app` write — extra SELinux surface and moving parts.
+
+Both degrade stealth or add attack surface for the **least-preferred, most-
+detectable** native backend (priority is kmod > KPM > Zygisk). KPM covers the
+same native vectors invisibly and already reports in-kernel counters, so the
+right path for a Zygisk user who wants native statistics is to move to KPM.
+Revisit only if Zygisk itself is kept long-term; the likelier outcome is that
+Zygisk is retired once KPM is proven and its users have migrated.
 
 ## Configuration
 
