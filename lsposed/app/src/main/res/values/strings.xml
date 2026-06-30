@@ -150,12 +150,24 @@
     <!-- Statistics -->
     <string name="statistics_title">Interception counters</string>
     <string name="statistics_subtitle">Runtime events reported by active backends</string>
-    <string name="statistics_backends">Backends</string>
-    <string name="statistics_total_events">Events</string>
-    <string name="statistics_active_backends">Active backends</string>
     <string name="statistics_backend_detail">%1$s · hooks: %2$d</string>
     <string name="statistics_backend_unavailable_detail">Native counters unavailable</string>
-    <string name="statistics_events">events</string>
+    <!-- Headline summary sentence. %1$s = total events count, %2$s = events
+         word, %3$s = apps count, %4$s = apps word, %5$s = methods count,
+         %6$s = methods word. -->
+    <string name="statistics_summary">%1$s %2$s recorded across %3$s %4$s via %5$s %6$s</string>
+    <plurals name="statistics_events_word">
+        <item quantity="one">event</item>
+        <item quantity="other">events</item>
+    </plurals>
+    <plurals name="statistics_apps_word">
+        <item quantity="one">app</item>
+        <item quantity="other">apps</item>
+    </plurals>
+    <plurals name="statistics_methods_word">
+        <item quantity="one">method</item>
+        <item quantity="other">methods</item>
+    </plurals>
     <string name="statistics_no_data">No runtime statistics yet. Counters appear after a protected app hits an installed hook.</string>
     <string name="statistics_no_data_supported_backends">No counters yet from backends that support statistics.</string>
     <string name="statistics_zygisk_native_unavailable">Native counters are not available for Zygisk. Java and Apps counters are still reported by LSPosed.</string>
@@ -171,15 +183,22 @@
     <string name="statistics_apps_header">Apps probing VPN</string>
     <string name="statistics_apps_caption">Cumulative since boot. Tap an app for the full per-hook breakdown.</string>
     <string name="statistics_capture_title">Capture session</string>
-    <string name="statistics_capture_intro">Start a capture, then open and use a target app. Tap Refresh to see which VPN checks it ran during that time.</string>
+    <string name="statistics_capture_intro">See exactly which VPN checks an app runs:</string>
+    <string name="statistics_capture_step1">Tap Start capture below.</string>
+    <string name="statistics_capture_step2">Switch to the app you want to test and use it for a bit.</string>
+    <string name="statistics_capture_step3">Every VPN check it makes shows up in the list below.</string>
     <string name="statistics_capture_start">Start capture</string>
-    <string name="statistics_capture_active">Capturing · %1$s · %2$d apps</string>
+    <string name="statistics_capture_live">Capturing · %1$s · apps: %2$d</string>
+    <string name="statistics_capture_active_hint">Switch to a target app and use it — probes show up below as they happen.</string>
     <string name="statistics_capture_stop">Stop</string>
-    <string name="statistics_capture_apps_header">Probes during capture</string>
-    <string name="statistics_capture_hint">What target apps probed since the capture started. Tap for the per-hook breakdown.</string>
-    <string name="statistics_capture_empty">No probes captured yet. Open a target app, then tap Refresh.</string>
-    <string name="statistics_apps_metric">Apps</string>
-    <string name="statistics_methods_metric">Methods</string>
+    <string name="statistics_capture_apps_header">Probes this session</string>
+    <string name="statistics_capture_hint">What a target app probed since this session started. Tap for the per-hook breakdown.</string>
+    <string name="statistics_capture_empty">Waiting for probes… switch to a target app and use it.</string>
+    <string name="statistics_capture_captured">Captured · %1$s · apps: %2$d</string>
+    <string name="statistics_capture_stopped_note">Session stopped — these results stay until you start a new capture or clear them.</string>
+    <string name="statistics_capture_stopped_empty">No probes were captured this session.</string>
+    <string name="statistics_capture_new">New capture</string>
+    <string name="statistics_capture_clear">Clear</string>
     <!-- Detection methods (per-app breakdown) -->
     <string name="method_routes">Routing table</string>
     <string name="method_interfaces">Network interfaces</string>

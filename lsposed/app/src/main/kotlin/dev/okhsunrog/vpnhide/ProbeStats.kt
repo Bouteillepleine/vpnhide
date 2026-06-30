@@ -144,6 +144,15 @@ internal fun buildAppProbeStats(
         )
 }
 
+// First installed-app summary that matches one of this UID's packages, so the
+// Statistics row can show a real icon + label instead of the bare package name.
+// UIDs with no installed match (system uids, uninstalled packages) resolve to
+// null and the caller falls back to the package/uid text + placeholder avatar.
+internal fun resolveAppSummary(
+    app: AppProbeStats,
+    byPackage: Map<String, AppSummary>,
+): AppSummary? = app.packageNames.firstNotNullOfOrNull { byPackage[it] }
+
 // ── Capture session: baseline-diff over a user-controlled window ──────────
 //
 // No backend reset command and no per-event timestamps — the app snapshots the
@@ -162,6 +171,15 @@ internal data class CaptureDiff(
     // A counter dropped below its baseline — the backend restarted (reboot /
     // system_server restart / Zygisk re-inject). The caller should re-baseline.
     val backendReset: Boolean,
+)
+
+// A finished capture session, frozen at "Stop". Keeps the per-app rollup and the
+// elapsed duration so the results stay on screen for review after the live
+// session ends — the user clears them explicitly instead of losing them the
+// instant they stop.
+internal data class FrozenCapture(
+    val apps: List<AppProbeStats>,
+    val durationMs: Long,
 )
 
 /** Probes that happened since [baseline] was taken, as a per-app rollup. */
