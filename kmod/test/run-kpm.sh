@@ -173,12 +173,17 @@ echo "-------------------------------------------------------------------"
 [ "$(kpmload "$TG_LOG")" = ok ] || { echo "ERROR: KPM did not load (target boot)"; tail -20 "$TG_LOG"; exit 1; }
 
 PASS=0; FAIL=0
-for vec in proc_route_v4 getifaddrs proc_route_v6 siocgifconf dev_ioctl netlink_route4 netlink_route6 policy_rule gai_getifaddrs; do
+for vec in proc_route_v4 getifaddrs proc_route_v6 siocgifconf dev_ioctl netlink_route4 hostroute4 netlink_route6 hostroute6 policy_rule gai_getifaddrs; do
 	# The gai_getifaddrs vector only exists when the bionic probe is available
 	# (baked VPNHIDE_GAI_BIN, or built from an NDK on this host). If neither is
 	# present the probe can't run, so skip the vector instead of failing it.
 	if [ "$vec" = gai_getifaddrs ] && [ -z "$GAI" ]; then
 		echo "RESULT $vec=SKIP (no bionic getifaddrs probe available)"; continue
+	fi
+	# init-kpm.sh emits `VEC <name>=SKIP` for a vector that doesn't apply to the
+	# running kernel (e.g. the host-route on non-GKI <5.6 kernels).
+	if grep -q "VEC $vec=SKIP" "$NT_LOG"; then
+		echo "RESULT $vec=SKIP (not supported on this kernel)"; continue
 	fi
 	nt="$(vec_count "$vec" "$NT_LOG")"
 	tg="$(vec_count "$vec" "$TG_LOG")"

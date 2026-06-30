@@ -62,10 +62,21 @@ static const struct vpnhide_offsets *off; /* selected per running kver */
 
 /* Live config (protocol §4.3). Each target carries a per-hook mask so the app
  * can enable hooks individually; a hook fires only if its bit is set for the
- * calling uid. */
+ * calling uid.
+ *
+ * Guarded by a seqlock so a hook reader (every hooked syscall, on any CPU) never
+ * sees a half-applied target set. A writer (rare, root-initiated: ctl0 config or
+ * the init load-args path) bumps cfg_seq odd, mutates targets[] in place, then
+ * bumps it even; readers snapshot under matching even-seq reads and retry on a
+ * concurrent write. KP has no kernel spinlock/RCU, and a double-buffer (two
+ * copies of targets[]) grew the .kpm enough to break KP boot on the 6.12 image —
+ * the seqlock costs one extra word instead. Writes are the serialized control
+ * path, so writers never race each other. */
 static struct vpnhide_target targets[MAX_TARGET_UIDS];
 static int nr_targets;
 static uint32_t active_hook_mask;
+static volatile uint32_t
+	cfg_seq; /* even = stable, odd = a writer is mid-update */
 static bool debug_enabled;
 
 /* status (protocol §4.3/§5.1): which hooks actually installed, and the dominant
@@ -104,6 +115,8 @@ static void (*_skb_trim)(void *, unsigned int);
 /*  Core helpers                                                      */
 /* ------------------------------------------------------------------ */
 
+/* Recompute the OR of all targets' hookmasks (the fast-path gate). Called by a
+ * writer while holding the seqlock (cfg_seq odd), reading the live targets[]. */
 static uint32_t compute_active_hook_mask(int count)
 {
 	uint32_t mask = 0;
@@ -114,27 +127,53 @@ static uint32_t compute_active_hook_mask(int count)
 	return mask;
 }
 
-/* The enabled-hook mask for the calling uid (0 if it is not a target). */
-static uint32_t target_mask(void)
+/* Seqlock write side. Bump odd before mutating targets[]/nr_targets/
+ * active_hook_mask in place, bump even after. Writes are serialized (single
+ * control path), so no CAS is needed on the counter itself. */
+static void cfg_write_begin(void)
 {
-	uid_t uid;
-	int i;
-
-	if (nr_targets <= 0)
-		return 0;
-	uid = current_uid();
-	for (i = 0; i < nr_targets; i++)
-		if (targets[i].uid == uid)
-			return targets[i].hookmask;
-	return 0;
+	__atomic_store_n(&cfg_seq,
+			 __atomic_load_n(&cfg_seq, __ATOMIC_RELAXED) + 1,
+			 __ATOMIC_RELEASE);
 }
 
-/* True if `hook_id` is enabled for the calling uid (per-hook gate, §4.3). */
+static void cfg_write_end(void)
+{
+	__atomic_store_n(&cfg_seq,
+			 __atomic_load_n(&cfg_seq, __ATOMIC_RELAXED) + 1,
+			 __ATOMIC_RELEASE);
+}
+
+/* True if `hook_id` is enabled for the calling uid (per-hook gate, §4.3).
+ * Seqlock read side: retry while a writer holds the lock (odd) or if the config
+ * changed across the read, so the mask gate and the per-uid scan always come
+ * from one consistent snapshot. Config writes are rare, so this normally makes
+ * a single pass. */
 static int hook_active(uint32_t hook_id)
 {
-	if (!(active_hook_mask & (1u << hook_id)))
-		return 0;
-	return (target_mask() & (1u << hook_id)) != 0;
+	uid_t uid = current_uid();
+	uint32_t s1, s2;
+	int result;
+
+	do {
+		s1 = __atomic_load_n(&cfg_seq, __ATOMIC_ACQUIRE);
+		if (s1 & 1u)
+			continue; /* a writer is mid-update */
+		result = 0;
+		if (active_hook_mask & (1u << hook_id)) {
+			int i;
+
+			for (i = 0; i < nr_targets; i++) {
+				if (targets[i].uid == uid) {
+					result = (targets[i].hookmask &
+						  (1u << hook_id)) != 0;
+					break;
+				}
+			}
+		}
+		s2 = __atomic_load_n(&cfg_seq, __ATOMIC_ACQUIRE);
+	} while (s1 != s2); /* s1 was even; retry if a write started/finished */
+	return result;
 }
 
 static int stats_slot_for_uid(uint32_t uid)
@@ -148,17 +187,36 @@ static int stats_slot_for_uid(uint32_t uid)
 	}
 
 	for (i = 0; i < MAX_TARGET_UIDS; i++) {
-		if (__atomic_load_n(&stats_used[i], __ATOMIC_ACQUIRE) != 0)
-			continue;
+		uint32_t st;
+
+		/* Wait out a concurrent claimer that is mid-init (state 2):
+		 * until it settles to state 1 we can't read its uid, and just
+		 * skipping it (the old code's `continue`) would let us allocate a
+		 * SECOND slot for the SAME uid. The init window is a few
+		 * instructions (CAS -> store uid -> store state 1), so this
+		 * settles immediately. */
+		while ((st = __atomic_load_n(&stats_used[i],
+					     __ATOMIC_ACQUIRE)) == 2)
+			;
+		if (st == 1) {
+			if (stats_uids[i] == uid)
+				return i; /* already ours */
+			continue; /* another uid owns this slot */
+		}
+		/* st == 0: free — try to claim it. */
 		if (__sync_bool_compare_and_swap(&stats_used[i], 0, 2)) {
 			stats_uids[i] = uid;
 			__sync_synchronize();
 			__atomic_store_n(&stats_used[i], 1, __ATOMIC_RELEASE);
 			return i;
 		}
-		if (__atomic_load_n(&stats_used[i], __ATOMIC_ACQUIRE) == 1 &&
-		    stats_uids[i] == uid)
-			return i;
+		/* Lost the CAS to a concurrent claimer — re-examine THIS slot (it
+		 * may be settling to our uid) instead of moving on and allocating
+		 * a duplicate. (A residual window remains only if two first-hits
+		 * for one uid claim two different free slots simultaneously; that
+		 * just splits a counter across two stats lines, never a crash —
+		 * a perfect lock-free find-or-insert needs a lock KP lacks.) */
+		i--;
 	}
 
 	return -1;
@@ -215,6 +273,57 @@ static int iface_is_vpn(const char *name)
 static const char *netdev_name(void *dev)
 {
 	return dev ? (const char *)((char *)dev + off->netdev_name) : 0;
+}
+
+/* True when `dev` (a route's output device) is physical AND the route is a
+ * public /32 host-route — the route a VPN client pins to the uplink so tunnel
+ * packets can reach the server, which leaks the server's public IPv4 even when
+ * the tun interface itself is hidden. The address/iface logic is shared with
+ * the .ko (vpnhide_is_public_ipv4 / vpnhide_iface_is_physical in
+ * shared/vpnhide_logic.h); only the kernel-struct read is KPM-specific.
+ *
+ * Only valid on the 5.6+ fib_rt_info path: `fri` is
+ * `fargs->args[fib_dump_fi_arg]`, with dst (__be32) at a constant +12 and
+ * dst_len (int) at +16 (struct fib_rt_info is stable across GKI 5.10..6.12,
+ * verified against the kernel sources). The fri is stack-resident in the
+ * caller, so reading those two fields is in-bounds. */
+static int kpm_is_public_host_route4(const void *fri, void *dev)
+{
+	int dst_len;
+
+	if (!fri || !dev)
+		return 0;
+	dst_len = *(const int *)((const char *)fri + 16);
+	if (dst_len != 32)
+		return 0;
+	if (!vpnhide_is_public_ipv4((const unsigned char *)fri + 12))
+		return 0;
+	return vpnhide_iface_is_physical(netdev_name(dev));
+}
+
+/* IPv6 analogue of kpm_is_public_host_route4: a public /128 host-route pinned to
+ * a physical uplink (the route a VPN client installs to reach the server, which
+ * leaks its IPv6 even when the tun is hidden — the .ko's
+ * is_public_host_route6_via_physical). Reads fib6_info.fib6_dst (rt6key { addr@0;
+ * int plen@16 }) at the per-kver offset; off->fib6_info_fib6_dst == 0 disables
+ * it (the pre-fib6_info 4.14 rt6_info path, and non-GKI kernels the QEMU matrix
+ * can't validate). `rt` is the fib6_info* arg to rt6_fill_node and fib6_dst sits
+ * before fib6_nh — which dev_from_fib6_info already reads — so it is in-bounds.
+ * The address/iface logic is shared with the .ko (shared/vpnhide_logic.h). */
+static int kpm_is_public_host_route6(void *rt, void *dev)
+{
+	const unsigned char *dst;
+	int plen;
+
+	if (!rt || !dev || !off->fib6_info_fib6_dst)
+		return 0;
+	dst = (const unsigned char *)rt + off->fib6_info_fib6_dst;
+	plen = *(const int *)(dst + 16); /* rt6key.plen */
+	if (plen != 128)
+		return 0;
+	if (!vpnhide_is_public_ipv6(dst)) /* rt6key.addr @ +0 */
+		return 0;
+	return vpnhide_iface_is_physical(netdev_name(dev));
 }
 
 /* ================================================================== */
@@ -569,7 +678,14 @@ static void fib_dump_before(hook_fargs12_t *fargs, void *udata)
 		return;
 	fi = off->fib_dump_fi_via_fri ? *(void **)p : p; /* fib_rt_info.fi @0 */
 	dev = dev_from_fib_info(fi);
-	if (!dev || !iface_is_vpn(netdev_name(dev)))
+	if (!dev)
+		return;
+	/* Hide the route if its output dev is a VPN iface, OR (5.6+ only, where
+	 * dst/dst_len live at fixed offsets in the fib_rt_info) it is a public
+	 * /32 host-route pinned to a physical uplink — the .ko hides both, so the
+	 * KPM must too for backend parity. */
+	if (!iface_is_vpn(netdev_name(dev)) &&
+	    !(off->fib_dump_fi_via_fri && kpm_is_public_host_route4(p, dev)))
 		return;
 
 	fargs->local.data0 = 1;
@@ -628,7 +744,12 @@ static void rt6_fill_before(hook_fargs12_t *fargs, void *udata)
 	if (!hook_active(VPNHIDE_HOOK_RT6_FILL_NODE) || !skb || !rt)
 		return;
 	dev = dev_from_fib6_info(rt);
-	if (!dev || !iface_is_vpn(netdev_name(dev)))
+	if (!dev)
+		return;
+	/* Hide the route if its output dev is a VPN iface, OR it is a public /128
+	 * host-route pinned to a physical uplink (parity with the .ko). */
+	if (!iface_is_vpn(netdev_name(dev)) &&
+	    !kpm_is_public_host_route6(rt, dev))
 		return;
 
 	fargs->local.data0 = 1;
@@ -721,10 +842,28 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
  *   inet6_fill_ifaddr      RTM_GETADDR v6         ✓ (inet6_ifaddr.idev->dev)
  *   dev_ioctl              SIOCGIF* by name       ✓ (ret -> -ENODEV)
  *   sock_ioctl             SIOCGIFCONF            ✓ (ifconf compaction)
- *   fib_dump_info          RTM_GETROUTE v4 dump   ✓ (#86; fib_info nexthop)
- *   rt6_fill_node          RTM_GETROUTE v6 dump   ✓ (fib6_info nexthop)
+ *   fib_dump_info          RTM_GETROUTE v4 dump   ✓ (#86; fib_info nexthop +
+ *                                                   public /32 host-route via a
+ *                                                   physical uplink, the .ko's
+ *                                                   is_public_host_route_via_
+ *                                                   physical — constant
+ *                                                   fib_rt_info offsets, A/B on
+ *                                                   5.10 + 6.12)
+ *   rt6_fill_node          RTM_GETROUTE v6 dump   ✓ (fib6_info nexthop +
+ *                                                   public /128 host-route via a
+ *                                                   physical uplink, the .ko's
+ *                                                   is_public_host_route6_via_
+ *                                                   physical — per-kver
+ *                                                   fib6_info.fib6_dst offset,
+ *                                                   A/B on 5.10/5.15/6.1/6.12)
  *   fib_nl_fill_rule       RTM_GETRULE            ✓ (fib_rule iif/oif/uid)
  *   ( rt_fill_info — intentionally NOT hooked; unstable arg->reg ABI )
+ *
+ * Both host-route predicates (v4 + v6) and their address/iface logic are now
+ * shared with the .ko via shared/vpnhide_logic.h. The IPv4 path needs no offset
+ * (fib_rt_info.dst/dst_len are at a constant +12/+16 on 5.6+); the IPv6 path
+ * reads fib6_info.fib6_dst at the per-kver offset (64 on 5.10..6.6, 80 on 6.12),
+ * disabled (0) on the non-GKI kernels the QEMU matrix can't validate.
  */
 
 /* ------------------------------------------------------------------ */
@@ -863,14 +1002,15 @@ static void apply_targets(const char *s)
 	while (s[n])
 		n++;
 	cnt = vpnhide_parse_target_uids(s, n, uids, MAX_TARGET_UIDS);
+	cfg_write_begin();
 	for (i = 0; i < cnt; i++) {
 		targets[i].uid = uids[i];
 		targets[i].hookmask = VPNHIDE_KERNEL_HOOK_MASK;
 	}
 	nr_targets = cnt;
 	active_hook_mask = compute_active_hook_mask(cnt);
-	vpnhide_dbg("loaded %d target UIDs (active hooks=0x%x)\n", cnt,
-		    active_hook_mask);
+	cfg_write_end();
+	vpnhide_dbg("loaded %d target UIDs\n", cnt);
 }
 
 /* Resolve `name`, wrap it, and record the install in `installed_hooks` so the
@@ -894,6 +1034,8 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 
 	installed_hooks = 0;
 	last_error = VPNHIDE_ERR_OK;
+	nr_targets =
+		0; /* empty config until load-args / ctl0 (pre-hook, no readers) */
 	active_hook_mask = 0;
 
 	/* `kver` is KernelPatch's running-kernel version (common.h), encoded
@@ -997,17 +1139,27 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 	kind = vpnhide_peek_kind(args, n_args);
 
 	if (kind == VPNHIDE_KIND_CONFIG) {
+		/* Parse in place under the seqlock. vpnhide_parse_config only
+		 * writes targets[] AFTER validating the header, so a reject-whole
+		 * (n < 0, bad header / too-new version) never touches the live
+		 * array — the old config is preserved. A concurrent hook reader
+		 * retries while cfg_seq is odd, so it never sees the half-written
+		 * array. */
 		int dbg = debug_enabled ? 1 : 0;
-		int n = vpnhide_parse_config(args, n_args, targets,
-					     MAX_TARGET_UIDS, &dbg);
+		int n;
 
+		cfg_write_begin();
+		n = vpnhide_parse_config(args, n_args, targets, MAX_TARGET_UIDS,
+					 &dbg);
+		if (n >= 0) {
+			nr_targets = n;
+			active_hook_mask = compute_active_hook_mask(n);
+		}
+		cfg_write_end();
 		if (n < 0)
 			return -1; /* rejected whole (bad header / version) */
-		nr_targets = n;
-		active_hook_mask = compute_active_hook_mask(n);
 		debug_enabled = dbg ? true : false;
-		vpnhide_dbg("ctl0 config: %d targets, debug=%d active=0x%x\n",
-			    n, dbg, active_hook_mask);
+		vpnhide_dbg("ctl0 config: %d targets, debug=%d\n", n, dbg);
 		return 0;
 	}
 

@@ -119,6 +119,13 @@ static bool debug_enabled;
 static struct vpnhide_target targets[MAX_TARGET_UIDS];
 static int nr_targets;
 static DEFINE_SPINLOCK(targets_lock);
+/* OR of every target's hookmask — a lock-free fast-path gate so hook_active()
+ * can reject the common case (a hook enabled for nobody, e.g. no targets yet)
+ * with a single atomic-free read instead of acquiring targets_lock on every
+ * hooked syscall. Recomputed under targets_lock on each config apply; a torn
+ * read only costs a brief over- or under-filter around a (rare) config change.
+ * Mirrors the KPM's active_hook_mask. */
+static u32 active_hook_mask;
 
 /* The enabled-hook mask for the calling UID (0 if it is not a target). */
 static u32 target_mask(void)
@@ -139,9 +146,12 @@ static u32 target_mask(void)
 }
 
 /* True if `hook_id` is enabled for the calling UID (per-hook gate, §4.3).
- * The .ko owns the full kernel hook mask, so it never masks foreign bits. */
+ * The .ko owns the full kernel hook mask, so it never masks foreign bits.
+ * Fast path: if no target enables this hook, skip the per-uid lock+scan. */
 static bool hook_active(u32 hook_id)
 {
+	if (!(READ_ONCE(active_hook_mask) & (1u << hook_id)))
+		return false;
 	return (target_mask() & (1u << hook_id)) != 0;
 }
 
@@ -246,6 +256,14 @@ static ssize_t ctl_write(struct file *file, const char __user *ubuf,
 	spin_lock(&targets_lock);
 	memcpy(targets, newt, (size_t)n * sizeof(*targets));
 	nr_targets = n;
+	{
+		u32 mask = 0;
+		int i;
+
+		for (i = 0; i < n; i++)
+			mask |= newt[i].hookmask & VPNHIDE_KERNEL_HOOK_MASK;
+		WRITE_ONCE(active_hook_mask, mask);
+	}
 	spin_unlock(&targets_lock);
 	WRITE_ONCE(debug_enabled, dbg ? true : false);
 
@@ -828,58 +846,26 @@ static int fib_route_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct fib_route_data *data = (void *)ri->data;
 	struct seq_file *seq = data->seq;
-	char *buf, *src, *dst, *end;
-	char ifname[IFNAMSIZ];
-	int j;
+	unsigned long newc;
 
 	if (!data->target || !seq || !seq->buf)
 		return 0;
-
 	if (seq->count <= data->start_count)
 		return 0;
 
 	/*
-	 * Scan the region [start_count, seq->count) for lines whose
-	 * first tab-separated field is a VPN interface name. Compact
-	 * out matching lines in place and adjust seq->count.
-	 *
-	 * Each route line looks like: "tun0\t08000000\t...\n"
+	 * Compact out lines whose FIRST tab-separated field (each route line is
+	 * "tun0\t08000000\t...\n") is a VPN iface name, in [start_count, count).
+	 * Uses the shared compactor — the single implementation the KPM also
+	 * calls — instead of an open-coded copy.
 	 */
-	buf = seq->buf;
-	src = buf + data->start_count;
-	dst = src;
-	end = buf + seq->count;
-
-	while (src < end) {
-		char *nl = memchr(src, '\n', end - src);
-		char *line_end = nl ? nl + 1 : end;
-		size_t line_len = line_end - src;
-
-		/* Extract the interface name (first field, tab-delimited) */
-		for (j = 0; j < IFNAMSIZ - 1 && j < (int)line_len &&
-			    src[j] != '\t' && src[j] != '\n';
-		     j++)
-			ifname[j] = src[j];
-		ifname[j] = '\0';
-
-		if (is_vpn_ifname(ifname)) {
-			vpnhide_dbg("fib_route_ret: hiding route for %s\n",
-				    ifname);
-			/* Skip this line */
-			src = line_end;
-			continue;
-		}
-
-		/* Keep this line — move it down if there's a gap */
-		if (dst != src)
-			memmove(dst, src, line_len);
-		dst += line_len;
-		src = line_end;
-	}
-
-	seq->count = dst - buf;
-	if (seq->count != (size_t)(end - buf))
+	newc = vpnhide_compact_seq_lines(seq->buf, data->start_count,
+					 seq->count, VPNHIDE_FIELD_FIRST,
+					 vpnhide_iface_is_vpn);
+	if (newc != seq->count) {
+		seq->count = newc;
 		record_hook_hit(VPNHIDE_HOOK_FIB_ROUTE_SEQ_SHOW);
+	}
 	return 0;
 }
 
@@ -921,57 +907,23 @@ static int ipv6_route_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct fib_route_data *data = (void *)ri->data;
 	struct seq_file *seq = data->seq;
-	char *buf, *src, *dst, *end;
-	char ifname[IFNAMSIZ];
-	int j;
+	unsigned long newc;
 
 	if (!data->target || !seq || !seq->buf)
 		return 0;
 	if (seq->count <= data->start_count)
 		return 0;
 
-	buf = seq->buf;
-	src = buf + data->start_count;
-	dst = src;
-	end = buf + seq->count;
-
-	while (src < end) {
-		char *nl = memchr(src, '\n', end - src);
-		char *line_end = nl ? nl + 1 : end;
-		size_t line_len = line_end - src;
-		char *field_start;
-		char *field_end = line_end;
-
-		while (field_end > src &&
-		       (field_end[-1] == '\n' || field_end[-1] == '\r' ||
-			field_end[-1] == ' ' || field_end[-1] == '\t'))
-			field_end--;
-		field_start = field_end;
-		while (field_start > src && field_start[-1] != ' ' &&
-		       field_start[-1] != '\t')
-			field_start--;
-
-		for (j = 0; j < IFNAMSIZ - 1 && (field_start + j) < field_end;
-		     j++)
-			ifname[j] = field_start[j];
-		ifname[j] = '\0';
-
-		if (is_vpn_ifname(ifname)) {
-			vpnhide_dbg("ipv6_route_ret: hiding route for %s\n",
-				    ifname);
-			src = line_end;
-			continue;
-		}
-
-		if (dst != src)
-			memmove(dst, src, line_len);
-		dst += line_len;
-		src = line_end;
-	}
-
-	seq->count = dst - buf;
-	if (seq->count != (size_t)(end - buf))
+	/* Same as fib_route_ret but the iface name is the LAST whitespace field
+	 * of each /proc/net/ipv6_route line — the shared compactor handles both
+	 * via the field selector. */
+	newc = vpnhide_compact_seq_lines(seq->buf, data->start_count,
+					 seq->count, VPNHIDE_FIELD_LAST,
+					 vpnhide_iface_is_vpn);
+	if (newc != seq->count) {
+		seq->count = newc;
 		record_hook_hit(VPNHIDE_HOOK_IPV6_ROUTE_SEQ_SHOW);
+	}
 	return 0;
 }
 
@@ -997,71 +949,22 @@ static bool copy_dev_name(struct net_device *dev, char name[IFNAMSIZ])
 	return true;
 }
 
-static bool is_physical_ifname(const char *name)
-{
-	return vpnhide_iface_starts_with_ci(name, "rmnet") ||
-	       vpnhide_iface_starts_with_ci(name, "wlan") ||
-	       vpnhide_iface_starts_with_ci(name, "eth") ||
-	       vpnhide_iface_starts_with_ci(name, "ccmni") ||
-	       vpnhide_iface_starts_with_ci(name, "ccemni") ||
-	       vpnhide_iface_starts_with_ci(name, "seth");
-}
-
-static bool is_public_ipv4(__be32 addr)
-{
-	u32 host = be32_to_cpu(addr);
-	u8 a = (host >> 24) & 0xff;
-	u8 b = (host >> 16) & 0xff;
-	u8 c = (host >> 8) & 0xff;
-
-	if (a == 0 || a == 10 || a == 127 || a >= 224)
-		return false;
-	if (a == 100 && b >= 64 && b <= 127)
-		return false;
-	if (a == 169 && b == 254)
-		return false;
-	if (a == 172 && b >= 16 && b <= 31)
-		return false;
-	if (a == 192 && b == 168)
-		return false;
-	if (a == 192 && b == 0 && c == 0)
-		return false;
-	if (a == 192 && b == 0 && c == 2)
-		return false;
-	if (a == 198 && (b == 18 || b == 19))
-		return false;
-	if (a == 198 && b == 51 && c == 100)
-		return false;
-	if (a == 203 && b == 0 && c == 113)
-		return false;
-	return true;
-}
-
+/* A public /32 host-route pinned to a physical uplink — the route a VPN client
+ * installs so tunnel packets reach the server, leaking the server's IPv4 even
+ * when the tun iface is hidden. The address/iface logic is shared with the KPM
+ * (vpnhide_is_public_ipv4 / vpnhide_iface_is_physical in shared/vpnhide_logic.h);
+ * &fri->dst is the __be32's 4 network-order bytes. */
 static bool is_public_host_route_via_physical(const struct fib_rt_info *fri,
 					      struct net_device *dev)
 {
 	char name[IFNAMSIZ];
 
-	if (!fri || !dev || fri->dst_len != 32 || !is_public_ipv4(fri->dst))
+	if (!fri || !dev || fri->dst_len != 32 ||
+	    !vpnhide_is_public_ipv4((const unsigned char *)&fri->dst))
 		return false;
 	if (!copy_dev_name(dev, name))
 		return false;
-	return is_physical_ifname(name);
-}
-
-static bool is_public_ipv6(const struct in6_addr *addr)
-{
-	u8 b0 = addr->s6_addr[0];
-
-	/* Global unicast 2000::/3 only. Excludes ::/:: 1 (unspec/loopback),
-	 * fe80::/10 (link-local), fc00::/7 (ULA), ff00::/8 (multicast). */
-	if ((b0 & 0xe0) != 0x20)
-		return false;
-	/* 2001:db8::/32 documentation range. */
-	if (addr->s6_addr[0] == 0x20 && addr->s6_addr[1] == 0x01 &&
-	    addr->s6_addr[2] == 0x0d && addr->s6_addr[3] == 0xb8)
-		return false;
-	return true;
+	return vpnhide_iface_is_physical(name);
 }
 
 /* IPv6 analogue of is_public_host_route_via_physical: a /128 route to a
@@ -1069,7 +972,8 @@ static bool is_public_ipv6(const struct in6_addr *addr)
  * client installs so tunnel packets can reach the server — it leaks the
  * server's IPv6 even when the tun interface itself is hidden. fib6_dst
  * (struct rt6key { struct in6_addr addr; int plen; }) is stable across
- * GKI 5.10..6.12; read it fault-safe since `rt` comes from a raw reg. */
+ * GKI 5.10..6.12; read it fault-safe since `rt` comes from a raw reg. The
+ * address/iface logic is shared with the KPM (shared/vpnhide_logic.h). */
 static bool is_public_host_route6_via_physical(struct fib6_info *rt,
 					       struct net_device *dev)
 {
@@ -1085,11 +989,11 @@ static bool is_public_host_route6_via_physical(struct fib6_info *rt,
 		return false;
 	if (copy_from_kernel_nofault(&addr, &rt->fib6_dst.addr, sizeof(addr)) !=
 		    0 ||
-	    !is_public_ipv6(&addr))
+	    !vpnhide_is_public_ipv6(addr.s6_addr))
 		return false;
 	if (!copy_dev_name(dev, name))
 		return false;
-	return is_physical_ifname(name);
+	return vpnhide_iface_is_physical(name);
 }
 
 static struct net_device *dev_from_nexthop(struct nexthop *nh)
