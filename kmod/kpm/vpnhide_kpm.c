@@ -290,16 +290,32 @@ static const char *netdev_name(void *dev)
  * dst_len (int) at +16 (struct fib_rt_info is stable across GKI 5.10..6.12,
  * verified against the kernel sources). The fri is stack-resident in the
  * caller, so reading those two fields is in-bounds. */
-static int kpm_is_public_host_route4(const void *fri, void *dev)
+static int kpm_is_public_host_route4(hook_fargs12_t *fargs, const void *p,
+				     void *dev)
 {
+	const unsigned char *dst_be;
+	uint32_t dst_val = 0;
 	int dst_len;
 
-	if (!fri || !dev)
+	if (!dev)
 		return 0;
-	dst_len = *(const int *)((const char *)fri + 16);
+	if (off->fib_dump_fi_via_fri) {
+		/* 5.6+: p is a fib_rt_info* with __be32 dst @+12, int dst_len
+		 * @+16 (constant across GKI 5.10..6.12). */
+		dst_len = *(const int *)((const char *)p + 16);
+		dst_be = (const unsigned char *)p + 12;
+	} else {
+		/* <5.6 (5.4/4.19/4.14): fib_dump_info(skb,...,tb_id,type,dst,
+		 * dst_len,...) passes the __be32 dst by value in arg 6 and
+		 * dst_len in arg 7. The register holds the network-order value,
+		 * so the in-memory bytes of a local copy are the octets a.b.c.d. */
+		dst_val = (uint32_t)fargs->args[6];
+		dst_len = (int)fargs->args[7];
+		dst_be = (const unsigned char *)&dst_val;
+	}
 	if (dst_len != 32)
 		return 0;
-	if (!vpnhide_is_public_ipv4((const unsigned char *)fri + 12))
+	if (!vpnhide_is_public_ipv4(dst_be))
 		return 0;
 	return vpnhide_iface_is_physical(netdev_name(dev));
 }
@@ -307,20 +323,25 @@ static int kpm_is_public_host_route4(const void *fri, void *dev)
 /* IPv6 analogue of kpm_is_public_host_route4: a public /128 host-route pinned to
  * a physical uplink (the route a VPN client installs to reach the server, which
  * leaks its IPv6 even when the tun is hidden — the .ko's
- * is_public_host_route6_via_physical). Reads fib6_info.fib6_dst (rt6key { addr@0;
- * int plen@16 }) at the per-kver offset; off->fib6_info_fib6_dst == 0 disables
- * it (the pre-fib6_info 4.14 rt6_info path, and non-GKI kernels the QEMU matrix
- * can't validate). `rt` is the fib6_info* arg to rt6_fill_node and fib6_dst sits
- * before fib6_nh — which dev_from_fib6_info already reads — so it is in-bounds.
- * The address/iface logic is shared with the .ko (shared/vpnhide_logic.h). */
+ * is_public_host_route6_via_physical). The route's destination is a rt6key
+ * { in6_addr addr@0; int plen@16 } whose offset depends on the kernel's IPv6
+ * route model: in fib6_info at off->fib6_info_fib6_dst (5.x/6.x), or in the
+ * embedded rt6_info at off->rt6_dst on the pre-fib6_info rt6_via_dst path (4.14).
+ * A 0 offset for the active model disables the check. `rt` is the route arg to
+ * rt6_fill_node; the rt6key sits within the struct dev_from_fib6_info already
+ * reads, so it is in-bounds. Address/iface logic shared with the .ko. */
 static int kpm_is_public_host_route6(void *rt, void *dev)
 {
 	const unsigned char *dst;
+	unsigned int dst_off;
 	int plen;
 
-	if (!rt || !dev || !off->fib6_info_fib6_dst)
+	if (!rt || !dev)
 		return 0;
-	dst = (const unsigned char *)rt + off->fib6_info_fib6_dst;
+	dst_off = off->rt6_via_dst ? off->rt6_dst : off->fib6_info_fib6_dst;
+	if (!dst_off)
+		return 0;
+	dst = (const unsigned char *)rt + dst_off;
 	plen = *(const int *)(dst + 16); /* rt6key.plen */
 	if (plen != 128)
 		return 0;
@@ -683,12 +704,12 @@ static void fib_dump_before(hook_fargs12_t *fargs, void *udata)
 	dev = dev_from_fib_info(fi);
 	if (!dev)
 		return;
-	/* Hide the route if its output dev is a VPN iface, OR (5.6+ only, where
-	 * dst/dst_len live at fixed offsets in the fib_rt_info) it is a public
-	 * /32 host-route pinned to a physical uplink — the .ko hides both, so the
-	 * KPM must too for backend parity. */
+	/* Hide the route if its output dev is a VPN iface, OR it is a public /32
+	 * host-route pinned to a physical uplink — the .ko hides both, so the KPM
+	 * must too for backend parity. Works on both the 5.6+ fib_rt_info ABI and
+	 * the <5.6 (5.4/4.19/4.14) dst/dst_len-as-args ABI. */
 	if (!iface_is_vpn(netdev_name(dev)) &&
-	    !(off->fib_dump_fi_via_fri && kpm_is_public_host_route4(p, dev)))
+	    !kpm_is_public_host_route4(fargs, p, dev))
 		return;
 
 	fargs->local.data0 = 1;
@@ -849,24 +870,25 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
  *                                                   public /32 host-route via a
  *                                                   physical uplink, the .ko's
  *                                                   is_public_host_route_via_
- *                                                   physical — constant
- *                                                   fib_rt_info offsets, A/B on
- *                                                   5.10 + 6.12)
+ *                                                   physical — A/B on every kver
+ *                                                   5.10/5.15/6.1/6.12 + legacy
+ *                                                   5.4/4.19/4.14)
  *   rt6_fill_node          RTM_GETROUTE v6 dump   ✓ (fib6_info nexthop +
  *                                                   public /128 host-route via a
  *                                                   physical uplink, the .ko's
  *                                                   is_public_host_route6_via_
- *                                                   physical — per-kver
- *                                                   fib6_info.fib6_dst offset,
- *                                                   A/B on 5.10/5.15/6.1/6.12)
+ *                                                   physical — A/B on every kver
+ *                                                   5.10/5.15/6.1/6.12 + legacy
+ *                                                   5.4/4.19/4.14)
  *   fib_nl_fill_rule       RTM_GETRULE            ✓ (fib_rule iif/oif/uid)
  *   ( rt_fill_info — intentionally NOT hooked; unstable arg->reg ABI )
  *
  * Both host-route predicates (v4 + v6) and their address/iface logic are now
- * shared with the .ko via shared/vpnhide_logic.h. The IPv4 path needs no offset
- * (fib_rt_info.dst/dst_len are at a constant +12/+16 on 5.6+); the IPv6 path
- * reads fib6_info.fib6_dst at the per-kver offset (64 on 5.10..6.6, 80 on 6.12),
- * disabled (0) on the non-GKI kernels the QEMU matrix can't validate.
+ * shared with the .ko via shared/vpnhide_logic.h, and cover EVERY supported kver.
+ * IPv4 needs no offset (fib_rt_info.dst/dst_len at a constant +12/+16 on 5.6+;
+ * dst/dst_len passed as args 6/7 on <5.6). IPv6 reads the route's rt6key from
+ * fib6_info.fib6_dst (64 on 5.4/4.19/5.10..6.6, 80 on 6.12) or, on the 4.14
+ * rt6_via_dst path, rt6_info.rt6i_dst (rt6_dst @256).
  */
 
 /* ------------------------------------------------------------------ */
