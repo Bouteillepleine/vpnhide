@@ -21,7 +21,8 @@ What it does, atomically:
       - `{kmod,zygisk,portshide}/module/module.prop` (version, versionCode)
       - `zygisk/Cargo.toml`                            (first `version = "..."`)
       - `lsposed/native/Cargo.toml`                    (first `version = "..."`)
-      - `lsposed/app/build.gradle.kts`                 (versionName, versionCode)
+      - `lsposed/app/build.gradle.kts`                 (versionCode; versionName
+        is derived from `build-version.py`/the git tag, not patched)
 
 `versionCode` is derived as `major*10000 + minor*100 + patch`.
 
@@ -112,13 +113,15 @@ def update_cargo_toml(path: Path, version: str, *, dry_run: bool = False) -> Non
 
 
 def update_gradle_kts(
-    path: Path, version: str, version_code: int, *, dry_run: bool = False
+    path: Path, version_code: int, *, dry_run: bool = False
 ) -> None:
+    # Only versionCode is a literal here. versionName is computed at configure
+    # time from build-version.py (the git tag `vX.Y.Z` → "X.Y.Z", falling back
+    # to the VERSION file), so there is nothing to patch for it.
     patch_file(
         path,
         [
             (re.compile(r"versionCode = \d+"), f"versionCode = {version_code}"),
-            (re.compile(r'versionName = "[^"]*"'), f'versionName = "{version}"'),
         ],
         dry_run=dry_run,
     )
@@ -132,7 +135,7 @@ def patch_all_sources(version: str, version_code: int, *, dry_run: bool) -> None
     update_module_prop(REPO_ROOT / "portshide/module/module.prop", version, vc, dry_run=dry_run)
     update_cargo_toml(REPO_ROOT / "zygisk/Cargo.toml", version, dry_run=dry_run)
     update_cargo_toml(REPO_ROOT / "lsposed/native/Cargo.toml", version, dry_run=dry_run)
-    update_gradle_kts(REPO_ROOT / "lsposed/app/build.gradle.kts", version, vc, dry_run=dry_run)
+    update_gradle_kts(REPO_ROOT / "lsposed/app/build.gradle.kts", vc, dry_run=dry_run)
 
 
 def write_version_file(version: str) -> None:
