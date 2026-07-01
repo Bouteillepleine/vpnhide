@@ -8,8 +8,10 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 /**
@@ -34,9 +36,15 @@ class SettingsRepository(
         val ANIMATIONS = booleanPreferencesKey("animations_enabled")
         val HAPTICS = booleanPreferencesKey("haptics_enabled")
         val FULL_PROTECTION_ROLE_LABELS = booleanPreferencesKey("full_protection_role_labels")
+        val BACKGROUND_UPDATE_CHECKS = booleanPreferencesKey("background_update_checks")
         val AGENT_CONTROL = booleanPreferencesKey("agent_control_enabled")
         val SETTINGS_HINT_SEEN = booleanPreferencesKey("settings_hint_seen")
         val SUPPRESS_VERSION_WARNINGS = booleanPreferencesKey("suppress_version_warnings")
+
+        // Worker-internal state (not a user-facing setting, so not surfaced in
+        // AppSettings): the last release the background update worker already
+        // notified about, so it doesn't re-notify for the same version.
+        val LAST_NOTIFIED_UPDATE_VERSION = stringPreferencesKey("last_notified_update_version")
     }
 
     val settings: Flow<AppSettings> =
@@ -53,6 +61,9 @@ class SettingsRepository(
                 hapticsEnabled = p[Keys.HAPTICS] ?: defaults.hapticsEnabled,
                 fullProtectionRoleLabels =
                     p[Keys.FULL_PROTECTION_ROLE_LABELS] ?: defaults.fullProtectionRoleLabels,
+                backgroundUpdateChecksConfigured = Keys.BACKGROUND_UPDATE_CHECKS in p,
+                backgroundUpdateChecksEnabled =
+                    p[Keys.BACKGROUND_UPDATE_CHECKS] ?: defaults.backgroundUpdateChecksEnabled,
                 agentControlEnabled = p[Keys.AGENT_CONTROL] ?: defaults.agentControlEnabled,
                 settingsHintSeen = p[Keys.SETTINGS_HINT_SEEN] ?: defaults.settingsHintSeen,
                 suppressVersionWarnings =
@@ -78,11 +89,21 @@ class SettingsRepository(
 
     suspend fun setFullProtectionRoleLabels(value: Boolean) = edit { it[Keys.FULL_PROTECTION_ROLE_LABELS] = value }
 
+    suspend fun setBackgroundUpdateChecksEnabled(value: Boolean) = edit { it[Keys.BACKGROUND_UPDATE_CHECKS] = value }
+
     suspend fun setAgentControlEnabled(value: Boolean) = edit { it[Keys.AGENT_CONTROL] = value }
 
     suspend fun setSettingsHintSeen(value: Boolean) = edit { it[Keys.SETTINGS_HINT_SEEN] = value }
 
     suspend fun setSuppressVersionWarnings(value: Boolean) = edit { it[Keys.SUPPRESS_VERSION_WARNINGS] = value }
+
+    /** Last release the background update worker has already notified about, if any. */
+    suspend fun lastNotifiedUpdateVersion(): String? =
+        context.uiSettingsStore.data
+            .map { it[Keys.LAST_NOTIFIED_UPDATE_VERSION] }
+            .first()
+
+    suspend fun setLastNotifiedUpdateVersion(value: String) = edit { it[Keys.LAST_NOTIFIED_UPDATE_VERSION] = value }
 
     private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
         context.uiSettingsStore.edit(block)
