@@ -131,6 +131,7 @@ def patch_all_sources(version: str, version_code: int, *, dry_run: bool) -> None
     """Patch (or, with dry_run, just validate) every version-bearing source file."""
     vc = version_code  # local alias to keep the patch calls within the line limit
     update_module_prop(REPO_ROOT / "kmod/module/module.prop", version, vc, dry_run=dry_run)
+    update_module_prop(REPO_ROOT / "kmod/kpm/module/module.prop", version, vc, dry_run=dry_run)
     update_module_prop(REPO_ROOT / "zygisk/module/module.prop", version, vc, dry_run=dry_run)
     update_module_prop(REPO_ROOT / "portshide/module/module.prop", version, vc, dry_run=dry_run)
     update_cargo_toml(REPO_ROOT / "zygisk/Cargo.toml", version, dry_run=dry_run)
@@ -170,6 +171,7 @@ def main() -> int:
     # Source files must all exist.
     files = [
         REPO_ROOT / "kmod/module/module.prop",
+        REPO_ROOT / "kmod/kpm/module/module.prop",
         REPO_ROOT / "zygisk/module/module.prop",
         REPO_ROOT / "portshide/module/module.prop",
         REPO_ROOT / "zygisk/Cargo.toml",
