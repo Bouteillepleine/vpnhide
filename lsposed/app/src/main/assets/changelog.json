@@ -1,6 +1,143 @@
 {
   "history": [
     {
+      "version": "1.0.0",
+      "sections": [
+        {
+          "type": "added",
+          "items": [
+            {
+              "en": "New KPM (KernelPatch Module) native backend (beta): hides VPN interfaces — and the VPN server's public host-route — on non-GKI and module-signing-locked kernels (4.14 through 6.12). It flashes as a Magisk/KernelSU-Next/APatch module that loads at boot and applies your targets automatically (under APatch it waits for the superkey from the app).",
+              "ru": "Добавлен нативный бэкенд KPM (KernelPatch Module, бета): скрывает VPN-интерфейсы — и публичный host-route VPN-сервера — на non-GKI и заблокированных по подписи модулей ядрах (4.14–6.12). Поставляется как прошиваемый модуль Magisk/KernelSU-Next/APatch: загружает KernelPatch-модуль при старте системы и сам применяет ваши цели (под APatch ожидает суперключ из приложения)."
+            },
+            {
+              "en": "New Statistics tab: a per-app view of which apps probe for the VPN and how, with app icons and names like the Hiding tab, and a tap-through per-hook breakdown that explains each detection method. Capture sessions surface probes live while you use a target app, and stopping a session keeps its results on screen for review.",
+              "ru": "Новая вкладка «Статистика»: разбивка по приложениям — кто и какими способами проверяет VPN, с иконками и названиями приложений, как на вкладке «Скрытие», и детальной расшифровкой по хукам с объяснением каждого способа детекта. В режиме сессии захвата пробы появляются автоматически, пока вы пользуетесь целевым приложением, без ручного обновления, а после остановки сессии её результаты остаются на экране для изучения."
+            },
+            {
+              "en": "Per-app hook selection: choose which Java and native hooks apply to each protected app, grouped by detection method with an explanation of what each method is and how an app uses it to detect a VPN. Full role labels (Java / Native / Apps / Ports) are shown by default.",
+              "ru": "Выбор Java- и нативных хуков отдельно для каждого защищаемого приложения: хуки сгруппированы по способам детекта, с пояснением, что это за способ и как приложение через него определяет VPN. Полные названия ролей (Java / Native / Apps / Ports) показываются по умолчанию."
+            },
+            {
+              "en": "The dashboard now explains more failure modes instead of surfacing raw errors: a kernel that rejects the module because it enforces module signatures (EKEYREJECTED — it recommends KernelSU Next), a KPM installed but waiting for the APatch superkey, and a hiding layer that is active while some of its runtime checks still fail (a Details button opens the full diagnostics). A fresh install with no targets now reads as guidance rather than an error. It also detects private AOSP fields broken by a new Android release at install time, listing the affected fields and Android SDK so you can file a bug.",
+              "ru": "Дашборд теперь поясняет больше причин сбоя вместо непонятных ошибок: модуль ядра отклонён из-за обязательной подписи модулей (EKEYREJECTED — рекомендуется KernelSU Next); KPM установлен, но неактивен и ждёт суперключ APatch; слой скрытия активен, но часть его проверок не проходит — тогда показывается предупреждение с кнопкой «Подробности», открывающей полную диагностику. Свежая установка без выбранных целей теперь показывается как подсказка, а не ошибка. При установке также проверяются приватные AOSP-поля: если новая версия Android их переименовала или сменила тип, дашборд показывает ошибку со списком сломанных полей и версией Android, чтобы можно было завести issue."
+            },
+            {
+              "en": "App hiding gains an advanced manual picker for choosing which apps to hide, automatic hiding of installed VPN apps via configurable heuristics, cleanup of configured apps that are no longer available, and plaintext export of the package list.",
+              "ru": "В «Скрытии» появились расширенный ручной выбор приложений для скрытия, автоматическое скрытие установленных VPN-приложений по настраиваемым эвристикам, очистка недоступных настроенных приложений и текстовый экспорт списка пакетов."
+            },
+            {
+              "en": "Settings can now export and import the full canonical JSON configuration, so you can back up or move your entire setup as a single file.",
+              "ru": "В настройках теперь можно экспортировать и импортировать полный канонический JSON-конфиг — весь набор настроек сохраняется и переносится одним файлом."
+            },
+            {
+              "en": "Add a Settings reset button that removes the config, state and target files VPN Hide writes to the device, so nothing is left orphaned after you uninstall the app and its modules.",
+              "ru": "Кнопка сброса в настройках удаляет файлы конфигурации, состояния и целей, которые VPN Hide создаёт на устройстве, чтобы после удаления приложения и модулей не оставалось бесхозных файлов."
+            },
+            {
+              "en": "Optional daily background update check that notifies you when a new version is available.",
+              "ru": "Добавлена опциональная ежедневная фоновая проверка обновлений с уведомлением о выходе новой версии."
+            },
+            {
+              "en": "Configure which localhost port ranges the Ports hiding role blocks.",
+              "ru": "Настройка диапазонов localhost-портов, которые блокирует роль Ports."
+            },
+            {
+              "en": "New Community & feedback screen gathers the author's contacts (GitHub, Telegram, 4PDA) in one place.",
+              "ru": "Новый экран «Сообщество и обратная связь» собирает контакты автора (GitHub, Telegram, 4PDA) в одном месте."
+            },
+            {
+              "en": "Experimental local HTTP bridge with a host MCP server for adb-driven app-state and hiding management. Off by default; enable it under Settings → Developer → Agent control.",
+              "ru": "Экспериментальный локальный HTTP-мост и MCP-сервер на хосте для управления состоянием приложения и скрытием через adb. Выключен по умолчанию; включается в Настройки → Для разработчиков → Agent control."
+            },
+            {
+              "en": "Native libraries now align their LOAD segments on 16 KiB, so they load cleanly on 16 KiB-page devices such as Pixel 8 Pro on Android 16 and future hardware, without the \"ELF LOAD not aligned\" warning at app start.",
+              "ru": "Native-библиотеки теперь выровнены на 16 КиБ и без ошибок загружаются на устройствах с 16 КиБ-страницами — например, на Pixel 8 Pro с Android 16 и будущем железе, — больше нет предупреждения «сегмент LOAD не выровнен» при старте приложения."
+            }
+          ]
+        },
+        {
+          "type": "changed",
+          "items": [
+            {
+              "en": "Redesigned the app with a Material 3 Expressive UI: grouped cards across Dashboard, Hiding, Diagnostics, and Settings, an at-a-glance status summary, a refreshed top bar and app mark, a proper themed monochrome chameleon icon, haptic and animated navigation, surface colors that avoid overly black Material You backgrounds, and live theme controls for card shadows and animations. The 'Root access required' screen matches the new look and gains a 'Check again' button to re-probe root without reopening the app. The dashboard is decluttered, with low-priority notes shown as neutral info rather than warnings.",
+              "ru": "Переработан интерфейс Android-приложения VPN Hide на Material 3 Expressive: сгруппированные карточки на экранах Обзор, Скрытие, Диагностика и Настройки, общий статус, обновлённая верхняя панель и знак приложения, корректная тематическая монохромная иконка (силуэт хамелеона), тактильная и анимированная навигация, уточнённые цвета поверхностей без чрезмерно чёрных фонов Material You и настройки темы для теней карточек и анимаций. Экран «Требуется root-доступ» обновлён под новый дизайн и получил кнопку «Проверить снова», чтобы перепроверить root, не переоткрывая приложение. Экран «Обзор» расхламлён, а низкоприоритетные заметки показываются как нейтральная информация, а не предупреждения."
+            },
+            {
+              "en": "Reframed the whole app around hiding the VPN: the Dashboard status reads “VPN hidden / VPN visible”, the Protection tab is renamed Hiding, and the Russian and English wording was polished throughout.",
+              "ru": "Всё приложение теперь выстроено вокруг скрытия VPN: статус на «Обзоре» показывает «VPN скрыт / VPN виден», вкладка «Защита» переименована в «Скрытие», а формулировки на русском и английском вычищены по всему интерфейсу."
+            },
+            {
+              "en": "The three Hiding tabs (Tun, App hiding, Ports) are now a single app list: each row carries J/N/A/P toggles (Java, Native, App-hiding, Ports) and one Save applies everything at once, so there's no more hunting an app across tabs or saving three times. Filters keep already-configured apps visible, list sorting is configurable (configured apps first by default), the in-screen help is better formatted, selected apps temporarily missing from the list are preserved on Save, and the list shows a retry card instead of spinning forever if it fails to load.",
+              "ru": "Три вкладки Скрытия (Туннели, Приложения, Порты) объединены в один список приложений: у каждого приложения теперь переключатели J/N/A/P (Java, нативный, скрытие приложений, порты), и одно «Сохранить» применяет всё сразу — больше не нужно искать приложение по трём вкладкам и сохранять трижды. Фильтры больше не скрывают уже настроенные приложения, сортировка списка настраивается (настроенные по умолчанию показываются первыми), улучшено оформление справки, выбранные приложения, временно отсутствующие в списке, не теряются при сохранении, а если список приложений не удалось загрузить, вместо бесконечной загрузки показывается карточка повтора."
+            },
+            {
+              "en": "Diagnostics now lives under Settings, alongside a new Developer section: a debug-logging preference (off by default to keep logcat quiet and save resources; when enabled it turns on verbose kmod dmesg output and LSPosed hook logs, which are also captured in debug exports) plus a toggle to mute version and changelog notices on dev builds. The dashboard now waits for the full protection-check set and shows an in-app loading state instead of holding the splash screen. Diagnostics also shows a distinct checks-failed retry state on a failed run instead of misreporting an active VPN as off.",
+              "ru": "Диагностика перенесена в настройки, рядом с новым разделом «Для разработчиков»: переключатель отладочных логов (выключены по умолчанию, чтобы не засорять logcat и не тратить ресурсы; при включении дают подробные логи модуля ядра в dmesg и логи LSPosed-хуков, которые также попадают в отладочный экспорт) и переключатель, скрывающий уведомления о версиях и changelog на dev-сборках. Обзор теперь ждёт полный набор проверок защиты и при запуске показывает загрузку внутри приложения вместо удержания splash-экрана. Диагностика также показывает отдельный баннер «проверки не выполнились, повторите» при ошибке прогона, а не сообщает ложно, что активный VPN выключен."
+            },
+            {
+              "en": "The Dashboard now models your setup as one Java backend (LSPosed) and one Native backend (kmod, KPM, or Zygisk) instead of a per-module list. It recognizes the new KPM backend and warns when more than one native backend is installed — an error for the kmod+KPM combination, which can freeze the kernel — and KPM reports a truthful conflict status when it stands down for a co-installed kernel module.",
+              "ru": "«Обзор» теперь представляет конфигурацию как один Java-бэкенд (LSPosed) и один нативный бэкенд (kmod, KPM или Zygisk), а не список модулей. Он распознаёт новый бэкенд KPM и предупреждает, когда установлено больше одного нативного бэкенда — для связки kmod+KPM это ошибка, она может подвесить ядро, — а KPM честно сообщает о конфликте, когда отключается из-за уже установленного модуля ядра."
+            },
+            {
+              "en": "On non-GKI kernels (4.14–5.4) the app now recommends the KPM backend (beta) instead of Zygisk.",
+              "ru": "На non-GKI ядрах (4.14–5.4) приложение теперь рекомендует бэкенд KPM (бета) вместо Zygisk."
+            },
+            {
+              "en": "The Zygisk module now appears as VPN Hide (Zygisk) in your root manager.",
+              "ru": "Zygisk-модуль теперь отображается в root-менеджере как «VPN Hide (Zygisk)»."
+            }
+          ]
+        },
+        {
+          "type": "fixed",
+          "items": [
+            {
+              "en": "Closed several Java Connectivity detection vectors so more apps can no longer see the VPN: network-callback pushes (e.g. VTB), getNetworkInfo(TYPE_VPN) (e.g. Улыбка радуги), the legacy NetworkInfo API (getActiveNetworkInfo), and the VPN Network handles from getActiveNetwork/getAllNetworks are now sanitized for target apps. The system_server hooks scrub results through public APIs, so they also cover Android 17, which changed the private fields the old hooks read.",
+              "ru": "Целевые приложения больше не могут обнаружить VPN через Java Connectivity API: теперь скрываются push-данные сетевых колбэков (например, ВТБ), getNetworkInfo(TYPE_VPN) (например, Улыбка радуги), устаревший API NetworkInfo (getActiveNetworkInfo) и VPN-дескрипторы Network из getActiveNetwork/getAllNetworks. Хуки в system_server чистят результаты через публичные API, поэтому работают и на Android 17 (он изменил приватные поля, которые читали старые хуки)."
+            },
+            {
+              "en": "Target apps can no longer detect a hidden VPN by enumerating interfaces or reading routes directly from the kernel. VPN routes — and the physical host-route hints that expose them — are stripped from RTM_GETROUTE netlink dumps (including the FORTIFY'd recvfrom/__recvfrom_chk path) and from /proc/net/ipv6_route, the SIOCGIFCONF buffer-size count trick (ifc_req == NULL) is closed, and tunnels renamed to the kernel-default `if<N>` pattern (issue #86) — along with utun/l2tp/gre and renamed *vpn* interfaces — are recognized and hidden consistently across the kmod, native, and Java backends. Hiding interfaces from RTM_GETLINK dumps also no longer hangs under Permissive SELinux.",
+              "ru": "Целевые приложения больше не могут обнаружить скрытый VPN, перечисляя интерфейсы или читая маршруты напрямую из ядра. VPN-маршруты и физические host-route признаки убираются из netlink-дампов RTM_GETROUTE (включая FORTIFY-обёртки recvfrom/__recvfrom_chk) и из /proc/net/ipv6_route, закрыт трюк с размером буфера SIOCGIFCONF (ifc_req == NULL), а туннели, переименованные в дефолтный для ядра паттерн `if<N>` (issue #86), — как и интерфейсы utun*, l2tp*, gre* и переименованные *vpn*, — распознаются и скрываются одинаково во всех бэкендах: kmod, нативном и Java. Кроме того, дампы RTM_GETLINK со скрытыми интерфейсами больше не зависают при Permissive SELinux."
+            },
+            {
+              "en": "Apps you hide stay invisible to other observer apps while still seeing themselves, and Android 17's PackageManager list wrappers are preserved when hiding packages.",
+              "ru": "Скрытые приложения остаются невидимыми для других приложений-наблюдателей, но видят сами себя; на Android 17 при скрытии пакетов сохраняются обёртки списков PackageManager."
+            },
+            {
+              "en": "A malformed port rule in the stored config no longer discards the whole configuration (which silently disabled every hook), and selected-app UIDs now resolve by literal package match so similarly named packages are never targeted by mistake. The activator also warns on stderr when native targets exceed the 64-target backend cap, instead of silently dropping the highest-UID apps from native protection.",
+              "ru": "Некорректное правило портов в сохранённом конфиге больше не отбрасывает всю конфигурацию (что молча отключало все хуки), а UID выбранных приложений теперь определяются по точному имени пакета, поэтому похожие имена больше не попадают в цели по ошибке. Активатор также предупреждает в stderr, когда нативных целей больше 64 (лимит бэкенда), вместо молчаливого исключения приложений с наибольшим UID из нативной защиты."
+            },
+            {
+              "en": "Fixed the app failing to start with \"Startup preparation failed\" — the root setup command was being flattened to one line, breaking its shell syntax. The failure screen now explains the actual cause (root unavailable, incomplete root data, or a config-write failure) and shows the underlying error detail instead of always telling you to check root permissions.",
+              "ru": "Исправлен запуск приложения с ошибкой «Startup preparation failed» — команда настройки root схлопывалась в одну строку и ломала синтаксис shell. Экран ошибки теперь объясняет настоящую причину (нет root, неполные root-данные или ошибка записи конфига) и показывает техническую деталь ошибки, вместо того чтобы всегда советовать проверить права root."
+            },
+            {
+              "en": "Fixed an out-of-memory crash when running diagnostics with a VPN connected on some kernels: the native netlink interface/route checks now bound their read loop and time out instead of looping until the allocator aborts.",
+              "ru": "Исправлен вылет приложения из-за нехватки памяти при запуске диагностики с подключённым VPN на некоторых ядрах: нативные проверки интерфейсов и маршрутов через netlink теперь ограничивают цикл чтения и завершаются по таймауту вместо зацикливания до аварии аллокатора."
+            }
+          ]
+        },
+        {
+          "type": "security",
+          "items": [
+            {
+              "en": "Localhost port blocking now covers the entire 127.0.0.0/8 loopback range, so a proxy or VPN daemon bound to 0.0.0.0 can no longer be reached through a 127.x.x.x alias.",
+              "ru": "Блокировка localhost-портов теперь покрывает весь диапазон loopback 127.0.0.0/8, поэтому прокси или VPN-демон на 0.0.0.0 больше нельзя достать через алиас 127.x.x.x."
+            },
+            {
+              "en": "LSPosed hides a protected package from getNameForUid / getNamesForUids uid-to-name resolution and scrubs the VPN's DNS servers and tunnel addresses from LinkProperties.",
+              "ru": "LSPosed скрывает защищённый пакет от резолва uid в имя через getNameForUid / getNamesForUids и вычищает DNS-серверы VPN и адреса туннеля из LinkProperties."
+            },
+            {
+              "en": "Zygisk blocks VPN interface-index probes (if_nametoindex / ioctl(SIOCGIFINDEX)) and intercepts /proc/net/{dev,udp,udp6} and /proc/thread-self and task path forms that could reveal a hidden VPN, and no longer reads out of bounds on netlink replies that use MSG_TRUNC.",
+              "ru": "Zygisk блокирует запросы индекса VPN-интерфейса (if_nametoindex / ioctl(SIOCGIFINDEX)) и перехватывает /proc/net/{dev,udp,udp6} и формы путей /proc/thread-self и task, которые могли выдать скрытый VPN; устранён выход за границы буфера при netlink-чтении с флагом MSG_TRUNC."
+            }
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.7.1",
       "sections": [
         {

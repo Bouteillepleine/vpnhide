@@ -146,7 +146,7 @@ android {
         applicationId = "dev.okhsunrog.vpnhide"
         minSdk = 29
         targetSdk = 36
-        versionCode = 701
+        versionCode = 10000
         versionName = buildVersion
 
         ndk {

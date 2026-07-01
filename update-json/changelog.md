@@ -1,3 +1,41 @@
+## v1.0.0
+
+### Added
+- New KPM (KernelPatch Module) native backend (beta): hides VPN interfaces — and the VPN server's public host-route — on non-GKI and module-signing-locked kernels (4.14 through 6.12). It flashes as a Magisk/KernelSU-Next/APatch module that loads at boot and applies your targets automatically (under APatch it waits for the superkey from the app).
+- New Statistics tab: a per-app view of which apps probe for the VPN and how, with app icons and names like the Hiding tab, and a tap-through per-hook breakdown that explains each detection method. Capture sessions surface probes live while you use a target app, and stopping a session keeps its results on screen for review.
+- Per-app hook selection: choose which Java and native hooks apply to each protected app, grouped by detection method with an explanation of what each method is and how an app uses it to detect a VPN. Full role labels (Java / Native / Apps / Ports) are shown by default.
+- The dashboard now explains more failure modes instead of surfacing raw errors: a kernel that rejects the module because it enforces module signatures (EKEYREJECTED — it recommends KernelSU Next), a KPM installed but waiting for the APatch superkey, and a hiding layer that is active while some of its runtime checks still fail (a Details button opens the full diagnostics). A fresh install with no targets now reads as guidance rather than an error. It also detects private AOSP fields broken by a new Android release at install time, listing the affected fields and Android SDK so you can file a bug.
+- App hiding gains an advanced manual picker for choosing which apps to hide, automatic hiding of installed VPN apps via configurable heuristics, cleanup of configured apps that are no longer available, and plaintext export of the package list.
+- Settings can now export and import the full canonical JSON configuration, so you can back up or move your entire setup as a single file.
+- Add a Settings reset button that removes the config, state and target files VPN Hide writes to the device, so nothing is left orphaned after you uninstall the app and its modules.
+- Optional daily background update check that notifies you when a new version is available.
+- Configure which localhost port ranges the Ports hiding role blocks.
+- New Community & feedback screen gathers the author's contacts (GitHub, Telegram, 4PDA) in one place.
+- Experimental local HTTP bridge with a host MCP server for adb-driven app-state and hiding management. Off by default; enable it under Settings → Developer → Agent control.
+- Native libraries now align their LOAD segments on 16 KiB, so they load cleanly on 16 KiB-page devices such as Pixel 8 Pro on Android 16 and future hardware, without the "ELF LOAD not aligned" warning at app start.
+
+### Changed
+- Redesigned the app with a Material 3 Expressive UI: grouped cards across Dashboard, Hiding, Diagnostics, and Settings, an at-a-glance status summary, a refreshed top bar and app mark, a proper themed monochrome chameleon icon, haptic and animated navigation, surface colors that avoid overly black Material You backgrounds, and live theme controls for card shadows and animations. The 'Root access required' screen matches the new look and gains a 'Check again' button to re-probe root without reopening the app. The dashboard is decluttered, with low-priority notes shown as neutral info rather than warnings.
+- Reframed the whole app around hiding the VPN: the Dashboard status reads “VPN hidden / VPN visible”, the Protection tab is renamed Hiding, and the Russian and English wording was polished throughout.
+- The three Hiding tabs (Tun, App hiding, Ports) are now a single app list: each row carries J/N/A/P toggles (Java, Native, App-hiding, Ports) and one Save applies everything at once, so there's no more hunting an app across tabs or saving three times. Filters keep already-configured apps visible, list sorting is configurable (configured apps first by default), the in-screen help is better formatted, selected apps temporarily missing from the list are preserved on Save, and the list shows a retry card instead of spinning forever if it fails to load.
+- Diagnostics now lives under Settings, alongside a new Developer section: a debug-logging preference (off by default to keep logcat quiet and save resources; when enabled it turns on verbose kmod dmesg output and LSPosed hook logs, which are also captured in debug exports) plus a toggle to mute version and changelog notices on dev builds. The dashboard now waits for the full protection-check set and shows an in-app loading state instead of holding the splash screen. Diagnostics also shows a distinct checks-failed retry state on a failed run instead of misreporting an active VPN as off.
+- The Dashboard now models your setup as one Java backend (LSPosed) and one Native backend (kmod, KPM, or Zygisk) instead of a per-module list. It recognizes the new KPM backend and warns when more than one native backend is installed — an error for the kmod+KPM combination, which can freeze the kernel — and KPM reports a truthful conflict status when it stands down for a co-installed kernel module.
+- On non-GKI kernels (4.14–5.4) the app now recommends the KPM backend (beta) instead of Zygisk.
+- The Zygisk module now appears as VPN Hide (Zygisk) in your root manager.
+
+### Fixed
+- Closed several Java Connectivity detection vectors so more apps can no longer see the VPN: network-callback pushes (e.g. VTB), getNetworkInfo(TYPE_VPN) (e.g. Улыбка радуги), the legacy NetworkInfo API (getActiveNetworkInfo), and the VPN Network handles from getActiveNetwork/getAllNetworks are now sanitized for target apps. The system_server hooks scrub results through public APIs, so they also cover Android 17, which changed the private fields the old hooks read.
+- Target apps can no longer detect a hidden VPN by enumerating interfaces or reading routes directly from the kernel. VPN routes — and the physical host-route hints that expose them — are stripped from RTM_GETROUTE netlink dumps (including the FORTIFY'd recvfrom/__recvfrom_chk path) and from /proc/net/ipv6_route, the SIOCGIFCONF buffer-size count trick (ifc_req == NULL) is closed, and tunnels renamed to the kernel-default `if<N>` pattern (issue #86) — along with utun/l2tp/gre and renamed *vpn* interfaces — are recognized and hidden consistently across the kmod, native, and Java backends. Hiding interfaces from RTM_GETLINK dumps also no longer hangs under Permissive SELinux.
+- Apps you hide stay invisible to other observer apps while still seeing themselves, and Android 17's PackageManager list wrappers are preserved when hiding packages.
+- A malformed port rule in the stored config no longer discards the whole configuration (which silently disabled every hook), and selected-app UIDs now resolve by literal package match so similarly named packages are never targeted by mistake. The activator also warns on stderr when native targets exceed the 64-target backend cap, instead of silently dropping the highest-UID apps from native protection.
+- Fixed the app failing to start with "Startup preparation failed" — the root setup command was being flattened to one line, breaking its shell syntax. The failure screen now explains the actual cause (root unavailable, incomplete root data, or a config-write failure) and shows the underlying error detail instead of always telling you to check root permissions.
+- Fixed an out-of-memory crash when running diagnostics with a VPN connected on some kernels: the native netlink interface/route checks now bound their read loop and time out instead of looping until the allocator aborts.
+
+### Security
+- Localhost port blocking now covers the entire 127.0.0.0/8 loopback range, so a proxy or VPN daemon bound to 0.0.0.0 can no longer be reached through a 127.x.x.x alias.
+- LSPosed hides a protected package from getNameForUid / getNamesForUids uid-to-name resolution and scrubs the VPN's DNS servers and tunnel addresses from LinkProperties.
+- Zygisk blocks VPN interface-index probes (if_nametoindex / ioctl(SIOCGIFINDEX)) and intercepts /proc/net/{dev,udp,udp6} and /proc/thread-self and task path forms that could reveal a hidden VPN, and no longer reads out of bounds on netlink replies that use MSG_TRUNC.
+
 ## v0.7.1
 
 ### Added
@@ -57,20 +95,3 @@
 
 ### Fixed
 - Magisk versions before v28 failed to install vpnhide-ports and vpnhide-kmod with an unpack error — restored the META-INF/com/google/android/{update-binary,updater-script} entries the older managers expect.
-
-## v0.6.0
-
-### Added
-- App hiding mode in Protection — hide selected apps from selected observer apps at the PackageManager level. Observer apps can no longer list, resolve, or query hidden apps.
-- Ports hiding mode plus new vpnhide-ports.zip module — block selected apps from reaching 127.0.0.1 / ::1 ports to hide locally running VPN/proxy daemons (Clash, sing-box, V2Ray, Happ, etc.).
-- Ports module integration in the dashboard — shows install state, active rules, observer count, and version mismatch/update warnings.
-
-### Changed
-- The old Apps tab is now Protection, split into three modes: Tun, Apps, and Ports.
-- Ports rules apply immediately on Save and are restored automatically on boot.
-- vpnhide-ports.zip is now included in the release/update pipeline with Magisk/KernelSU update metadata.
-
-### Fixed
-- Fixed LinkProperties filtering so VPN routes are stripped more reliably from app-visible network snapshots.
-- Fixed SIOCGIFCONF filtering on some Android 12/13 5.10 kernels where the previous hook could succeed but never fire.
-- Fixed debug log collection so app logcat entries are captured reliably on devices where logcat via su misses them.
