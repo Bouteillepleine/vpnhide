@@ -112,9 +112,7 @@ def update_cargo_toml(path: Path, version: str, *, dry_run: bool = False) -> Non
     )
 
 
-def update_gradle_kts(
-    path: Path, version_code: int, *, dry_run: bool = False
-) -> None:
+def update_gradle_kts(path: Path, version_code: int, *, dry_run: bool = False) -> None:
     # Only versionCode is a literal here. versionName is computed at configure
     # time from build-version.py (the git tag `vX.Y.Z` → "X.Y.Z", falling back
     # to the VERSION file), so there is nothing to patch for it.
