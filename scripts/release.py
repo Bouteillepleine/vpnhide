@@ -134,6 +134,8 @@ def patch_all_sources(version: str, version_code: int, *, dry_run: bool) -> None
     update_module_prop(REPO_ROOT / "kmod/kpm/module/module.prop", version, vc, dry_run=dry_run)
     update_module_prop(REPO_ROOT / "zygisk/module/module.prop", version, vc, dry_run=dry_run)
     update_module_prop(REPO_ROOT / "portshide/module/module.prop", version, vc, dry_run=dry_run)
+    update_cargo_toml(REPO_ROOT / "crates/protocol/Cargo.toml", version, dry_run=dry_run)
+    update_cargo_toml(REPO_ROOT / "crates/activator/Cargo.toml", version, dry_run=dry_run)
     update_cargo_toml(REPO_ROOT / "zygisk/Cargo.toml", version, dry_run=dry_run)
     update_cargo_toml(REPO_ROOT / "lsposed/native/Cargo.toml", version, dry_run=dry_run)
     update_gradle_kts(REPO_ROOT / "lsposed/app/build.gradle.kts", vc, dry_run=dry_run)
@@ -174,6 +176,8 @@ def main() -> int:
         REPO_ROOT / "kmod/kpm/module/module.prop",
         REPO_ROOT / "zygisk/module/module.prop",
         REPO_ROOT / "portshide/module/module.prop",
+        REPO_ROOT / "crates/protocol/Cargo.toml",
+        REPO_ROOT / "crates/activator/Cargo.toml",
         REPO_ROOT / "zygisk/Cargo.toml",
         REPO_ROOT / "lsposed/app/build.gradle.kts",
         REPO_ROOT / "lsposed/native/Cargo.toml",
