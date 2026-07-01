@@ -14,6 +14,7 @@ All hooks are inline on `libc.so` via ByteDance shadowhook:
 | `getifaddrs` | `NetworkInterface.getNetworkInterfaces()`, Dart VM, direct C/C++ | Unlinks VPN entries from the returned linked list. |
 | `openat` | `/proc/net/{route,ipv6_route,if_inet6,tcp,tcp6}` | Returns a memfd with VPN entries stripped out. |
 | `recvmsg` | Netlink `RTM_NEWADDR` / `RTM_NEWLINK` dump responses | Removes VPN interface entries from netlink messages. |
+| `recv` | Netlink `RTM_NEWADDR` / `RTM_NEWLINK` dump responses | Same as `recvmsg`; hooked separately because bionic's `recv()` tail-calls `recvfrom`. |
 
 ## Architecture
 
@@ -43,7 +44,7 @@ We carry a small fork at [okhsunrog/android-inline-hook](https://github.com/okhs
 
 ## Compatibility
 
-The module declares Zygisk API v5 but only calls v1-era functions (`pre_app_specialize`, `post_app_specialize`, `args.nice_name`, `set_option(DlCloseModuleLibrary)`). The inline hooks happen via shadowhook inside the process, not through the Zygisk API.
+The module declares Zygisk API v2 but only calls v1-era functions (`pre_app_specialize`, `post_app_specialize`, `args.nice_name`, `set_option(DlCloseModuleLibrary)`). The inline hooks happen via shadowhook inside the process, not through the Zygisk API.
 
 | Setup | Works |
 |-------|-------|
@@ -113,11 +114,11 @@ cargo ndk -t arm64-v8a build --release \
 
 ## Filter logic
 
-VPN interface prefixes: `tun`, `ppp`, `tap`, `wg`, `ipsec`, `xfrm`, `utun`, `l2tp`, `gre`, plus anything containing the substring `vpn`. Matches the list in the [LSPosed companion](../lsposed/).
+VPN interface prefixes: `tun`, `ppp`, `tap`, `wg`, `ipsec`, `xfrm`, `utun`, `l2tp`, `gre`, plus anything containing the substring `vpn`, plus `if<N>` renamed/anonymous netdevs. Matches the list in the [LSPosed companion](../lsposed/).
 
 ## Known limitations
 
-- **Direct `svc #0` syscalls bypass the hook.** Apps issuing raw syscalls skip libc entirely. Use [vpnhide-kmod](../kmod/) for these apps.
+- **Direct `svc #0` syscalls bypass the hook.** Apps issuing raw syscalls skip libc entirely. Use a kernel-level backend, [vpnhide-kmod](../kmod/) or [KPM](../kmod/kpm/), for these apps.
 - **arm64 only.** No 32-bit arm, no x86.
 - **`getifaddrs` hook leaks a few bytes per call.** Unlinked VPN entries in the ifaddrs linked list are intentionally leaked rather than tracked with a shadow allocator. Acceptable tradeoff -- `getifaddrs` is called infrequently.
 - **Tested on Android 16 (API 36).** Should work back to API 24 in principle, but nothing older has been exercised.
