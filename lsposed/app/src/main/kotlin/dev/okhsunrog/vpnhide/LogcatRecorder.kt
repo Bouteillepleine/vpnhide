@@ -32,7 +32,7 @@ import java.util.concurrent.TimeUnit
  * so reports about a third-party app still carry enough VPN Hide context.
  */
 internal object LogcatRecorder {
-    private const val TAG = "VpnHide-Logcat"
+    private const val TAG = LogTags.LOGCAT
     private const val LOGCAT_STOP_GRACE_MS = 200L
     private const val LOGCAT_PIPE_JOIN_MS = 2_000L
 
@@ -105,7 +105,7 @@ internal object LogcatRecorder {
         var process: Process? = null
         var scope: CoroutineScope? = null
         try {
-            loggingSession = beginDebugCaptureLogging(context)
+            loggingSession = beginDebugCaptureLogging()
             val startMs = System.currentTimeMillis()
             // Step back one second so the start marker and any immediate debug
             // propagation lines are not lost to logcat timestamp rounding.
@@ -114,7 +114,7 @@ internal object LogcatRecorder {
 
             process = startLogcatProcess(logcatSince)
             if (process == null) {
-                restoreDebugCaptureLogging(context, loggingSession)
+                restoreDebugCaptureLogging(loggingSession)
                 runCatching { rawLogFile.delete() }
                 return null
             }
@@ -141,7 +141,7 @@ internal object LogcatRecorder {
         } catch (t: Throwable) {
             process?.destroyForcibly()
             scope?.cancel()
-            loggingSession?.let { restoreDebugCaptureLogging(context, it) }
+            loggingSession?.let { restoreDebugCaptureLogging(it) }
             runCatching { rawLogFile.delete() }
             throw t
         }
@@ -181,7 +181,7 @@ internal object LogcatRecorder {
 
             val dmesg = suExec("dmesg 2>/dev/null").second
             val shellSnapshot = collectDebugShellSnapshot()
-            val restore = restoreDebugCaptureLogging(context, recording.loggingSession)
+            val restore = restoreDebugCaptureLogging(recording.loggingSession)
             restoreAttempted = true
             val completedLoggingSession = recording.loggingSession.withRestore(restore)
 
@@ -211,7 +211,7 @@ internal object LogcatRecorder {
                         .onFailure { VpnHideLog.w(TAG, "failed to stop logcat process: ${it.message}") }
                 }
                 if (!restoreAttempted) {
-                    runCatching { restoreDebugCaptureLogging(context, recording.loggingSession) }
+                    runCatching { restoreDebugCaptureLogging(recording.loggingSession) }
                         .onFailure { VpnHideLog.w(TAG, "failed to restore debug logging: ${it.message}") }
                 }
                 if (zipFile == null) {
@@ -355,22 +355,7 @@ internal object LogcatRecorder {
             }
         }.trimEnd()
 
-    private fun isVpnHideLogcatLine(line: String): Boolean =
-        listOf(
-            "VPNHideTest",
-            "VpnHide",
-            "VpnHide-Dashboard",
-            "VpnHide-Startup",
-            "VpnHide-LSPosed",
-            "VpnHide-Diag",
-            "VpnHide-Logcat",
-            "VpnHide-Update",
-            "VpnHideAgentBridge",
-            "vpnhide",
-            "vpnhide_ports",
-            "vpnhide-zygisk",
-            "shadowhook_tag",
-        ).any { line.contains(it) }
+    private fun isVpnHideLogcatLine(line: String): Boolean = (LogTags.APP_TAGS + LogTags.NATIVE_TAGS).any { line.contains(it) }
 
     private fun formatLogcatSince(date: Date): String = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US).format(date)
 

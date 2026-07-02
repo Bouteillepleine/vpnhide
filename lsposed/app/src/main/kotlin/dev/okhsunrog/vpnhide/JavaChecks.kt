@@ -6,7 +6,6 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
-import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -48,7 +47,7 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
-private const val TAG = "VPNHideTest"
+private const val TAG = LogTags.TEST
 
 data class CheckResult(
     val name: String,
@@ -178,7 +177,7 @@ private fun nativeCheck(
         CheckResult(name, out.status.toPassed(), out.detail)
     } catch (e: Exception) {
         val detail = e.message ?: e.javaClass.simpleName
-        Log.e(TAG, "[$name] $detail", e)
+        VpnHideLog.e(TAG, "[$name] $detail", e)
         CheckResult(name, false, detail)
     }
 

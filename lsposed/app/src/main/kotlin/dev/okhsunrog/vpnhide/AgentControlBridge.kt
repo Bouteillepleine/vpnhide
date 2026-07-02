@@ -20,7 +20,7 @@ import java.security.SecureRandom
 import java.util.Base64
 import kotlin.concurrent.thread
 
-private const val TAG = "VpnHideAgentBridge"
+private const val TAG = LogTags.AGENT_BRIDGE
 private const val LOCALHOST = "127.0.0.1"
 
 // A stalled localhost peer must not wedge the single serve thread forever:
@@ -79,7 +79,7 @@ internal object AgentControlBridge {
                 )
             }
         }.onFailure { error ->
-            Log.e(TAG, "Failed to start agent bridge", error)
+            VpnHideLog.e(TAG, "Failed to start agent bridge", error)
         }.getOrNull()
 
     private fun generateToken(): String {
@@ -109,7 +109,7 @@ private class BridgeServer(
 
     fun start() {
         worker =
-            thread(name = "VpnHideAgentBridge", isDaemon = true) {
+            thread(name = LogTags.AGENT_BRIDGE, isDaemon = true) {
                 serveLoop()
             }
     }
@@ -175,7 +175,7 @@ private class BridgeServer(
         } catch (e: SerializationException) {
             writeError(client, 400, "Bad Request", e.message ?: "Invalid JSON")
         } catch (e: Throwable) {
-            Log.e(TAG, "Agent bridge request failed", e)
+            VpnHideLog.e(TAG, "Agent bridge request failed", e)
             writeError(client, 500, "Internal Server Error", e.message ?: e::class.java.simpleName)
         }
     }
