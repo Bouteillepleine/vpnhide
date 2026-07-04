@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v1.1.0
+
+### Added
+- Detailed diagnostics can export a separate opt-in ZIP with active kernel boot images and partition metadata.
+- The dashboard now diagnoses a KPM install stuck without loading (corrupted activator or a generic activator failure), showing which one and how to fix it — previously it silently sat inactive with no explanation.
+- The dashboard now shows the installed kernel module's GKI variant on its card, and update warnings for an outdated kmod name the exact recommended zip to grab — so updating over an old kmod install no longer means guessing which variant you originally flashed.
+- Diagnostics now checks that VPN Hide itself is routed through your VPN; if it has been split-tunnelled out, it asks you to add it to the tunnel instead of running meaningless checks.
+- Diagnostics now includes an RTM_GETRULE check that detects a VPN leaking through per-app policy routing rules.
+- Settings now has a full Hidden apps page that shows automatic app-hiding matches, manual hidden apps, and per-app auto-hide exclusions.
+- The dashboard now offers one-tap module downloads: a button to grab the exact recommended zip from the latest release (plus a link to all releases), and a download button on outdated-version and wrong-variant module warnings.
+
+### Changed
+- Debug bundles now include a best-effort boot logcat excerpt for LSPosed and Vector attach diagnostics.
+- Debug exports now include richer device, module and backend diagnostics, including decoded hook status/counter reports for KPM, Zygisk, LSPosed and Ports live state.
+- Default debug APK is now R8-shrunk; use rawDebug for the old unminified debug build.
+- Full system logcat recording now saves a diagnostic ZIP with device, backend, kernel, config, dmesg, and debug-capture context.
+- Diagnostics now probes the legacy getNetworkInfo(TYPE_VPN) API and drops the uninformative system-proxy check.
+- Java-level diagnostics now attribute who hid the VPN (hidden by the backend, or a leak) like the native checks, instead of a bare clean/fail.
+- The detailed diagnostics screen now shows who hid the VPN on each check — the backend, SELinux, or nothing to hide — instead of a bare pass/fail.
+- Compact single-row app bar (logo, title and actions on one line) that scales the brand down on very narrow screens; Apps-list filters moved out of the top-bar menu into chips above the list.
+- On large screens the Dashboard expands its header into a larger brand and animates back to the compact bar when you switch tabs.
+- The detailed diagnostics screen now shows what root saw on each native check next to the app's own read, and marks 'nothing to hide' distinctly from a backend win — so a SELinux-blocked check that has nothing to leak explains itself instead of looking protected.
+
+### Fixed
+- Auto-hidden VPN apps are now re-detected on startup and when you tap Refresh, so a VPN app installed after the app list was cached gets hidden from detector apps without re-saving the hiding list.
+- Dashboard now explains inactive Ports rules using the portshide load_status.
+- Diagnostic captures now restore temporary debug logging reliably after errors, cancellation, or overlapping captures.
+- Portshide diagnostics now record the latest apply status and command output.
+- Dashboard native/Java level tiles no longer mislabel an unloaded backend as "Partial" or a mostly-working layer as "Not working": each layer now reads OK / Partial / Not active, judged by what actually hid the VPN.
+- KPM activation now works on FolkPatch/APatch setups that expose the trusted su KernelPatch control token, without requiring users to save a SuperKey when the runtime already grants it.
+- Protection search now closes on back, and unsaved app role toggles no longer move rows between groups before Save.
+
 ## v1.0.0
 
 ### Added

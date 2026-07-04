@@ -1,6 +1,122 @@
 {
   "history": [
     {
+      "version": "1.1.0",
+      "sections": [
+        {
+          "type": "added",
+          "items": [
+            {
+              "en": "Detailed diagnostics can export a separate opt-in ZIP with active kernel boot images and partition metadata.",
+              "ru": "Подробная диагностика теперь умеет отдельно экспортировать ZIP с активными образами boot-разделов ядра и метаданными разделов."
+            },
+            {
+              "en": "The dashboard now diagnoses a KPM install stuck without loading (corrupted activator or a generic activator failure), showing which one and how to fix it — previously it silently sat inactive with no explanation.",
+              "ru": "Дашборд теперь диагностирует KPM, который установлен, но не загрузился (повреждён активатор или его сбой по другой причине), и показывает, что именно случилось и как это исправить — раньше он просто оставался неактивным без объяснений."
+            },
+            {
+              "en": "The dashboard now shows the installed kernel module's GKI variant on its card, and update warnings for an outdated kmod name the exact recommended zip to grab — so updating over an old kmod install no longer means guessing which variant you originally flashed.",
+              "ru": "Дашборд теперь показывает GKI-вариант установленного модуля ядра прямо на карточке, а предупреждение об устаревшей версии kmod называет конкретный рекомендуемый zip-файл — обновление старого kmod больше не требует угадывать, какой вариант был установлен изначально."
+            },
+            {
+              "en": "Diagnostics now checks that VPN Hide itself is routed through your VPN; if it has been split-tunnelled out, it asks you to add it to the tunnel instead of running meaningless checks.",
+              "ru": "Диагностика теперь проверяет, что сам VPN Hide идёт через ваш VPN; если он выведен из туннеля сплит-туннелем, приложение просит добавить его в туннель вместо бессмысленных проверок."
+            },
+            {
+              "en": "Diagnostics now includes an RTM_GETRULE check that detects a VPN leaking through per-app policy routing rules.",
+              "ru": "В диагностику добавлена проверка RTM_GETRULE: она ловит VPN, который выдают правила policy routing для отдельных приложений."
+            },
+            {
+              "en": "Settings now has a full Hidden apps page that shows automatic app-hiding matches, manual hidden apps, and per-app auto-hide exclusions.",
+              "ru": "В настройках появилась полноценная страница скрытых приложений: она показывает автоматические совпадения, скрытые вручную приложения и исключения автоскрытия для отдельных пакетов."
+            },
+            {
+              "en": "The dashboard now offers one-tap module downloads: a button to grab the exact recommended zip from the latest release (plus a link to all releases), and a download button on outdated-version and wrong-variant module warnings.",
+              "ru": "На дашборде появилось скачивание модулей в один тап: кнопка для загрузки точного рекомендованного zip из последнего релиза (плюс ссылка на все релизы) и кнопка скачивания в предупреждениях об устаревшей версии и неверном варианте модуля."
+            }
+          ]
+        },
+        {
+          "type": "changed",
+          "items": [
+            {
+              "en": "Debug bundles now include a best-effort boot logcat excerpt for LSPosed and Vector attach diagnostics.",
+              "ru": "Диагностические архивы теперь по возможности включают фрагмент logcat после загрузки для диагностики подключения LSPosed и Vector."
+            },
+            {
+              "en": "Debug exports now include richer device, module and backend diagnostics, including decoded hook status/counter reports for KPM, Zygisk, LSPosed and Ports live state.",
+              "ru": "Диагностический архив теперь включает больше сведений об устройстве, модулях и бэкендах, включая расшифрованный отчёт о статусе хуков/счётчиках и live state KPM, Zygisk, LSPosed и Ports."
+            },
+            {
+              "en": "Default debug APK is now R8-shrunk; use rawDebug for the old unminified debug build.",
+              "ru": "Обычный debug APK теперь проходит R8/shrink; для прежней unminified debug-сборки используйте rawDebug."
+            },
+            {
+              "en": "Full system logcat recording now saves a diagnostic ZIP with device, backend, kernel, config, dmesg, and debug-capture context.",
+              "ru": "Запись полного системного logcat теперь сохраняет диагностический ZIP с информацией об устройстве, бэкендах, ядре, конфигурации, dmesg и состоянии debug-capture."
+            },
+            {
+              "en": "Diagnostics now probes the legacy getNetworkInfo(TYPE_VPN) API and drops the uninformative system-proxy check.",
+              "ru": "Диагностика теперь проверяет легаси-API getNetworkInfo(TYPE_VPN) и больше не показывает неинформативную проверку системного прокси."
+            },
+            {
+              "en": "Java-level diagnostics now attribute who hid the VPN (hidden by the backend, or a leak) like the native checks, instead of a bare clean/fail.",
+              "ru": "Java-проверки в диагностике теперь показывают, кто скрыл VPN (скрыто бэкендом или утечка), как и нативные, — вместо простого «чисто/провал»."
+            },
+            {
+              "en": "The detailed diagnostics screen now shows who hid the VPN on each check — the backend, SELinux, or nothing to hide — instead of a bare pass/fail.",
+              "ru": "Экран подробной диагностики теперь показывает, кто скрыл VPN в каждой проверке — бэкенд, SELinux или скрывать нечего — вместо простого «пройдено/провал»."
+            },
+            {
+              "en": "Compact single-row app bar (logo, title and actions on one line) that scales the brand down on very narrow screens; Apps-list filters moved out of the top-bar menu into chips above the list.",
+              "ru": "Компактная однострочная шапка (логотип, заголовок и кнопки в одну строку), бренд ужимается на очень узких экранах; фильтры списка приложений вынесены из меню шапки в чипы над списком."
+            },
+            {
+              "en": "On large screens the Dashboard expands its header into a larger brand and animates back to the compact bar when you switch tabs.",
+              "ru": "На больших экранах шапка Dashboard раскрывается в крупный бренд и плавно возвращается к компактной строке при переключении вкладок."
+            },
+            {
+              "en": "The detailed diagnostics screen now shows what root saw on each native check next to the app's own read, and marks 'nothing to hide' distinctly from a backend win — so a SELinux-blocked check that has nothing to leak explains itself instead of looking protected.",
+              "ru": "Экран подробной диагностики теперь показывает, что видит root по каждой нативной проверке, рядом с чтением самого приложения, и отличает «нечего скрывать» от заслуги бэкенда — так SELinux-заблокированная проверка, где скрывать нечего, объясняет себя, а не выглядит «защищённой»."
+            }
+          ]
+        },
+        {
+          "type": "fixed",
+          "items": [
+            {
+              "en": "Auto-hidden VPN apps are now re-detected on startup and when you tap Refresh, so a VPN app installed after the app list was cached gets hidden from detector apps without re-saving the hiding list.",
+              "ru": "Список автоматически скрываемых VPN-приложений теперь обновляется при запуске и по кнопке «Обновить»: VPN-приложение, установленное уже после загрузки списка, прячется от приложений-детекторов без повторного сохранения на вкладке «Скрытие»."
+            },
+            {
+              "en": "Dashboard now explains inactive Ports rules using the portshide load_status.",
+              "ru": "Dashboard теперь объясняет неактивные правила Ports через portshide load_status."
+            },
+            {
+              "en": "Diagnostic captures now restore temporary debug logging reliably after errors, cancellation, or overlapping captures.",
+              "ru": "Диагностические сборы теперь надежно восстанавливают временное отладочное логирование после ошибок, отмены или параллельных сборов."
+            },
+            {
+              "en": "Portshide diagnostics now record the latest apply status and command output.",
+              "ru": "Диагностика portshide теперь сохраняет последний статус применения правил и вывод команд."
+            },
+            {
+              "en": "Dashboard native/Java level tiles no longer mislabel an unloaded backend as \"Partial\" or a mostly-working layer as \"Not working\": each layer now reads OK / Partial / Not active, judged by what actually hid the VPN.",
+              "ru": "Плитки нативного и Java уровня на дашборде больше не показывают незагруженный бэкенд как «Частично», а в основном рабочий слой — как «Не работает»: уровень теперь честно оценивается OK / Частично / Не активен по тому, что реально спрятало VPN."
+            },
+            {
+              "en": "KPM activation now works on FolkPatch/APatch setups that expose the trusted su KernelPatch control token, without requiring users to save a SuperKey when the runtime already grants it.",
+              "ru": "Активация KPM теперь работает на FolkPatch/APatch-системах с доверенным su-токеном управления KernelPatch: сохранять SuperKey больше не требуется, если runtime уже выдаёт такой доступ."
+            },
+            {
+              "en": "Protection search now closes on back, and unsaved app role toggles no longer move rows between groups before Save.",
+              "ru": "Поиск на вкладке защиты теперь закрывается по кнопке назад, а несохранённые переключения ролей больше не перемещают приложения между группами до нажатия Save."
+            }
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.0.0",
       "sections": [
         {
