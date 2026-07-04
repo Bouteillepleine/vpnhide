@@ -5,25 +5,30 @@ use std::io::ErrorKind;
 
 use crate::generated::iface_lists::matches_vpn;
 
-uniffi::setup_scaffolding!();
+// ── Probe outcome types — serialized to JSON on both transports ───────
+// In-process (app view) via the JNI export below; root ground-truth via the
+// `vhprobe` bin. Same code, same JSON schema on both sides.
 
-// ── Probe outcome types — crossing the FFI ───────────────────────────
-
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum CheckStatus {
-    /// Probe ran and saw nothing VPN-shaped, or was legitimately blocked
-    /// (SELinux denial, ENODEV, etc.) — both outcomes confirm the VPN is
-    /// hidden from this surface.
+    /// Probe ran and saw nothing VPN-shaped — the VPN is hidden from this
+    /// surface (by a backend hook, or simply nothing to leak here). The caller
+    /// distinguishes those two via the root ground-truth differential.
     Pass,
     /// Probe surfaced VPN-shaped data the kmod / zygisk should have hidden.
     Fail,
+    /// The probe was denied by SELinux (EACCES/EPERM) before it could read.
+    /// Distinct from Pass: the app saw no VPN, but SELinux blocked the read —
+    /// not a backend hook — so it is not evidence the backend works.
+    SelinuxBlocked,
     /// App has no network permission, so the probe couldn't run at all.
-    /// Reported separately from Pass/Fail so the UI can tell the user to
-    /// enable network access before trusting the results.
+    /// Reported separately so the UI can tell the user to enable network
+    /// access before trusting the results.
     NetworkBlocked,
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub struct CheckOutput {
     pub status: CheckStatus,
     pub detail: String,
@@ -40,6 +45,13 @@ impl CheckOutput {
     fn fail(detail: impl Into<String>) -> Self {
         Self {
             status: CheckStatus::Fail,
+            detail: detail.into(),
+        }
+    }
+
+    fn selinux_blocked(detail: impl Into<String>) -> Self {
+        Self {
+            status: CheckStatus::SelinuxBlocked,
             detail: detail.into(),
         }
     }
@@ -167,7 +179,6 @@ unsafe fn with_inet_dgram_socket(f: impl FnOnce(libc::c_int) -> CheckOutput) -> 
     out
 }
 
-#[uniffi::export]
 fn check_ioctl_siocgifflags() -> CheckOutput {
     unsafe {
         with_inet_dgram_socket(|fd| {
@@ -202,7 +213,6 @@ fn check_ioctl_siocgifflags() -> CheckOutput {
     }
 }
 
-#[uniffi::export]
 fn check_ioctl_siocgifmtu() -> CheckOutput {
     unsafe {
         with_inet_dgram_socket(|fd| {
@@ -229,7 +239,6 @@ fn check_ioctl_siocgifmtu() -> CheckOutput {
     }
 }
 
-#[uniffi::export]
 fn check_ioctl_siocgifconf() -> CheckOutput {
     unsafe {
         with_inet_dgram_socket(|fd| {
@@ -261,7 +270,6 @@ fn check_ioctl_siocgifconf() -> CheckOutput {
     }
 }
 
-#[uniffi::export]
 fn check_getifaddrs() -> CheckOutput {
     unsafe {
         let mut addrs: *mut libc::ifaddrs = std::ptr::null_mut();
@@ -295,7 +303,7 @@ fn check_proc_file(path: &str) -> CheckOutput {
     match std::fs::read_to_string(path) {
         Err(e) => {
             if is_selinux_denial(&e) {
-                return CheckOutput::pass(format!(
+                return CheckOutput::selinux_blocked(format!(
                     "access denied by SELinux ({e}) — app cannot read {path}"
                 ));
             }
@@ -357,7 +365,7 @@ fn open_netlink() -> Result<i32, CheckOutput> {
         if fd < 0 {
             let e = std::io::Error::last_os_error();
             return Err(if is_selinux_denial(&e) {
-                CheckOutput::pass(format!("netlink socket denied by SELinux ({e})"))
+                CheckOutput::selinux_blocked(format!("netlink socket denied by SELinux ({e})"))
             } else {
                 CheckOutput::fail(format!("cannot create netlink socket: {e}"))
             });
@@ -370,7 +378,7 @@ fn open_netlink() -> Result<i32, CheckOutput> {
             let e = std::io::Error::last_os_error();
             libc::close(fd);
             return Err(if is_selinux_denial(&e) {
-                CheckOutput::pass(format!(
+                CheckOutput::selinux_blocked(format!(
                     "netlink bind denied by SELinux ({e}) — app cannot enumerate interfaces"
                 ))
             } else {
@@ -457,7 +465,6 @@ unsafe fn for_each_rtattr(
     }
 }
 
-#[uniffi::export]
 fn check_netlink_getlink() -> CheckOutput {
     let fd = match open_netlink() {
         Ok(fd) => fd,
@@ -533,7 +540,6 @@ fn check_netlink_getlink() -> CheckOutput {
     }
 }
 
-#[uniffi::export]
 fn check_netlink_getroute() -> CheckOutput {
     let fd = match open_netlink() {
         Ok(fd) => fd,
@@ -614,12 +620,178 @@ fn check_netlink_getroute() -> CheckOutput {
     }
 }
 
-#[uniffi::export]
+/// Send an RTM_GETRULE dump for `family` on an already-bound `fd` and invoke
+/// `on_rule(buf, offset, msg_len)` for each RTM_NEWRULE message. The kernel's
+/// rule dump is per-family, and Android installs the per-app VPN policy rules for
+/// BOTH IPv4 and IPv6 — so callers dump `AF_INET` and `AF_INET6` on the same
+/// socket (distinct seq) and merge, else an IPv6 rule set is invisible. Returns
+/// the OS error string on a send failure; a short read / NLMSG_DONE ends the dump.
+///
+/// # Safety
+/// `fd` must be a bound NETLINK_ROUTE socket; `buf` must be 8-aligned and large
+/// enough for a dump chunk (the callers pass a 32 KiB `AlignedBytes`).
+unsafe fn dump_fib_rules(
+    fd: i32,
+    family: u8,
+    seq: u32,
+    buf: &mut [u8],
+    mut on_rule: impl FnMut(&[u8], usize, usize),
+) -> Result<(), String> {
+    unsafe {
+        #[repr(C)]
+        struct Req {
+            nlh: libc::nlmsghdr,
+            frh: Rtmsg,
+        }
+        let mut req: Req = std::mem::zeroed();
+        req.nlh.nlmsg_len = std::mem::size_of::<Req>() as u32;
+        req.nlh.nlmsg_type = libc::RTM_GETRULE;
+        req.nlh.nlmsg_flags = (libc::NLM_F_REQUEST | libc::NLM_F_DUMP) as u16;
+        req.nlh.nlmsg_seq = seq;
+        req.frh.rtm_family = family;
+
+        if libc::send(
+            fd,
+            std::ptr::from_ref(&req).cast(),
+            req.nlh.nlmsg_len as usize,
+            0,
+        ) < 0
+        {
+            return Err(last_os_error());
+        }
+
+        for _ in 0..MAX_NETLINK_RECV_ITERS {
+            let len = netlink_recv(fd, buf);
+            if len <= 0 {
+                break;
+            }
+            let cont = parse_netlink_msgs(buf, len as usize, libc::RTM_NEWRULE, &mut on_rule);
+            if !cont {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The address families whose policy-rule dumps together cover an Android VPN's
+/// per-app routing (v4 + v6). Iterated by both the diagnostic and the gate.
+const RULE_FAMILIES: [u8; 2] = [libc::AF_INET as u8, libc::AF_INET6 as u8];
+
+/// RTM_GETRULE — policy routing rules. On Android the VPN's per-app policy is
+/// expressed as `ip rule` entries steering a UID range into the interface's own
+/// routing table (`... uidrange 10236-10236 lookup tun0`), plus rules that name
+/// the VPN interface directly (`iif/oif tun0`). Reading those rules reveals the
+/// VPN even when /proc/net/route (main table only) shows nothing. The kernel
+/// `fib_nl_fill_rule` hook trims exactly these from a target's dump; this probe
+/// mirrors that predicate so a working backend reads as "hidden" and root
+/// ground-truth (not a target → hook inert) reads as "leak".
+fn check_netlink_getrule() -> CheckOutput {
+    check_netlink_getrule_uid(unsafe { libc::getuid() })
+}
+
+/// RTM_GETRULE for a specific uid. The `vhprobe --uid` self-routing gate reuses
+/// this to answer "is <uid> routed through the VPN?" — a matching policy rule
+/// (or a VPN-named iif/oif) means yes.
+fn check_netlink_getrule_uid(myuid: u32) -> CheckOutput {
+    // rtattr types and standard table ids (linux/fib_rules.h, linux/rtnetlink.h).
+    const FRA_IIFNAME: u16 = 3;
+    const FRA_TABLE: u16 = 15;
+    const FRA_OIFNAME: u16 = 17;
+    const FRA_UID_RANGE: u16 = 20;
+    const RT_TABLE_DEFAULT: u32 = 253;
+    const RT_TABLE_MAIN: u32 = 254;
+    const RT_TABLE_LOCAL: u32 = 255;
+
+    let fd = match open_netlink() {
+        Ok(fd) => fd,
+        Err(out) => return out,
+    };
+
+    let mut leaks: Vec<String> = Vec::new();
+    let mut total = 0u32;
+
+    unsafe {
+        let mut buf = AlignedBytes::<32768>::zeroed();
+        let hdr_plus_rtmsg = std::mem::size_of::<libc::nlmsghdr>() + std::mem::size_of::<Rtmsg>();
+
+        // fib_rule_hdr shares Rtmsg's 12-byte layout (family + 7 u8 + u32 flags).
+        let mut on_rule = |b: &[u8], offset: usize, msg_len: usize| {
+            total += 1;
+            let frh = &*(b
+                .as_ptr()
+                .add(offset + std::mem::size_of::<libc::nlmsghdr>())
+                as *const Rtmsg);
+            // The low byte of the table id lives in the header; the full u32
+            // arrives in FRA_TABLE (Android tun tables are > 255).
+            let mut table = frh.rtm_table as u32;
+            let mut uid_lo = 0u32;
+            let mut uid_hi = 0u32;
+            let mut has_uidrange = false;
+            let mut iface_hit: Option<String> = None;
+            for_each_rtattr(
+                b,
+                offset + hdr_plus_rtmsg,
+                offset + msg_len,
+                |rta, payload| match rta.rta_type {
+                    FRA_IIFNAME | FRA_OIFNAME if !payload.is_empty() => {
+                        let name = cstr_to_str(payload.as_ptr() as *const libc::c_char);
+                        if is_vpn_iface(&name) {
+                            iface_hit = Some(name);
+                        }
+                    }
+                    FRA_TABLE if payload.len() >= 4 => {
+                        table = u32::from_ne_bytes(payload[..4].try_into().unwrap());
+                    }
+                    FRA_UID_RANGE if payload.len() >= 8 => {
+                        uid_lo = u32::from_ne_bytes(payload[..4].try_into().unwrap());
+                        uid_hi = u32::from_ne_bytes(payload[4..8].try_into().unwrap());
+                        has_uidrange = true;
+                    }
+                    _ => {}
+                },
+            );
+            // Mirror fib_nl_fill_rule: a rule leaks the VPN if it names a VPN
+            // interface, or steers this very UID into a non-standard table (the
+            // per-app tun policy rule). The 0..u32::MAX range is the catch-all
+            // default rule, not a VPN rule.
+            if let Some(name) = iface_hit {
+                leaks.push(format!("iface {name}"));
+            } else if has_uidrange
+                && uid_lo <= myuid
+                && myuid <= uid_hi
+                && !(uid_lo == 0 && uid_hi == u32::MAX)
+                && table != RT_TABLE_MAIN
+                && table != RT_TABLE_LOCAL
+                && table != RT_TABLE_DEFAULT
+                && table > 100
+            {
+                leaks.push(format!("uid {myuid} → table {table}"));
+            }
+        };
+
+        // Dump v4 and v6 rules on the same socket (distinct seq) and merge.
+        for (i, family) in RULE_FAMILIES.into_iter().enumerate() {
+            if let Err(e) = dump_fib_rules(fd, family, (i + 1) as u32, &mut buf.0, &mut on_rule) {
+                libc::close(fd);
+                return CheckOutput::fail(format!("send error: {e}"));
+            }
+        }
+        libc::close(fd);
+    }
+
+    if leaks.is_empty() {
+        CheckOutput::pass(format!("{total} policy rules, none reveal VPN"))
+    } else {
+        CheckOutput::fail(format!("VPN policy rule(s): {}", join_list(&leaks)))
+    }
+}
+
 fn check_sys_class_net() -> CheckOutput {
     match std::fs::read_dir("/sys/class/net") {
         Err(e) => {
             if is_selinux_denial(&e) {
-                CheckOutput::pass(format!("access denied by SELinux ({e})"))
+                CheckOutput::selinux_blocked(format!("access denied by SELinux ({e})"))
             } else {
                 CheckOutput::fail(format!("cannot open /sys/class/net: {e}"))
             }
@@ -643,17 +815,14 @@ fn check_sys_class_net() -> CheckOutput {
 //    keeps a thin `checkProcNetFoo(): CheckOutput` surface instead of
 //    pushing path strings across the FFI. ──────────────────────────────
 
-#[uniffi::export]
 fn check_proc_net_route() -> CheckOutput {
     check_proc_file("/proc/net/route")
 }
 
-#[uniffi::export]
 fn check_proc_net_if_inet6() -> CheckOutput {
     check_proc_file("/proc/net/if_inet6")
 }
 
-#[uniffi::export]
 fn check_proc_net_ipv6_route() -> CheckOutput {
     check_proc_file("/proc/net/ipv6_route")
 }
@@ -666,7 +835,194 @@ fn check_proc_net_ipv6_route() -> CheckOutput {
 // no honest check to run; the address-leak vector on these files is covered by
 // zygisk's tcp/tcp6/udp socket-table filters, not by a self-diagnostic.
 
-#[uniffi::export]
 fn check_proc_net_dev() -> CheckOutput {
     check_proc_file("/proc/net/dev")
+}
+
+// ── Registry + JSON transport ─────────────────────────────────────────────
+// One code path, two transports: the JNI export runs this in the app's own
+// process (app view — real uid + SELinux domain + zygisk/kernel hooks); the
+// `vhprobe` bin runs it as root (ground truth — uid 0 is not a hook target).
+// Both emit the same JSON; the app classifies by comparing per-`id`.
+
+#[derive(serde::Serialize)]
+struct CheckJson {
+    /// Stable id — matches NativeChecks.kt `NativeCheckSpec.id`.
+    id: &'static str,
+    status: CheckStatus,
+    detail: String,
+}
+
+fn run_all() -> Vec<CheckJson> {
+    fn j(id: &'static str, out: CheckOutput) -> CheckJson {
+        CheckJson {
+            id,
+            status: out.status,
+            detail: out.detail,
+        }
+    }
+    vec![
+        j("ioctl_flags", check_ioctl_siocgifflags()),
+        j("ioctl_mtu", check_ioctl_siocgifmtu()),
+        j("ioctl_conf", check_ioctl_siocgifconf()),
+        j("getifaddrs", check_getifaddrs()),
+        j("netlink_getlink", check_netlink_getlink()),
+        j("netlink_getroute", check_netlink_getroute()),
+        j("netlink_getrule", check_netlink_getrule()),
+        j("proc_route", check_proc_net_route()),
+        j("proc_ipv6_route", check_proc_net_ipv6_route()),
+        j("proc_if_inet6", check_proc_net_if_inet6()),
+        j("proc_dev", check_proc_net_dev()),
+        j("sys_class_net", check_sys_class_net()),
+    ]
+}
+
+/// Run every native probe in display order and serialize to a JSON array of
+/// `{id, status, detail}`. Public so both the JNI export and the `vhprobe` bin
+/// call the exact same code.
+pub fn run_all_json() -> String {
+    serde_json::to_string(&run_all()).unwrap_or_else(|_| "[]".to_string())
+}
+
+#[derive(serde::Serialize)]
+struct SelfRouted {
+    uid: u32,
+    routed: bool,
+    detail: String,
+}
+
+/// The self-in-tunnel gate: is `uid` routed through the VPN? Run as root (not a
+/// hook target) so the answer is the unfiltered ground truth. Serialized as
+/// `{uid, routed, detail}`.
+///
+/// This is NOT the diagnostic predicate (`check_netlink_getrule`, which mirrors
+/// the kernel hook's broad "any non-standard table > 100" rule). Policy routing
+/// steers every UID into *some* per-network table (wlan0, rmnet, tun0 — all
+/// non-standard), so the broad predicate would call any online UID "routed".
+/// The gate must pin the VPN table specifically: first learn which table id a
+/// rule egresses to the VPN interface (`oif tun0`), then ask whether a uidrange
+/// rule steers this UID into exactly that table.
+pub fn self_routed_json(uid: u32) -> String {
+    let (routed, detail) = uid_routed_through_vpn(uid);
+    let sr = SelfRouted {
+        uid,
+        routed,
+        detail,
+    };
+    serde_json::to_string(&sr).unwrap_or_else(|_| "{}".to_string())
+}
+
+struct GateRule {
+    table: u32,
+    uid_lo: u32,
+    uid_hi: u32,
+    has_uidrange: bool,
+    oif_vpn: bool,
+}
+
+fn uid_routed_through_vpn(myuid: u32) -> (bool, String) {
+    const FRA_TABLE: u16 = 15;
+    const FRA_OIFNAME: u16 = 17;
+    const FRA_UID_RANGE: u16 = 20;
+
+    let fd = match open_netlink() {
+        Ok(fd) => fd,
+        Err(out) => return (false, out.detail),
+    };
+
+    let mut rules: Vec<GateRule> = Vec::new();
+
+    unsafe {
+        let mut buf = AlignedBytes::<32768>::zeroed();
+        let hdr_plus_rtmsg = std::mem::size_of::<libc::nlmsghdr>() + std::mem::size_of::<Rtmsg>();
+
+        let mut on_rule = |b: &[u8], offset: usize, msg_len: usize| {
+            let frh = &*(b
+                .as_ptr()
+                .add(offset + std::mem::size_of::<libc::nlmsghdr>())
+                as *const Rtmsg);
+            let mut r = GateRule {
+                table: frh.rtm_table as u32,
+                uid_lo: 0,
+                uid_hi: 0,
+                has_uidrange: false,
+                oif_vpn: false,
+            };
+            for_each_rtattr(
+                b,
+                offset + hdr_plus_rtmsg,
+                offset + msg_len,
+                |rta, payload| match rta.rta_type {
+                    FRA_OIFNAME if !payload.is_empty() => {
+                        let name = cstr_to_str(payload.as_ptr() as *const libc::c_char);
+                        if is_vpn_iface(&name) {
+                            r.oif_vpn = true;
+                        }
+                    }
+                    FRA_TABLE if payload.len() >= 4 => {
+                        r.table = u32::from_ne_bytes(payload[..4].try_into().unwrap());
+                    }
+                    FRA_UID_RANGE if payload.len() >= 8 => {
+                        r.uid_lo = u32::from_ne_bytes(payload[..4].try_into().unwrap());
+                        r.uid_hi = u32::from_ne_bytes(payload[4..8].try_into().unwrap());
+                        r.has_uidrange = true;
+                    }
+                    _ => {}
+                },
+            );
+            rules.push(r);
+        };
+
+        // v4 + v6: a VPN steers the uid into a tun table for both families; either
+        // membership means routed, so merge both dumps before deciding.
+        for (i, family) in RULE_FAMILIES.into_iter().enumerate() {
+            if let Err(e) = dump_fib_rules(fd, family, (i + 1) as u32, &mut buf.0, &mut on_rule) {
+                libc::close(fd);
+                return (false, format!("send error: {e}"));
+            }
+        }
+        libc::close(fd);
+    }
+
+    // Pass 1: the VPN egress table id(s) — tables a rule routes out via `oif tun0`.
+    let vpn_tables: Vec<u32> = rules
+        .iter()
+        .filter(|r| r.oif_vpn)
+        .map(|r| r.table)
+        .collect();
+
+    // Pass 2: is this UID steered into exactly a VPN table by a uidrange rule?
+    // Exclude the universal 0..u32::MAX catch-all (not a per-app membership rule).
+    let routed = rules.iter().any(|r| {
+        r.has_uidrange
+            && r.uid_lo <= myuid
+            && myuid <= r.uid_hi
+            && !(r.uid_lo == 0 && r.uid_hi == u32::MAX)
+            && vpn_tables.contains(&r.table)
+    });
+
+    let detail = if vpn_tables.is_empty() {
+        format!("no VPN egress rule found for uid {myuid}")
+    } else if routed {
+        format!("uid {myuid} routed into VPN table(s) {vpn_tables:?}")
+    } else {
+        format!("uid {myuid} not in any VPN table(s) {vpn_tables:?}")
+    };
+    (routed, detail)
+}
+
+/// In-process (app-view) entry. Class/package must match the Kotlin
+/// `object dev.okhsunrog.vpnhide.checks.NativeProbe`.
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_okhsunrog_vpnhide_checks_NativeProbe_runAllChecksJson<'local>(
+    mut env: jni::EnvUnowned<'local>,
+    _class: jni::objects::JClass<'local>,
+) -> jni::objects::JString<'local> {
+    env.with_env(
+        |env| -> jni::errors::Result<jni::objects::JString<'local>> {
+            env.new_string(run_all_json())
+        },
+    )
+    .resolve::<jni::errors::ThrowRuntimeExAndDefault>()
 }

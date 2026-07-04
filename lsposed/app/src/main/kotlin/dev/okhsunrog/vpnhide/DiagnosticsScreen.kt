@@ -9,12 +9,16 @@ import android.os.Build
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Stop
@@ -22,13 +26,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.okhsunrog.vpnhide.checks.CheckOutput
 import dev.okhsunrog.vpnhide.generated.IfaceLists
 import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
 import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
@@ -103,6 +109,15 @@ fun DiagnosticsScreen(
 
             diagState is DiagnosticsCache.State.VpnOff -> {
                 VpnOffPrompt(
+                    onRetry = {
+                        DiagnosticsCache.retry(scope, context)
+                        DashboardCache.refresh(scope, context, selfNeedsRestart)
+                    },
+                )
+            }
+
+            diagState is DiagnosticsCache.State.SelfNotRouted -> {
+                SelfNotRoutedPrompt(
                     onRetry = {
                         DiagnosticsCache.retry(scope, context)
                         DashboardCache.refresh(scope, context, selfNeedsRestart)
@@ -501,40 +516,73 @@ private fun formatSize(bytes: Long): String {
     return "%.1f MB".format(mb)
 }
 
+/**
+ * One check's status: a coloured **dot + short word** (the "3-B" treatment — the
+ * app's own status-dot idiom from the module rows). The card colour tracks current
+ * reality only — green when hidden (by backend OR SELinux) or nothing-to-leak, red
+ * on a real leak, neutral when not measured — so a normal enforcing device is all
+ * green. The backend-vs-SELinux attribution rides on the dot colour + word, never
+ * on the card colour (no alarm on SELinux-protected items). Detail is collapsed by
+ * default and revealed on tap; a leak is the only thing expanded up front.
+ */
+private data class DiagStatus(
+    val label: String,
+    val accent: Color,
+    val container: Color,
+    val expandedByDefault: Boolean,
+)
+
+@Composable
+private fun diagStatus(r: CheckResult): DiagStatus {
+    val ok = DiagStatus(stringResource(R.string.diag_status_ok), StatusColors.successDot, StatusColors.successContainer(), false)
+    val leak = DiagStatus(stringResource(R.string.diag_status_leak), StatusColors.errorDot, StatusColors.errorContainer(), true)
+    val notMeasured =
+        DiagStatus(stringResource(R.string.diag_status_nomeasure), StatusColors.neutralAccent, StatusColors.neutralContainer(), false)
+    return when (r.outcome) {
+        CheckOutcome.Leak -> {
+            leak
+        }
+
+        // Hidden by the backend, or simply nothing to leak: both read as plain OK.
+        CheckOutcome.HiddenByBackend, CheckOutcome.NothingToLeak -> {
+            ok
+        }
+
+        // Hidden by SELinux, not a backend hook: still a green card (no alarm), but a
+        // blue dot + "SELinux" word flags the distinction the redesign is about.
+        CheckOutcome.HiddenBySelinux -> {
+            DiagStatus(stringResource(R.string.diag_status_selinux), StatusColors.infoAccent, StatusColors.successContainer(), false)
+        }
+
+        is CheckOutcome.NotMeasured -> {
+            notMeasured
+        }
+
+        // Java-implemented native-level probes carry no outcome — fall back to passed.
+        null -> {
+            when (r.passed) {
+                true -> ok
+                false -> leak
+                null -> notMeasured
+            }
+        }
+    }
+}
+
 @Composable
 private fun CheckCard(
     r: CheckResult,
     index: Int = -1,
     count: Int = 1,
 ) {
-    val actualColor =
-        when (r.passed) {
-            true -> StatusColors.successContainer()
-            false -> StatusColors.errorContainer()
-            null -> MaterialTheme.colorScheme.surfaceVariant
-        }
-
-    val badgeText =
-        stringResource(
-            when (r.passed) {
-                true -> R.string.badge_pass
-                false -> R.string.badge_fail
-                null -> R.string.badge_info
-            },
-        )
-
-    val badgeColor =
-        when (r.passed) {
-            true -> StatusColors.successBadge
-            false -> StatusColors.errorAccent
-            null -> MaterialTheme.colorScheme.onSurfaceVariant
-        }
-
+    val status = diagStatus(r)
+    var expanded by remember(r.name) { mutableStateOf(status.expandedByDefault) }
+    val caretRotation by animateFloatAsState(if (expanded) 90f else 0f, label = "caret")
     GroupedCard(
         index = index,
         count = count,
-        modifier = Modifier.fillMaxWidth(),
-        color = actualColor,
+        modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+        color = status.container,
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
@@ -546,22 +594,36 @@ private fun CheckCard(
                     text = r.name,
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).padding(end = 8.dp),
                 )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Box(modifier = Modifier.size(9.dp).clip(CircleShape).background(status.accent))
+                    Text(
+                        text = status.label,
+                        color = status.accent,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp,
+                    )
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp).rotate(caretRotation),
+                    )
+                }
+            }
+            if (expanded) {
+                Spacer(Modifier.height(6.dp))
                 Text(
-                    text = badgeText,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    color = badgeColor,
+                    text = r.detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
                 )
             }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = r.detail,
-                style = MaterialTheme.typography.bodySmall,
-                fontFamily = FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
-            )
         }
     }
 }

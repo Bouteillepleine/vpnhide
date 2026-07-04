@@ -38,8 +38,14 @@ internal object AgentControl {
         withAppContext(context) { context ->
             val results = DiagnosticsCache.awaitFullResults(context)
             if (results == null) {
+                val gatedState =
+                    if (DiagnosticsCache.state.value is DiagnosticsCache.State.SelfNotRouted) {
+                        "self_not_routed"
+                    } else {
+                        "vpn_off"
+                    }
                 AgentDiagnosticsReport(
-                    state = "vpn_off",
+                    state = gatedState,
                     score = AgentCheckScore(0, 0),
                     nativeChecks = emptyList(),
                     javaChecks = emptyList(),
@@ -628,43 +634,47 @@ private fun ProtectionCheck.toAgentProtectionSummary(): AgentProtectionSummary =
             AgentProtectionSummary(state = "needs_restart")
         }
 
+        ProtectionCheck.SelfNotRouted -> {
+            AgentProtectionSummary(state = "self_not_routed")
+        }
+
         is ProtectionCheck.Checked -> {
             AgentProtectionSummary(
                 state = "checked",
                 native = native.toAgentStatus(),
                 java = java.toAgentStatus(),
-                nativePassed = (native as? NativeResult.Fail)?.passed,
-                nativeFailed = (native as? NativeResult.Fail)?.failed,
-                javaFailed = (java as? JavaResult.Fail)?.failedChecks,
+                nativePassed = (native as? LayerStatus.Active)?.hidden,
+                nativeFailed = (native as? LayerStatus.Active)?.leaks,
+                javaFailed = (java as? LayerStatus.Active)?.leaks,
             )
         }
     }
 
-private fun NativeResult.toAgentStatus(): String =
+private fun LayerStatus.toAgentStatus(): String =
     when (this) {
-        NativeResult.Ok -> "ok"
-        NativeResult.NoModule -> "no_module"
-        is NativeResult.Fail -> "fail"
-    }
-
-private fun JavaResult.toAgentStatus(): String =
-    when (this) {
-        JavaResult.Ok -> "ok"
-        JavaResult.HooksInactive -> "hooks_inactive"
-        is JavaResult.Fail -> "fail"
+        LayerStatus.Absent -> "absent"
+        LayerStatus.Inactive -> "inactive"
+        is LayerStatus.Active -> verdict.name.lowercase()
     }
 
 private fun CheckResults.toAgentDiagnosticsReport(): AgentDiagnosticsReport {
     val score = all.score()
+    // Native checks (in NATIVE_CHECKS order) carry the root-differential outcome;
+    // Java checks carry the gate-derived outcome on the result itself. nativeExtra
+    // (Java-implemented native-level probes) has no outcome.
+    val nativeWithOutcomes =
+        native.mapIndexed { i, cr ->
+            cr.toAgentCheckResult(nativeOutcomes[NATIVE_CHECKS.getOrNull(i)?.id]?.token())
+        } + nativeExtra.map { it.toAgentCheckResult(null) }
     return AgentDiagnosticsReport(
         state = "ready",
         score = AgentCheckScore(score.passed, score.total),
-        nativeChecks = nativeAll.map(CheckResult::toAgentCheckResult),
-        javaChecks = java.map(CheckResult::toAgentCheckResult),
+        nativeChecks = nativeWithOutcomes,
+        javaChecks = java.map { it.toAgentCheckResult(it.outcome?.token()) },
     )
 }
 
-private fun CheckResult.toAgentCheckResult(): AgentCheckResult =
+private fun CheckResult.toAgentCheckResult(outcome: String? = null): AgentCheckResult =
     AgentCheckResult(
         name = name,
         status =
@@ -674,6 +684,7 @@ private fun CheckResult.toAgentCheckResult(): AgentCheckResult =
                 null -> "info"
             },
         detail = detail,
+        outcome = outcome,
     )
 
 private fun StatisticsState.toAgentStatisticsState(selfPackage: String? = null): AgentStatisticsState {
