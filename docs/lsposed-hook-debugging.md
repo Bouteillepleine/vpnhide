@@ -154,9 +154,8 @@ Read `cs_attempts` top to bottom and match the divergence from §4:
 |---|---|
 | `cs_path` absent; trail ends `… \| B:getService=null` with **no `C`/`D` attach** | Hooks never attached — the service was never resolved. |
 | Trail has **no `C:addService(connectivity) seen`** | The ROM doesn't publish `connectivity` through the hooked `ServiceManager.addService` (seen on MediaTek/OEM). Path D (deferred `getService`) is the fallback that covers this. |
-| `cs_path=A` with a **single** `PathClassLoader<BootClassLoader` | Attached to a class on the system_server loader that may not be the live (APEX) instance — suspect a wrong-classloader match. |
 | `cs_network` has `getNetworkForType=0` (etc.) | That method name/signature differs on the ROM; `hookAllMethods` matched nothing. |
-| `cs_path` set, `cs_network` all `=1`, but checks still leak | Attached, but possibly to the wrong instance — compare `cs_loader` to the known-good chain. |
+| `cs_path` set, `cs_network` all `=1`, mask full, **but the connectivity `stats` counters never move** and checks leak | Hooks bound but never fire — an early/pre-construction attach that ART discarded. This is why the install-time classloader path was removed (§8); a late binder attach fixes it. If you still see it, the hooked class isn't the live instance — compare `cs_loader`. |
 
 ## 6. Why logcat is not the tool here
 
@@ -187,11 +186,13 @@ sections. Open `hook_report.txt` and read §3–§5.
 
 ## 8. The attach mechanism (developers)
 
-`HookEntry.installConnectivityServiceHook` tries, in order:
+`HookEntry.installConnectivityServiceHook` only ever attaches from the **live
+service binder**, never via the raw `system_server` classloader. A classloader
+attach at install time runs *before* `ConnectivityService` is constructed; ART
+then replaces the method entries during class init/compile and the hooks
+silently never fire — observed on MediaTek A11, where every method matched and
+the mask read full yet no connectivity counter ever moved. It tries, in order:
 
-- **A** — resolve `com.android.server.ConnectivityService` on the `system_server`
-  classloader now. Works on ≤ A12 (class on `SYSTEMSERVERCLASSPATH`); throws on
-  A13+ (APEX), which releases the once-only latch for the other paths.
 - **B** — `getService("connectivity")` now, hook from its binder's classloader.
   Usually `null` at install time (service not registered yet).
 - **C** — hook `ServiceManager.addService` to catch the registration and take the
@@ -202,6 +203,9 @@ sections. Open `hook_report.txt` and read §3–§5.
   attach. Independent of *how* the service was registered; this is what covers
   ROMs where C never fires. The thread is torn down (`quitSafely`) the moment any
   path attaches or the budget runs out.
+
+All three attach *late*, to an already-constructed instance — which is why the
+hooks stick (an install-time classloader attach does not).
 
 Key fact that makes B/C/D work: inside `system_server`, `getService`/the
 `addService` argument return the **local `ConnectivityService` instance**, not a

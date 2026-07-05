@@ -937,14 +937,19 @@ class HookEntry : IXposedHookLoadPackage {
      */
     private fun installConnectivityServiceHook(bootClassLoader: ClassLoader) {
         recordCsAttempt("install sdk=${Build.VERSION.SDK_INT} bootLoader=${describeLoader(bootClassLoader)}")
-        // Path A — try the system_server classloader immediately. Works when CS
-        // is on SYSTEMSERVERCLASSPATH (≤ A12); on A13+ it lives in the
-        // Connectivity APEX and this throws, releasing the latch for B/C.
-        hookConnectivityServiceIfPossible(bootClassLoader, "A")
-
+        // We deliberately do NOT attach via the system_server classloader at
+        // install time (the old "path A"). Even where the class resolves (≤ A12),
+        // hooking it here — before ConnectivityService is constructed — binds
+        // method entries that ART then replaces when the class is initialised and
+        // compiled, so the hooks silently never fire (seen on Redmi Note 8 Pro /
+        // MediaTek A11: every method matched, mask full, yet all checks leaked and
+        // none of the connectivity counters moved). Worse, that early attach grabbed
+        // the once-only latch and blocked the late paths that DO stick. So we only
+        // ever attach from the live service binder, once it exists: B (already up),
+        // C (addService registration), D (deferred poll).
         val serviceManager = XposedHelpers.findClass("android.os.ServiceManager", bootClassLoader)
         // Path B — the service may already be registered; its binder carries the
-        // real (APEX) classloader.
+        // real classloader (the Connectivity APEX loader on A13+).
         val existing = XposedHelpers.callStaticMethod(serviceManager, "getService", "connectivity") as? android.os.IBinder
         recordCsAttempt("B:getService=${existing?.javaClass?.simpleName ?: "null"}")
         existing?.let { hookConnectivityFromBinder(it, "B") }
