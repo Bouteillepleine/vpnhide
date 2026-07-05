@@ -155,7 +155,7 @@ Read `cs_attempts` top to bottom and match the divergence from §4:
 | `cs_path` absent; trail ends `… \| B:getService=null` with **no `C`/`D` attach** | Hooks never attached — the service was never resolved. |
 | Trail has **no `C:addService(connectivity) seen`** | The ROM doesn't publish `connectivity` through the hooked `ServiceManager.addService` (seen on MediaTek/OEM). Path D (deferred `getService`) is the fallback that covers this. |
 | `cs_network` has `getNetworkForType=0` (etc.) | That method name/signature differs on the ROM; `hookAllMethods` matched nothing. |
-| `cs_path` set, `cs_network` all `=1`, mask full, **but the connectivity `stats` counters never move** and checks leak | Hooks bound but never fire — an early/pre-construction attach that ART discarded. This is why the install-time classloader path was removed (§8); a late binder attach fixes it. If you still see it, the hooked class isn't the live instance — compare `cs_loader`. |
+| `cs_path` set, `cs_network` all `=1`, mask full, **but the connectivity `stats` counters never move** and checks leak | Hooks bound but never fire. Two known causes, both fixed (§8): an early pre-construction attach ART discarded (the install-time classloader path, removed), or a name-resolved class that isn't the live instance — look for `nameResolvesSame=false` in `cs_attempts` (now we hook `binder.javaClass` directly). |
 
 ## 6. Why logcat is not the tool here
 
@@ -207,10 +207,19 @@ the mask read full yet no connectivity counter ever moved. It tries, in order:
 All three attach *late*, to an already-constructed instance — which is why the
 hooks stick (an install-time classloader attach does not).
 
-Key fact that makes B/C/D work: inside `system_server`, `getService`/the
-`addService` argument return the **local `ConnectivityService` instance**, not a
-`BinderProxy`, so `binder.javaClass.classLoader` is the APEX loader that resolves
-the class.
+Two facts make B/C/D work:
+
+1. Inside `system_server`, `getService`/the `addService` argument return the
+   **local `ConnectivityService` instance**, not a `BinderProxy`, so
+   `binder.javaClass` is the live class.
+2. We hook **`binder.javaClass` directly**, never a name-resolved class. Resolving
+   `com.android.server.ConnectivityService` by name through the binder's
+   classloader can, on a child-loader ROM (MediaTek A11), follow delegation to a
+   *parent* copy of the class — a different `Class` object with the same name.
+   Hooking that copy attaches cleanly (all methods match, mask full) but never
+   fires, because the live binder dispatches to the child copy. The
+   `nameResolvesSame` flag in `cs_attempts` records whether name-resolution would
+   have returned that same live class (`true` on Pixels; `false` is the trap).
 
 The bits and `cs_*` are reported from `reportConnectivityAttach` →
 `LsposedStats.setConnectivityDiagnostics`, which folds the bits into the mask and
