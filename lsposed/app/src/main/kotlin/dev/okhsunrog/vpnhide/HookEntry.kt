@@ -1043,8 +1043,9 @@ class HookEntry : IXposedHookLoadPackage {
         // IS the live class, so hooking it always intercepts the real calls.
         val csClass = binder.javaClass
         val loader = csClass.classLoader
-        // Diagnostic: does the old name-resolution yield a *different* object?
-        // nameResolvesSame=false is the delegation trap above. Drop once confirmed.
+        // Permanent guard: does name-resolution return this same live class?
+        // nameResolvesSame=false is the delegation trap above — a one-line tell in
+        // the report if another ROM ever loads ConnectivityService oddly.
         val nameResolvesSame =
             loader?.let { runCatching { findConnectivityServiceClass(it) === csClass }.getOrNull() }
         recordCsAttempt("$path:binderClass=${csClass.name} loader=${describeLoader(loader)} nameResolvesSame=$nameResolvesSame")
