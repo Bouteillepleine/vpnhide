@@ -121,7 +121,7 @@ class HookEntry : IXposedHookLoadPackage {
     private fun reportConnectivityAttach(
         path: String,
         csClass: Class<*>,
-        classLoader: ClassLoader,
+        classLoader: ClassLoader?,
         ctorCount: Int,
         resultCounts: Map<String, Int>,
         networkCounts: Map<String, Int>,
@@ -1033,17 +1033,26 @@ class HookEntry : IXposedHookLoadPackage {
         binder: android.os.IBinder,
         path: String,
     ) {
-        val classLoader =
-            binder.javaClass.classLoader ?: run {
-                recordCsAttempt("$path:binderNoClassLoader(${binder.javaClass.name})")
-                HookLog.i("VpnHide: connectivity binder has no classloader; waiting for direct classloader")
-                return
-            }
-        hookConnectivityServiceIfPossible(classLoader, path)
+        // Hook the binder's OWN runtime class, never a name-resolved one. On some
+        // ROMs (MediaTek A11) the live ConnectivityService is defined by a child
+        // classloader, and findClass(name, thatLoader) follows delegation to a
+        // *parent* copy of the class — a different Class object with the same name.
+        // Hooking that copy attaches cleanly (every method matches) yet never
+        // fires, because the live binder dispatches to the child copy (attached,
+        // all counts=1, but no connectivity counter ever moves). binder.javaClass
+        // IS the live class, so hooking it always intercepts the real calls.
+        val csClass = binder.javaClass
+        val loader = csClass.classLoader
+        // Diagnostic: does the old name-resolution yield a *different* object?
+        // nameResolvesSame=false is the delegation trap above. Drop once confirmed.
+        val nameResolvesSame =
+            loader?.let { runCatching { findConnectivityServiceClass(it) === csClass }.getOrNull() }
+        recordCsAttempt("$path:binderClass=${csClass.name} loader=${describeLoader(loader)} nameResolvesSame=$nameResolvesSame")
+        hookConnectivityServiceIfPossible(csClass, path)
     }
 
     private fun hookConnectivityServiceIfPossible(
-        classLoader: ClassLoader,
+        csClass: Class<*>,
         path: String,
     ) {
         if (!connectivityHooked.compareAndSet(false, true)) {
@@ -1051,18 +1060,19 @@ class HookEntry : IXposedHookLoadPackage {
             return
         }
         try {
-            hookConnectivityService(classLoader, path)
+            hookConnectivityService(csClass, path)
         } catch (t: Throwable) {
             connectivityHooked.set(false)
-            recordCsAttempt("$path:notReady(${t.javaClass.simpleName}:${t.message}) loader=${describeLoader(classLoader)}")
-            HookLog.i("VpnHide: ConnectivityService class not ready on ${classLoader.javaClass.name}: ${t.message}")
+            recordCsAttempt("$path:failed(${t.javaClass.simpleName}:${t.message}) class=${csClass.name}")
+            HookLog.i("VpnHide: ConnectivityService hook failed on ${csClass.name}: ${t.message}")
         }
     }
 
+    // Kept only for the hookConnectivityFromBinder diagnostic that proves the
+    // name-resolution-vs-live-class mismatch; the attach itself uses the binder's
+    // own class and never this.
     private fun findConnectivityServiceClass(classLoader: ClassLoader): Class<*> =
         try {
-            // Android 14+ ships ConnectivityService in the repackaged
-            // Connectivity APEX namespace; older releases use the original.
             XposedHelpers.findClass(
                 "android.net.connectivity.com.android.server.ConnectivityService",
                 classLoader,
@@ -1083,10 +1093,9 @@ class HookEntry : IXposedHookLoadPackage {
      * detect VPN only via callbacks.
      */
     private fun hookConnectivityService(
-        classLoader: ClassLoader,
+        csClass: Class<*>,
         path: String,
     ) {
-        val csClass = findConnectivityServiceClass(classLoader)
         val ctorCount =
             try {
                 XposedBridge
@@ -1148,7 +1157,7 @@ class HookEntry : IXposedHookLoadPackage {
             }
         }
 
-        reportConnectivityAttach(path, csClass, classLoader, ctorCount, resultCounts, networkCounts, callbackCounts)
+        reportConnectivityAttach(path, csClass, csClass.classLoader, ctorCount, resultCounts, networkCounts, callbackCounts)
     }
 
     private fun installConnectivityServiceResultHooks(csClass: Class<*>): Map<String, Int> {
