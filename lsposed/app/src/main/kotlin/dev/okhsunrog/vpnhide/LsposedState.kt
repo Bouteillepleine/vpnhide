@@ -78,6 +78,30 @@ internal object LsposedStats {
 
     @Volatile private var installFailures: List<String> = emptyList()
 
+    // ConnectivityService hooks attach asynchronously (the reliable path only
+    // fires when "connectivity" registers, after handleLoadPackage returns), so
+    // their bits and diagnostics can't be known at setStatus() time. The attach
+    // path reports them here; both are merged into the published state whenever
+    // they land. cs_* meta keys are persisted install telemetry — they survive
+    // from boot to the next debug capture without depending on logcat or the
+    // debug-logging toggle, which is what makes "hook didn't attach" diagnosable.
+    @Volatile private var connectivityBits: Int = 0
+
+    @Volatile private var connectivityMeta: Map<String, String> = emptyMap()
+
+    fun setConnectivityDiagnostics(
+        attachedBits: Int,
+        meta: Map<String, String>,
+    ) {
+        connectivityBits = attachedBits
+        connectivityMeta = meta.mapValues { sanitizeMetadataValue(it.value) }
+        // Publish promptly: attach events are rare and each one changes the
+        // honest hook mask, so don't wait for the debounced counter flush.
+        writeHandler.removeCallbacks(flushRunnable)
+        flushPending.set(false)
+        writeHandler.post(flushRunnable)
+    }
+
     fun setStatus(
         installedHookMask: Int,
         broken: List<String>,
@@ -126,7 +150,10 @@ internal object LsposedStats {
     }
 
     private fun buildStateText(): String {
-        val installed = installedHooks
+        // Fold in the connectivity bits reported once those hooks actually
+        // attach, so the published mask reflects reality (not the optimistic
+        // "install call didn't throw").
+        val installed = installedHooks or connectivityBits
         val error =
             if (installed == HookIds.LSPOSED_HOOK_MASK) {
                 HookIds.StatusError.OK.code
@@ -165,6 +192,10 @@ internal object LsposedStats {
         if (failures.isNotEmpty()) {
             meta[LsposedStateMetadata.INSTALL_FAILURES] = failures.joinToString("; ")
         }
+        // cs_* connectivity attach telemetry (resolved class, classloader chain,
+        // path, per-method hooked counts, attempt log). hook_report.txt renders
+        // every meta key, so these appear automatically in a debug bundle.
+        meta.putAll(connectivityMeta)
         return meta
     }
 
@@ -199,5 +230,9 @@ internal object LsposedStats {
             .take(MAX_METADATA_VALUE_CHARS)
 
     private const val MAX_METADATA_FAILURES = 24
-    private const val MAX_METADATA_VALUE_CHARS = 240
+
+    // Roomy enough for the cs_attempts trail (per-path attach log incl. class-not-
+    // ready reasons) to land intact on a total-failure device — that trail is the
+    // only signal when nothing attaches, so it must not get truncated.
+    private const val MAX_METADATA_VALUE_CHARS = 800
 }

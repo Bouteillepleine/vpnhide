@@ -9,6 +9,8 @@ import android.net.RouteInfo
 import android.os.Binder
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.HandlerThread
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
@@ -64,6 +66,87 @@ class HookEntry : IXposedHookLoadPackage {
 
     @Volatile private var connectivityServiceInstance: Any? = null
 
+    // ── ConnectivityService attach telemetry ──────────────────────────────
+    // The CS hooks are the ones that leak on some devices while the framework
+    // writeToParcel hooks work. Because attachment is deferred and multi-path
+    // (A: system_server classloader now, B: live binder now, C: addService
+    // later), logcat can't reliably show whether/how they attached — proven on
+    // a working device where debug is on yet no install lines appear. So we
+    // accumulate the outcome (resolved class, classloader chain, path, per-
+    // method match counts, every attempt) and publish it to the LSPosed state
+    // file, where it lands in hook_report.txt of any debug bundle regardless of
+    // logcat or the debug-logging toggle.
+    private val csAttempts = java.util.concurrent.CopyOnWriteArrayList<String>()
+
+    @Volatile private var csAttachedMeta: Map<String, String> = emptyMap()
+
+    @Volatile private var csAttachedBits: Int = 0
+
+    // Background poller for path D (deferred getService retry). Created only if D
+    // is actually needed (A/B didn't already attach) and torn down the moment the
+    // hooks land or we give up — no idle thread lingering in system_server.
+    @Volatile private var connectivityRetryThread: HandlerThread? = null
+
+    @Volatile private var connectivityRetryHandler: Handler? = null
+
+    /** Compact classloader-chain fingerprint, e.g. "PathClassLoader<BootClassLoader".
+     *  Distinguishes the system_server loader from a Connectivity-APEX loader —
+     *  a mismatch there is the prime suspect for the hooks not intercepting. */
+    private fun describeLoader(cl: ClassLoader?): String {
+        if (cl == null) return "null"
+        val sb = StringBuilder()
+        var c: ClassLoader? = cl
+        var depth = 0
+        while (c != null && depth < 5) {
+            if (depth > 0) sb.append('<')
+            sb.append(c.javaClass.simpleName.ifBlank { c.javaClass.name })
+            c = c.parent
+            depth++
+        }
+        return sb.toString()
+    }
+
+    private fun publishCsDiag() {
+        val meta = LinkedHashMap<String, String>()
+        meta["cs_attempts"] = csAttempts.joinToString(" | ").ifBlank { "(none)" }
+        meta.putAll(csAttachedMeta)
+        LsposedStats.setConnectivityDiagnostics(csAttachedBits, meta)
+    }
+
+    private fun recordCsAttempt(entry: String) {
+        csAttempts.add(entry)
+        publishCsDiag()
+    }
+
+    private fun reportConnectivityAttach(
+        path: String,
+        csClass: Class<*>,
+        classLoader: ClassLoader?,
+        ctorCount: Int,
+        resultCounts: Map<String, Int>,
+        networkCounts: Map<String, Int>,
+        callbackCounts: Map<String, Int>,
+    ) {
+        var bits = 0
+        if (resultCounts.values.any { it > 0 }) bits = bits or hookBit(HookIds.Hook.LSPOSED_CONNECTIVITY_RESULT)
+        if (networkCounts.values.any { it > 0 }) bits = bits or hookBit(HookIds.Hook.LSPOSED_CONNECTIVITY_NETWORK)
+        if (callbackCounts.values.any { it > 0 }) bits = bits or hookBit(HookIds.Hook.LSPOSED_CONNECTIVITY_CALLBACK)
+        csAttachedBits = bits
+
+        fun fmt(m: Map<String, Int>) = m.entries.joinToString(",") { "${it.key}=${it.value}" }
+        csAttachedMeta =
+            linkedMapOf(
+                "cs_path" to path,
+                "cs_class" to csClass.name,
+                "cs_loader" to describeLoader(classLoader),
+                "cs_ctor" to ctorCount.toString(),
+                "cs_result" to fmt(resultCounts),
+                "cs_network" to fmt(networkCounts),
+                "cs_callback" to fmt(callbackCounts),
+            )
+        recordCsAttempt("$path:attached class=${csClass.simpleName} net=[${fmt(networkCounts)}] cb=[${fmt(callbackCounts)}]")
+    }
+
     private fun effectiveCallerUid(): Int {
         val uid = Binder.getCallingUid()
         return if (uid == SYSTEM_UID) currentCallbackUid.get() ?: uid else uid
@@ -100,13 +183,13 @@ class HookEntry : IXposedHookLoadPackage {
             if (tryHook("PackageVisibility", installFailures) { PackageVisibilityHooks.install(lpparam.classLoader) }) {
                 installedMask = installedMask or hookBit(HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY)
             }
-            if (tryHook("ConnectivityService", installFailures) { installConnectivityServiceHook(lpparam.classLoader) }) {
-                installedMask =
-                    installedMask or
-                    hookBit(HookIds.Hook.LSPOSED_CONNECTIVITY_RESULT) or
-                    hookBit(HookIds.Hook.LSPOSED_CONNECTIVITY_CALLBACK) or
-                    hookBit(HookIds.Hook.LSPOSED_CONNECTIVITY_NETWORK)
-            }
+            // ConnectivityService hooks attach asynchronously (the reliable path
+            // only fires when "connectivity" registers, after this returns), so
+            // their bits are NOT set here. reportConnectivityAttach() sets them
+            // via LsposedStats once methods actually match — so the published mask
+            // reflects real attachment and a device where they never attach shows
+            // them under "missing owned hooks" instead of a false "8/8 installed".
+            tryHook("ConnectivityService", installFailures) { installConnectivityServiceHook(lpparam.classLoader) }
             LsposedStats.setStatus(installedMask, hookInstall.brokenFields, installFailures)
         }
     }
@@ -853,46 +936,144 @@ class HookEntry : IXposedHookLoadPackage {
      * APEX (A13+) and in-boot-classpath (A12-) layouts.
      */
     private fun installConnectivityServiceHook(bootClassLoader: ClassLoader) {
-        hookConnectivityServiceIfPossible(bootClassLoader)
-
+        recordCsAttempt("install sdk=${Build.VERSION.SDK_INT} bootLoader=${describeLoader(bootClassLoader)}")
+        // We deliberately do NOT attach via the system_server classloader at
+        // install time (the old "path A"). Even where the class resolves (≤ A12),
+        // hooking it here — before ConnectivityService is constructed — binds
+        // method entries that ART then replaces when the class is initialised and
+        // compiled, so the hooks silently never fire (seen on Redmi Note 8 Pro /
+        // MediaTek A11: every method matched, mask full, yet all checks leaked and
+        // none of the connectivity counters moved). Worse, that early attach grabbed
+        // the once-only latch and blocked the late paths that DO stick. So we only
+        // ever attach from the live service binder, once it exists: B (already up),
+        // C (addService registration), D (deferred poll).
         val serviceManager = XposedHelpers.findClass("android.os.ServiceManager", bootClassLoader)
-        (XposedHelpers.callStaticMethod(serviceManager, "getService", "connectivity") as? android.os.IBinder)
-            ?.let { hookConnectivityFromBinder(it) }
+        // Path B — the service may already be registered; its binder carries the
+        // real classloader (the Connectivity APEX loader on A13+).
+        val existing = XposedHelpers.callStaticMethod(serviceManager, "getService", "connectivity") as? android.os.IBinder
+        recordCsAttempt("B:getService=${existing?.javaClass?.simpleName ?: "null"}")
+        existing?.let { hookConnectivityFromBinder(it, "B") }
+        // Path C — catch the registration so we get the binder's classloader even
+        // when it isn't up yet at install time.
         XposedBridge.hookAllMethods(
             serviceManager,
             "addService",
             object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     if (param.args.getOrNull(0) != "connectivity") return
-                    (param.args.getOrNull(1) as? android.os.IBinder)?.let { hookConnectivityFromBinder(it) }
+                    recordCsAttempt("C:addService(connectivity) seen")
+                    (param.args.getOrNull(1) as? android.os.IBinder)?.let { hookConnectivityFromBinder(it, "C") }
                 }
             },
         )
+        // Path D — deferred retrying getService(): the robust fallback. On A13+
+        // OEM ROMs (MediaTek/MIUI) the service isn't published through the hooked
+        // ServiceManager.addService, so path C never fires (proven on POCO A13);
+        // but connectivity is always resolvable by name once it's up, so we
+        // re-query on a short timer until the live binder appears and attach from
+        // its (APEX) classloader — independent of the registration mechanism.
+        startConnectivityRetry(serviceManager)
     }
 
-    private fun hookConnectivityFromBinder(binder: android.os.IBinder) {
-        val classLoader =
-            binder.javaClass.classLoader ?: run {
-                HookLog.i("VpnHide: connectivity binder has no classloader; waiting for direct classloader")
-                return
+    private fun startConnectivityRetry(serviceManager: Class<*>) {
+        if (connectivityHooked.get()) return // A/B already got it — no poller needed
+        val thread = HandlerThread("vpnhide-cs-attach").apply { start() }
+        connectivityRetryThread = thread
+        connectivityRetryHandler = Handler(thread.looper)
+        scheduleConnectivityRetry(serviceManager, 1)
+    }
+
+    private fun stopConnectivityRetry() {
+        connectivityRetryThread?.quitSafely()
+        connectivityRetryThread = null
+        connectivityRetryHandler = null
+    }
+
+    private fun scheduleConnectivityRetry(
+        serviceManager: Class<*>,
+        attempt: Int,
+    ) {
+        val handler = connectivityRetryHandler ?: return
+        if (connectivityHooked.get()) {
+            stopConnectivityRetry()
+            return
+        }
+        if (attempt > CS_RETRY_MAX_ATTEMPTS) {
+            recordCsAttempt("D:gaveUp after ${attempt - 1} tries")
+            stopConnectivityRetry()
+            return
+        }
+        handler.postDelayed({
+            // Path C (or A/B) may have attached while we waited — done, tear down.
+            if (connectivityHooked.get()) {
+                stopConnectivityRetry()
+                return@postDelayed
             }
-        hookConnectivityServiceIfPossible(classLoader)
+            val binder =
+                try {
+                    XposedHelpers.callStaticMethod(serviceManager, "getService", "connectivity") as? android.os.IBinder
+                } catch (_: Throwable) {
+                    null
+                }
+            if (binder == null) {
+                // Not registered yet — keep waiting.
+                scheduleConnectivityRetry(serviceManager, attempt + 1)
+                return@postDelayed
+            }
+            recordCsAttempt("D:getService(try=$attempt)=${binder.javaClass.simpleName}")
+            hookConnectivityFromBinder(binder, "D")
+            // The name now resolves; retrying the same binder won't change the
+            // outcome, so stop here whether or not the attach stuck.
+            if (!connectivityHooked.get()) recordCsAttempt("D:attachFailed on resolved binder")
+            stopConnectivityRetry()
+        }, CS_RETRY_DELAY_MS)
     }
 
-    private fun hookConnectivityServiceIfPossible(classLoader: ClassLoader) {
-        if (!connectivityHooked.compareAndSet(false, true)) return
+    private fun hookConnectivityFromBinder(
+        binder: android.os.IBinder,
+        path: String,
+    ) {
+        // Hook the binder's OWN runtime class, never a name-resolved one. On some
+        // ROMs (MediaTek A11) the live ConnectivityService is defined by a child
+        // classloader, and findClass(name, thatLoader) follows delegation to a
+        // *parent* copy of the class — a different Class object with the same name.
+        // Hooking that copy attaches cleanly (every method matches) yet never
+        // fires, because the live binder dispatches to the child copy (attached,
+        // all counts=1, but no connectivity counter ever moves). binder.javaClass
+        // IS the live class, so hooking it always intercepts the real calls.
+        val csClass = binder.javaClass
+        val loader = csClass.classLoader
+        // Permanent guard: does name-resolution return this same live class?
+        // nameResolvesSame=false is the delegation trap above — a one-line tell in
+        // the report if another ROM ever loads ConnectivityService oddly.
+        val nameResolvesSame =
+            loader?.let { runCatching { findConnectivityServiceClass(it) === csClass }.getOrNull() }
+        recordCsAttempt("$path:binderClass=${csClass.name} loader=${describeLoader(loader)} nameResolvesSame=$nameResolvesSame")
+        hookConnectivityServiceIfPossible(csClass, path)
+    }
+
+    private fun hookConnectivityServiceIfPossible(
+        csClass: Class<*>,
+        path: String,
+    ) {
+        if (!connectivityHooked.compareAndSet(false, true)) {
+            recordCsAttempt("$path:skipped(already-hooked)")
+            return
+        }
         try {
-            hookConnectivityService(classLoader)
+            hookConnectivityService(csClass, path)
         } catch (t: Throwable) {
             connectivityHooked.set(false)
-            HookLog.i("VpnHide: ConnectivityService class not ready on ${classLoader.javaClass.name}: ${t.message}")
+            recordCsAttempt("$path:failed(${t.javaClass.simpleName}:${t.message}) class=${csClass.name}")
+            HookLog.i("VpnHide: ConnectivityService hook failed on ${csClass.name}: ${t.message}")
         }
     }
 
+    // Kept only for the hookConnectivityFromBinder diagnostic that proves the
+    // name-resolution-vs-live-class mismatch; the attach itself uses the binder's
+    // own class and never this.
     private fun findConnectivityServiceClass(classLoader: ClassLoader): Class<*> =
         try {
-            // Android 14+ ships ConnectivityService in the repackaged
-            // Connectivity APEX namespace; older releases use the original.
             XposedHelpers.findClass(
                 "android.net.connectivity.com.android.server.ConnectivityService",
                 classLoader,
@@ -912,20 +1093,27 @@ class HookEntry : IXposedHookLoadPackage {
      * entirely — don't reveal a VPN exists. Fixes apps (e.g. VTB, issue #70) that
      * detect VPN only via callbacks.
      */
-    private fun hookConnectivityService(classLoader: ClassLoader) {
-        val csClass = findConnectivityServiceClass(classLoader)
-        tryHook("ConnectivityService constructors") {
-            XposedBridge.hookAllConstructors(
-                csClass,
-                object : XC_MethodHook() {
-                    override fun afterHookedMethod(param: MethodHookParam) {
-                        rememberConnectivityService(param.thisObject)
-                    }
-                },
-            )
-        }
-        installConnectivityServiceResultHooks(csClass)
-        installConnectivityServiceNetworkHooks(csClass)
+    private fun hookConnectivityService(
+        csClass: Class<*>,
+        path: String,
+    ) {
+        val ctorCount =
+            try {
+                XposedBridge
+                    .hookAllConstructors(
+                        csClass,
+                        object : XC_MethodHook() {
+                            override fun afterHookedMethod(param: MethodHookParam) {
+                                rememberConnectivityService(param.thisObject)
+                            }
+                        },
+                    ).size
+            } catch (t: Throwable) {
+                HookLog.e("VpnHide: ConnectivityService constructors hook failed: ${t.message}")
+                0
+            }
+        val resultCounts = installConnectivityServiceResultHooks(csClass)
+        val networkCounts = installConnectivityServiceNetworkHooks(csClass)
 
         // Both methods take the NetworkRequestInfo as their first arg, so the
         // same handler covers the callback-object and PendingIntent paths.
@@ -959,17 +1147,22 @@ class HookEntry : IXposedHookLoadPackage {
                 }
             }
 
+        val callbackCounts = LinkedHashMap<String, Int>()
         for (method in CALLBACK_DISPATCH_METHODS) {
             val hooked = XposedBridge.hookAllMethods(csClass, method, dispatchHook)
+            callbackCounts[method] = hooked.size
             if (hooked.isEmpty()) {
                 HookLog.e("VpnHide: no $method on ${csClass.name}")
             } else {
                 HookLog.i("VpnHide: hooked ConnectivityService.$method (${hooked.size})")
             }
         }
+
+        reportConnectivityAttach(path, csClass, csClass.classLoader, ctorCount, resultCounts, networkCounts, callbackCounts)
     }
 
-    private fun installConnectivityServiceResultHooks(csClass: Class<*>) {
+    private fun installConnectivityServiceResultHooks(csClass: Class<*>): Map<String, Int> {
+        val counts = LinkedHashMap<String, Int>()
         for ((method, uidArgIndex) in CONNECTIVITY_RESULT_METHODS) {
             val hooked =
                 XposedBridge.hookAllMethods(
@@ -990,25 +1183,32 @@ class HookEntry : IXposedHookLoadPackage {
                         }
                     },
                 )
+            // Only record methods that exist on this build — a 0 for a method the
+            // AOSP version simply doesn't have is noise; a 0 for one it *does*
+            // have is the signal. Keep every entry; the reader compares to a
+            // known-good device.
+            counts[method] = hooked.size
             if (hooked.isEmpty()) {
                 HookLog.e("VpnHide: no ConnectivityService.$method result hook target on ${csClass.name}")
             } else {
                 HookLog.i("VpnHide: hooked ConnectivityService.$method result (${hooked.size})")
             }
         }
+        return counts
     }
 
-    private fun installConnectivityServiceNetworkHooks(csClass: Class<*>) {
-        hookConnectivityNetworkMethod(csClass, "getActiveNetwork", ::sanitizeActiveNetworkResult)
-        hookConnectivityNetworkMethod(csClass, "getAllNetworks", ::sanitizeAllNetworksResult)
-        hookConnectivityNetworkMethod(csClass, "getNetworkForType", ::sanitizeNetworkForTypeResult)
-    }
+    private fun installConnectivityServiceNetworkHooks(csClass: Class<*>): Map<String, Int> =
+        linkedMapOf(
+            "getActiveNetwork" to hookConnectivityNetworkMethod(csClass, "getActiveNetwork", ::sanitizeActiveNetworkResult),
+            "getAllNetworks" to hookConnectivityNetworkMethod(csClass, "getAllNetworks", ::sanitizeAllNetworksResult),
+            "getNetworkForType" to hookConnectivityNetworkMethod(csClass, "getNetworkForType", ::sanitizeNetworkForTypeResult),
+        )
 
     private fun hookConnectivityNetworkMethod(
         csClass: Class<*>,
         method: String,
         sanitizer: (XC_MethodHook.MethodHookParam) -> Unit,
-    ) {
+    ): Int {
         val hooked =
             XposedBridge.hookAllMethods(
                 csClass,
@@ -1027,6 +1227,7 @@ class HookEntry : IXposedHookLoadPackage {
         } else {
             HookLog.i("VpnHide: hooked ConnectivityService.$method network result (${hooked.size})")
         }
+        return hooked.size
     }
 
     private fun sanitizeActiveNetworkResult(param: XC_MethodHook.MethodHookParam) {
@@ -1122,6 +1323,13 @@ class HookEntry : IXposedHookLoadPackage {
     companion object {
         private const val SYSTEM_UID = 1000
         private const val CALLBACK_BUNDLE_ARG_INDEX = 2
+
+        // Path D poll cadence: connectivity registers within a few seconds of
+        // boot; retry getService("connectivity") every 500ms for up to ~90s
+        // (180 tries), stopping — and tearing down the poller thread — as soon as
+        // the hooks attach.
+        private const val CS_RETRY_DELAY_MS = 500L
+        private const val CS_RETRY_MAX_ATTEMPTS = 180
         private val RECIPIENT_UID_FIELDS = listOf("mAsUid", "mUid", "uid")
         private val CALLBACK_DISPATCH_METHODS = listOf("callCallbackForRequest", "sendPendingIntentForRequest")
 

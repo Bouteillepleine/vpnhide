@@ -26,6 +26,7 @@ These short files cover everything specific to this repo. Skipping them leads to
 - [docs/protocol.md](docs/protocol.md) — the frozen v1 control/stats **wire** between the app and the native backends (config/stats/status); the format every backend parser must agree on
 - [docs/detection-vectors.md](docs/detection-vectors.md) — what an app can probe to detect the VPN (or a hidden package), which component (kmod / KPM / zygisk / lsposed / SELinux) covers each vector, how it manifests. Read before adding or changing a hook.
 - [docs/diagnostics.md](docs/diagnostics.md) — how the app self-tests hiding and attributes *who* hid the VPN (root-differential, `CheckOutcome`, `LayerStatus`/verdict, the self-in-tunnel gate). Read before touching the diagnostics/dashboard.
+- [docs/lsposed-hook-debugging.md](docs/lsposed-hook-debugging.md) — debugging the Java-layer LSPosed hooks: the `cs_*` attach telemetry, reading `hook_report.txt`, and diagnosing why a `ConnectivityService` hook didn't attach on a given ROM. Read before touching `HookEntry.kt`.
 - [docs/adb-root-debugging.md](docs/adb-root-debugging.md) — how to make `adb shell su` useful on KernelSU/APatch/Magisk test devices; covers UID 0 without capabilities, SELinux denials on `/data/adb` and `/data/system`, and KPM/KPatch diagnostics.
 - [docs/changelog.md](docs/changelog.md) — changelog storage (`changelog.d/` fragments + history JSON), `./scripts/changelog.py` usage
 - [docs/releasing.md](docs/releasing.md) — `./scripts/release.py` usage, version-bump flow
