@@ -1,6 +1,6 @@
 {
-  "version": "v1.1.0",
-  "versionCode": 10100,
-  "zipUrl": "https://github.com/okhsunrog/vpnhide/releases/download/v1.1.0/vpnhide-ports.zip",
+  "version": "v1.1.1",
+  "versionCode": 10101,
+  "zipUrl": "https://github.com/okhsunrog/vpnhide/releases/download/v1.1.1/vpnhide-ports.zip",
   "changelog": "https://raw.githubusercontent.com/okhsunrog/vpnhide/main/update-json/changelog.md"
 }
