@@ -846,23 +846,13 @@ private fun writeSuperkeySetting(
         snapshot?.let(::buildCanonicalConfigFromTargetsSnapshot)
             ?: CanonicalConfig()
     val canonical = base.copy(settings = base.settings.copy(rememberSuperkey = remember))
-    val requiredParts =
-        listOf(
-            buildCanonicalConfigWriteCommand(canonical),
-            if (remember) buildSuperkeyWriteCommand(superkey) else buildSuperkeyClearCommand(),
-        )
-    val cmd =
-        if (remember) {
-            requiredParts.joinToString(" && ") + " && " + ConfigChannels.reconcileCommand()
-        } else {
-            requiredParts.joinToString(" && ")
-        }
-    val (exit, _) = suExec(cmd)
-    if (exit == 0) {
-        RootSnapshotCache.invalidate()
-        DashboardCache.invalidate()
-    }
-    return exit
+    val secretCommand = if (remember) buildSuperkeyWriteCommand(superkey) else buildSuperkeyClearCommand()
+    return CanonicalConfigRepository
+        .persist(
+            canonical,
+            coupledCommands = listOf(secretCommand),
+            activation = CanonicalActivation(native = remember),
+        ).exitCode
 }
 
 private enum class ConfigImportResult {
@@ -910,17 +900,13 @@ private fun importConfigFromUri(
                 ?.use { it.readText() }
         }.getOrNull() ?: return ConfigImportResult.InvalidJson
     val canonical = parseImportedCanonicalConfig(raw, context.packageName) ?: return ConfigImportResult.InvalidJson
-    val cmd =
-        listOf(
-            buildCanonicalConfigWriteCommand(canonical),
-            ConfigChannels.reconcileCommand(),
-            ConfigChannels.portsActivatorCommand(),
-        ).joinToString(" ; ")
-    val (exit, _) = suExec(cmd)
-    if (exit != 0) return ConfigImportResult.RootFailed
+    val result =
+        CanonicalConfigRepository.persist(
+            canonical,
+            activation = CanonicalActivation(native = true, ports = true),
+        )
+    if (!result.succeeded) return ConfigImportResult.RootFailed
     VpnHideLog.enabled = canonical.debug
-    RootSnapshotCache.invalidate()
-    DashboardCache.invalidate()
     return ConfigImportResult.Success
 }
 
@@ -1185,17 +1171,7 @@ private fun writeAutoHideSetting(
             selfPkg = context.packageName,
             signals = apps.map(AppSummary::toAutoHideSignal),
         )
-    val cmd =
-        listOf(
-            buildCanonicalConfigWriteCommand(canonical),
-            ConfigChannels.reconcileCommand(),
-        ).joinToString(" && ")
-    val (exit, _) = suExec(cmd)
-    if (exit == 0) {
-        RootSnapshotCache.invalidate()
-        DashboardCache.invalidate()
-    }
-    return exit
+    return CanonicalConfigRepository.persist(canonical).exitCode
 }
 
 private fun writeRemoveUnavailableConfiguredApps(
@@ -1206,19 +1182,11 @@ private fun writeRemoveUnavailableConfiguredApps(
     val snapshot = TargetsCache.snapshot.value ?: return 1
     val base = buildCanonicalConfigFromTargetsSnapshot(snapshot)
     val canonical = removeConfiguredPackages(base, packages, context.packageName)
-    val cmd =
-        listOf(
-            buildCanonicalConfigWriteCommand(canonical),
-            ConfigChannels.reconcileCommand(),
-            ConfigChannels.portsActivatorCommand(),
-        ).joinToString(" ; ")
-    val (exit, _) = suExec(cmd)
-    if (exit == 0) {
-        RootSnapshotCache.invalidate()
-        DashboardCache.invalidate()
-        StatisticsCache.invalidate()
-    }
-    return exit
+    return CanonicalConfigRepository
+        .persist(
+            canonical,
+            activation = CanonicalActivation(native = true, ports = true),
+        ).exitCode
 }
 
 // Settings headers are the non-bold, indented variant; delegate to the shared

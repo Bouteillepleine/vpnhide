@@ -3,8 +3,9 @@
 #
 # Goal: catch the smell ktlint can't — god-functions, high complexity,
 # dead code, common bug patterns — without bikeshedding AI-written Compose
-# code to death. Pre-existing findings are frozen in baseline.xml, so this
-# only bites NEW code. Tune thresholds here as the team learns what's noise.
+# code to death. There is no baseline: inherent exceptions stay visible at the
+# call site, and a separate Gradle source-size budget covers top-level Compose
+# files that LargeClass cannot see.
 
 build:
   # Any finding not in the baseline fails the build.
@@ -13,8 +14,8 @@ build:
 complexity:
   LongMethod:
     # The whole reason for this gate: loadDashboardState was 830 lines.
-    # @Composable UI builders are legitimately long, so they're exempt —
-    # LargeClass / file length still bounds god-screens.
+    # @Composable UI builders are exempt here; checkKotlinSourceSize bounds
+    # top-level god-screens that detekt's class-oriented rules cannot see.
     threshold: 60
     ignoreAnnotated: ['Composable']
   CyclomaticComplexMethod:

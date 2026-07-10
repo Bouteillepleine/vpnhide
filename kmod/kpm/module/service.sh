@@ -7,7 +7,6 @@ ACTIVATOR="$MODDIR/activator"
 KPM="$MODDIR/vpnhide.kpm"
 STATUS_DIR="/data/adb/vpnhide_kpm"
 STATUS_FILE="$STATUS_DIR/load_status"
-SUPERKEY_FILE="/data/adb/vpnhide/superkey"
 
 sanitize() {
     printf '%s' "$1" | tr '\n' ' ' | cut -c 1-240
@@ -62,13 +61,15 @@ apply_at_boot() {
             log -t vpnhide "kpm: activator deferred to .ko (single-active)"
             write_status conflict 0 "vpnhide_kmod present"
             ;;
+        4)
+            # EXIT_AWAITING_AUTHENTICATION: APatch/FolkPatch is available but
+            # no saved superkey or trusted su grant authenticated yet.
+            log -t vpnhide "kpm: awaiting APatch authentication"
+            write_status apatch 0 awaiting_superkey
+            return 0
+            ;;
         *)
             log -t vpnhide "kpm: activator failed rc=$rc"
-            if [ -d /data/adb/ap ] && [ ! -s "$SUPERKEY_FILE" ] && \
-               printf '%s' "$out" | grep -q "APatch/FolkPatch KPM requires"; then
-                write_status apatch 0 awaiting_superkey
-                return 0
-            fi
             write_status activator 0 "rc=$rc $out"
             return "$rc"
             ;;

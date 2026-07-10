@@ -611,10 +611,12 @@ catching what the previous misses.
 - **Layer 4 — version fuse.** `version` in the header turns any drift that slips
   all tests into a loud refusal rather than a silent misparse (§3).
 
-CI gates all of: C host vectors, Rust vectors + proptest-diff, fuzz smoke (short
-on PR, long on schedule), and the registry drift-check (TOML regenerated and
-committed). The spec is always the correctness oracle; the diff says "they
-diverged", the spec says "who is wrong".
+CI currently gates C host vectors, Rust/Kotlin vectors, the Rust↔C proptest
+differential oracle, and the registry drift-check (TOML regenerated and
+committed). Layer 3 remains the next hardening step; no fuzz-smoke gate is
+claimed until a bounded PR corpus and scheduled long run are actually wired.
+The spec is always the correctness oracle; the diff says "they diverged", the
+spec says "who is wrong".
 
 If the format ever grows real structure, the parity cost of two implementations
 rises faster than the cost of a single C implementation linked into the hub via

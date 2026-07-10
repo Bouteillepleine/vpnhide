@@ -370,16 +370,18 @@ private fun writeStartupCanonical(
     canonical: CanonicalConfig,
     timeoutSec: Long,
 ): String? {
-    val command =
-        listOf(
-            buildCanonicalConfigWriteCommand(canonical),
-            ConfigChannels.reconcileCommand(),
-            ConfigChannels.portsActivatorCommand(),
-        ).joinToString(" ; ")
-    val (exit, out) = suExec(command, timeoutSec = timeoutSec)
-    if (exit == 0) return null
-    VpnHideLog.w(TAG, "ensureSelfInTargets: canonical write failed (exit=$exit): ${out.trim()}")
-    return "canonical write exit=$exit"
+    val result =
+        CanonicalConfigRepository.persist(
+            canonical,
+            activation = CanonicalActivation(native = true, ports = true),
+            timeoutSec = timeoutSec,
+        )
+    if (result.succeeded) return null
+    VpnHideLog.w(
+        TAG,
+        "ensureSelfInTargets: canonical write failed (exit=${result.exitCode}): ${result.output.trim()}",
+    )
+    return "canonical write exit=${result.exitCode}"
 }
 
 private fun cleanupLegacyConfigInputs(timeoutSec: Long) {

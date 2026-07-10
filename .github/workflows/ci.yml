@@ -103,7 +103,7 @@ jobs:
           cargo fmt --check
           cd lsposed/native && cargo fmt --check
       - name: clippy (protocol + activator)
-        run: cargo clippy -p vpnhide_protocol -p vpnhide_activator --all-targets -- -D warnings
+        run: cargo clippy -p vpnhide_protocol -p vpnhide_protocol_diff -p vpnhide_activator --all-targets -- -D warnings
       # `--tests` so generated test modules are also linted
       # (catches `bool_assert_comparison`-style regressions in
       # codegen output).
@@ -112,7 +112,7 @@ jobs:
       - name: clippy (lsposed native)
         run: cd lsposed/native && cargo ndk -t arm64-v8a clippy --tests -- -D warnings
       - name: cargo test (workspace)
-        run: cargo test -p vpnhide_protocol -p vpnhide_activator -p vpnhide_zygisk
+        run: cargo test -p vpnhide_protocol -p vpnhide_protocol_diff -p vpnhide_activator -p vpnhide_zygisk
       - name: cargo test (lsposed native)
         run: cd lsposed/native && cargo test
 

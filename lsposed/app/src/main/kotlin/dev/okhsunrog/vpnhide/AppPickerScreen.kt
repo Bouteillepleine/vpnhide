@@ -51,6 +51,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import dev.okhsunrog.vpnhide.generated.HookIds
 import dev.okhsunrog.vpnhide.settings.LocalSettingsState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * One row per app across every VPN-hiding role. The unified list keeps role
@@ -149,12 +151,14 @@ internal fun AppPickerScreen(
         countText = { entries, res ->
             res.getString(R.string.selected_count, entries.count { it.anySelected })
         },
-        buildSaveCommand = { entries, ctx ->
-            buildUnifiedSaveCommand(
-                ctx = ctx,
-                selections = entries.map(AppEntry::toRoleSelection),
-                autoHideSignals = entries.map(AppEntry::toAutoHideSignal),
-            )
+        persist = { entries, ctx ->
+            withContext(Dispatchers.IO) {
+                persistUnifiedSelection(
+                    ctx = ctx,
+                    selections = entries.map(AppEntry::toRoleSelection),
+                    autoHideSignals = entries.map(AppEntry::toAutoHideSignal),
+                )
+            }
         },
         successMessage = { entries, res ->
             res.getString(R.string.save_success, entries.count { it.anySelected })
@@ -362,13 +366,11 @@ private fun HelpInfoBlock(
  * running the installed activator; LSPosed reads the JSON directly; the ports
  * activator derives its observer set from the same JSON.
  */
-private fun buildUnifiedSaveCommand(
+private fun persistUnifiedSelection(
     ctx: SaveContext,
     selections: Collection<AppRoleSelection>,
     autoHideSignals: Collection<AppAutoHideSignal>,
-): String {
-    val parts = mutableListOf<String>()
-
+): CanonicalWriteResult {
     val canonical =
         buildCanonicalConfigForAppPickerSave(
             debug = ctx.debug,
@@ -377,13 +379,10 @@ private fun buildUnifiedSaveCommand(
             snapshot = TargetsCache.snapshot.value,
             autoHideSignals = autoHideSignals,
         )
-    parts += buildCanonicalConfigWriteCommand(canonical)
-
-    parts += ConfigChannels.nativeWriteParts()
-
-    parts += ConfigChannels.portsActivatorCommand()
-
-    return parts.joinToString(" ; ")
+    return CanonicalConfigRepository.persist(
+        canonical,
+        activation = CanonicalActivation(native = true, ports = true),
+    )
 }
 
 private fun AppEntry.toRoleSelection(): AppRoleSelection =

@@ -42,8 +42,9 @@ import java.lang.reflect.Array as JavaArray
  *
  * Only "System Framework" needs to be in LSPosed scope.
  *
- * Single Xposed entry point for system_server hook wiring; splitting the hook
- * installer is a separate refactor from adding telemetry.
+ * Single Xposed entry point for system_server hook wiring. Compatibility
+ * probes and other self-contained collaborators live in adjacent Hook* files;
+ * this class owns only stateful hook installation and callback coordination.
  *
  * Deprecated legacy connectivity APIs are still active detection surfaces.
  */
@@ -76,11 +77,7 @@ class HookEntry : IXposedHookLoadPackage {
     // method match counts, every attempt) and publish it to the LSPosed state
     // file, where it lands in hook_report.txt of any debug bundle regardless of
     // logcat or the debug-logging toggle.
-    private val csAttempts = java.util.concurrent.CopyOnWriteArrayList<String>()
-
-    @Volatile private var csAttachedMeta: Map<String, String> = emptyMap()
-
-    @Volatile private var csAttachedBits: Int = 0
+    private val connectivityDiagnostics = ConnectivityAttachDiagnostics()
 
     // Background poller for path D (deferred getService retry). Created only if D
     // is actually needed (A/B didn't already attach) and torn down the moment the
@@ -88,64 +85,6 @@ class HookEntry : IXposedHookLoadPackage {
     @Volatile private var connectivityRetryThread: HandlerThread? = null
 
     @Volatile private var connectivityRetryHandler: Handler? = null
-
-    /** Compact classloader-chain fingerprint, e.g. "PathClassLoader<BootClassLoader".
-     *  Distinguishes the system_server loader from a Connectivity-APEX loader —
-     *  a mismatch there is the prime suspect for the hooks not intercepting. */
-    private fun describeLoader(cl: ClassLoader?): String {
-        if (cl == null) return "null"
-        val sb = StringBuilder()
-        var c: ClassLoader? = cl
-        var depth = 0
-        while (c != null && depth < 5) {
-            if (depth > 0) sb.append('<')
-            sb.append(c.javaClass.simpleName.ifBlank { c.javaClass.name })
-            c = c.parent
-            depth++
-        }
-        return sb.toString()
-    }
-
-    private fun publishCsDiag() {
-        val meta = LinkedHashMap<String, String>()
-        meta["cs_attempts"] = csAttempts.joinToString(" | ").ifBlank { "(none)" }
-        meta.putAll(csAttachedMeta)
-        LsposedStats.setConnectivityDiagnostics(csAttachedBits, meta)
-    }
-
-    private fun recordCsAttempt(entry: String) {
-        csAttempts.add(entry)
-        publishCsDiag()
-    }
-
-    private fun reportConnectivityAttach(
-        path: String,
-        csClass: Class<*>,
-        classLoader: ClassLoader?,
-        ctorCount: Int,
-        resultCounts: Map<String, Int>,
-        networkCounts: Map<String, Int>,
-        callbackCounts: Map<String, Int>,
-    ) {
-        var bits = 0
-        if (resultCounts.values.any { it > 0 }) bits = bits or hookBit(HookIds.Hook.LSPOSED_CONNECTIVITY_RESULT)
-        if (networkCounts.values.any { it > 0 }) bits = bits or hookBit(HookIds.Hook.LSPOSED_CONNECTIVITY_NETWORK)
-        if (callbackCounts.values.any { it > 0 }) bits = bits or hookBit(HookIds.Hook.LSPOSED_CONNECTIVITY_CALLBACK)
-        csAttachedBits = bits
-
-        fun fmt(m: Map<String, Int>) = m.entries.joinToString(",") { "${it.key}=${it.value}" }
-        csAttachedMeta =
-            linkedMapOf(
-                "cs_path" to path,
-                "cs_class" to csClass.name,
-                "cs_loader" to describeLoader(classLoader),
-                "cs_ctor" to ctorCount.toString(),
-                "cs_result" to fmt(resultCounts),
-                "cs_network" to fmt(networkCounts),
-                "cs_callback" to fmt(callbackCounts),
-            )
-        recordCsAttempt("$path:attached class=${csClass.simpleName} net=[${fmt(networkCounts)}] cb=[${fmt(callbackCounts)}]")
-    }
 
     private fun effectiveCallerUid(): Int {
         val uid = Binder.getCallingUid()
@@ -185,7 +124,7 @@ class HookEntry : IXposedHookLoadPackage {
             }
             // ConnectivityService hooks attach asynchronously (the reliable path
             // only fires when "connectivity" registers, after this returns), so
-            // their bits are NOT set here. reportConnectivityAttach() sets them
+            // their bits are NOT set here. ConnectivityAttachDiagnostics sets them
             // via LsposedStats once methods actually match — so the published mask
             // reflects real attachment and a device where they never attach shows
             // them under "missing owned hooks" instead of a false "8/8 installed".
@@ -622,7 +561,7 @@ class HookEntry : IXposedHookLoadPackage {
     )
 
     private fun installSystemServerHooks(): HookInstallResult {
-        val brokenFields = runReflectionSmokeCheck()
+        val brokenFields = runHookReflectionSmokeCheck()
         if (brokenFields.isNotEmpty()) {
             HookLog.e("VpnHide: reflection smoke-check found broken keys: $brokenFields")
         }
@@ -669,55 +608,6 @@ class HookEntry : IXposedHookLoadPackage {
 
         tryHook("FileObserver", installFailures) { watchCanonicalConfigFile() }
         return HookInstallResult(brokenFields, installedHookMask, installFailures)
-    }
-
-    private data class FieldProbe(
-        val key: String,
-        val clazz: Class<*>,
-        val name: String,
-        // If the device's SDK is below this, the probe is skipped entirely
-        // (not "found", not "broken" — not applicable). Used for fields
-        // introduced after our minSdk floor (e.g. mTransportInfo at API 29).
-        // Listed before `typeCheck` so the latter stays the last parameter
-        // — that lets call sites use trailing-lambda syntax for the probe
-        // without having to name `typeCheck =` every time.
-        val minSdk: Int = 0,
-        // Field-type compatibility predicate. For collections we use
-        // isAssignableFrom() so AOSP swapping ArrayList → LinkedList stays OK.
-        val typeCheck: (Class<*>) -> Boolean,
-    )
-
-    private data class CtorProbe(
-        val key: String,
-        val clazz: Class<*>,
-        val params: Array<Class<*>>,
-    )
-
-    private fun runReflectionSmokeCheck(): List<String> {
-        val broken = mutableListOf<String>()
-        for (probe in FIELD_PROBES) {
-            if (Build.VERSION.SDK_INT < probe.minSdk) continue
-            val field =
-                try {
-                    XposedHelpers.findField(probe.clazz, probe.name)
-                } catch (_: NoSuchFieldError) {
-                    broken += probe.key
-                    continue
-                }
-            if (!probe.typeCheck(field.type)) {
-                // Suffix carries the actual type to help debug AOSP-drift
-                // bug reports without rebuilding/instrumenting the device.
-                broken += "${probe.key}:type=${field.type.name}"
-            }
-        }
-        for (probe in CTOR_PROBES) {
-            try {
-                probe.clazz.getDeclaredConstructor(*probe.params)
-            } catch (_: NoSuchMethodException) {
-                broken += probe.key
-            }
-        }
-        return broken
     }
 
     /**
@@ -936,7 +826,9 @@ class HookEntry : IXposedHookLoadPackage {
      * APEX (A13+) and in-boot-classpath (A12-) layouts.
      */
     private fun installConnectivityServiceHook(bootClassLoader: ClassLoader) {
-        recordCsAttempt("install sdk=${Build.VERSION.SDK_INT} bootLoader=${describeLoader(bootClassLoader)}")
+        connectivityDiagnostics.record(
+            "install sdk=${Build.VERSION.SDK_INT} bootLoader=${connectivityDiagnostics.describeLoader(bootClassLoader)}",
+        )
         // We deliberately do NOT attach via the system_server classloader at
         // install time (the old "path A"). Even where the class resolves (≤ A12),
         // hooking it here — before ConnectivityService is constructed — binds
@@ -951,7 +843,7 @@ class HookEntry : IXposedHookLoadPackage {
         // Path B — the service may already be registered; its binder carries the
         // real classloader (the Connectivity APEX loader on A13+).
         val existing = XposedHelpers.callStaticMethod(serviceManager, "getService", "connectivity") as? android.os.IBinder
-        recordCsAttempt("B:getService=${existing?.javaClass?.simpleName ?: "null"}")
+        connectivityDiagnostics.record("B:getService=${existing?.javaClass?.simpleName ?: "null"}")
         existing?.let { hookConnectivityFromBinder(it, "B") }
         // Path C — catch the registration so we get the binder's classloader even
         // when it isn't up yet at install time.
@@ -961,7 +853,7 @@ class HookEntry : IXposedHookLoadPackage {
             object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     if (param.args.getOrNull(0) != "connectivity") return
-                    recordCsAttempt("C:addService(connectivity) seen")
+                    connectivityDiagnostics.record("C:addService(connectivity) seen")
                     (param.args.getOrNull(1) as? android.os.IBinder)?.let { hookConnectivityFromBinder(it, "C") }
                 }
             },
@@ -999,7 +891,7 @@ class HookEntry : IXposedHookLoadPackage {
             return
         }
         if (attempt > CS_RETRY_MAX_ATTEMPTS) {
-            recordCsAttempt("D:gaveUp after ${attempt - 1} tries")
+            connectivityDiagnostics.record("D:gaveUp after ${attempt - 1} tries")
             stopConnectivityRetry()
             return
         }
@@ -1020,11 +912,11 @@ class HookEntry : IXposedHookLoadPackage {
                 scheduleConnectivityRetry(serviceManager, attempt + 1)
                 return@postDelayed
             }
-            recordCsAttempt("D:getService(try=$attempt)=${binder.javaClass.simpleName}")
+            connectivityDiagnostics.record("D:getService(try=$attempt)=${binder.javaClass.simpleName}")
             hookConnectivityFromBinder(binder, "D")
             // The name now resolves; retrying the same binder won't change the
             // outcome, so stop here whether or not the attach stuck.
-            if (!connectivityHooked.get()) recordCsAttempt("D:attachFailed on resolved binder")
+            if (!connectivityHooked.get()) connectivityDiagnostics.record("D:attachFailed on resolved binder")
             stopConnectivityRetry()
         }, CS_RETRY_DELAY_MS)
     }
@@ -1048,7 +940,10 @@ class HookEntry : IXposedHookLoadPackage {
         // the report if another ROM ever loads ConnectivityService oddly.
         val nameResolvesSame =
             loader?.let { runCatching { findConnectivityServiceClass(it) === csClass }.getOrNull() }
-        recordCsAttempt("$path:binderClass=${csClass.name} loader=${describeLoader(loader)} nameResolvesSame=$nameResolvesSame")
+        connectivityDiagnostics.record(
+            "$path:binderClass=${csClass.name} loader=${connectivityDiagnostics.describeLoader(loader)} " +
+                "nameResolvesSame=$nameResolvesSame",
+        )
         hookConnectivityServiceIfPossible(csClass, path)
     }
 
@@ -1057,14 +952,14 @@ class HookEntry : IXposedHookLoadPackage {
         path: String,
     ) {
         if (!connectivityHooked.compareAndSet(false, true)) {
-            recordCsAttempt("$path:skipped(already-hooked)")
+            connectivityDiagnostics.record("$path:skipped(already-hooked)")
             return
         }
         try {
             hookConnectivityService(csClass, path)
         } catch (t: Throwable) {
             connectivityHooked.set(false)
-            recordCsAttempt("$path:failed(${t.javaClass.simpleName}:${t.message}) class=${csClass.name}")
+            connectivityDiagnostics.record("$path:failed(${t.javaClass.simpleName}:${t.message}) class=${csClass.name}")
             HookLog.i("VpnHide: ConnectivityService hook failed on ${csClass.name}: ${t.message}")
         }
     }
@@ -1158,7 +1053,15 @@ class HookEntry : IXposedHookLoadPackage {
             }
         }
 
-        reportConnectivityAttach(path, csClass, csClass.classLoader, ctorCount, resultCounts, networkCounts, callbackCounts)
+        connectivityDiagnostics.report(
+            path,
+            csClass,
+            csClass.classLoader,
+            ctorCount,
+            resultCounts,
+            networkCounts,
+            callbackCounts,
+        )
     }
 
     private fun installConnectivityServiceResultHooks(csClass: Class<*>): Map<String, Int> {
@@ -1350,58 +1253,6 @@ class HookEntry : IXposedHookLoadPackage {
                 "getNetworkInfo" to null,
                 "getNetworkInfoForUid" to 1,
                 "getAllNetworkInfo" to null,
-            )
-        private val FIELD_PROBES =
-            listOf(
-                FieldProbe(
-                    "LinkProperties.mIfaceName",
-                    LinkProperties::class.java,
-                    "mIfaceName",
-                ) { it == String::class.java },
-                FieldProbe(
-                    "LinkProperties.mRoutes",
-                    LinkProperties::class.java,
-                    "mRoutes",
-                ) { MutableList::class.java.isAssignableFrom(it) },
-                FieldProbe(
-                    "LinkProperties.mStackedLinks",
-                    LinkProperties::class.java,
-                    "mStackedLinks",
-                ) { MutableMap::class.java.isAssignableFrom(it) },
-                FieldProbe(
-                    "NetworkInfo.mNetworkType",
-                    NetworkInfo::class.java,
-                    "mNetworkType",
-                ) { it == Integer.TYPE },
-                FieldProbe(
-                    "NetworkInfo.mState",
-                    NetworkInfo::class.java,
-                    "mState",
-                ) { it == NetworkInfo.State::class.java },
-                FieldProbe(
-                    "NetworkInfo.mDetailedState",
-                    NetworkInfo::class.java,
-                    "mDetailedState",
-                ) { it == NetworkInfo.DetailedState::class.java },
-                FieldProbe(
-                    "NetworkInfo.mIsAvailable",
-                    NetworkInfo::class.java,
-                    "mIsAvailable",
-                ) { it == java.lang.Boolean.TYPE },
-            )
-
-        private val CTOR_PROBES =
-            listOf(
-                CtorProbe(
-                    "LinkProperties.<init>(LinkProperties)",
-                    LinkProperties::class.java,
-                    arrayOf(LinkProperties::class.java),
-                ),
-                CtorProbe(
-                    "NetworkInfo.<init>(int,int,String,String)",
-                    NetworkInfo::class.java,
-                    arrayOf(Integer.TYPE, Integer.TYPE, String::class.java, String::class.java),
-                ),
             )
 
         // Per-hook critical-probe sets. A hook is skipped if any key in
