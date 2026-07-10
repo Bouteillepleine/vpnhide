@@ -81,8 +81,8 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 - `post-fs-data.sh`: loads KPM automatically on keyless KPatch-Next; on
   APatch/FolkPatch records a deferred status and leaves load/config to service.
 - `service.sh`: starts `activator --boot-wait` in the background.
-- `uninstall.sh`: removes KPM-specific persistent status and legacy targets
-  under `/data/adb/vpnhide_kpm/`.
+- `uninstall.sh`: removes KPM-specific persistent status, the ctl0 lock, and
+  legacy targets under `/data/adb/vpnhide_kpm/`.
 - `activator`: Rust bin that refuses to run when the `.ko` backend is present,
   reads optional `/data/adb/vpnhide/superkey`, loads/configures KPM through
   APatch/FolkPatch direct supercalls or KPatch-Next `kpatch kpm load` +
@@ -130,6 +130,7 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 | File | Format | Writer | Reader | Lifetime |
 |---|---|---|---|---|
 | `load_status` | `key=value`: timestamp, uname_r, runtime, loaded, detail | `kmod/kpm/module/post-fs-data.sh` | app dashboard | overwritten each boot |
+| `ctl.lock` | empty advisory-lock inode, mode `0600` | KPM activator | KPM activators serialize ctl0 config/status/stats calls with `flock` | while the module is installed; removed on uninstall |
 
 ### `/data/adb/vpnhide_ports/`
 

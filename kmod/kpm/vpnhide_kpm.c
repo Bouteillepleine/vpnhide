@@ -73,13 +73,17 @@ static const struct vpnhide_offsets *off; /* selected per running kver */
  * bumps it even; readers snapshot under matching even-seq reads and retry on a
  * concurrent write. KP has no kernel spinlock/RCU, and a double-buffer (two
  * copies of targets[]) grew the .kpm enough to break KP boot on the 6.12 image —
- * the seqlock costs one extra word instead. Writes are the serialized control
- * path, so writers never race each other. */
+ * the seqlock costs one extra word instead. ctl0 calls can arrive concurrently
+ * (for example, boot activation racing an app-triggered reconcile), so a small
+ * atomic writer gate serializes mutations before cfg_seq is made odd. A
+ * contending ctl0 returns busy rather than spinning in preemptible kernel
+ * context; the userspace activator retries the rare collision. */
 static struct vpnhide_target targets[MAX_TARGET_UIDS];
 static int nr_targets;
 static uint32_t active_hook_mask;
 static volatile uint32_t
 	cfg_seq; /* even = stable, odd = a writer is mid-update */
+static volatile uint32_t cfg_writer; /* 0 = free, 1 = config writer active */
 static bool debug_enabled;
 
 /* status (protocol §4.3/§5.1): which hooks actually installed, and the dominant
@@ -130,21 +134,25 @@ static uint32_t compute_active_hook_mask(int count)
 	return mask;
 }
 
-/* Seqlock write side. Bump odd before mutating targets[]/nr_targets/
- * active_hook_mask in place, bump even after. Writes are serialized (single
- * control path), so no CAS is needed on the counter itself. */
-static void cfg_write_begin(void)
+/* Seqlock write side. Claim the writer gate, then bump cfg_seq odd before
+ * mutating targets[]/nr_targets/active_hook_mask in place and even after. Do
+ * not spin here: if a lock holder were preempted by another ctl0 caller on the
+ * same CPU, a home-grown spinlock without preempt_disable could deadlock. */
+static int cfg_try_write_begin(void)
 {
-	__atomic_store_n(&cfg_seq,
-			 __atomic_load_n(&cfg_seq, __ATOMIC_RELAXED) + 1,
-			 __ATOMIC_RELEASE);
+	uint32_t expected = 0;
+
+	if (!__atomic_compare_exchange_n(&cfg_writer, &expected, 1, false,
+					 __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+		return 0;
+	__atomic_fetch_add(&cfg_seq, 1, __ATOMIC_RELEASE);
+	return 1;
 }
 
 static void cfg_write_end(void)
 {
-	__atomic_store_n(&cfg_seq,
-			 __atomic_load_n(&cfg_seq, __ATOMIC_RELAXED) + 1,
-			 __ATOMIC_RELEASE);
+	__atomic_fetch_add(&cfg_seq, 1, __ATOMIC_RELEASE);
+	__atomic_store_n(&cfg_writer, 0, __ATOMIC_RELEASE);
 }
 
 /* True if `hook_id` is enabled for the calling uid (per-hook gate, §4.3).
@@ -1027,7 +1035,8 @@ static void apply_targets(const char *s)
 	while (s[n])
 		n++;
 	cnt = vpnhide_parse_target_uids(s, n, uids, MAX_TARGET_UIDS);
-	cfg_write_begin();
+	if (!cfg_try_write_begin())
+		return; /* init path has no concurrent writer; defensive only */
 	for (i = 0; i < cnt; i++) {
 		targets[i].uid = uids[i];
 		targets[i].hookmask = VPNHIDE_KERNEL_HOOK_MASK;
@@ -1059,6 +1068,8 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 
 	installed_hooks = 0;
 	last_error = VPNHIDE_ERR_OK;
+	cfg_seq = 0;
+	cfg_writer = 0;
 	nr_targets =
 		0; /* empty config until load-args / ctl0 (pre-hook, no readers) */
 	active_hook_mask = 0;
@@ -1164,33 +1175,34 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 	kind = vpnhide_peek_kind(args, n_args);
 
 	if (kind == VPNHIDE_KIND_CONFIG) {
-		/* Parse in place under the seqlock. vpnhide_parse_config only
-		 * writes targets[] AFTER validating the header, so a reject-whole
-		 * (n < 0, bad header / too-new version) never touches the live
-		 * array — the old config is preserved. A concurrent hook reader
-		 * retries while cfg_seq is odd, so it never sees the half-written
-		 * array. */
-		int dbg = debug_enabled ? 1 : 0;
-		int n;
+		/* Parse into a private stack snapshot before claiming the very short
+		 * writer gate. A bad header/version never touches live state; a
+		 * concurrent ctl0 writer gets -2 (busy) and userspace retries. */
+		struct vpnhide_target new_targets[MAX_TARGET_UIDS];
+		int dbg = -1; /* absent debug record preserves live value */
+		int i, n;
 
-		cfg_write_begin();
-		n = vpnhide_parse_config(args, n_args, targets, MAX_TARGET_UIDS,
-					 &dbg);
-		if (n >= 0) {
-			nr_targets = n;
-			active_hook_mask = compute_active_hook_mask(n);
-		}
-		cfg_write_end();
+		n = vpnhide_parse_config(args, n_args, new_targets,
+					 MAX_TARGET_UIDS, &dbg);
 		if (n < 0)
 			return -1; /* rejected whole (bad header / version) */
-		debug_enabled = dbg ? true : false;
-		vpnhide_dbg("ctl0 config: %d targets, debug=%d\n", n, dbg);
+		if (!cfg_try_write_begin())
+			return -2; /* concurrent config writer; retry from userspace */
+		for (i = 0; i < n; i++)
+			targets[i] = new_targets[i];
+		nr_targets = n;
+		active_hook_mask = compute_active_hook_mask(n);
+		if (dbg >= 0)
+			debug_enabled = dbg ? true : false;
+		cfg_write_end();
+		vpnhide_dbg("ctl0 config: %d targets, debug=%d\n", n,
+			    debug_enabled ? 1 : 0);
 		return 0;
 	}
 
 	if (kind == VPNHIDE_KIND_STATS || kind == VPNHIDE_KIND_STATUS) {
 		char buf[VPNHIDE_OUT_MAX];
-		unsigned long full, n;
+		unsigned long available, full, n;
 
 		if (kind == VPNHIDE_KIND_STATS) {
 			int count = snapshot_stats(stats_snapshot,
@@ -1211,15 +1223,17 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 
 		/*
 		 * vpnhide_format_* report the FULL intended length, which can
-		 * exceed sizeof(buf); the bytes past the buffer were never
-		 * written. Clamp before clamp_to_line/copy_to_user so a
-		 * generous outlen can't drive a read past the 4096-byte stack
-		 * buffer (kernel infoleak / OOB). The .ko bounds the same way.
+		 * exceed sizeof(buf); preserve that larger value so
+		 * clamp_to_line knows the snapshot is incomplete even when the
+		 * caller also supplied a 4096-byte buffer. Limit only the bytes it
+		 * may inspect/copy to the stack buffer actually written. This
+		 * guarantees a truncated reply ends at a complete line with its
+		 * final newline removed (the protocol truncation signal).
 		 */
-		if (full > sizeof(buf))
-			full = sizeof(buf);
-		n = vpnhide_clamp_to_line(
-			buf, full, outlen > 0 ? (unsigned long)outlen : 0);
+		available = outlen > 0 ? (unsigned long)outlen : 0;
+		if (available > sizeof(buf))
+			available = sizeof(buf);
+		n = vpnhide_clamp_to_line(buf, full, available);
 		if (_copy_to_user && out_msg && n)
 			_copy_to_user(out_msg, buf, n);
 		return (long)n;

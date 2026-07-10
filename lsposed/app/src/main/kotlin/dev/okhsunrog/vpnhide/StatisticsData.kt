@@ -11,7 +11,10 @@ internal data class StatisticsState(
     val totalCount: ULong = backends.fold(0uL) { acc, backend -> acc + backend.totalCount }
 }
 
-internal enum class StatisticsUnavailableReason { ZygiskNativeStats }
+internal enum class StatisticsUnavailableReason {
+    ZygiskNativeStats,
+    KpmStatsTruncated,
+}
 
 internal data class BackendStatistics(
     val backend: HookIds.Backend,
@@ -36,12 +39,14 @@ internal data class StatisticsRow(
 
 private val PROTOCOL_KINDS = setOf("config", "stats", "status")
 private val HOOKS_BY_ID = HookIds.Hook.entries.associateBy { it.id.toLong() }
+private const val KPM_TRUNCATION_MARKER = "# vpnhide truncated"
 
 internal fun buildStatisticsState(snapshot: RootSnapshot): StatisticsState {
     val uidPackages = uidPackages(snapshot.sections["pm_packages"].orEmpty())
     val kmodRaw = snapshot.sections["kmod_state"].orEmpty()
     val kpmRaw = snapshot.sections["kpm_state"].orEmpty()
     val lsposedRaw = snapshot.sections["lsposed_state"].orEmpty()
+    val kpmStatsTruncated = kpmRaw.lineSequence().any { it.trim() == KPM_TRUNCATION_MARKER }
     val activeNativeBackendId = detectNativeBackendStates(snapshot.sections).activeId
     val nativeBackends =
         listOf(
@@ -54,8 +59,10 @@ internal fun buildStatisticsState(snapshot: RootSnapshot): StatisticsState {
             buildBackendStatistics(
                 backend = HookIds.Backend.KPM,
                 status = parseProtocolStatusBlock(kpmRaw),
-                stats = parseProtocolStatsBlock(kpmRaw),
+                stats = if (kpmStatsTruncated) emptyList() else parseProtocolStatsBlock(kpmRaw),
                 uidPackages = uidPackages,
+                unavailableReason =
+                    StatisticsUnavailableReason.KpmStatsTruncated.takeIf { kpmStatsTruncated },
             ),
         )
     val lsposed =
@@ -93,9 +100,7 @@ internal fun extractProtocolBlock(
             .drop(start + 1)
             .indexOfFirst { protocolKindOfLine(it) != null }
             .let { if (it < 0) lines.size else start + 1 + it }
-    return lines.subList(start, end).joinToString("\n").let { block ->
-        if (block.endsWith("\n")) block else "$block\n"
-    }
+    return lines.subList(start, end).joinToString("\n")
 }
 
 internal fun formatStatCount(count: ULong): String =

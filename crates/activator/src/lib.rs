@@ -3,9 +3,11 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::ffi::CString;
 use std::fs;
+use std::fs::OpenOptions;
 use std::io::ErrorKind;
 use std::io::Write;
-use std::os::raw::{c_char, c_long, c_void};
+use std::os::fd::AsRawFd;
+use std::os::raw::{c_char, c_int, c_long, c_void};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -20,7 +22,7 @@ use std::time::UNIX_EPOCH;
 use serde::Deserialize;
 use vpnhide_protocol::Target;
 use vpnhide_protocol::hook_ids::{HOOK_NAMES, KERNEL_HOOK_MASK, ZYGISK_HOOK_MASK};
-use vpnhide_protocol::{MAX_TARGET_UIDS, format_config, parse_config};
+use vpnhide_protocol::{Kind, MAX_TARGET_UIDS, format_config, parse_config, peek_kind};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -38,6 +40,8 @@ const PORTS_CHAIN6: &str = "vpnhide_out6";
 const PORTS_STATUS_DIR: &str = "/data/adb/vpnhide_ports";
 const PORTS_LOAD_STATUS: &str = "/data/adb/vpnhide_ports/load_status";
 const PORTS_LOAD_LOG: &str = "/data/adb/vpnhide_ports/load_log";
+const KPM_CTL_LOCK: &str = "/data/adb/vpnhide_kpm/ctl.lock";
+const KPM_TRUNCATION_MARKER: &str = "# vpnhide truncated";
 // The native-target cap is owned by the shared protocol crate (and mirrored by
 // the C backends' `#define MAX_TARGET_UIDS`); alias it here so all three stay in
 // lock-step instead of restating the literal 64.
@@ -58,7 +62,10 @@ const APATCH_SUPERCALL_VERSION_FALLBACKS: &[c_long] = &[
 
 unsafe extern "C" {
     fn syscall(num: c_long, ...) -> c_long;
+    fn flock(fd: c_int, operation: c_int) -> c_int;
 }
+
+const LOCK_EX: c_int = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ApatchCommandStyle {
@@ -800,6 +807,34 @@ enum KpmClient {
     },
 }
 
+/// Cross-process serialization for this project's KPM ctl0 callers. The
+/// KernelPatch runtime stores ctl args in one module-owned buffer before
+/// dispatching the handler, so boot activation, app reconciliation, and stats
+/// reads must not enter ctl0 concurrently even though the handler also guards
+/// its own live config snapshot.
+struct KpmCtlLock {
+    _file: fs::File,
+}
+
+impl KpmCtlLock {
+    fn acquire() -> Result<Self> {
+        if let Some(parent) = Path::new(KPM_CTL_LOCK).parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(KPM_CTL_LOCK)?;
+        fs::set_permissions(KPM_CTL_LOCK, fs::Permissions::from_mode(0o600))?;
+        if unsafe { flock(file.as_raw_fd(), LOCK_EX) } != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        Ok(Self { _file: file })
+    }
+}
+
 impl KpmClient {
     fn detect() -> Result<Self> {
         if Path::new(APATCH_DIR).is_dir() {
@@ -885,13 +920,31 @@ impl KpmClient {
     }
 
     fn ctl0_config(&self, wire: &str) -> Result<()> {
-        match self {
-            Self::KpatchCli { path } => run_kpatch_kpm_ctl0_config(path, wire),
-            Self::ApatchSupercall { key, style } => apatch_kpm_ctl0_config(key, *style, wire),
+        let _lock = KpmCtlLock::acquire()?;
+        const ATTEMPTS: usize = 4;
+        for attempt in 0..ATTEMPTS {
+            let result = match self {
+                Self::KpatchCli { path } => run_kpatch_kpm_ctl0_config(path, wire),
+                Self::ApatchSupercall { key, style } => apatch_kpm_ctl0_config(key, *style, wire),
+            };
+            match result {
+                Ok(()) => return Ok(()),
+                Err(_) if attempt + 1 < ATTEMPTS => {
+                    // A concurrent boot/app ctl0 config gets the KPM's short
+                    // busy return instead of spinning inside the kernel. The
+                    // critical section is only a 64-entry copy, so a brief
+                    // retry also covers runtimes that flatten negative return
+                    // codes to a generic CLI failure.
+                    thread::sleep(Duration::from_millis(20));
+                }
+                Err(error) => return Err(error),
+            }
         }
+        unreachable!()
     }
 
     fn ctl0_read(&self, wire: &str) -> Result<String> {
+        let _lock = KpmCtlLock::acquire()?;
         match self {
             Self::KpatchCli { path } => run_kpatch_kpm_ctl0_read(path, wire),
             Self::ApatchSupercall { key, style } => apatch_kpm_ctl0_read(key, *style, wire),
@@ -948,7 +1001,29 @@ fn run_kpatch_kpm_ctl0_read(kpatch: &Path, wire: &str) -> Result<String> {
     // error the supercall returns a negative rc and never fills the buffer, so
     // stdout is empty. Trust stdout: the reply text is authoritative, the exit
     // code is not (it can't even round-trip a reply longer than 255 bytes).
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    normalize_kpm_reply(wire, String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Validate a KPM readback and preserve the protocol's missing-newline
+/// truncation signal as an explicit comment. KPatch's CLI and the APatch client
+/// both cap ctl0 replies at 4096 bytes, so retrying with a larger userspace
+/// buffer is not portable. Keeping the complete-line prefix plus a marker lets
+/// the app retain backend status while refusing to total partial counters.
+fn normalize_kpm_reply(wire: &str, mut reply: String) -> Result<String> {
+    if reply.is_empty() {
+        return Err("KPM ctl0 returned an empty reply".into());
+    }
+    let expected = peek_kind(wire.as_bytes()).ok_or("invalid KPM ctl0 request header")?;
+    let actual = peek_kind(reply.as_bytes()).ok_or("invalid KPM ctl0 reply header")?;
+    if actual != expected || !matches!(actual, Kind::Status | Kind::Stats) {
+        return Err(format!("unexpected KPM ctl0 reply kind {actual:?} for {expected:?}").into());
+    }
+    if !reply.ends_with('\n') {
+        reply.push('\n');
+        reply.push_str(KPM_TRUNCATION_MARKER);
+        reply.push('\n');
+    }
+    Ok(reply)
 }
 
 fn kpatch_ctl0_config_status_ok(status: std::process::ExitStatus, wire: &str) -> bool {
@@ -1018,7 +1093,7 @@ fn apatch_kpm_ctl0_read(key: &str, style: ApatchCommandStyle, wire: &str) -> Res
     let (rc, out) = apatch_kpm_ctl0_raw(key, style, wire)?;
     supercall_ok(rc, "kpm ctl0")?;
     let len = apatch_output_len(rc, &out);
-    Ok(String::from_utf8_lossy(&out[..len]).into_owned())
+    normalize_kpm_reply(wire, String::from_utf8_lossy(&out[..len]).into_owned())
 }
 
 fn apatch_kpm_ctl0_raw(
@@ -1894,5 +1969,32 @@ mod tests {
             std::process::ExitStatus::from_raw(15),
             one_target
         ));
+    }
+
+    #[test]
+    fn kpm_readback_marks_truncated_complete_line_prefixes() {
+        let complete = "vpnhide 1 stats\n0x1 0x0:0x2\n";
+        assert_eq!(
+            normalize_kpm_reply("vpnhide 1 stats", complete.to_owned()).unwrap(),
+            complete,
+        );
+
+        let partial = "vpnhide 1 stats\n0x1 0x0:0x2";
+        assert_eq!(
+            normalize_kpm_reply("vpnhide 1 stats", partial.to_owned()).unwrap(),
+            "vpnhide 1 stats\n0x1 0x0:0x2\n# vpnhide truncated\n",
+        );
+    }
+
+    #[test]
+    fn kpm_readback_rejects_empty_or_wrong_kind_replies() {
+        assert!(normalize_kpm_reply("vpnhide 1 stats", String::new()).is_err());
+        assert!(
+            normalize_kpm_reply(
+                "vpnhide 1 stats",
+                "vpnhide 1 status\nbackend 0x1\n".to_owned(),
+            )
+            .is_err(),
+        );
     }
 }

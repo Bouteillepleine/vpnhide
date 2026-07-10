@@ -179,6 +179,7 @@
     <string name="statistics_no_data">No runtime statistics yet. Counters appear when a selected app calls an installed hook.</string>
     <string name="statistics_no_data_supported_backends">No counters yet from backends that support statistics.</string>
     <string name="statistics_zygisk_native_unavailable">Native counters are not available for Zygisk. Java and Apps counters are still reported by LSPosed.</string>
+    <string name="statistics_kpm_stats_truncated">KPM has more counters than its control channel can return in one snapshot. Partial native totals are hidden; Java and Apps counters are still reported by LSPosed.</string>
     <string name="statistics_unknown_uid">uid %1$d</string>
     <string name="statistics_status_ok">OK</string>
     <string name="statistics_status_partial">Partial</string>
