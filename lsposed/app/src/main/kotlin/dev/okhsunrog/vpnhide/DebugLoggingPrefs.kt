@@ -37,18 +37,13 @@ internal suspend fun setDebugLoggingEnabled(enabled: Boolean) {
             )
             ?: return
 
-    val command =
-        listOf(
-            buildCanonicalConfigWriteCommand(canonical),
-            ConfigChannels.reconcileCommand(),
-        ).joinToString(" ; ")
-    val (exit, out) = suExec(command)
-    if (exit != 0) {
-        VpnHideLog.e(TAG, "write canonical debug command failed: exit=$exit: ${out.trim()}")
+    val result = CanonicalConfigRepository.persist(canonical)
+    if (!result.succeeded) {
+        VpnHideLog.e(
+            TAG,
+            "write canonical debug command failed: exit=${result.exitCode}: ${result.output.trim()}",
+        )
     }
 
     VpnHideLog.enabled = enabled
-    RootSnapshotCache.invalidate()
-    TargetsCache.invalidate()
-    DashboardCache.invalidate()
 }

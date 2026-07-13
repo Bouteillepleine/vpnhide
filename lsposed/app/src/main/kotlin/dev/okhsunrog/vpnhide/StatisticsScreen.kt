@@ -1054,6 +1054,7 @@ private fun backendDetailText(
 private fun statisticsUnavailableText(reason: StatisticsUnavailableReason): String =
     when (reason) {
         StatisticsUnavailableReason.ZygiskNativeStats -> stringResource(R.string.statistics_zygisk_native_unavailable)
+        StatisticsUnavailableReason.KpmStatsTruncated -> stringResource(R.string.statistics_kpm_stats_truncated)
     }
 
 private data class HealthVisual(

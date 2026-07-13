@@ -477,39 +477,37 @@ private fun applyCanonicalConfig(
     targetRestartRecommended: Boolean = true,
 ): AgentMutationResult {
     val next = canonicalConfigWithSelfTarget(canonical, context.packageName)
-    val result = runActivationCommand(buildCanonicalConfigWriteCommand(next), changed = true)
-    if (result.ok) {
-        RootSnapshotCache.invalidate()
-        TargetsCache.invalidate()
-        DashboardCache.invalidate()
-        StatisticsCache.invalidate()
-    }
+    val write =
+        CanonicalConfigRepository.persist(
+            next,
+            activation = CanonicalActivation(native = true, ports = true),
+        )
+    val result = write.toAgentMutationResult(changed = true)
     return result.copy(targetRestartRecommended = result.ok && targetRestartRecommended)
 }
 
-private fun runActivation(changed: Boolean): AgentMutationResult = runActivationCommand(prefix = null, changed = changed)
+private fun runActivation(changed: Boolean): AgentMutationResult = runActivationCommand(changed = changed)
 
-private fun runActivationCommand(
-    prefix: String?,
-    changed: Boolean,
-): AgentMutationResult {
+private fun runActivationCommand(changed: Boolean): AgentMutationResult {
     val parts =
-        listOfNotNull(
-            prefix,
+        listOf(
             ConfigChannels.reconcileCommand(),
             ConfigChannels.portsActivatorCommand(),
         )
     val (exit, output) = suExec(parts.joinToString(" ; "))
-    return if (exit == 0) {
+    return CanonicalWriteResult(exit, output).toAgentMutationResult(changed)
+}
+
+private fun CanonicalWriteResult.toAgentMutationResult(changed: Boolean): AgentMutationResult =
+    if (succeeded) {
         AgentMutationResult(ok = true, message = "Activation completed", changed = changed)
     } else {
         AgentMutationResult(
             ok = false,
-            message = "Root command failed with exit=$exit: ${output.trim()}",
+            message = "Root command failed with exit=$exitCode: ${output.trim()}",
             changed = false,
         )
     }
-}
 
 private fun buildProtectionState(snapshot: TargetsSnapshot): AgentProtectionState {
     val canonical =

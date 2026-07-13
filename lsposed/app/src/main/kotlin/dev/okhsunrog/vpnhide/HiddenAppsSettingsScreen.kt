@@ -493,15 +493,5 @@ private fun writeHiddenApps(
             excludedPackages = excludedPackages,
             signals = signals,
         )
-    val cmd =
-        listOf(
-            buildCanonicalConfigWriteCommand(canonical),
-            ConfigChannels.reconcileCommand(),
-        ).joinToString(" && ")
-    val (exit, _) = suExec(cmd)
-    if (exit == 0) {
-        RootSnapshotCache.invalidate()
-        DashboardCache.invalidate()
-    }
-    return exit
+    return CanonicalConfigRepository.persist(canonical).exitCode
 }

@@ -125,7 +125,7 @@ internal data class SaveContext(
  * @param countText bottom-bar status text (e.g. "12 selected").
  * @param row renders one row; call `onChange` with the updated entry to mark
  *   the list dirty.
- * @param buildSaveCommand build the root shell command persisting [entries].
+ * @param persist persist [entries] through the canonical-config repository.
  * @param successMessage snackbar text shown after a successful save.
  */
 @Composable
@@ -143,7 +143,7 @@ internal fun <T : TargetEntry> TargetPickerScreen(
     help: @Composable (TargetsSnapshot) -> Unit,
     merge: (apps: List<AppSummary>, targets: TargetsSnapshot, selfPkg: String) -> MergeResult<T>,
     countText: (entries: List<T>, resources: Resources) -> String,
-    buildSaveCommand: (entries: List<T>, ctx: SaveContext) -> String,
+    persist: suspend (entries: List<T>, ctx: SaveContext) -> CanonicalWriteResult,
     successMessage: (entries: List<T>, resources: Resources) -> String,
     moduleMissing: (TargetsSnapshot) -> Boolean = { false },
     moduleMissingContent: @Composable (Modifier) -> Unit = {},
@@ -341,8 +341,7 @@ internal fun <T : TargetEntry> TargetPickerScreen(
                     targets?.canonicalConfig?.debugSwitch ?: (targets?.canonicalConfig?.debug ?: false),
                 )
             try {
-                val (exitCode, _) =
-                    suExecAsync(buildSaveCommand(entries, ctx))
+                val exitCode = persist(entries, ctx).exitCode
                 when (exitCode) {
                     0 -> {
                         snackDuration = SnackbarDuration.Short

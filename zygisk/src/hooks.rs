@@ -48,6 +48,13 @@ struct ifconf {
 thread_local! {
     #[allow(clippy::missing_const_for_thread_local)]
     static IN_GETIFADDRS: Cell<bool> = const { Cell::new(false) };
+
+    /// Reusable contiguous view for scatter/gather netlink recvmsg payloads.
+    /// Most callers use one iovec and stay on the allocation-free fast path;
+    /// split payloads borrow this buffer only long enough to gather, filter,
+    /// and scatter the compacted bytes back.
+    #[allow(clippy::missing_const_for_thread_local)]
+    static NETLINK_IOV_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(65536));
 }
 
 /// Returns true if `fd` is an `AF_NETLINK` socket.
@@ -799,16 +806,11 @@ saved_original! {
 /// so, collects VPN interface indices and removes matching entries from
 /// the buffer before returning to the caller.
 ///
-/// recvmsg distributes `ret` bytes across the iov array in order:
-/// iov[0] fills first, then iov[1], and so on. We filter the portion
-/// that landed in iov[0] — netlink dumps fit there in any sane caller
-/// (bionic always uses iov[0] only). A deliberately split call where
-/// the netlink message crosses an iov boundary is a corner case we
-/// don't try to stitch back together: filtering iov[0] still hides
-/// VPN entries that landed in it; entries fully inside iov[1+] pass
-/// through unfiltered. Strictly better than the previous behaviour,
-/// which bailed out entirely as soon as `iovlen != 1` and let a caller
-/// bypass the filter with a single extra zero-length iov.
+/// recvmsg distributes `ret` bytes across the iov array in order. The common
+/// one-iovec case is filtered in place. For scatter/gather callers we assemble
+/// the complete returned prefix in a reusable thread-local buffer, filter it as
+/// one netlink datagram (including messages crossing an iovec boundary), then
+/// scatter the compacted bytes back across the caller's iovecs.
 pub unsafe extern "C" fn hooked_recvmsg(fd: c_int, msg: *mut libc::msghdr, flags: c_int) -> isize {
     let Some(real) = real_recvmsg() else {
         set_errno(libc::EFAULT);
@@ -826,17 +828,135 @@ pub unsafe extern "C" fn hooked_recvmsg(fd: c_int, msg: *mut libc::msghdr, flags
         return ret;
     }
 
-    let iov = unsafe { &*hdr.msg_iov };
-    if iov.iov_base.is_null() {
+    if hdr.msg_iovlen == 1 {
+        let iov = unsafe { &*hdr.msg_iov };
+        if iov.iov_base.is_null() {
+            return ret;
+        }
+        let in_first = ret.min(iov.iov_len as isize);
+        let filtered = unsafe { maybe_filter_netlink_buf(fd, iov.iov_base as *mut u8, in_first) };
+        return ret - (in_first - filtered);
+    }
+
+    if !is_netlink_fd(fd) || IN_GETIFADDRS.with(|guard| guard.get()) {
+        return ret;
+    }
+    let Some(in_iovecs) = (unsafe { iovec_payload_len(hdr.msg_iov, hdr.msg_iovlen, ret as usize) })
+    else {
+        return ret;
+    };
+    if in_iovecs < 16 {
+        return ret;
+    }
+    let (indices, n) = collect_vpn_iface_indices();
+    if n == 0 {
         return ret;
     }
 
-    let in_first = ret.min(iov.iov_len as isize);
-    let filtered_first = unsafe { maybe_filter_netlink_buf(fd, iov.iov_base as *mut u8, in_first) };
+    NETLINK_IOV_BUF.with(|cell| {
+        let Ok(mut scratch) = cell.try_borrow_mut() else {
+            return ret;
+        };
+        let Some(filtered) = (unsafe {
+            rewrite_iovec_payload(
+                hdr.msg_iov,
+                hdr.msg_iovlen,
+                in_iovecs,
+                &mut scratch,
+                |data| crate::filter::filter_netlink_dump(data, &indices[..n]),
+            )
+        }) else {
+            return ret;
+        };
+        ret - (in_iovecs - filtered) as isize
+    })
+}
 
-    // Propagate any shrink of iov[0] to the total return value; bytes
-    // that landed in iov[1+] are unchanged.
-    ret - (in_first - filtered_first)
+/// Number of bytes actually copied into an iovec array by a successful
+/// recvmsg. With MSG_TRUNC, `returned` may exceed the total capacity, so clamp
+/// to the writable prefix before gathering.
+///
+/// # Safety
+///
+/// `iov` must point to `iovlen` readable descriptors from a successful recvmsg.
+unsafe fn iovec_payload_len(
+    iov: *const libc::iovec,
+    iovlen: usize,
+    returned: usize,
+) -> Option<usize> {
+    let mut capacity = 0usize;
+    for index in 0..iovlen {
+        let entry = unsafe { &*iov.add(index) };
+        if entry.iov_len > 0 && entry.iov_base.is_null() {
+            return None;
+        }
+        capacity = capacity.saturating_add(entry.iov_len);
+    }
+    Some(returned.min(capacity))
+}
+
+/// Gather a returned iovec prefix, compact it with `filter`, and scatter the
+/// resulting prefix back. Returns `None` on an invalid descriptor or allocation
+/// failure so the hook can safely fall back to the original unmodified result.
+///
+/// # Safety
+///
+/// The first `payload_len` bytes described by `iov[0..iovlen]` must be valid for
+/// reads and writes, as guaranteed after a successful recvmsg.
+unsafe fn rewrite_iovec_payload(
+    iov: *mut libc::iovec,
+    iovlen: usize,
+    payload_len: usize,
+    scratch: &mut Vec<u8>,
+    filter: impl FnOnce(&mut [u8]) -> usize,
+) -> Option<usize> {
+    scratch.clear();
+    if scratch.try_reserve(payload_len).is_err() {
+        return None;
+    }
+
+    let mut remaining = payload_len;
+    for index in 0..iovlen {
+        if remaining == 0 {
+            break;
+        }
+        let entry = unsafe { &*iov.add(index) };
+        let take = remaining.min(entry.iov_len);
+        if take == 0 {
+            continue;
+        }
+        if entry.iov_base.is_null() {
+            return None;
+        }
+        let bytes = unsafe { core::slice::from_raw_parts(entry.iov_base.cast::<u8>(), take) };
+        scratch.extend_from_slice(bytes);
+        remaining -= take;
+    }
+    if remaining != 0 {
+        return None;
+    }
+
+    let filtered = filter(scratch.as_mut_slice()).min(payload_len);
+    let mut copied = 0usize;
+    for index in 0..iovlen {
+        if copied == filtered {
+            break;
+        }
+        let entry = unsafe { &*iov.add(index) };
+        let take = (filtered - copied).min(entry.iov_len);
+        if take == 0 {
+            continue;
+        }
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                scratch.as_ptr().add(copied),
+                entry.iov_base.cast::<u8>(),
+                take,
+            );
+        }
+        copied += take;
+    }
+    (copied == filtered).then_some(filtered)
 }
 
 /// Post-process a netlink read: if `fd` is a netlink socket and the
@@ -1058,6 +1178,74 @@ fn collect_vpn_iface_indices() -> ([u32; crate::filter::MAX_VPN_ADDRS], usize) {
     }
 
     (indices, n)
+}
+
+#[cfg(test)]
+mod iovec_tests {
+    use super::{iovec_payload_len, rewrite_iovec_payload};
+    use crate::filter::{RTM_NEWLINK, filter_netlink_dump};
+
+    fn make_nlmsg(if_index: u32) -> Vec<u8> {
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&24u32.to_ne_bytes());
+        msg.extend_from_slice(&RTM_NEWLINK.to_ne_bytes());
+        msg.extend_from_slice(&0u16.to_ne_bytes());
+        msg.extend_from_slice(&1u32.to_ne_bytes());
+        msg.extend_from_slice(&0u32.to_ne_bytes());
+        msg.extend_from_slice(&[0u8; 4]);
+        msg.extend_from_slice(&if_index.to_ne_bytes());
+        msg
+    }
+
+    #[test]
+    fn filters_netlink_messages_across_iovec_boundaries() {
+        let mut payload = Vec::new();
+        payload.extend(make_nlmsg(2));
+        payload.extend(make_nlmsg(7));
+        payload.extend(make_nlmsg(3));
+        let mut expected = Vec::new();
+        expected.extend(make_nlmsg(2));
+        expected.extend(make_nlmsg(3));
+
+        // Include an empty first iovec and split the first netlink header over
+        // the next two. A caller using this layout previously bypassed recvmsg
+        // filtering because only iov[0] was inspected.
+        let mut first = payload[..7].to_vec();
+        let mut rest = payload[7..].to_vec();
+        let mut iovecs = [
+            libc::iovec {
+                iov_base: core::ptr::null_mut(),
+                iov_len: 0,
+            },
+            libc::iovec {
+                iov_base: first.as_mut_ptr().cast(),
+                iov_len: first.len(),
+            },
+            libc::iovec {
+                iov_base: rest.as_mut_ptr().cast(),
+                iov_len: rest.len(),
+            },
+        ];
+        let mut scratch = Vec::new();
+
+        let copied =
+            unsafe { iovec_payload_len(iovecs.as_ptr(), iovecs.len(), payload.len()).unwrap() };
+        let filtered = unsafe {
+            rewrite_iovec_payload(
+                iovecs.as_mut_ptr(),
+                iovecs.len(),
+                copied,
+                &mut scratch,
+                |data| filter_netlink_dump(data, &[7]),
+            )
+            .unwrap()
+        };
+
+        let mut actual = first;
+        actual.extend(rest);
+        assert_eq!(filtered, expected.len());
+        assert_eq!(&actual[..filtered], expected.as_slice());
+    }
 }
 
 #[cfg(test)]

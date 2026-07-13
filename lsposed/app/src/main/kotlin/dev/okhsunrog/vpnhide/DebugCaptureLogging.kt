@@ -162,11 +162,7 @@ private suspend fun applyCanonicalDebugToggle(
         )
     }
 
-    val (exit, out) =
-        listOf(
-            buildCanonicalConfigWriteCommand(canonical),
-            ConfigChannels.reconcileCommand(),
-        ).joinToString(" ; ").let(::suExec)
+    val result = CanonicalConfigRepository.persist(canonical)
 
     VpnHideLog.enabled = enabled
     invalidateDebugCaptureState()
@@ -175,8 +171,8 @@ private suspend fun applyCanonicalDebugToggle(
         requestedEnabled = enabled,
         source = "canonical_debug_only",
         rootSnapshotExit = rootSnapshotExit,
-        commandExit = exit,
-        detail = out.trim(),
+        commandExit = result.exitCode,
+        detail = result.output.trim(),
     )
 }
 

@@ -35,12 +35,6 @@ internal object ConfigChannels {
     fun portsActivatorCommand(): String =
         "if [ -x $PORTS_ACTIVATOR ] && [ ! -f $PORTS_MODULE_DIR/disable ]; then $PORTS_ACTIVATOR 2>&1; else true; fi"
 
-    /** Shell part running exactly one native activator by backend priority. */
-    fun nativeWriteParts(): List<String> =
-        listOf(
-            nativeActivatorCommand(),
-        )
-
     /**
      * Re-emit the runtime config for the current canonical config. Package→UID
      * resolution and wire formatting live in the activator, not in the app.
@@ -89,20 +83,14 @@ internal fun reconcileAutoHiddenPackages(
     val selfPkg = context.packageName
     if (!autoHiddenPackagesNeedReconcile(config, selfPkg, signals)) return false
     val next = applyAutoHiddenPackages(config, selfPkg, signals)
-    val cmd =
-        listOf(
-            buildCanonicalConfigWriteCommand(next),
-            ConfigChannels.reconcileCommand(),
-        ).joinToString(" ; ")
-    val (exit, output) = suExec(cmd)
-    if (exit != 0) {
-        VpnHideLog.w(LogTags.STARTUP, "auto-hide reconcile failed (exit=$exit): ${output.trim()}")
+    val result = CanonicalConfigRepository.persist(next)
+    if (!result.succeeded) {
+        VpnHideLog.w(
+            LogTags.STARTUP,
+            "auto-hide reconcile failed (exit=${result.exitCode}): ${result.output.trim()}",
+        )
         return false
     }
-    RootSnapshotCache.invalidate()
-    TargetsCache.invalidate()
-    DashboardCache.invalidate()
-    StatisticsCache.invalidate()
     VpnHideLog.i(
         LogTags.STARTUP,
         "auto-hide reconcile: ${next.settings.autoHiddenPackages.size} auto-hidden package(s)",

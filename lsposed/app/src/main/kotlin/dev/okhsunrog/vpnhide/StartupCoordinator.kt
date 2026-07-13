@@ -137,20 +137,14 @@ internal class StartupCoordinator(
             reconcileRuntimeConfig()
             return
         }
-        val command =
-            listOf(
-                buildCanonicalConfigWriteCommand(reconciled),
-                ConfigChannels.reconcileCommand(),
-            ).joinToString(" ; ")
-        val (exit, output) = suExec(command)
-        if (exit != 0) {
-            VpnHideLog.w(LogTags.STARTUP, "startup debug reconcile failed (exit=$exit): ${output.trim()}")
+        val result = CanonicalConfigRepository.persist(reconciled)
+        if (!result.succeeded) {
+            VpnHideLog.w(
+                LogTags.STARTUP,
+                "startup debug reconcile failed (exit=${result.exitCode}): ${result.output.trim()}",
+            )
             return
         }
-        RootSnapshotCache.invalidate()
-        TargetsCache.invalidate()
-        DashboardCache.invalidate()
-        StatisticsCache.invalidate()
     }
 
     fun ensureUpdateFresh(scope: CoroutineScope) {

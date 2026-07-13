@@ -224,6 +224,21 @@ static void run_clamp(const char *raw_full, const char *raw_outlen,
 	}
 }
 
+/* KPM formats into a fixed buffer while format_stats returns the larger,
+ * intended length. The clamp must still treat an exactly-full output buffer as
+ * truncated and remove its final newline; replacing full_len with sizeof(buf)
+ * used to make this case look complete. */
+static void run_fixed_buffer_overflow_clamp(void)
+{
+	char written[8] = { 'a', 'a', 'a', '\n', 'b', 'b', 'b', '\n' };
+	unsigned long got = vpnhide_clamp_to_line(written, 12, sizeof(written));
+
+	checks++;
+	if (got != 7 || memcmp(written, "aaa\nbbb", 7) != 0)
+		fail("fixed-buffer overflow clamp", "not line-clamped",
+		     "aaa\\nbbb");
+}
+
 int main(int argc, char **argv)
 {
 	const char *path = argc > 1 ? argv[1] : "protocol_vectors.tsv";
@@ -267,6 +282,7 @@ int main(int argc, char **argv)
 
 	free(line);
 	fclose(f);
+	run_fixed_buffer_overflow_clamp();
 
 	if (failures) {
 		fprintf(stderr, "%d/%d protocol vector(s) failed\n", failures,

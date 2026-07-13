@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/activator",
     "crates/protocol",
+    "crates/protocol-diff",
     "zygisk",
 ]
 exclude = ["lsposed/native"]

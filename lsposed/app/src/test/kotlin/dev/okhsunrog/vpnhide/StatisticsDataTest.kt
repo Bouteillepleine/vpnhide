@@ -46,6 +46,10 @@ class StatisticsDataTest {
             parseProtocolStatsBlock(raw),
         )
         assertNull(extractProtocolBlock("not protocol\n", Protocol.Kind.STATS))
+        assertEquals(
+            "vpnhide 1 stats\n0x1 0x0:0x1",
+            extractProtocolBlock("vpnhide 1 stats\n0x1 0x0:0x1", Protocol.Kind.STATS),
+        )
     }
 
     @Test
@@ -90,6 +94,32 @@ class StatisticsDataTest {
                 .single()
                 .packageNames
                 .single(),
+        )
+    }
+
+    @Test
+    fun `marks truncated kpm counters unavailable instead of totaling a partial prefix`() {
+        val base = statisticsFixtureSnapshot()
+        val state =
+            buildStatisticsState(
+                RootSnapshot(
+                    base.sections +
+                        mapOf(
+                            "kmod_state" to "",
+                            "kpm_state" to
+                                base.sections.getValue("kpm_state") +
+                                "\n# vpnhide truncated",
+                        ),
+                ),
+            )
+
+        val kpm = state.backends.single { it.backend == HookIds.Backend.KPM }
+        assertEquals(StatisticsUnavailableReason.KpmStatsTruncated, kpm.unavailableReason)
+        assertEquals(emptyList<StatisticsRow>(), kpm.rows)
+        assertEquals(
+            HookIds.Backend.KPM.id
+                .toLong(),
+            kpm.status?.backend,
         )
     }
 
