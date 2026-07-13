@@ -25,6 +25,12 @@ internal object IfaceLists {
         if (n.startsWith("l2tp")) return true
         // GRE tunnels
         if (n.startsWith("gre")) return true
+        // Tailscale native/root daemon tunnel (standard Android VpnService normally uses tun)
+        if (n.startsWith("tailscale")) return true
+        // ZeroTier virtual Ethernet (zt followed by a network-derived interface id)
+        if (n.startsWith("zt")) return true
+        // Hurricane Electric IPv6-in-IPv4 tunnel
+        if (n.startsWith("he-ipv6")) return true
         // catch-all for renamed clients (myvpn0, vpn-client, xvpn1, ...)
         if (n.contains("vpn")) return true
         // Anonymous netdev / renamed tunnel using the kernel's default naming pattern (e.g. `ip link set tun0 name if33` from issue #86). Does NOT match `ifb<N>` — those are kernel intermediate-functional-block traffic-shaping ifaces (different shape: `if` + letter, not + digit).

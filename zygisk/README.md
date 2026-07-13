@@ -114,7 +114,7 @@ cargo ndk -t arm64-v8a build --release \
 
 ## Filter logic
 
-VPN interface prefixes: `tun`, `ppp`, `tap`, `wg`, `ipsec`, `xfrm`, `utun`, `l2tp`, `gre`, plus anything containing the substring `vpn`, plus `if<N>` renamed/anonymous netdevs. Matches the list in the [LSPosed companion](../lsposed/).
+VPN interface prefixes: `tun`, `ppp`, `tap`, `wg`, `ipsec`, `xfrm`, `utun`, `l2tp`, `gre`, `tailscale`, `zt`, `he-ipv6`, plus anything containing the substring `vpn`, plus `if<N>` renamed/anonymous netdevs. Matches the list in the [LSPosed companion](../lsposed/).
 
 ## Known limitations
 

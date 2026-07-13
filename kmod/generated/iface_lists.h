@@ -96,6 +96,15 @@ static inline int vpnhide_iface_is_vpn(const char *name)
 	/* GRE tunnels */
 	if (vpnhide_iface_starts_with_ci(name, "gre"))
 		return 1;
+	/* Tailscale native/root daemon tunnel (standard Android VpnService normally uses tun) */
+	if (vpnhide_iface_starts_with_ci(name, "tailscale"))
+		return 1;
+	/* ZeroTier virtual Ethernet (zt followed by a network-derived interface id) */
+	if (vpnhide_iface_starts_with_ci(name, "zt"))
+		return 1;
+	/* Hurricane Electric IPv6-in-IPv4 tunnel */
+	if (vpnhide_iface_starts_with_ci(name, "he-ipv6"))
+		return 1;
 	/* catch-all for renamed clients (myvpn0, vpn-client, xvpn1, ...) */
 	if (vpnhide_iface_contains_ci(name, "vpn"))
 		return 1;

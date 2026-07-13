@@ -287,5 +287,6 @@ detectors actually probe:
 | iface match rules | single source of truth `data/interfaces.toml` → `scripts/codegen-interfaces.py` renders all four targets (kmod/KPM C, zygisk Rust, lsposed native Rust, lsposed Kotlin) |
 
 The interface-name patterns (`tun`/`tap`/`wg`/`ppp`/`ipsec`/`xfrm`/`utun`/`l2tp`/`gre`,
-substring `vpn`, and the `if<digits>` renamed-tunnel form from issue #86) are
-generated identically for all layers from `data/interfaces.toml`.
+`tailscale`/`zt`/`he-ipv6`, substring `vpn`, and the `if<digits>` renamed-tunnel
+form from issue #86) are generated identically for all layers from
+`data/interfaces.toml`.

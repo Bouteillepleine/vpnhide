@@ -58,6 +58,18 @@ match = { prefix = "gre" }
 note = "GRE tunnels"
 
 [[vpn]]
+match = { prefix = "tailscale" }
+note = "Tailscale native/root daemon tunnel (standard Android VpnService normally uses tun)"
+
+[[vpn]]
+match = { prefix = "zt" }
+note = "ZeroTier virtual Ethernet (zt followed by a network-derived interface id)"
+
+[[vpn]]
+match = { prefix = "he-ipv6" }
+note = "Hurricane Electric IPv6-in-IPv4 tunnel"
+
+[[vpn]]
 match = { contains = "vpn" }
 note = "catch-all for renamed clients (myvpn0, vpn-client, xvpn1, ...)"
 
@@ -121,6 +133,26 @@ is_vpn = true
 name = "gre0"
 is_vpn = true
 
+[[test]]
+name = "tailscale0"
+is_vpn = true
+
+[[test]]
+name = "ztyqb6mebi"
+is_vpn = true
+
+[[test]]
+name = "zt0"
+is_vpn = true
+
+[[test]]
+name = "he-ipv6"
+is_vpn = true
+
+[[test]]
+name = "he-ipv6-1"
+is_vpn = true
+
 # Case-insensitivity
 
 [[test]]
@@ -151,6 +183,10 @@ is_vpn = true
 
 [[test]]
 name = "xvpn1"
+is_vpn = true
+
+[[test]]
+name = "svpn0"        # covered by the generic contains-vpn rule
 is_vpn = true
 
 # Real physical / system interfaces — must NOT match
@@ -256,4 +292,3 @@ is_vpn = false
 [[test]]
 name = "VPN"          # full name is the substring
 is_vpn = true
-

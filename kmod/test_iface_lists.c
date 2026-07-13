@@ -38,6 +38,11 @@ int main(void)
 	check("utun3", true);
 	check("l2tp0", true);
 	check("gre0", true);
+	check("tailscale0", true);
+	check("ztyqb6mebi", true);
+	check("zt0", true);
+	check("he-ipv6", true);
+	check("he-ipv6-1", true);
 	check("TUN0", true);
 	check("Wg99", true);
 	check("MyVPN", true);
@@ -45,6 +50,7 @@ int main(void)
 	check("myvpn0", true);
 	check("vpn", true);
 	check("xvpn1", true);
+	check("svpn0", true);
 	check("lo", false);
 	check("wlan0", false);
 	check("wlan", false);
@@ -73,6 +79,6 @@ int main(void)
 		fprintf(stderr, "%d test(s) failed\n", failures);
 		return 1;
 	}
-	printf("OK: 42 vectors passed\n");
+	printf("OK: 48 vectors passed\n");
 	return 0;
 }
