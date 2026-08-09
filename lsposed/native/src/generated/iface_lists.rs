@@ -92,6 +92,18 @@ pub fn matches_vpn(name: &[u8]) -> bool {
     if starts_with_ci(name, b"gre") {
         return true;
     }
+    // Tailscale native/root daemon tunnel (standard Android VpnService normally uses tun)
+    if starts_with_ci(name, b"tailscale") {
+        return true;
+    }
+    // ZeroTier virtual Ethernet (zt followed by a network-derived interface id)
+    if starts_with_ci(name, b"zt") {
+        return true;
+    }
+    // Hurricane Electric IPv6-in-IPv4 tunnel
+    if starts_with_ci(name, b"he-ipv6") {
+        return true;
+    }
     // catch-all for renamed clients (myvpn0, vpn-client, xvpn1, ...)
     if contains_ci(name, b"vpn") {
         return true;
@@ -122,6 +134,11 @@ mod tests {
         assert!(matches_vpn(b"utun3"), "matches_vpn('utun3')");
         assert!(matches_vpn(b"l2tp0"), "matches_vpn('l2tp0')");
         assert!(matches_vpn(b"gre0"), "matches_vpn('gre0')");
+        assert!(matches_vpn(b"tailscale0"), "matches_vpn('tailscale0')");
+        assert!(matches_vpn(b"ztyqb6mebi"), "matches_vpn('ztyqb6mebi')");
+        assert!(matches_vpn(b"zt0"), "matches_vpn('zt0')");
+        assert!(matches_vpn(b"he-ipv6"), "matches_vpn('he-ipv6')");
+        assert!(matches_vpn(b"he-ipv6-1"), "matches_vpn('he-ipv6-1')");
         assert!(matches_vpn(b"TUN0"), "matches_vpn('TUN0')");
         assert!(matches_vpn(b"Wg99"), "matches_vpn('Wg99')");
         assert!(matches_vpn(b"MyVPN"), "matches_vpn('MyVPN')");
@@ -129,6 +146,7 @@ mod tests {
         assert!(matches_vpn(b"myvpn0"), "matches_vpn('myvpn0')");
         assert!(matches_vpn(b"vpn"), "matches_vpn('vpn')");
         assert!(matches_vpn(b"xvpn1"), "matches_vpn('xvpn1')");
+        assert!(matches_vpn(b"svpn0"), "matches_vpn('svpn0')");
         assert!(!matches_vpn(b"lo"), "matches_vpn('lo')");
         assert!(!matches_vpn(b"wlan0"), "matches_vpn('wlan0')");
         assert!(!matches_vpn(b"wlan"), "matches_vpn('wlan')");
