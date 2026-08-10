@@ -323,60 +323,20 @@ check_keep_exact keep_dev_ioctl       "ifconfig eth0"           "^eth0"
 check_keep keep_netlink_route4  "ip route show table all" "dev eth0"
 check_keep_exact keep_policy_rule     "ip rule show"            "lookup main"
 
-# Entry-kprobe redirection continues outside the exception handler. Stress an
-# unload while target bind calls are in flight; the module must unregister the
-# entry probes and drain those redirected task paths before its text is freed.
-_bind_pids=""
-if [ -x /bind-probe ] && [ -n "$_vpn_ifindex" ]; then
-	set_target 5555
-	for _worker in 1 2 3 4; do
-		(
-			while /bind-probe vpn0 "$_vpn_ifindex" >/dev/null 2>&1; do :; done
-		) &
-		_bind_pids="$_bind_pids $!"
-	done
-	sleep 1
-fi
-_unload_attempt=1
-_unload_ok=0
-_rmmod_error=""
-while [ "$_unload_attempt" -le 50 ]; do
-	if rmmod vpnhide_kmod >/tmp/vpnhide-rmmod.log 2>&1; then
-		_unload_ok=1
-		break
-	fi
+# Root module managers replace or remove the backend across a reboot. Keep the
+# entry-kprobe replacement text resident for that whole lifetime: ordinary
+# rmmod must fail and leave both the module and its control plane intact.
+if rmmod vpnhide_kmod >/tmp/vpnhide-rmmod.log 2>&1; then
+	echo "RESULT permanent_module=FAIL (rmmod unexpectedly succeeded)"
+	FAIL=$((FAIL + 1))
+elif [ -d /sys/module/vpnhide_kmod ] && [ -e /proc/vpnhide_ctl ]; then
 	_rmmod_error=$(tr '\n' ' ' </tmp/vpnhide-rmmod.log)
-	case "$_rmmod_error" in
-		*"Resource busy"*|*"temporarily unavailable"*) ;;
-		*) break ;;
-	esac
-	_unload_attempt=$((_unload_attempt + 1))
-done
-if [ "$_unload_ok" -eq 1 ]; then
-	echo "RESULT unload=PASS (redirected paths drained; attempts=$_unload_attempt)"
+	echo "RESULT permanent_module=PASS (${_rmmod_error:-removal refused})"
 	PASS=$((PASS + 1))
 else
-	_module_refcnt=$(cat /sys/module/vpnhide_kmod/refcnt 2>/dev/null || echo unavailable)
-	_module_state=$(cat /sys/module/vpnhide_kmod/initstate 2>/dev/null || echo unavailable)
-	_module_holders=""
-	for _holder in /sys/module/vpnhide_kmod/holders/*; do
-		[ -e "$_holder" ] || continue
-		_module_holders="$_module_holders $(basename "$_holder")"
-	done
-	echo "RESULT unload=FAIL (attempts=$_unload_attempt refcnt=$_module_refcnt state=$_module_state holders=${_module_holders:-none}; ${_rmmod_error:-no rmmod diagnostic})"
+	_rmmod_error=$(tr '\n' ' ' </tmp/vpnhide-rmmod.log)
+	echo "RESULT permanent_module=FAIL (module/control plane missing after refusal; ${_rmmod_error:-no rmmod diagnostic})"
 	FAIL=$((FAIL + 1))
-fi
-for _pid in $_bind_pids; do
-	kill "$_pid" 2>/dev/null
-	wait "$_pid" 2>/dev/null
-done
-if [ "$_unload_ok" -eq 0 ]; then
-	if rmmod vpnhide_kmod >/tmp/vpnhide-rmmod-after-stop.log 2>&1; then
-		echo "UNLOAD_AFTER_WORKERS_STOP=PASS"
-	else
-		_rmmod_after_stop=$(tr '\n' ' ' </tmp/vpnhide-rmmod-after-stop.log)
-		echo "UNLOAD_AFTER_WORKERS_STOP=FAIL (${_rmmod_after_stop:-no rmmod diagnostic})"
-	fi
 fi
 
 PANIC=$(dmesg | grep -ci 'Unable to handle\|Internal error\|Oops\|BUG:\|Kernel panic')

@@ -1,12 +1,12 @@
 # vpnhide -- Kernel module
 
-kretprobe-based kernel module that hides VPN interfaces from selected apps. Part of [vpnhide](../README.md).
+Kernel-probe module that hides VPN interfaces from selected apps. Part of [vpnhide](../README.md).
 
 Zero footprint in the target app's process -- no modified function prologues, no framework classes, no anonymous memory regions. Invisible to aggressive anti-tamper SDKs.
 
 ## What it hooks
 
-| kretprobe target | What it filters | Detection path covered |
+| Hook target | What it filters | Detection path covered |
 |---|---|---|
 | `dev_ioctl` | `SIOCGIFFLAGS`, `SIOCGIFNAME`, and other per-interface ioctls: returns `-ENODEV` for VPN interfaces | Direct `ioctl()` calls from native code (Flutter/Dart, JNI, C/C++) |
 | `sock_ioctl` | `SIOCGIFCONF`: compacts VPN entries out of the returned interface array | Interface enumeration via `ioctl(SIOCGIFCONF)` |
@@ -18,6 +18,7 @@ Zero footprint in the target app's process -- no modified function prologues, no
 | `fib_dump_info` | Trims IPv4 VPN route entries and public physical-interface host-route hints from netlink route dumps via `skb_trim` | RTM_GETROUTE route table dumps |
 | `rt6_fill_node` | Trims IPv6 VPN route entries from netlink route dump replies via `skb_trim` | IPv6 RTM_GETROUTE dumps |
 | `fib_nl_fill_rule` | Trims target-UID policy rules and VPN interface rules from netlink rule dumps via `skb_trim` | RTM_GETRULE policy routing dumps |
+| `sock_setsockopt` / `sk_setsockopt` entry redirect | Returns `-ENODEV` for hidden VPN names and indices before socket state changes | Raw `SO_BINDTODEVICE` / `SO_BINDTOIFINDEX` calls |
 
 All filtering is **per-UID**: only processes whose UID is a `target` in the config written to `/proc/vpnhide_ctl` see the filtered view. Everyone else (system services, VPN client, NFC subsystem) sees the real data.
 
@@ -50,6 +51,10 @@ See [BUILDING.md](BUILDING.md) for the full guide (DDK Docker build, kernel sour
 1. `adb push vpnhide-kmod-<kmi>.zip /sdcard/Download/` (download the zip matching your device's GKI generation, e.g. `vpnhide-kmod-android14-6.1.zip`)
 2. KernelSU-Next manager -> Modules -> Install from storage
 3. Reboot
+
+The loaded `.ko` intentionally remains resident until reboot. Disable, update,
+or remove it through the root module manager and reboot to apply that change;
+ordinary `rmmod` is not supported.
 
 On boot:
 - `post-fs-data.sh` runs `insmod` to load the kernel module
@@ -119,9 +124,9 @@ int dev_ioctl(struct net *net,       // x0
 
 `SIOCGIFCONF` does NOT go through `dev_ioctl()`. The call path is `sock_ioctl → dev_ifconf()` -- a completely separate function from `dev_ioctl`, which handles `SIOCGIFFLAGS`, `SIOCGIFNAME`, etc.
 
-The natural choice would be to hook `dev_ifconf` directly, but on GKI 5.10 (Clang LTO) the linker inlines `dev_ifconf` into `sock_do_ioctl`. The `dev_ifconf` symbol stays in `kallsyms` as a dead stub, so `register_kretprobe` succeeds but the probe never fires. Confirmed by disassembly on Xiaomi 13 Lite (5.10.136) and Lenovo Legion 2 Pro (5.10.101): no `bl dev_ifconf` in `sock_do_ioctl`. On 6.1+, `SIOCGIFCONF` was moved out of `sock_do_ioctl` and is dispatched directly from `sock_ioctl`, so hooking `sock_do_ioctl` would miss it on newer kernels too.
+The natural choice would be to hook `dev_ifconf` directly, but Clang LTO can inline it into `sock_do_ioctl` while leaving an unused `dev_ifconf` symbol in `kallsyms`. A kretprobe can then register successfully without observing the live path. On 6.1+, `SIOCGIFCONF` is dispatched directly from `sock_ioctl`, so `sock_do_ioctl` is not a cross-version hook point either.
 
-`sock_ioctl` is the correct hook point because (1) it is the `file_operations->unlocked_ioctl` callback for socket fds — used as a function pointer, so LTO can never inline it; (2) all socket ioctls, including `SIOCGIFCONF`, pass through it on every kernel version (5.10 through 6.12+); (3) after `sock_ioctl` returns, the ifconf data (ifreq array + `ifc_len`) is already in userspace, so we filter it uniformly via `copy_from_user`/`copy_to_user` regardless of kernel version.
+`sock_ioctl` is the stable hook point because (1) it is the `file_operations->unlocked_ioctl` callback for socket fds and therefore remains address-taken; (2) the supported GKI paths dispatch socket ioctls through it; and (3) after it returns, the ifconf data (ifreq array + `ifc_len`) is already in userspace, so the module can filter it uniformly via `copy_from_user`/`copy_to_user`.
 
 The entry handler stashes the userspace `argp`; the return handler reads back the buffer, compacts out VPN entries, and updates `ifc_len` via `put_user`. Cost is one `cmd == SIOCGIFCONF` compare per socket ioctl for non-target paths.
 

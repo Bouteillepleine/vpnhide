@@ -31,8 +31,8 @@ Per kernel version, the harness validates:
   leave the socket unbound for a target; binding physical `eth0` still works,
 - malformed option pointers and lengths preserve native errors and leave the
   socket unbound instead of being dereferenced or fingerprinting the hook,
-- unloading the `.ko` while target bind probes are active drains redirected
-  entry-kprobe paths before module text is freed,
+- ordinary `rmmod` is refused and leaves the module/control plane active — the
+  entry-kprobe replacement text intentionally remains resident until reboot,
 - **no kernel panic** across the whole hook set.
 
 Vectors exercised (`init.sh`):

@@ -33,6 +33,11 @@
  * `regs->regs[N]`, and the socket-bind entry probes redirect the saved PC
  * according to AAPCS64. On other architectures those registers have a
  * different meaning, so the build is gated below.
+ *
+ * Lifecycle: the module is intentionally non-unloadable. Root module managers
+ * install, update, disable, and remove it across a reboot; keeping module text
+ * resident for the whole boot also makes redirected entry-kprobe targets an
+ * unconditional lifetime invariant.
  */
 
 #include <linux/module.h>
@@ -52,7 +57,6 @@
 #include <linux/rtnetlink.h>
 #include <linux/skbuff.h>
 #include <linux/inetdevice.h>
-#include <linux/rcupdate.h>
 #include <net/sock.h>
 #include <net/if_inet6.h>
 #include <net/ip_fib.h>
@@ -427,8 +431,8 @@ static struct kretprobe dev_ioctl_krp = {
 /*  eliminating userspace TOCTOU. A hidden interface returns ENODEV    */
 /*  without ever calling the mutation path.                            */
 /*                                                                    */
-/*  sock_setsockopt is the ordinary SOL_SOCKET path on every shipped  */
-/*  GKI. On 6.1+ MPTCP can delegate directly to sk_setsockopt, so that */
+/*  sock_setsockopt is the ordinary SOL_SOCKET path on supported GKI  */
+/*  kernels. On 6.1+ MPTCP can delegate directly to sk_setsockopt, so */
 /*  symbol is covered as a second required registration there.       */
 /* ================================================================== */
 
@@ -638,12 +642,14 @@ static struct socket_bind_kprobe_hook socket_bind_kprobe_hooks[] = {
 
 static bool socket_bind_hooks_registered;
 
-static void unregister_socket_bind_hooks(void)
+/* Registration keeps redirection disabled until every required probe exists.
+ * Therefore rollback cannot race a redirected wrapper and needs no runtime
+ * drain protocol. Once ready becomes true the permanent module keeps these
+ * probes and their replacement text resident until reboot. */
+static void rollback_socket_bind_hooks(void)
 {
-	bool must_drain = READ_ONCE(socket_bind_hooks_ready);
 	int i;
 
-	WRITE_ONCE(socket_bind_hooks_ready, false);
 	for (i = ARRAY_SIZE(socket_bind_kprobe_hooks) - 1; i >= 0; i--) {
 		struct socket_bind_kprobe_hook *hook =
 			&socket_bind_kprobe_hooks[i];
@@ -655,12 +661,6 @@ static void unregister_socket_bind_hooks(void)
 		pr_info(MODNAME ": redirect kprobe(%s) unregistered\n",
 			hook->name);
 	}
-	/* A redirected wrapper executes after the kprobe exception handler has
-	 * returned, so unregister_kprobe() alone cannot see it. Wait until every
-	 * task that could have observed hooks_ready=true passes through a Tasks-RCU
-	 * quiescent state before module text may be freed on rmmod/init failure. */
-	if (must_drain)
-		synchronize_rcu_tasks();
 	socket_bind_hooks_registered = false;
 }
 
@@ -696,7 +696,7 @@ static int register_socket_bind_hooks(void)
 fail:
 	pr_warn(MODNAME ": redirect kprobe(%s) failed: %d\n",
 		socket_bind_kprobe_hooks[i].name, ret);
-	unregister_socket_bind_hooks();
+	rollback_socket_bind_hooks();
 	return ret;
 }
 
@@ -705,12 +705,12 @@ fail:
 /*                                                                    */
 /*  Why sock_ioctl instead of dev_ifconf?                             */
 /*                                                                    */
-/*  On GKI 5.10 kernels built with Clang LTO (all stock Android       */
-/*  devices), the linker inlines dev_ifconf() into sock_do_ioctl().   */
+/*  On GKI 5.10 kernels built with Clang LTO, the linker can inline   */
+/*  dev_ifconf() into sock_do_ioctl().                                */
 /*  The symbol "dev_ifconf" stays in kallsyms as a dead stub, so      */
 /*  kretprobe registration succeeds but the probe never fires.        */
-/*  Confirmed by disassembly on Xiaomi 13 Lite (5.10.136) and Lenovo  */
-/*  Legion 2 Pro (5.10.101): no `bl dev_ifconf` in sock_do_ioctl.    */
+/*  The unused dev_ifconf symbol then has no live call from           */
+/*  sock_do_ioctl, despite successful kretprobe registration.         */
 /*                                                                    */
 /*  On 6.1+, SIOCGIFCONF was moved out of sock_do_ioctl() into       */
 /*  sock_ioctl() directly (handled in the switch statement), so       */
@@ -719,8 +719,7 @@ fail:
 /*  sock_ioctl is the correct hook point because:                     */
 /*  1. It is the file_operations->unlocked_ioctl callback for socket  */
 /*     fds — used as a function pointer, so LTO cannot inline it.     */
-/*  2. ALL socket ioctls, including SIOCGIFCONF, pass through it on   */
-/*     every kernel version (5.10 through 6.12+).                     */
+/*  2. Supported GKI paths dispatch socket ioctls through it.         */
 /*  3. After sock_ioctl returns, the ifconf data (ifreq array +       */
 /*     ifc_len) is already in userspace — we filter it uniformly via  */
 /*     copy_from_user/copy_to_user regardless of kernel version.      */
@@ -1702,10 +1701,8 @@ static struct kretprobe fib_rule_fill_krp = {
 };
 
 /* ================================================================== */
-/*  Module init / exit                                                */
+/*  Module init                                                       */
 /* ================================================================== */
-
-static struct proc_dir_entry *ctl_entry;
 
 struct kretprobe_reg {
 	struct kretprobe *krp;
@@ -1772,52 +1769,33 @@ static int __init vpnhide_init(void)
 		pr_warn(MODNAME ": only %d/%zu kretprobes registered — "
 				"some detection paths are not covered\n",
 			ok, ARRAY_SIZE(probes));
-	register_socket_bind_hooks();
-
 	/* 0600: root-only read/write. The config snapshot is written here by
 	 * service.sh and the VPN Hide app (both root). Apps must not see the
 	 * control channel. (Renamed from vpnhide_targets for semantic accuracy
 	 * — it is now control+stats, not just targets, §OPEN-4.) */
-	ctl_entry = proc_create("vpnhide_ctl", 0600, NULL, &ctl_proc_ops);
-	if (!ctl_entry) {
+	if (!proc_create("vpnhide_ctl", 0600, NULL, &ctl_proc_ops)) {
 		/* Without /proc/vpnhide_ctl userspace cannot configure the
 		 * target list, so the module would silently filter nothing —
 		 * fail loudly instead of pretending to work. */
 		pr_err(MODNAME ": proc_create(vpnhide_ctl) failed; aborting\n");
-		unregister_socket_bind_hooks();
 		for (i = 0; i < ARRAY_SIZE(probes); i++)
 			if (probes[i].registered)
 				unregister_kretprobe(probes[i].krp);
 		return -ENOMEM;
 	}
 
+	/* Activate execution redirection last. No fallible initialization may run
+	 * after module text becomes reachable outside the kprobe handler. The module
+	 * has no exit function and remains resident until reboot. */
+	register_socket_bind_hooks();
+
 	pr_info(MODNAME
 		": loaded — write a config snapshot to /proc/vpnhide_ctl\n");
 	return 0;
 }
 
-static void __exit vpnhide_exit(void)
-{
-	int i;
-
-	if (ctl_entry)
-		proc_remove(ctl_entry);
-	unregister_socket_bind_hooks();
-
-	for (i = 0; i < ARRAY_SIZE(probes); i++) {
-		if (probes[i].registered) {
-			unregister_kretprobe(probes[i].krp);
-			pr_info(MODNAME ": kretprobe(%s) unregistered "
-					"(missed %d)\n",
-				probes[i].name, probes[i].krp->nmissed);
-		}
-	}
-
-	pr_info(MODNAME ": unloaded\n");
-}
-
 module_init(vpnhide_init);
-module_exit(vpnhide_exit);
+/* Deliberately no module_exit(): vpnhide_kmod stays loaded until reboot. */
 
 /* The source is MIT-licensed (see SPDX header), but MODULE_LICENSE("GPL")
  * is required to resolve EXPORT_SYMBOL_GPL symbols (kretprobes, etc.)
