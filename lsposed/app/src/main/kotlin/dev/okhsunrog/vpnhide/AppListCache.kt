@@ -48,10 +48,11 @@ internal fun looksLikeVpnAppName(label: String): Boolean = label.uppercase(Local
  * otherwise every row in the list reads "Cromite (0)", "Chrome (0)",
  * ... for users who don't even have a secondary profile.
  *
- * When [userNames] contains an entry for a user ID, its friendly name
- * ("Work", "Second Space") is used; otherwise we fall back to the raw
+ * When [userNames] contains an entry for a user ID, its display name
+ * ("Work", "Cloned app") is used; otherwise we fall back to the raw
  * numeric ID. This keeps the helper usable even before the user-name
- * map is loaded (no root / parse failure).
+ * map is loaded (no root / parse failure) — see
+ * [AppListCache.userNames] for how nameless profiles get a name.
  */
 internal fun labelWithUsers(
     label: String,
@@ -80,10 +81,13 @@ internal object AppListCache : StateCache<List<AppSummary>>(
 ) {
     val apps: StateFlow<List<AppSummary>?> get() = value
 
-    /** user_id → friendly profile name (e.g. 10 → "Work"). Populated
-     * from `pm list users` alongside the package scan. Empty map if
-     * root isn't available or parsing failed — `labelWithUsers` falls
-     * back to numeric IDs in that case.
+    /** user_id → display profile name (e.g. 10 → "Work"). Populated
+     * from `pm list users` alongside the package scan. Profiles the OS
+     * reports without a name — clone profiles are routinely nameless —
+     * get a name derived from their type ("Cloned app", "Private
+     * space") instead of leaking a bare user ID into the UI. Empty map
+     * if root isn't available or parsing failed — `labelWithUsers`
+     * falls back to numeric IDs in that case.
      */
     private val _userNames = MutableStateFlow<Map<Int, String>>(emptyMap())
     val userNames: StateFlow<Map<Int, String>> = _userNames.asStateFlow()
@@ -126,7 +130,7 @@ internal object AppListCache : StateCache<List<AppSummary>>(
             val pm = appContext.packageManager
             val vpnServicePkgs = queryVpnServiceProviders(pm)
             val (packages, users) = loadPackagesAndUsersViaRoot()
-            _userNames.value = users
+            _userNames.value = users.mapValues { (_, profile) -> profileDisplayName(appContext, profile) }
             if (packages.isNotEmpty()) {
                 packages.entries
                     .map { (pkg, meta) ->
@@ -211,30 +215,59 @@ internal object AppListCache : StateCache<List<AppSummary>>(
      * Enumerate every installed package and every user profile in a
      * single `su` invocation. `pm list packages -U -f --user all` gives
      * APK path + UID per (pkg, user) tuple; `pm list users` gives the
-     * friendly profile names ("Work", "Second Space") that the UI
-     * renders instead of raw user IDs. Two commands, one `su` spawn —
-     * separated by a sentinel the parser splits on.
+     * profile names ("Work", "Second Space") and types that the UI
+     * renders instead of raw user IDs. One `su` spawn — the packages
+     * section is separated from the users section by a sentinel the
+     * parser splits on.
+     *
+     * Both `pm list users` forms are emitted. `-v` is what carries the
+     * profile *type* (`profile.CLONE`, `profile.MANAGED`, …), which is
+     * the only way to name a profile the OS left nameless; it exists
+     * since Android 11 but prints "Invalid option" on anything older,
+     * so the plain form follows as the naming fallback. AOSP pins the
+     * plain format, which also makes it a safety net if an OEM reworks
+     * the verbose printf.
      *
      * Packages output is one of:
      *   package:<apk_path>=<pkg> uid:<uid>            (single-user)
      *   package:<apk_path>=<pkg> uid:<uid>,<uid>,...  (AOSP --user all)
      *   package:<apk_path>=<pkg> uid:<uid>            (repeated per user
      *                                                  on some ROMs)
-     * Users output is:
-     *   UserInfo{<id>:<name>:<flags>} [running ...]
+     * Users output is parsed by [parseUserProfiles].
      */
-    private fun loadPackagesAndUsersViaRoot(): Pair<Map<String, PkgMeta>, Map<Int, String>> {
+    private fun loadPackagesAndUsersViaRoot(): Pair<Map<String, PkgMeta>, Map<Int, UserProfileInfo>> {
         val (exitCode, raw) =
             suExec(
                 "pm list packages -U -f --user all 2>/dev/null; " +
                     "echo '$USERS_SENTINEL'; " +
+                    "pm list users -v 2>/dev/null; " +
                     "pm list users 2>/dev/null",
             )
         if (exitCode != 0) return emptyMap<String, PkgMeta>() to emptyMap()
         val parts = raw.split(USERS_SENTINEL, limit = 2)
         val packages = parsePackages(parts[0])
-        val users = if (parts.size > 1) parseUsers(parts[1]) else emptyMap()
+        val users = if (parts.size > 1) parseUserProfiles(parts[1]) else emptyMap()
         return packages to users
+    }
+
+    /**
+     * A profile's own name wins — it is what the system UI shows. Only
+     * when the OS reports none do we synthesize one from the profile
+     * type, so the Hiding list never shows a bare `(10)` the user can't
+     * place against anything on their device.
+     */
+    private fun profileDisplayName(
+        context: Context,
+        profile: UserProfileInfo,
+    ): String {
+        profile.name?.let { return it }
+        return when (profile.kind) {
+            UserProfileKind.WORK -> context.getString(R.string.profile_kind_work)
+            UserProfileKind.CLONE -> context.getString(R.string.profile_kind_clone)
+            UserProfileKind.PRIVATE -> context.getString(R.string.profile_kind_private)
+            UserProfileKind.SECONDARY -> context.getString(R.string.profile_kind_secondary, profile.id)
+            UserProfileKind.UNKNOWN -> context.getString(R.string.profile_kind_unknown, profile.id)
+        }
     }
 
     private fun parsePackages(raw: String): Map<String, PkgMeta> {
@@ -271,23 +304,6 @@ internal object AppListCache : StateCache<List<AppSummary>>(
                         )
                     }
             }
-        return out
-    }
-
-    // `UserInfo{10:Work:1030}` — flags are trailing hex, name is
-    // everything between the first `:` and the last `:`. The lazy
-    // name-group (.*?) combined with a greedy flags-group anchored to
-    // `}` handles names that contain `:` (rare, but Android allows it).
-    private val userLine = Regex("""UserInfo\{(\d+):(.*?):[0-9a-fA-F]+\}""")
-
-    private fun parseUsers(raw: String): Map<Int, String> {
-        val out = LinkedHashMap<Int, String>()
-        raw.lineSequence().forEach { line ->
-            val m = userLine.find(line) ?: return@forEach
-            val id = m.groupValues[1].toIntOrNull() ?: return@forEach
-            val name = m.groupValues[2].trim()
-            if (name.isNotEmpty()) out[id] = name
-        }
         return out
     }
 

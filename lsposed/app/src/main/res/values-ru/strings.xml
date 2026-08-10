@@ -19,6 +19,14 @@
     <string name="target_group_configured">Настроенные</string>
     <string name="target_group_other_apps">Остальные приложения</string>
     <string name="target_group_header">%1$s · %2$d</string>
+
+    <!-- Fallback names for user profiles the system reports without a name -->
+    <string name="profile_kind_work">Рабочий профиль</string>
+    <string name="profile_kind_clone">Клон приложения</string>
+    <string name="profile_kind_private">Приватное пространство</string>
+    <string name="profile_kind_secondary">Пользователь %d</string>
+    <string name="profile_kind_unknown">Профиль %d</string>
+
     <string name="apps_help_title">Как это работает</string>
     <string name="java_hooks_title">Java-хуки</string>
     <string name="native_hooks_title">Нативные хуки</string>
