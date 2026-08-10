@@ -6,12 +6,14 @@
 #   + the Alpine minirootfs tarball (so the test needs no download at run time)
 #
 # Stock GKI boot images can't boot in plain QEMU (no virtio/console drivers),
-# so we build kernel/common@<kmi> with kmod/test/qemu.config merged onto
-# gki_defconfig, using the DDK container's matching clang. The module itself is
-# NOT baked — it's built per-PR by the kmod CI job and passed in via
+# so we build the matrix-pinned kernel/common commit for each KMI with
+# kmod/test/qemu.config merged onto gki_defconfig, using the DDK container's
+# matching clang. The module itself is NOT baked — it's built per-PR by the
+# kmod CI job and passed in via
 # VPNHIDE_QEMU_KO (a kdir-built module loads fine here: same source, same
-# vermagic). Built rarely by qemu-image.yml since kernels change seldom.
-ARG KMI
+# vermagic). Built rarely by qemu-image.yml; source updates are explicit matrix
+# pin changes rather than ambient movement of the KMI branches.
+ARG KMI=android14-6.1
 
 # --- builder: the bionic getifaddrs probe ----------------------------------
 # The gai_getifaddrs vector must run a *bionic* binary (it validates how
@@ -40,11 +42,12 @@ RUN TC="/opt/android-ndk-${NDK_VER}/toolchains/llvm/prebuilt/linux-x86_64/bin" &
 
 FROM ghcr.io/ylarod/ddk-min:${KMI}-20260313
 ARG KMI
+ARG KERNEL_COMMIT
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         qemu-system-arm cpio gzip curl ca-certificates git \
-        bc bison flex libelf-dev libssl-dev \
+        bc bison flex libelf-dev libssl-dev patch \
         gcc-aarch64-linux-gnu && \
     rm -rf /var/lib/apt/lists/*
 
@@ -55,10 +58,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # (incremental-rebuild artifacts, ~half the tree, not needed for external
 # modules) to keep the image smaller.
 COPY kmod/test/qemu.config /tmp/qemu.config
+COPY .github/docker/ddk-qemu/extract-cert-key-pass.patch /tmp/extract-cert-key-pass.patch
 RUN CLANG_BIN="$(ls -d /opt/ddk/clang/*/bin | head -1)" && export PATH="$CLANG_BIN:$PATH" && \
     mkdir -p /opt/qemu && \
-    git clone --depth=1 -b "${KMI}" \
-        https://android.googlesource.com/kernel/common /opt/qemu/linux && \
+    git init /opt/qemu/linux && \
+    git -C /opt/qemu/linux remote add origin \
+        https://android.googlesource.com/kernel/common && \
+    git -C /opt/qemu/linux fetch --depth=1 origin "${KERNEL_COMMIT}" && \
+    git -C /opt/qemu/linux checkout --detach FETCH_HEAD && \
+    test "$(git -C /opt/qemu/linux rev-parse HEAD)" = "${KERNEL_COMMIT}" && \
+    case "${KMI}" in \
+        android14-6.1|android15-6.6) \
+            patch -d /opt/qemu/linux -p1 < /tmp/extract-cert-key-pass.patch ;; \
+    esac && \
     cd /opt/qemu/linux && \
     make ARCH=arm64 LLVM=1 gki_defconfig && \
     ./scripts/kconfig/merge_config.sh -m .config /tmp/qemu.config && \
@@ -67,7 +79,7 @@ RUN CLANG_BIN="$(ls -d /opt/ddk/clang/*/bin | head -1)" && export PATH="$CLANG_B
     make ARCH=arm64 LLVM=1 modules_prepare && \
     cp arch/arm64/boot/Image /opt/qemu/Image && \
     cp vmlinux.symvers Module.symvers && \
-    rm -f /tmp/qemu.config && \
+    rm -f /tmp/qemu.config /tmp/extract-cert-key-pass.patch && \
     find /opt/qemu/linux -name '*.cmd' -delete
 
 RUN curl -fsSL \

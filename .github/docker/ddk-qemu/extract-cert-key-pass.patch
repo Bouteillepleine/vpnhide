@@ -1,0 +1,10 @@
+--- a/certs/extract-cert.c
++++ b/certs/extract-cert.c
+@@ -80,3 +80,1 @@
+-#ifdef USE_PKCS11_ENGINE
+ static const char *key_pass;
+-#endif
+@@ -111,3 +109,1 @@
+-#ifdef USE_PKCS11_ENGINE
+ 	key_pass = getenv("KBUILD_SIGN_PIN");
+-#endif
