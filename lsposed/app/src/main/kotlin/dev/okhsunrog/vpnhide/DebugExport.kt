@@ -135,6 +135,8 @@ private suspend fun buildExportDiagnosticReport(
                 shellSnapshot.sections["current_boot_id"].orEmpty(),
             ),
         complete = true,
+        kmodFilesystemHookInstalled =
+            kmodFilesystemHookInstalled(shellSnapshot.sections["kmod_state"].orEmpty()),
     )
 
 // ── Debug-zip section builders (each produces one file in the export) ─────

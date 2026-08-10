@@ -79,6 +79,26 @@ class LayerStatusTest {
     }
 
     @Test
+    fun `optional kmod filesystem vectors are owned only when their hook is installed`() {
+        val outcomes = mapOf("sys_class_net" to CheckOutcome.Leak)
+        val backend = kmod(installed(active = true))
+
+        assertEquals(
+            LayerStatus.Active(hidden = 0, leaks = 0),
+            summarizeNativeLayer(backend, outcomes),
+        )
+        assertEquals(1, unownedNativeLeaks(backend, outcomes))
+        assertEquals(
+            LayerStatus.Active(hidden = 0, leaks = 1),
+            summarizeNativeLayer(backend, outcomes, kmodFilesystemHookInstalled = true),
+        )
+        assertEquals(
+            0,
+            unownedNativeLeaks(backend, outcomes, kmodFilesystemHookInstalled = true),
+        )
+    }
+
+    @Test
     fun `ownership is per backend family - zygisk owns what the kernel does not`() {
         // Mirror image of the kmod case: proc_dev (zygisk openat) is zygisk-owned;
         // netlink_getrule (fib_nl_fill_rule, kernel-only — no zygisk parses rule

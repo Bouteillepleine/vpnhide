@@ -437,10 +437,11 @@ backend = "kernel"
 Each backend applies `mask & own_hooks` and ignores foreign bits. A config mask
 is global; a backend only acts on its own bits.
 
-Current kernel hooks (`.ko` / KPM, 11): `fib_route_seq_show`,
+Current shared kernel hooks (`.ko` / KPM, 11): `fib_route_seq_show`,
 `ipv6_route_seq_show`, `rtnl_fill_ifinfo`, `inet_fill_ifaddr`,
 `inet6_fill_ifaddr`, `dev_ioctl`, `sock_ioctl`, `fib_dump_info`, `rt6_fill_node`,
-`fib_nl_fill_rule`, `socket_bind_interface`. Current LSPosed Java hooks (8):
+`fib_nl_fill_rule`, `socket_bind_interface`. The optional `.ko`-only hook is
+`filesystem_iface_paths`; it is not part of KPM's owned mask. Current LSPosed Java hooks (8):
 `lsposed_link_properties`,
 `lsposed_network_capabilities`, `lsposed_network_info`, `lsposed_network`,
 `lsposed_connectivity_result`, `lsposed_connectivity_callback`,

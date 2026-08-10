@@ -107,8 +107,9 @@ internal fun buildDiagnosticReport(
     backend: DisplayNativeBackend,
     lsposedActive: Boolean,
     complete: Boolean,
+    kmodFilesystemHookInstalled: Boolean = false,
 ): DiagnosticReport {
-    val nativeChecks = nativeDiagnosticChecks(results, backend)
+    val nativeChecks = nativeDiagnosticChecks(results, backend, kmodFilesystemHookInstalled)
     // The per-check outcome is the single source of truth; the by-id map the layer
     // summary needs is derived here (owned spec checks only), not stored a second
     // time on CheckResults.
@@ -117,7 +118,8 @@ internal fun buildDiagnosticReport(
         if (results == null) {
             0
         } else {
-            unownedNativeLeaks(backend, nativeOutcomes) + results.nativeExtra.count { it.outcome is CheckOutcome.Leak }
+            unownedNativeLeaks(backend, nativeOutcomes, kmodFilesystemHookInstalled) +
+                results.nativeExtra.count { it.outcome is CheckOutcome.Leak }
         }
     return DiagnosticReport(
         gate = gate,
@@ -125,7 +127,7 @@ internal fun buildDiagnosticReport(
             LayerReport(
                 layer = CheckLayer.NATIVE,
                 backend = backend.id,
-                status = summarizeNativeLayer(backend, nativeOutcomes),
+                status = summarizeNativeLayer(backend, nativeOutcomes, kmodFilesystemHookInstalled),
                 unownedLeaks = unowned,
                 checks = nativeChecks,
             ),
@@ -144,9 +146,10 @@ internal fun buildDiagnosticReport(
 private fun nativeDiagnosticChecks(
     results: CheckResults?,
     backend: DisplayNativeBackend,
+    kmodFilesystemHookInstalled: Boolean,
 ): List<DiagnosticCheck> {
     if (results == null) return emptyList()
-    val ownedHooks = ownedNativeHooks(backend.id)
+    val ownedHooks = ownedNativeHooks(backend.id, kmodFilesystemHookInstalled)
     // native and nativeExtra are built in NATIVE_CHECKS order, so a positional zip
     // is stable by construction — the spec carries the stable id + hook coverage,
     // the result carries the localized label, outcome, and root ground-truth detail.

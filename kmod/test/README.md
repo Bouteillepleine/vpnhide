@@ -32,6 +32,8 @@ Per kernel version, the harness validates:
   leave the socket unbound for a target; binding physical `eth0` still works,
 - malformed option pointers and lengths preserve native errors and leave the
   socket unbound instead of being dereferenced or fingerprinting the hook,
+- optional VFS concealment makes `vpn0` absent from stat/open/readdir probes
+  under sysfs and `/proc/sys/net`, while keeping physical `eth0` entries,
 - ordinary `rmmod` is refused and leaves the module/control plane active — the
   entry-kprobe replacement text intentionally remains resident until reboot,
 - **no kernel panic** across the whole hook set.
@@ -50,6 +52,8 @@ Vectors exercised (`init.sh`):
 | netlink route dump v6 | `ip -6 route show table all` | `rt6_fill_node` |
 | policy rules | `ip rule show` | `fib_nl_fill_rule` |
 | socket bind by name/index | `/bind-probe` static NDK raw-syscall probe | `socket_bind_interface` |
+| sysfs stat/open/readdir | `/sys/class/net/vpn0` and its directory | `filesystem_iface_paths` |
+| proc-sys stat/readdir | `/proc/sys/net/ipv4/{conf,neigh}/vpn0` | `filesystem_iface_paths` |
 
 **Limits:** GitHub/QEMU runners have no KVM, so the VM runs under TCG (software
 emulation) — correct, just slow. The test kernel is *our* `kernel/common` build

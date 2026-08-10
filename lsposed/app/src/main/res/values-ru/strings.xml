@@ -407,6 +407,9 @@
     <string name="settings_background_update_checks">Автоматическая проверка обновлений</string>
     <string name="settings_background_update_checks_sub">Раз в сутки проверять новые релизы в фоне и уведомлять, когда доступна новая версия.</string>
     <string name="settings_diagnostics_section">Диагностика</string>
+    <string name="settings_experimental_protection">Экспериментальная защита</string>
+    <string name="settings_filesystem_hiding">Скрывать VPN-пути в файловой системе</string>
+    <string name="settings_filesystem_hiding_sub">Опциональные VFS-хуки только для kmod скрывают VPN-интерфейсы в /sys и /proc/sys. Требуется перезагрузка; по умолчанию выключено, поскольку хуки работают на глобальных файловых путях.</string>
     <string name="settings_diagnostics_title">Подробная диагностика</string>
     <string name="settings_diagnostics_sub">Полный набор проверок скрытия</string>
     <string name="settings_debug_section">Отладка</string>

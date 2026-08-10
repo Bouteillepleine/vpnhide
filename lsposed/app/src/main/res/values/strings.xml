@@ -393,6 +393,7 @@
     <string name="check_proc_if_inet6" translatable="false">/proc/net/if_inet6</string>
     <string name="check_proc_dev" translatable="false">/proc/net/dev</string>
     <string name="check_sys_class_net" translatable="false">/sys/class/net</string>
+    <string name="check_proc_sys_net" translatable="false">/proc/sys/net/*/{conf,neigh}</string>
     <string name="check_net_iface_enum" translatable="false">NetworkInterface enum</string>
 
     <!-- Java/LSPosed check names (technical, not translatable) -->
@@ -435,6 +436,9 @@
     <string name="settings_background_update_checks">Automatic update checks</string>
     <string name="settings_background_update_checks_sub">Check once a day in the background and notify when a new release is available.</string>
     <string name="settings_diagnostics_section">Diagnostics</string>
+    <string name="settings_experimental_protection">Experimental protection</string>
+    <string name="settings_filesystem_hiding">Hide VPN filesystem paths</string>
+    <string name="settings_filesystem_hiding_sub">Optional kmod-only VFS hooks hide VPN interfaces under /sys and /proc/sys. Reboot required; disabled by default because the hooks run on global filesystem paths.</string>
     <string name="settings_diagnostics_title">Detailed diagnostics</string>
     <string name="settings_diagnostics_sub">Run the full hiding check suite</string>
     <string name="settings_debug_section">Debugging</string>

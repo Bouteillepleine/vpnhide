@@ -39,10 +39,16 @@ val LayerStatus.Active.verdict: Verdict
 
 /** Native-check ids the active backend owns — its checks whose expected hooks the
  * backend covers. One derivation shared by the tile summary and the unowned count. */
-private fun ownedNativeCheckIds(backend: DisplayNativeBackend): Set<String> {
-    val owned = ownedNativeHooks(backend.id)
+private fun ownedNativeCheckIds(
+    backend: DisplayNativeBackend,
+    kmodFilesystemHookInstalled: Boolean = false,
+): Set<String> {
+    val owned = ownedNativeHooks(backend.id, kmodFilesystemHookInstalled)
     return NATIVE_CHECKS.filter { it.coveredBy(owned) }.map { it.id }.toSet()
 }
+
+internal fun kmodFilesystemHookInstalled(statusRaw: String): Boolean =
+    parseProtocolStatusBlock(statusRaw)?.hooks?.let { hooks -> KMOD_HOOKS.any(hooks::hasHook) } == true
 
 /**
  * Native tile = health of the active backend, judged **only on vectors it owns**
@@ -54,10 +60,11 @@ private fun ownedNativeCheckIds(backend: DisplayNativeBackend): Set<String> {
 internal fun summarizeNativeLayer(
     backend: DisplayNativeBackend,
     outcomes: Map<String, CheckOutcome>,
+    kmodFilesystemHookInstalled: Boolean = false,
 ): LayerStatus {
     if (backend.state is ModuleState.NotInstalled) return LayerStatus.Absent
     if (!moduleActive(backend.state)) return LayerStatus.Inactive
-    val ownedIds = ownedNativeCheckIds(backend)
+    val ownedIds = ownedNativeCheckIds(backend, kmodFilesystemHookInstalled)
     // Both counts are scoped to vectors this backend owns, so hidden and leaks
     // describe the same vector set — a cross-backend hidden (only possible if the
     // one-active-backend invariant ever breaks) can't mask an owned Broken verdict.
@@ -91,8 +98,9 @@ internal fun summarizeJavaLayer(
 internal fun unownedNativeLeaks(
     backend: DisplayNativeBackend,
     outcomes: Map<String, CheckOutcome>,
+    kmodFilesystemHookInstalled: Boolean = false,
 ): Int {
     if (backend.state !is ModuleState.Installed || !moduleActive(backend.state)) return 0
-    val ownedIds = ownedNativeCheckIds(backend)
+    val ownedIds = ownedNativeCheckIds(backend, kmodFilesystemHookInstalled)
     return outcomes.count { (id, outcome) -> outcome is CheckOutcome.Leak && id !in ownedIds }
 }

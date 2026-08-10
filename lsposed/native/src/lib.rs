@@ -885,6 +885,36 @@ fn check_sys_class_net() -> CheckOutput {
     }
 }
 
+fn check_proc_sys_net_ifaces() -> CheckOutput {
+    const DIRS: [&str; 4] = [
+        "/proc/sys/net/ipv4/conf",
+        "/proc/sys/net/ipv4/neigh",
+        "/proc/sys/net/ipv6/conf",
+        "/proc/sys/net/ipv6/neigh",
+    ];
+    let mut visible = Vec::new();
+    for path in DIRS {
+        let entries = match fs::read_dir(path) {
+            Ok(entries) => entries,
+            Err(e) if is_selinux_denial(&e) => {
+                return CheckOutput::selinux_blocked(format!("access denied by SELinux ({e})"));
+            }
+            Err(e) => return CheckOutput::fail(format!("cannot open {path}: {e}")),
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if is_vpn_iface(&name) {
+                visible.push(format!("{path}/{name}"));
+            }
+        }
+    }
+    if visible.is_empty() {
+        CheckOutput::pass("no VPN interface directories".to_string())
+    } else {
+        CheckOutput::fail(format!("VPN paths: {}", join_list(&visible)))
+    }
+}
+
 // ── /proc/net/* wrappers: one uniffi export per path so the Kotlin side
 //    keeps a thin `checkProcNetFoo(): CheckOutput` surface instead of
 //    pushing path strings across the FFI. ──────────────────────────────
@@ -948,6 +978,7 @@ fn run_all() -> Vec<CheckJson> {
         j("proc_if_inet6", check_proc_net_if_inet6()),
         j("proc_dev", check_proc_net_dev()),
         j("sys_class_net", check_sys_class_net()),
+        j("proc_sys_net", check_proc_sys_net_ifaces()),
     ]
 }
 

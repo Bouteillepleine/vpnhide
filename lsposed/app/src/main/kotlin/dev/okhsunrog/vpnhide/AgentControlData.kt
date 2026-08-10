@@ -20,7 +20,9 @@ internal fun resolveHookIds(
 
 internal fun parseNativeHookFamily(value: String): NativeHookFamily =
     when (value.trim().lowercase()) {
-        "kernel", "kmod", "kpm" -> NativeHookFamily.Kernel
+        "kernel" -> NativeHookFamily.Kernel
+        "kmod" -> NativeHookFamily.Kmod
+        "kpm" -> NativeHookFamily.Kpm
         "zygisk" -> NativeHookFamily.Zygisk
         else -> throw IllegalArgumentException("Unknown native hook family: $value")
     }

@@ -103,13 +103,13 @@ results. A `null` answer (no root) does not block.
 
 ## 6. Empirical facts that shape the checks
 
-- **SELinux carries part of "protection", and it is invisible without the
-  differential.** On both test kernels, 8 of 13 native probes "pass" under enforcing
-  *only* because SELinux denies the read. Three of those — `/proc/net/if_inet6`,
-  `/proc/net/dev`, `/sys/class/net` — have **no backend coverage at all** under a
-  kernel backend (no kernel hook exists for those procfs/sysfs paths, by design); on a
-  permissive device they leak `tun0`. This is why the permissive-SELinux warning
-  exists and why SELinux attribution is dev-facing, not a user alarm.
+- **SELinux can carry part of "protection", and it is invisible without the
+  differential.** `/proc/net/if_inet6` and `/proc/net/dev` still have no kernel
+  backend hook. `/sys/class/net` and the per-interface `/proc/sys/net` trees are
+  covered only when the optional `.ko` filesystem feature was enabled before
+  reboot; KPM does not claim them. When SELinux denies a path first, the
+  differential attributes that result to SELinux rather than overstating backend
+  coverage. This is also why permissive devices need an explicit warning.
 - **The VPN lives in protected sockets + per-UID policy tables, not the main route
   table.** A split-tunnel VPN app marks its sockets and installs `ip rule … uidrange
   <uid> lookup tun0`; it does *not* put a default route in the main table. So
@@ -142,7 +142,8 @@ SELinux/zygisk territory by design, not bugs. Full hiding matrix in
 | `proc_ipv6_route` | `/proc/net/ipv6_route` | `ipv6_route_seq_show` | |
 | `proc_if_inet6` | `/proc/net/if_inet6` | **(none)** | no kernel seq_show hook — zygisk `openat` or SELinux only |
 | `proc_dev` | `/proc/net/dev` | **(none)** | zygisk `openat` or SELinux only |
-| `sys_class_net` | `/sys/class/net` | **(none)** | SELinux only |
+| `sys_class_net` | `/sys/class/net` | `filesystem_iface_paths` (`.ko`, optional) | reboot-gated; otherwise SELinux only |
+| `proc_sys_net` | `/proc/sys/net/*/{conf,neigh}` | `filesystem_iface_paths` (`.ko`, optional) | reboot-gated; otherwise SELinux only |
 
 `socket_bind_interface` intentionally has no app-process root-differential row
 yet. An honest test needs the hidden interface name/index from the root view,

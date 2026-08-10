@@ -17,6 +17,7 @@ internal data class CanonicalConfig(
 
 internal data class CanonicalSettings(
     val rememberSuperkey: Boolean = false,
+    val experimentalFilesystemHiding: Boolean = false,
     val autoHideVpnServices: Boolean = true,
     val autoHideVpnName: Boolean = false,
     val autoHideExcludedPackages: Set<String> = emptySet(),
@@ -48,6 +49,8 @@ internal data class NativeRole(
 
 internal enum class NativeHookFamily {
     Kernel,
+    Kmod,
+    Kpm,
     Zygisk,
 }
 
@@ -57,7 +60,7 @@ internal data class NativeHookOverrides(
 ) {
     fun hooksFor(family: NativeHookFamily): List<String>? =
         when (family) {
-            NativeHookFamily.Kernel -> kernel
+            NativeHookFamily.Kernel, NativeHookFamily.Kmod, NativeHookFamily.Kpm -> kernel
             NativeHookFamily.Zygisk -> zygisk
         }
 
@@ -66,7 +69,7 @@ internal data class NativeHookOverrides(
         hooks: List<String>?,
     ): NativeHookOverrides =
         when (family) {
-            NativeHookFamily.Kernel -> copy(kernel = hooks)
+            NativeHookFamily.Kernel, NativeHookFamily.Kmod, NativeHookFamily.Kpm -> copy(kernel = hooks)
             NativeHookFamily.Zygisk -> copy(zygisk = hooks)
         }
 
@@ -81,7 +84,11 @@ private data class ParsedHookRole(
 
 internal val NativeKernelHookEntries: List<HookIds.Hook> = KERNEL_HOOKS
 
+internal val NativeKmodHookEntries: List<HookIds.Hook> = KERNEL_HOOKS + KMOD_HOOKS
+
 internal val ZygiskNativeHookEntries: List<HookIds.Hook> = ZYGISK_HOOKS
+
+internal val NativeHookEntries: List<HookIds.Hook> = NativeKernelHookEntries
 
 internal val LsposedJavaHookEntries: List<HookIds.Hook> =
     LSPOSED_HOOKS.filter { it != HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY }
@@ -89,13 +96,17 @@ internal val LsposedJavaHookEntries: List<HookIds.Hook> =
 internal fun nativeHookEntriesFor(family: NativeHookFamily): List<HookIds.Hook> =
     when (family) {
         NativeHookFamily.Kernel -> NativeKernelHookEntries
+        NativeHookFamily.Kmod -> NativeKmodHookEntries
+        NativeHookFamily.Kpm -> NativeKernelHookEntries
         NativeHookFamily.Zygisk -> ZygiskNativeHookEntries
     }
 
 internal fun nativeHookFamilyFor(backend: NativeBackendId?): NativeHookFamily =
     when (backend) {
         NativeBackendId.Zygisk -> NativeHookFamily.Zygisk
-        NativeBackendId.Kmod, NativeBackendId.Kpm, null -> NativeHookFamily.Kernel
+        NativeBackendId.Kmod -> NativeHookFamily.Kmod
+        NativeBackendId.Kpm -> NativeHookFamily.Kpm
+        null -> NativeHookFamily.Kernel
     }
 
 internal fun hookSelectionMask(
@@ -136,6 +147,11 @@ internal fun parseCanonicalConfig(raw: String): CanonicalConfig? {
         settings =
             CanonicalSettings(
                 rememberSuperkey = settingsJson?.optBoolean("rememberSuperkey", defaultSettings.rememberSuperkey) == true,
+                experimentalFilesystemHiding =
+                    settingsJson?.optBoolean(
+                        "experimentalFilesystemHiding",
+                        defaultSettings.experimentalFilesystemHiding,
+                    ) ?: defaultSettings.experimentalFilesystemHiding,
                 autoHideVpnServices =
                     settingsJson?.optBoolean("autoHideVpnServices", defaultSettings.autoHideVpnServices)
                         ?: defaultSettings.autoHideVpnServices,
@@ -392,6 +408,9 @@ internal fun canonicalConfigJson(config: CanonicalConfig): String =
         append("  \"settings\": {\n")
         append("    \"rememberSuperkey\": ")
         append(config.settings.rememberSuperkey)
+        append(",\n")
+        append("    \"experimentalFilesystemHiding\": ")
+        append(config.settings.experimentalFilesystemHiding)
         append(",\n")
         append("    \"autoHideVpnServices\": ")
         append(config.settings.autoHideVpnServices)

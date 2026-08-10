@@ -31,7 +31,8 @@ enum vpnhide_hook_id {
 	VPNHIDE_HOOK_ZYGISK_RECVFROM_CHK           = 24,
 	VPNHIDE_HOOK_SOCKET_BIND_INTERFACE         = 25,
 	VPNHIDE_HOOK_ZYGISK_SETSOCKOPT             = 26,
-	VPNHIDE_HOOK_COUNT                         = 27,
+	VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS        = 27,
+	VPNHIDE_HOOK_COUNT                         = 28,
 };
 
 static inline unsigned int vpnhide_hook_bit(enum vpnhide_hook_id id)
@@ -41,6 +42,7 @@ static inline unsigned int vpnhide_hook_bit(enum vpnhide_hook_id id)
 
 /* Hooks owned by each backend: apply `mask & own`, ignore foreign bits. */
 #define VPNHIDE_KERNEL_HOOK_MASK 0x20003ffu
+#define VPNHIDE_KMOD_HOOK_MASK 0x8000000u
 #define VPNHIDE_ZYGISK_HOOK_MASK 0x5fc0000u
 #define VPNHIDE_LSPOSED_HOOK_MASK 0x3fc00u
 
@@ -132,6 +134,7 @@ static inline const char *vpnhide_hook_name(enum vpnhide_hook_id id)
 	case VPNHIDE_HOOK_ZYGISK_RECVFROM_CHK: return "zygisk_recvfrom_chk";
 	case VPNHIDE_HOOK_SOCKET_BIND_INTERFACE: return "socket_bind_interface";
 	case VPNHIDE_HOOK_ZYGISK_SETSOCKOPT: return "zygisk_setsockopt";
+	case VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS: return "filesystem_iface_paths";
 	default: return "?";
 	}
 }

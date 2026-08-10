@@ -28,13 +28,15 @@ internal fun hooksInMask(mask: Long): List<HookIds.Hook> = HookIds.Hook.entries.
  * A backend acts only on the hooks it owns and ignores foreign bits (protocol §1.4).
  */
 internal val KERNEL_HOOKS: List<HookIds.Hook> = hooksInMask(HookIds.KERNEL_HOOK_MASK.toLong())
+internal val KMOD_HOOKS: List<HookIds.Hook> = hooksInMask(HookIds.KMOD_HOOK_MASK.toLong())
 internal val ZYGISK_HOOKS: List<HookIds.Hook> = hooksInMask(HookIds.ZYGISK_HOOK_MASK.toLong())
 internal val LSPOSED_HOOKS: List<HookIds.Hook> = hooksInMask(HookIds.LSPOSED_HOOK_MASK.toLong())
 
 /** The hooks owned by [backend] (its generated mask), or an empty set for an unknown id. */
 internal fun ownedHooks(backend: HookIds.Backend): List<HookIds.Hook> =
     when (backend) {
-        HookIds.Backend.KMOD, HookIds.Backend.KPM -> KERNEL_HOOKS
+        HookIds.Backend.KMOD -> KERNEL_HOOKS + KMOD_HOOKS
+        HookIds.Backend.KPM -> KERNEL_HOOKS
         HookIds.Backend.ZYGISK -> ZYGISK_HOOKS
         HookIds.Backend.LSPOSED -> LSPOSED_HOOKS
     }
@@ -45,8 +47,23 @@ internal fun ownedHooks(backend: HookIds.Backend): List<HookIds.Hook> =
  * so the tile verdict, the unowned-leak count, and [buildDiagnosticReport] all
  * scope "owned vectors" the same way.
  */
-internal fun ownedNativeHooks(id: NativeBackendId?): Set<HookIds.Hook> =
-    if (id == NativeBackendId.Zygisk) ZYGISK_HOOKS.toSet() else KERNEL_HOOKS.toSet()
+internal fun ownedNativeHooks(
+    id: NativeBackendId?,
+    kmodFilesystemHookInstalled: Boolean = false,
+): Set<HookIds.Hook> =
+    when (id) {
+        NativeBackendId.Kmod -> {
+            (KERNEL_HOOKS + if (kmodFilesystemHookInstalled) KMOD_HOOKS else emptyList()).toSet()
+        }
+
+        NativeBackendId.Zygisk -> {
+            ZYGISK_HOOKS.toSet()
+        }
+
+        NativeBackendId.Kpm, null -> {
+            KERNEL_HOOKS.toSet()
+        }
+    }
 
 /** Whether any hook that should cover this vector is in [hooks]. */
 internal fun NativeCheckSpec.coveredBy(hooks: Set<HookIds.Hook>): Boolean = expectedHooks.any { it in hooks }

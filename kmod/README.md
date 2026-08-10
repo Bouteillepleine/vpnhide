@@ -21,8 +21,15 @@ regions. Detection paths outside the hooks listed below remain out of scope.
 | `rt6_fill_node` | Trims IPv6 VPN route entries from netlink route dump replies via `skb_trim` | IPv6 RTM_GETROUTE dumps |
 | `fib_nl_fill_rule` | Trims target-UID policy rules and VPN interface rules from netlink rule dumps via `skb_trim` | RTM_GETRULE policy routing dumps |
 | `sock_setsockopt` / `sk_setsockopt` entry redirect | Returns `-ENODEV` for hidden VPN names and indices before socket state changes | Raw `SO_BINDTODEVICE` / `SO_BINDTOIFINDEX` calls |
+| `filename_lookup`, `do_filp_open`, `vfs_getattr`, `iterate_dir` entry redirects (optional) | Makes VPN interface nodes look absent under sysfs and `/proc/sys/net/*/{conf,neigh}` | `stat`/`access`/`readlink`, `open`/`fstat`, and `getdents64` probes |
 
 All filtering is **per-UID**: only processes whose UID is a `target` in the config written to `/proc/vpnhide_ctl` see the filtered view. Everyone else (system services, VPN client, NFC subsystem) sees the real data.
+
+The VFS row is additionally **reboot-gated and disabled by default**. Enable
+**Settings → Experimental protection → Hide VPN filesystem paths** and reboot.
+When disabled, those four probes are not registered, so the default boot pays
+no VFS hot-path trampoline cost. The setting is `.ko`-only; KPM does not claim
+this coverage.
 
 ## Why kernel-level?
 
@@ -61,7 +68,8 @@ or remove it through the root module manager and reboot to apply that change;
 ordinary `rmmod` is not supported.
 
 On boot:
-- `post-fs-data.sh` runs `insmod` to load the kernel module
+- `post-fs-data.sh` reads the reboot-gated filesystem setting through the
+  activator, then runs `insmod` with the corresponding module parameter
 - `service.sh` runs the Rust activator, which reads `/data/system/vpnhide_config.json`, enumerates Android users, resolves package names for each user separately, and emits a `vpnhide 2 config` snapshot (docs/protocol.md) to `/proc/vpnhide_ctl`
 
 ### Target management
@@ -75,8 +83,9 @@ adb shell su -c '/data/adb/modules/vpnhide_kmod/activator'
 
 # Or push a control-config snapshot straight to the kernel (docs/protocol.md):
 # header + folded debug flag + grouped target UIDs + mandatory end count
-# (20003ff = all current kernel hooks; control v2 uses bare hex).
-adb shell su -c 'printf "vpnhide 2 config\ndebug 0\ntargets 20003ff 28b7\nend 1\n" > /proc/vpnhide_ctl'
+# (a0003ff = shared kernel hooks plus the optional .ko filesystem hook;
+# control v2 uses bare hex).
+adb shell su -c 'printf "vpnhide 2 config\ndebug 0\ntargets a0003ff 28b7\nend 1\n" > /proc/vpnhide_ctl'
 ```
 
 The app writes to **two layers** simultaneously:
@@ -88,7 +97,7 @@ The app writes to **two layers** simultaneously:
 Covering both native and Java API detection paths requires two layers, without
 placing vpnhide hooks in the target app's process:
 
-- **vpnhide-kmod** (this module) covers the native side: `ioctl`, `getifaddrs()` (netlink), `/proc/net/route`, `/proc/net/ipv6_route`, netlink address/route/rule dumps, and pre-mutation `SO_BINDTODEVICE` / `SO_BINDTOIFINDEX` denial.
+- **vpnhide-kmod** (this module) covers the native side: `ioctl`, `getifaddrs()` (netlink), `/proc/net/route`, `/proc/net/ipv6_route`, netlink address/route/rule dumps, pre-mutation `SO_BINDTODEVICE` / `SO_BINDTOIFINDEX` denial, and optional sysfs/proc-sys interface-path concealment.
 - **[lsposed](../lsposed/)** hooks `writeToParcel()` on `NetworkCapabilities`, `NetworkInfo`, `LinkProperties` inside `system_server` -- stripping VPN data before Binder serialization reaches the app.
 
 Together they cover the detection paths documented in

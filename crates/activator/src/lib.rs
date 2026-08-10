@@ -105,6 +105,14 @@ pub fn read_canonical() -> Result<String> {
     }
 }
 
+/// Read the reboot-gated .ko VFS setting without waiting for PackageManager.
+/// The kmod post-fs-data loader uses the exit status of its thin binary before
+/// insmod, so disabled boots never register the hot-path probes at all.
+pub fn filesystem_hiding_enabled() -> Result<bool> {
+    let config = parse_canonical(&read_canonical()?)?;
+    Ok(config.settings.experimental_filesystem_hiding)
+}
+
 pub fn activate_kmod() -> Result<()> {
     activate_kmod_with_pm_wait(PmReadyWait::Bounded(PM_READY_ATTEMPTS))
 }
@@ -115,7 +123,7 @@ pub fn activate_kmod_boot() -> Result<()> {
 }
 
 fn activate_kmod_with_pm_wait(wait: PmReadyWait) -> Result<()> {
-    let wire = project_native_with_pm_wait(&read_canonical()?, NativeHookFamily::Kernel, wait)?;
+    let wire = project_native_with_pm_wait(&read_canonical()?, NativeHookFamily::Kmod, wait)?;
     // /proc/vpnhide_ctl replaces the entire config per write(), so keep this
     // bounded to MAX_NATIVE_TARGETS and deliver one complete snapshot.
     fs::write(KMOD_CTL, wire)?;
@@ -241,7 +249,7 @@ fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Resu
         }
         return Ok(KpmBootOutcome::UnsupportedKernel);
     }
-    let wire = project_native_with_pm_wait(&read_canonical()?, NativeHookFamily::Kernel, wait)?;
+    let wire = project_native_with_pm_wait(&read_canonical()?, NativeHookFamily::Kpm, wait)?;
     // Re-check after the (possibly long) PackageManager wait: the .ko may have
     // been loaded meanwhile, in which case we must not configure the KPM.
     if skip_kpm_for_kmod_conflict(conflict_is_error)? {
