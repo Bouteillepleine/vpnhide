@@ -240,8 +240,9 @@ check_bind_pair() {
 		SKIP=$((SKIP+1))
 		return
 	fi
-	# SO_BINDTODEVICE needs CAP_NET_RAW on 4.9/4.14/4.19/5.4; SO_BINDTOIFINDEX is
-	# absent before 5.7 (ENOPROTOOPT from both set and get). Report those proven
+	# SO_BINDTODEVICE needs CAP_NET_RAW on these legacy kernels. Upstream added
+	# SO_BINDTOIFINDEX in 5.7, but Android common backported it to 5.4 with the
+	# same capability gate; 4.x returns ENOPROTOOPT instead. Report those proven
 	# kernel properties separately: they close the vector but do not exercise the
 	# KPM bind hook. SKIP is reserved for a probe that did not run.
 	if [ "$nt_errno" -ne 0 ] &&
@@ -252,8 +253,9 @@ check_bind_pair() {
 				NA=$((NA+1))
 				return
 			fi
-			if { [ "$prefix" = BIND_NAME_RAW ] || [ "$prefix" = BIND_NAME_NUL ]; } &&
-				[ "$nt_errno" -eq 1 ]; then
+			if [ "$nt_errno" -eq 1 ] &&
+				{ [ "$prefix" = BIND_NAME_RAW ] || [ "$prefix" = BIND_NAME_NUL ] ||
+				  [ "$prefix" = BIND_INDEX ]; }; then
 				echo "RESULT $vec=NATIVE-COVERED (CAP_NET_RAW gate denied and socket stayed unbound)"
 				NATIVE=$((NATIVE+1))
 				return

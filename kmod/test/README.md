@@ -116,9 +116,10 @@ run with no panic across the CI reference set — 4.9, 4.14, 4.19, 5.4, 5.10,
 5.15, 6.1, 6.6, 6.12 (the modern GKI ones via
 the DDK `Image`, the legacy AOSP ones via a from-source `Image` passed with
 `VPNHIDE_QEMU_IMAGE=`). Legacy kernels that natively require `CAP_NET_RAW` for
-the first bind report `NATIVE-COVERED`; kernels that predate
-`SO_BINDTOIFINDEX` report `NOT-APPLICABLE`. `SKIP` is reserved for a probe that
-did not run, so neither result pretends that the KPM bind hook fired.
+the first bind report `NATIVE-COVERED` (including Android common 5.4's
+backported `SO_BINDTOIFINDEX`); 4.x kernels without that option report
+`NOT-APPLICABLE`. `SKIP` is reserved for a probe that did not run, so neither
+result pretends that the KPM bind hook fired.
 
 ```sh
 make -C kmod kpm                 # build vpnhide.kpm

@@ -121,7 +121,7 @@ VPN interface prefixes: `tun`, `ppp`, `tap`, `wg`, `ipsec`, `xfrm`, `utun`, `l2t
 ## Known limitations
 
 - **Direct `svc #0` syscalls bypass the hook.** Apps issuing raw syscalls skip libc entirely, including the best-effort `setsockopt` protection. Use a kernel-level backend, [vpnhide-kmod](../kmod/) or [KPM](../kmod/kpm/), for these apps.
-- **Socket binding is left native before Linux 5.7.** Those kernels reject an unprivileged `SO_BINDTODEVICE` before reading the name, and `SO_BINDTOIFINDEX` does not exist; filtering would introduce a distinguishable error instead of closing an oracle.
+- **Socket binding is left native before Linux 5.7.** Those kernels reject an unprivileged `SO_BINDTODEVICE` before reading the name. Android common 5.4 backports `SO_BINDTOIFINDEX` with the same capability gate; 4.x lacks it. Filtering would introduce a distinguishable error instead of closing an oracle.
 - **arm64 only.** No 32-bit arm, no x86.
 - **`getifaddrs` hook leaks a few bytes per call.** Unlinked VPN entries in the ifaddrs linked list are intentionally leaked rather than tracked with a shadow allocator. Acceptable tradeoff -- `getifaddrs` is called infrequently.
 - **Tested on Android 16 (API 36).** Should work back to API 24 in principle, but nothing older has been exercised.
