@@ -8,6 +8,8 @@ const EXIT_DEFERRED_CONFLICT: i32 = 3;
 /// APatch is present but authentication is not available yet. This is a
 /// deferred boot state, not a generic activator failure.
 const EXIT_AWAITING_AUTHENTICATION: i32 = 4;
+/// The running kernel has no validated KPM offset table.
+const EXIT_UNSUPPORTED_KERNEL: i32 = 5;
 
 fn main() {
     match run() {
@@ -26,6 +28,7 @@ fn run() -> vpnhide_activator::Result<i32> {
         [arg] if arg == "--boot-wait" => {
             Ok(boot_exit_code(vpnhide_activator::activate_kpm_boot()?))
         }
+        [arg] if arg == "--load-only" => Ok(boot_exit_code(vpnhide_activator::load_kpm_boot()?)),
         [arg] if arg == "status" => {
             print!("{}", vpnhide_activator::read_kpm_status()?);
             Ok(0)
@@ -38,7 +41,7 @@ fn run() -> vpnhide_activator::Result<i32> {
             print!("{}", vpnhide_activator::read_kpm_state()?);
             Ok(0)
         }
-        _ => Err("usage: activator [--boot-wait|status|stats|state]".into()),
+        _ => Err("usage: activator [--boot-wait|--load-only|status|stats|state]".into()),
     }
 }
 
@@ -47,6 +50,7 @@ fn boot_exit_code(outcome: KpmBootOutcome) -> i32 {
         KpmBootOutcome::Configured => 0,
         KpmBootOutcome::DeferredConflict => EXIT_DEFERRED_CONFLICT,
         KpmBootOutcome::AwaitingAuthentication => EXIT_AWAITING_AUTHENTICATION,
+        KpmBootOutcome::UnsupportedKernel => EXIT_UNSUPPORTED_KERNEL,
     }
 }
 
@@ -59,5 +63,6 @@ mod tests {
         assert_eq!(boot_exit_code(KpmBootOutcome::Configured), 0);
         assert_eq!(boot_exit_code(KpmBootOutcome::DeferredConflict), 3);
         assert_eq!(boot_exit_code(KpmBootOutcome::AwaitingAuthentication), 4);
+        assert_eq!(boot_exit_code(KpmBootOutcome::UnsupportedKernel), 5);
     }
 }

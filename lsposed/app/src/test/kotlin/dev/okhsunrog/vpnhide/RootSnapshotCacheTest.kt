@@ -76,6 +76,7 @@ class RootSnapshotCacheTest {
         assertTrue(command.contains("[ -s $SUPERKEY_FILE ] && echo 1 || echo 0"))
         assertTrue(command.contains("cat $PROC_CTL"))
         assertTrue(command.contains("$KPM_ACTIVATOR state"))
+        assertTrue(command.contains("kpm_runtime_modules"))
         assertTrue(command.contains(ZYGISK_STATUS_FILE))
         assertTrue(command.contains(PORTS_LOAD_STATUS_FILE))
         assertTrue(command.contains("probe_ok=1"))
@@ -91,11 +92,32 @@ class RootSnapshotCacheTest {
     }
 
     @Test
+    fun `snapshot stages APatch runtime probe only from validated app path`() {
+        val command = buildRootShellSnapshotCommand(runtimeProbeSource = "/data/user/0/dev.okhsunrog.vpnhide/files/vhprobe")
+
+        assertTrue(command.contains("KPM_RUNTIME_PROBE_SOURCE=/data/user/0/dev.okhsunrog.vpnhide/files/vhprobe"))
+        assertTrue(command.contains("--apatch-kpm-list"))
+        assertTrue(command.contains("\"${'$'}KPATCH\" kpm list"))
+        assertTrue(command.contains("rm -f \"${'$'}KPM_PROBE\""))
+    }
+
+    @Test
     fun `snapshot command can skip package enumeration when startup seeded it`() {
         val command = buildRootShellSnapshotCommand(includePmPackages = false)
 
         assertFalse(command.contains("pm list packages -U --user all"))
         assertTrue(command.contains("phase_target_files"))
         assertTrue(command.contains("phase_vpn_ifaces"))
+    }
+
+    @Test
+    fun `snapshot command remains valid POSIX shell with runtime probe`() {
+        val process = ProcessBuilder("sh", "-c", buildRootShellSnapshotCommand(includePmPackages = false)).start()
+        val stdout = process.inputStream.bufferedReader().readText()
+        val stderr = process.errorStream.bufferedReader().readText()
+
+        assertEquals("shell stderr: $stderr", 0, process.waitFor())
+        val sections = parseRootShellSnapshot(stdout, recordMetric = { _, _ -> })
+        assertEquals("available=0", sections["kpm_runtime_modules"])
     }
 }

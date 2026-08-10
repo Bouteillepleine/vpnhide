@@ -5,8 +5,28 @@
 // `--uid <n>`: the self-in-tunnel gate — report whether uid <n> is routed
 // through the VPN (a policy rule steers it into a tun table). Emits
 // `{uid, routed, detail}` instead of the full checks array.
+//
+// `--apatch-kpm-list`: read-only APatch/FolkPatch KPM enumeration for detecting
+// a raw vpnhide.kpm loaded without the flashable module. Authentication tries
+// the root-only saved key and then APatch's trusted `su` token; neither value is
+// printed. Emits `available=1` plus module names, or `available=0` when the
+// runtime cannot be authenticated.
+
+use std::ffi::CString;
+use std::os::raw::{c_long, c_void};
+use vpnhide_apatch_abi::{
+    APATCH_SUPERCALL_NR, command_candidates, encode_command, parse_kernel_version_hint,
+};
+
+const SUPERKEY_FILE: &str = "/data/adb/vpnhide/superkey";
+const SUPERCALL_KPM_LIST: c_long = 0x1031;
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|arg| arg == "--apatch-kpm-list") {
+        print_apatch_kpm_list();
+        return;
+    }
     if let Some(i) = args.iter().position(|a| a == "--uid") {
         match args.get(i + 1).and_then(|s| s.parse::<u32>().ok()) {
             Some(uid) => println!("{}", vpnhide_checks::self_routed_json(uid)),
@@ -18,4 +38,78 @@ fn main() {
         return;
     }
     println!("{}", vpnhide_checks::run_all_json());
+}
+
+fn print_apatch_kpm_list() {
+    match apatch_kpm_list() {
+        Some(list) => {
+            println!("available=1");
+            print!("{list}");
+            if !list.is_empty() && !list.ends_with('\n') {
+                println!();
+            }
+        }
+        None => println!("available=0"),
+    }
+}
+
+fn apatch_kpm_list() -> Option<String> {
+    let mut keys = Vec::new();
+    if let Ok(saved) = std::fs::read_to_string(SUPERKEY_FILE) {
+        let saved = saved.trim();
+        if !saved.is_empty() {
+            keys.push(saved.to_owned());
+        }
+    }
+    if !keys.iter().any(|key| key == "su") {
+        keys.push("su".to_owned());
+    }
+
+    let commands = command_candidates(apatch_kernel_version_hint());
+    for key in keys {
+        let key = CString::new(key).ok()?;
+        for &style in &commands {
+            let mut buffer = [0_u8; 4096];
+            let rc = unsafe {
+                libc::syscall(
+                    APATCH_SUPERCALL_NR,
+                    key.as_ptr(),
+                    encode_command(style, SUPERCALL_KPM_LIST),
+                    buffer.as_mut_ptr().cast::<c_void>(),
+                    buffer.len() as c_long,
+                )
+            };
+            if rc >= 0 {
+                let length = if rc > 0 {
+                    usize::try_from(rc)
+                        .unwrap_or(buffer.len())
+                        .min(buffer.len())
+                } else {
+                    buffer.iter().position(|byte| *byte == 0).unwrap_or(0)
+                };
+                return Some(String::from_utf8_lossy(&buffer[..length]).into_owned());
+            }
+        }
+    }
+    None
+}
+
+fn apatch_kernel_version_hint() -> Option<c_long> {
+    let output = std::process::Command::new("dmesg").output().ok()?;
+    output
+        .status
+        .success()
+        .then(|| parse_kernel_version_hint(&String::from_utf8_lossy(&output.stdout)))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_latest_apatch_version_hint_from_dmesg() {
+        let log =
+            "old\nKP KernelPatch Version: 000d02\nnoise\nKP KernelPatch Version: 000d03-extra\n";
+        assert_eq!(parse_kernel_version_hint(log), Some(0x000d03));
+    }
 }

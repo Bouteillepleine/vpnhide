@@ -19,7 +19,8 @@
  *
  * DESIGN:
  *   - One source plus a runtime kver offset table (kver_offsets.h), producing
- *     one binary across the supported 4.14-6.12 kernel families.
+ *     one binary across the supported Android kernel families from 4.9
+ *     through 6.12 (the exact minor families are listed in the README).
  *   - Per-call state lives in `fargs->local.dataN`, so a task migrating CPUs
  *     between the before/after callbacks cannot mix state with another call.
  *   - Filtering algorithms shared with the `.ko` via ../shared/vpnhide_logic.h.
@@ -333,7 +334,8 @@ static int kpm_is_public_host_route4(hook_fargs12_t *fargs, const void *p,
  * is_public_host_route6_via_physical). The route's destination is a rt6key
  * { in6_addr addr@0; int plen@16 } whose offset depends on the kernel's IPv6
  * route model: in fib6_info at off->fib6_info_fib6_dst (5.x/6.x), or in the
- * embedded rt6_info at off->rt6_dst on the pre-fib6_info rt6_via_dst path (4.14).
+ * embedded rt6_info at off->rt6_dst on the pre-fib6_info rt6_via_dst path
+ * (4.9/4.14).
  * A 0 offset for the active model disables the check. `rt` is the route arg to
  * rt6_fill_node; the rt6key sits within the struct dev_from_fib6_info already
  * reads, so it is in-bounds. Address/iface logic shared with the .ko. */
@@ -461,12 +463,12 @@ static void rtnl_fill_after(hook_fargs12_t *fargs, void *udata)
 
 /* ================================================================== */
 /*  Hook 4: dev_ioctl — per-interface ioctls (SIOCGIF* by name)        */
-/*  arg1 = cmd, arg2 = ifr (ifr_name at offset 0, uapi-stable). NOTE:   */
-/*  arg2 is a *kernel* struct ifreq* on >=5.5, but a *userspace* ptr on */
-/*  <5.5 (4.14/4.19/5.4 do the copy inside dev_ioctl). Dereferencing a  */
-/*  user ptr directly from kernel context faults under PAN on real HW   */
-/*  (QEMU without PAN didn't), so the name is read through the right     */
-/*  path for whichever the pointer is. If it names a VPN iface, -ENODEV. */
+/*  arg1 = cmd, arg2 = ifr (ifr_name at offset 0, uapi-stable). The arg */
+/*  can be a kernel struct ifreq* or a userspace pointer: the transition */
+/*  was backported differently across Android 4.x vendor/common trees.  */
+/*  Dereferencing a user ptr from kernel context faults under PAN, so   */
+/*  detect its address domain and use the matching read path. If it      */
+/*  names a VPN iface, return -ENODEV.                                  */
 /* ================================================================== */
 
 #define VPNHIDE_ENODEV ((uint64_t)(-19))
@@ -693,7 +695,7 @@ static void dev_ioctl_after(hook_fargs5_t *fargs, void *udata)
 	if (ptr_is_kernel(ifr)) {
 		is_vpn = iface_is_vpn(ifr); /* >=5.5: ifr is kernel memory */
 	} else {
-		/* <5.5: ifr is a __user pointer — copy the name in safely. */
+		/* Older ABI: ifr is a __user pointer — copy the name safely. */
 		if (!_copy_from_user ||
 		    _copy_from_user(name, ifr, VPNHIDE_IFNAMSIZ))
 			return;
@@ -1079,8 +1081,8 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
 
 /*
  * HOOK COVERAGE — parity with vpnhide_kmod.c (the .ko). CI exercises these
- * paths in booted QEMU images for 4.14, 4.19, 5.4, 5.10, 5.15, 6.1, 6.6, and
- * 6.12. Filtering logic shared with the .ko lives in
+ * paths in booted QEMU images for 4.9, 4.14, 4.19, 5.4, 5.10, 5.15, 6.1,
+ * 6.6, and 6.12. Filtering logic shared with the .ko lives in
  * shared/vpnhide_logic.h; version-specific field offsets live in
  * kver_offsets.h. QEMU coverage is the pre-merge safety gate, not a claim of
  * testing every vendor kernel or device configuration.
@@ -1098,14 +1100,14 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
  *                                                   is_public_host_route_via_
  *                                                   physical — QEMU matrix:
  *                                                   5.10/5.15/6.1/6.12 + legacy
- *                                                   5.4/4.19/4.14)
+ *                                                   5.4/4.19/4.14/4.9)
  *   rt6_fill_node          RTM_GETROUTE v6 dump   ✓ (fib6_info nexthop +
  *                                                   public /128 host-route via a
  *                                                   physical uplink, the .ko's
  *                                                   is_public_host_route6_via_
  *                                                   physical — QEMU matrix:
  *                                                   5.10/5.15/6.1/6.12 + legacy
- *                                                   5.4/4.19/4.14)
+ *                                                   5.4/4.19/4.14/4.9)
  *   fib_nl_fill_rule       RTM_GETRULE            ✓ (fib_rule iif/oif/uid)
  *   socket_bind_interface SO_BINDTODEVICE/index  ✓ (pre-mutation ENODEV;
  *                                                   state-aware raw-syscall test)
@@ -1117,7 +1119,7 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
  * IPv4 needs no offset (fib_rt_info.dst/dst_len at a constant +12/+16 on 5.6+;
  * dst/dst_len passed as args 6/7 on <5.6). IPv6 reads the route's rt6key from
  * fib6_info.fib6_dst (64 on 5.4/4.19/5.10..6.6, 80 on 6.12) or, on the 4.14
- * rt6_via_dst path, rt6_info.rt6i_dst (rt6_dst @256).
+ * 4.9/4.14 rt6_via_dst path, rt6_info.rt6i_dst (rt6_dst @256).
  */
 
 /* ------------------------------------------------------------------ */
@@ -1217,7 +1219,7 @@ static int raw_usercopy_is_safe(void)
 {
 	uint64_t mmfr1;
 
-	/* 4.14/4.19 __arch_copy_*_user assembly brackets the copy with
+	/* 4.9/4.14/4.19 __arch_copy_*_user assembly brackets the copy with
 	 * uaccess_enable_not_uao itself. From 5.x onward that moved into the
 	 * inline raw_copy_*_user wrapper, which may not have a callable symbol. */
 	if ((unsigned int)kver < VPNHIDE_KVER(5, 0, 0))

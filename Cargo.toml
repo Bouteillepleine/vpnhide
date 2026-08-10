@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/apatch-abi",
     "crates/activator",
     "crates/protocol",
     "crates/protocol-diff",

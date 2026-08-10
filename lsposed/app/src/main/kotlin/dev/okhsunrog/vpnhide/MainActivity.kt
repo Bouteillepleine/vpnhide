@@ -68,8 +68,8 @@ class MainActivity : ComponentActivity() {
         StartupTrace.mark("activity_on_create")
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        // Load debug state from the canonical snapshot before any runtime work.
-        // This keeps first suExec and dashboard bootstrap aligned.
+        RootSnapshotCache.setRuntimeProbeSource(GroundTruthProbe.prepare(this)?.absolutePath)
+        // Load canonical debug state before runtime work so first suExec and dashboard bootstrap agree.
         VpnHideLog.init()
         setContent {
             VpnHideApp()

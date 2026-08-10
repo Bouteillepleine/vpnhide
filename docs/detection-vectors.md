@@ -209,8 +209,10 @@ userspace TOCTOU. On 5.7-5.8, KPM instead hooks the resolved-ifindex mutation
 helper; if LTO removes that static symbol, status is deliberately partial.
 Before 5.7, the kernel itself rejects the first interface bind without
 `CAP_NET_RAW`, and KPM preserves that native result exactly rather than adding
-a distinguishable errno. 4.x also lacks `SO_BINDTOIFINDEX`. The legacy QEMU
-checks record these paths as native protection.
+a distinguishable errno. Android common 5.4 backports `SO_BINDTOIFINDEX` but
+keeps that capability gate; 4.x lacks the option entirely. The legacy QEMU
+checks record the gated paths as native protection and the absent option as
+not applicable.
 
 When neither kernel backend is available, Zygisk inline-hooks bionic's
 `setsockopt` entry point and applies the same pre-syscall `ENODEV` policy. It

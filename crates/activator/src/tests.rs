@@ -2,6 +2,45 @@ use super::*;
 use std::os::unix::process::ExitStatusExt;
 
 #[test]
+fn parses_android_kernel_release_families_without_prefix_matches() {
+    assert_eq!(parse_kernel_family("4.9"), Some((4, 9)));
+    assert_eq!(parse_kernel_family("4.9.337-gki"), Some((4, 9)));
+    assert_eq!(
+        parse_kernel_family("6.1.128-android14-11-g123456789abc-ab12345678"),
+        Some((6, 1)),
+    );
+    assert_eq!(parse_kernel_family("6.12+"), Some((6, 12)));
+    assert_eq!(parse_kernel_family("6.10.2"), Some((6, 10)));
+    assert_eq!(parse_kernel_family("5.100.1"), Some((5, 100)));
+    assert_eq!(parse_kernel_family("Linux 6.1.2"), None);
+    assert_eq!(parse_kernel_family("6.1rc1"), None);
+    assert_eq!(parse_kernel_family("6"), None);
+    assert!(kernel_release_supports_kpm("6.1.128-android14-ab123"));
+    assert!(!kernel_release_supports_kpm("6.10.2-mainline"));
+    assert!(!kernel_release_supports_kpm("Linux 6.1.2"));
+}
+
+#[test]
+fn kpm_supported_families_match_the_offset_selector() {
+    let header = include_str!("../../../kmod/kpm/kver_offsets.h");
+    let selector_families = header
+        .match_indices("VPNHIDE_KVER_FAMILY(kver, ")
+        .filter_map(|(start, _)| {
+            let args = header[start..].split_once(')')?.0;
+            let mut values = args.rsplitn(3, ',');
+            let minor = values.next()?.trim().parse::<u32>().ok()?;
+            let major = values.next()?.trim().parse::<u32>().ok()?;
+            Some((major, minor))
+        })
+        .collect::<BTreeSet<_>>();
+    let activator_families = KPM_SUPPORTED_KERNEL_PAIRS
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(activator_families, selector_families);
+}
+
+#[test]
 fn parses_pm_package_uids_for_all_profiles() {
     let map = parse_pm_packages(
         "package:com.example.one uid:10123,1010123\n\
@@ -400,11 +439,13 @@ fn pm_ready_check_matches_literal_package_token() {
 fn apatch_supercall_command_keeps_kpm_command_in_low_bits() {
     assert_eq!(
         supercall_cmd(
-            ApatchCommandStyle::Versioned(APATCH_SUPERCALL_DEFAULT_VERSION_CODE),
+            ApatchCommandStyle::Versioned(
+                vpnhide_apatch_abi::APATCH_SUPERCALL_DEFAULT_VERSION_CODE
+            ),
             SUPERCALL_KPM_CONTROL,
         ),
-        (APATCH_SUPERCALL_DEFAULT_VERSION_CODE << 32)
-            | (APATCH_SUPERCALL_MAGIC << 16)
+        (vpnhide_apatch_abi::APATCH_SUPERCALL_DEFAULT_VERSION_CODE << 32)
+            | (vpnhide_apatch_abi::APATCH_SUPERCALL_MAGIC << 16)
             | SUPERCALL_KPM_CONTROL,
     );
     assert_eq!(

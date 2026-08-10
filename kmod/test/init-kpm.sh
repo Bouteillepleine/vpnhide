@@ -88,7 +88,11 @@ if [ -x /ifconf ]; then
 	/ifconf 2>/dev/null
 fi
 
-PANIC=$(dmesg | grep -ci 'Unable to handle\|Internal error\|Oops\|BUG:\|Kernel panic')
+PANIC_RE='Unable to handle|Internal error:|Oops|BUG:|Kernel panic'
+PANIC=$(dmesg | grep -cE "$PANIC_RE")
 echo "PANIC=$PANIC"
+if [ "$PANIC" -ne 0 ]; then
+	dmesg | grep -E "$PANIC_RE" | sed 's/^/PANICLOG=/'
+fi
 echo "##### VPNHIDE-KPM-TEST END #####"
 poweroff -f

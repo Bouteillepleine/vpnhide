@@ -135,7 +135,17 @@ class BuildNativeInstallRecommendationTest {
         assertEquals("Android 14", r.kernelBranch)
     }
 
-    // ── 5. Non-GKI kernels KernelPatch covers (4.14 / 4.19 / 5.4) → KPM ────
+    // ── 5. Non-GKI kernels KernelPatch covers (4.9 / 4.14 / 4.19 / 5.4) → KPM ────
+
+    @Test
+    fun `non-GKI 4_9 recommends KPM, not zygisk`() {
+        val r = buildNativeInstallRecommendation("4.9.337-perf", "Android 10")!!
+        assertEquals(RecommendedBackend.Kpm, r.recommended)
+        assertFalse(r.preferKmod)
+        assertFalse(r.variantAmbiguous)
+        assertEquals("vpnhide-kpm.zip", r.recommendedArtifact)
+        assertNull(r.recommendedGkiVariant)
+    }
 
     @Test
     fun `non-GKI 4_14 recommends KPM, not zygisk`() {
@@ -168,12 +178,12 @@ class BuildNativeInstallRecommendationTest {
         assertFalse(withoutRuntime.kpatchRuntimeAvailable)
     }
 
-    // ── 6. Older than KernelPatch's range / unsupported → zygisk ──────────
+    // ── 6. Unsupported kernel series → zygisk ─────────────────────────────
 
     @Test
-    fun `pre-4_14 kernel recommends zygisk`() {
-        // Below 4.14 the KPM kver offset table has no entry — fall back to zygisk.
-        val r = buildNativeInstallRecommendation("4.9.186-perf", "Android 10")!!
+    fun `4_4 kernel recommends zygisk`() {
+        // The KPM kver offset table has no 4.4 entry — fall back to zygisk.
+        val r = buildNativeInstallRecommendation("4.4.302-perf", "Android 9")!!
         assertEquals(RecommendedBackend.Zygisk, r.recommended)
         assertFalse(r.preferKmod)
         assertEquals("vpnhide-zygisk.zip", r.recommendedArtifact)
@@ -182,7 +192,7 @@ class BuildNativeInstallRecommendationTest {
 
     @Test
     fun `6_3 recommends zygisk — no shipping variant for this series`() {
-        // We only ship kmod for 6.1, 6.6, 6.12 and KPM for 4.14/4.19/5.4 — a 6.3
+        // We only ship kmod for 6.1, 6.6, 6.12 and KPM for 4.9/4.14/4.19/5.4 — a 6.3
         // kernel is rare but shouldn't silently pick one of those.
         val r = buildNativeInstallRecommendation("6.3.0-something", "Android 14")!!
         assertEquals(RecommendedBackend.Zygisk, r.recommended)

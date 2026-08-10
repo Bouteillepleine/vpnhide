@@ -400,8 +400,8 @@ private const val TAG = LogTags.DASHBOARD
 // Non-GKI kernel series KernelPatch (the KPM runtime) supports but the .ko does
 // not: no GKI KMI, no DDK build. Mirrors the sub-5.10 rows of the KPM kver
 // offset table in kmod/kpm/kver_offsets.h. GKI series (5.10+) prefer the .ko;
-// anything below 4.14 isn't in the table and falls back to zygisk.
-internal val KPM_NON_GKI_SERIES = setOf("4.14", "4.19", "5.4")
+// other series aren't in the table and fall back to zygisk.
+internal val KPM_NON_GKI_SERIES = setOf("4.9", "4.14", "4.19", "5.4")
 
 internal fun parseKernelSeries(raw: String): String? = Regex("""\b(\d+\.\d+)""").find(raw)?.groupValues?.get(1)
 
@@ -429,13 +429,13 @@ internal fun parseKernelAndroidBranch(raw: String): String? =
  *       - 5.10 / 5.15 have two shipping variants each → return the
  *         primary plus an alternative via `variantAmbiguous=true`;
  *         the UI shows "try primary, if it doesn't load try alt".
- *  3. Non-GKI kernels that KernelPatch covers (4.14 / 4.19 / 5.4 —
+ *  3. Non-GKI kernels that KernelPatch covers (4.9 / 4.14 / 4.19 / 5.4 —
  *     no GKI KMI, no DDK kmod build) → KPM (beta), the single
  *     universal binary. [kpatchRuntimeAvailable] decides whether the
  *     UI also asks the user to install the KPatch-Next-Module first.
- *  4. Pre-4.14 series or unparseable kernel version → fall back to
- *     zygisk (recommended=Zygisk); KernelPatch's kver offset table
- *     starts at 4.14, and no kmod build loads against such kernels.
+ *  4. Any other series or an unparseable kernel version → fall back to
+ *     zygisk (recommended=Zygisk); the KPM offset table has no validated
+ *     layout for it, and no kmod build loads against such kernels.
  *
  * Returns `null` only if [kernelRaw] is blank (no uname output).
  * `deviceAndroidLabel` is only reflected back in the returned
@@ -526,7 +526,7 @@ internal fun buildNativeInstallRecommendation(
         )
     }
 
-    // Non-GKI kernels KernelPatch supports (4.14 / 4.19 / 5.4) — no GKI KMI and
+    // Non-GKI kernels KernelPatch supports (4.9 / 4.14 / 4.19 / 5.4) — no GKI KMI and
     // no DDK kmod build, but they're in the KPM kver offset table
     // (kmod/kpm/kver_offsets.h). Recommend the universal KPM (beta).
     if (kernelSeries in KPM_NON_GKI_SERIES) {
@@ -826,85 +826,6 @@ private fun renderKmodProblem(
 
                 is KmodProblemKind.LoadFailed -> {
                     res.getString(R.string.dashboard_issue_kmod_load_failed, kind.insmodStderr)
-                }
-            },
-    )
-
-internal sealed interface KpmProblemKind {
-    val reason: ModuleBrokenReason?
-
-    // The activator binary itself is missing from the module directory — a
-    // corrupted or partial KPM install (see kmod/kpm/module/service.sh).
-    // [path] is the path the boot script tried to exec.
-    data class ActivatorMissing(
-        val path: String,
-    ) : KpmProblemKind {
-        override val reason get() = ModuleBrokenReason.KpmActivatorMissing
-    }
-
-    // The activator ran but exited non-zero for a reason we don't have a
-    // named diagnosis for. [detail] is the raw `rc=<code> <captured output>`
-    // the boot script wrote — the KPM analogue of kmod's raw insmod stderr.
-    // Null reason (mirrors KmodProblemKind.LoadFailed): an untriaged exit
-    // code isn't a confident enough diagnosis to paint the module card red.
-    data class LoadFailed(
-        val detail: String,
-    ) : KpmProblemKind {
-        override val reason: ModuleBrokenReason? get() = null
-    }
-}
-
-/**
- * Diagnose a KPM install that's present but didn't load, for the
- * `runtime=activator` outcomes the boot script (kmod/kpm/module/service.sh)
- * writes. The other two runtimes it can write — `conflict` (a co-installed
- * .ko took the single-active slot) and `apatch` (dormant, awaiting a saved
- * superkey) — are expected, recoverable states already handled separately as
- * warnings by [kpmDeferredForConflict] / [kpmAwaitingSuperkey]; this function
- * only fires for `runtime=activator`, so it can never double up with those.
- * `runtime=activator` itself covers both the success case (`loaded=1`, which
- * the `!kpm.active` guard below already excludes) and the failure cases this
- * diagnoses — the KPM analogue of classifyKmodProblem's LoadFailed fallback,
- * sourced from the activator's own captured detail instead of insmod stderr.
- */
-internal fun classifyKpmProblem(
-    kpm: ModuleState,
-    loadStatusSection: String,
-    currentBootId: String,
-): KpmProblemKind? {
-    if (kpm !is ModuleState.Installed || kpm.active) return null
-    val load = parseKeyValueLines(loadStatusSection)
-    val bootId = load["boot_id"]?.trim()
-    if (load["runtime"]?.trim() != "activator" ||
-        load["loaded"]?.trim() != "0" ||
-        bootId.isNullOrEmpty() ||
-        bootId != currentBootId.trim()
-    ) {
-        return null
-    }
-    val detail = load["detail"]?.trim().orEmpty()
-    val missingPrefix = "activator missing at "
-    return if (detail.startsWith(missingPrefix)) {
-        KpmProblemKind.ActivatorMissing(detail.removePrefix(missingPrefix))
-    } else {
-        KpmProblemKind.LoadFailed(detail)
-    }
-}
-
-private fun renderKpmProblem(
-    kind: KpmProblemKind,
-    res: android.content.res.Resources,
-): ModuleProblem =
-    ModuleProblem(
-        reason = kind.reason,
-        text =
-            when (kind) {
-                is KpmProblemKind.ActivatorMissing -> {
-                    res.getString(R.string.dashboard_issue_kpm_activator_missing, kind.path)
-                }
-
-                is KpmProblemKind.LoadFailed -> {
-                    res.getString(R.string.dashboard_issue_kpm_load_failed, kind.detail)
                 }
             },
     )
@@ -1280,11 +1201,15 @@ internal suspend fun loadDashboardState(
     val zygiskStatusRaw = shellSnapshot["zygisk_status"].orEmpty()
     val zygisk = rawNativeBackends.zygisk.withTargetCount(nativeTargetCount)
     val kpmRaw = rawNativeBackends.kpm.withTargetCount(nativeTargetCount)
+    val standaloneKpm = standaloneKpmLoaded(kpmRaw, shellSnapshot["kpm_runtime_modules"].orEmpty())
     val ports = detectPortsModule(shellSnapshot, selfPkg).withTargetCount(countPackages(targetsSnapshot.portsObservers))
     val kmodTargetCount = (kmodRaw as? ModuleState.Installed)?.targetCount ?: 0
     val kpmTargetCount = (kpmRaw as? ModuleState.Installed)?.targetCount ?: 0
     val zygiskTargetCount = (zygisk as? ModuleState.Installed)?.targetCount ?: 0
-    VpnHideLog.i(TAG, "modules: kmodRaw=$kmodRaw kpmRaw=$kpmRaw zygisk=$zygisk ports=$ports")
+    VpnHideLog.i(
+        TAG,
+        "modules: kmodRaw=$kmodRaw kpmRaw=$kpmRaw standaloneKpm=$standaloneKpm zygisk=$zygisk ports=$ports",
+    )
     StartupTrace.mark("dashboard_modules_done")
 
     // Recommendation based purely on the kernel — used by the install card,
@@ -1343,7 +1268,7 @@ internal suspend fun loadDashboardState(
     // installed yet. Wrong-variant / broken / unsupported-kernel cases
     // already emit a red error below with the same CTA — showing both
     // duplicates the instruction.
-    val nativeInstallRecommendation = kernelRecommendation?.takeIf { backends.noneInstalled }
+    val nativeInstallRecommendation = kernelRecommendation?.takeIf { backends.noneInstalled && !standaloneKpm }
     VpnHideLog.i(
         TAG,
         "nativeInstallRecommendation=$nativeInstallRecommendation " +
@@ -1404,7 +1329,9 @@ internal suspend fun loadDashboardState(
 
     // ── Messages ──
     val hasNative = backends.anyInstalled
-    if (!hasNative) {
+    if (standaloneKpm) {
+        err(res.getString(R.string.dashboard_issue_kpm_standalone_install), "vpnhide-kpm.zip")
+    } else if (!hasNative) {
         err(res.getString(R.string.dashboard_issue_no_native))
     }
     if (lsposedFramework is LsposedFramework.NotInstalled && lsposed !is LsposedState.Active) {

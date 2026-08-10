@@ -1,0 +1,7 @@
+.git
+**/.cache
+**/target
+**/build
+**/.gradle
+*.apk
+*.zip

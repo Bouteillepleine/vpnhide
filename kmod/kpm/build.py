@@ -3,8 +3,9 @@
 module zip — single entry point for CI and local builds.
 
 The `.kpm` is one cross-version relocatable object with reference layouts for
-4.14–6.12 on both KernelPatch runtimes, so unlike the `.ko` there is no per-KMI
-build matrix: one build, one zip.
+the explicitly supported Android kernel families (4.9, 4.14, 4.19, 5.4, 5.10,
+5.15, 6.1, 6.6, and 6.12) on both KernelPatch runtimes, so unlike the `.ko`
+there is no per-KMI build matrix: one build, one zip.
 
 Build step: `make -C kmod kpm` (host clang, no kernel tree — only the
 KernelPatch submodule headers). Set CLANG_DIR to pick a specific clang;

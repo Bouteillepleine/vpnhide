@@ -2,30 +2,32 @@
 # Build a QEMU-bootable, from-source kernel for the KPM harness's pre-GKI /
 # legacy targets — the kernels the `.ko` backend can NOT serve (no GKI, no DDK):
 #
-#   4.14  (vanilla)         — issue #33; oldest target, rt6_info IPv6 model
-#   4.19  (vanilla)         — pre-nexthop, struct fib6_info
+#   4.9   (AOSP common)     — oldest requested Android family, rt6_info model
+#   4.14  (AOSP common)     — issue #33; rt6_info IPv6 model
+#   4.19  (AOSP common)     — pre-nexthop, struct fib6_info
 #   5.4   (AOSP common)     — issue #35 (HyperOS) target
 #
 # Unlike build-kernel.sh (GKI built with the per-KMI DDK clang container), all
-# three legacy kernels build with ONE pinned Bootlin aarch64 gcc — the compiler
+# four legacy kernels build with ONE pinned Bootlin aarch64 gcc — the compiler
 # version doesn't affect struct layout (that's source+config), it's just old
 # enough to compile these kernels (a modern gcc/clang trips on -Werror). The
-# config is `defconfig` + qemu.config (virtio/console/initrd + software PAN) +
-# the IPv6/policy-routing bits the harness's route/rule vectors need, matching
-# the offsets in ../kpm/kver_offsets.h.
+# config is the branch's Android reference config (`cuttlefish_defconfig` on
+# 4.x, `gki_defconfig` on 5.4) + qemu.config (virtio/console/initrd + software
+# PAN) + the IPv6/policy-routing bits the harness's route/rule vectors need,
+# matching the offsets in ../kpm/kver_offsets.h.
 #
 # Output is just an `Image` — the KPM never builds against the kernel tree
 # (the `.kpm` is relocatable against KernelPatch headers), so unlike the `.ko`
 # harness there is no tree/symvers to keep.
 #
-# Usage:  build-source-kernel.sh <4.14|4.19|5.4> [outdir]
+# Usage:  build-source-kernel.sh <4.9|4.14|4.19|5.4> [outdir]
 # Output: <outdir>/Image            (default: .cache/legacy/<ver>/Image)
 #
 # Boot these with `-cpu cortex-a57` (they fault on `-cpu max`'s newer features
 # before the console) and `rodata=off` — run-kpm.sh already does both.
 set -euo pipefail
 
-VER="${1:?usage: build-source-kernel.sh <4.14|4.19|5.4> [outdir]}"
+VER="${1:?usage: build-source-kernel.sh <4.9|4.14|4.19|5.4> [outdir]}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CACHE="$HERE/.cache/legacy"
 OUT="${2:-$CACHE/$VER}"
@@ -47,40 +49,64 @@ if [ ! -x "${CROSS}gcc" ]; then
 	curl -fsSL "$TC_URL" | tar xj -C "$TCROOT"
 fi
 
-# --- pinned source ------------------------------------------------------------
-KORG="https://cdn.kernel.org/pub/linux/kernel/v4.x"
-AOSP="https://android.googlesource.com/kernel/common"
+# --- pinned AOSP source -------------------------------------------------------
+# The old `deprecated/android-*-q` refs are retained by the GitHub AOSP mirror;
+# android11-5.4 comes from the canonical Android Git server. Fetch the named
+# branch shallowly, then require its tip to equal the pinned commit — branch
+# movement cannot silently change the reference source.
+AOSP_MIRROR="https://github.com/aosp-mirror/kernel_common.git"
+AOSP_CANONICAL="https://android.googlesource.com/kernel/common"
+checkout_aosp() {
+	local remote="$1" branch="$2" sha="$3" dest="$4"
+
+	if ! git -C "$dest" rev-parse --git-dir >/dev/null 2>&1; then
+		echo "[legacy] fetching AOSP common $branch @ $sha…"
+		mkdir -p "$dest"
+		git -C "$dest" init -q
+		git -C "$dest" remote add origin "$remote"
+		git -C "$dest" fetch --depth=1 origin "refs/heads/$branch"
+		git -C "$dest" checkout -q --detach FETCH_HEAD
+	fi
+	if [ "$(git -C "$dest" rev-parse HEAD)" != "$sha" ]; then
+		echo "ERROR: $dest is not pinned at $sha" >&2
+		exit 2
+	fi
+}
+
 case "$VER" in
+4.9)
+	SRC="$SRCROOT/aosp-4.9"
+	checkout_aosp "$AOSP_MIRROR" deprecated/android-4.9-q \
+		f9b8314c64640cd10c7b14ce9d2a11a0dc02a941 "$SRC"
+	DEFCONFIG=cuttlefish_defconfig
+	;;
 4.14)
-	SRC="$SRCROOT/linux-4.14.336"
-	[ -d "$SRC" ] || { echo "[legacy] fetching linux-4.14.336…"; curl -fsSL "$KORG/linux-4.14.336.tar.xz" | tar xJ -C "$SRCROOT"; }
+	SRC="$SRCROOT/aosp-4.14"
+	checkout_aosp "$AOSP_MIRROR" deprecated/android-4.14-q \
+		ef7460eabd6dc0cf87ee5ead6fd0d0b6c8c288f2 "$SRC"
+	DEFCONFIG=cuttlefish_defconfig
 	;;
 4.19)
-	SRC="$SRCROOT/linux-4.19.325"
-	[ -d "$SRC" ] || { echo "[legacy] fetching linux-4.19.325…"; curl -fsSL "$KORG/linux-4.19.325.tar.xz" | tar xJ -C "$SRCROOT"; }
+	SRC="$SRCROOT/aosp-4.19"
+	checkout_aosp "$AOSP_MIRROR" deprecated/android-4.19-q \
+		12d190ed22fbc3ac4b9b19b9305f26d530769fc8 "$SRC"
+	DEFCONFIG=cuttlefish_defconfig
 	;;
 5.4)
-	# AOSP common is a moving branch — pin the exact commit we derived offsets
-	# against (android11-5.4.302_r00).
 	SRC="$SRCROOT/aosp-5.4"
-	AOSP_SHA="91d385eb2a413918a037a93089f8e29910fdf707"
-	if [ ! -d "$SRC" ]; then
-		echo "[legacy] cloning AOSP common android11-5.4 @ $AOSP_SHA…"
-		git clone --depth=1 -b android11-5.4 "$AOSP" "$SRC"
-		if git -C "$SRC" fetch --depth=1 origin "$AOSP_SHA"; then
-			git -C "$SRC" checkout -q "$AOSP_SHA" || true
-		fi
-	fi
+	checkout_aosp "$AOSP_CANONICAL" android11-5.4 \
+		91d385eb2a413918a037a93089f8e29910fdf707 "$SRC"
+	DEFCONFIG=gki_defconfig
 	;;
 *)
-	echo "ERROR: unknown version '$VER' (expected 4.14 | 4.19 | 5.4)"; exit 2 ;;
+	echo "ERROR: unknown version '$VER' (expected 4.9 | 4.14 | 4.19 | 5.4)"; exit 2 ;;
 esac
 
 cd "$SRC"
 mk() { make ARCH=arm64 CROSS_COMPILE="$CROSS" "$@"; }
 
 # --- config: defconfig + qemu.config + IPv6/policy, per-version tweaks ---------
-mk defconfig >/dev/null
+mk "$DEFCONFIG" >/dev/null
 ./scripts/kconfig/merge_config.sh -m .config "$FRAG" >/dev/null 2>&1
 
 # IPv6 + policy routing built-in so the v6-route / policy-rule vectors have

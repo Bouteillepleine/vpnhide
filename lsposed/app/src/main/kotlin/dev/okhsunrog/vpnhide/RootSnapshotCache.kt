@@ -48,6 +48,7 @@ internal val REQUIRED_ROOT_SNAPSHOT_SECTIONS =
         "kernel_release",
         "kmod_state",
         "kpm_state",
+        "kpm_runtime_modules",
         "lsposed_state",
         "getenforce",
         "kpatch_runtime",
@@ -73,6 +74,11 @@ internal object RootSnapshotCache {
 
     private val mutex = Mutex()
     private var preloadedPmPackages: String? = null
+    private var runtimeProbeSource: String? = null
+
+    fun setRuntimeProbeSource(path: String?) {
+        runtimeProbeSource = path?.takeIf { it.matches(Regex("/[A-Za-z0-9_./-]+")) }
+    }
 
     suspend fun getOrLoad(): RootSnapshot =
         withContext(Dispatchers.IO) {
@@ -105,7 +111,7 @@ internal object RootSnapshotCache {
             StartupTrace.mark("root_snapshot_start")
             val pmPackages = preloadedPmPackages
             preloadedPmPackages = null
-            val sections = loadRootShellSnapshot(pmPackagesOverride = pmPackages)
+            val sections = loadRootShellSnapshot(pmPackagesOverride = pmPackages, runtimeProbeSource = runtimeProbeSource)
             val snapshot = RootSnapshot(sections)
             _snapshot.value = snapshot
             StartupTrace.mark("root_snapshot_done")
@@ -119,10 +125,16 @@ internal object RootSnapshotCache {
     }
 }
 
-private fun loadRootShellSnapshot(pmPackagesOverride: String?): Map<String, String> {
+private fun loadRootShellSnapshot(
+    pmPackagesOverride: String?,
+    runtimeProbeSource: String?,
+): Map<String, String> {
     val (exitCode, raw) =
         suExec(
-            buildRootShellSnapshotCommand(includePmPackages = pmPackagesOverride == null),
+            buildRootShellSnapshotCommand(
+                includePmPackages = pmPackagesOverride == null,
+                runtimeProbeSource = runtimeProbeSource,
+            ),
             timeoutSec = ROOT_SNAPSHOT_TIMEOUT_SEC,
         )
     if (exitCode != 0) {
@@ -146,8 +158,12 @@ internal fun validateRootSnapshotSections(sections: Map<String, String>) {
 // Long because it's a single embedded shell script (the batched root probe),
 // not Kotlin control flow.
 @Suppress("LongMethod")
-internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): String =
+internal fun buildRootShellSnapshotCommand(
+    includePmPackages: Boolean = true,
+    runtimeProbeSource: String? = null,
+): String =
     """
+    KPM_RUNTIME_PROBE_SOURCE=${runtimeProbeSource.orEmpty()}
     emit_cmd() {
       NAME="${'$'}1"
       shift
@@ -238,6 +254,26 @@ internal fun buildRootShellSnapshotCommand(includePmPackages: Boolean = true): S
       emit_cmd kernel_release uname -r
       emit_eval kmod_state '[ -e $PROC_CTL ] && cat $PROC_CTL || true'
       emit_eval kpm_state 'if [ -x $KPM_ACTIVATOR ] && [ ! -f $KPM_MODULE_DIR/disable ]; then $KPM_ACTIVATOR state; fi'
+      emit_eval kpm_runtime_modules '
+        KPATCH=""
+        for CANDIDATE in kpatch /data/adb/modules/KPatch-Next/bin/kpatch /data/adb/modules/kpatch-next/bin/kpatch; do
+          if command -v "${'$'}CANDIDATE" >/dev/null 2>&1; then KPATCH="${'$'}CANDIDATE"; break; fi
+          if [ -x "${'$'}CANDIDATE" ]; then KPATCH="${'$'}CANDIDATE"; break; fi
+        done
+        if [ -n "${'$'}KPATCH" ]; then
+          KPM_LIST="${'$'}("${'$'}KPATCH" kpm list 2>/dev/null)"
+          if [ ${'$'}? -eq 0 ]; then printf "available=1\\n%s\\n" "${'$'}KPM_LIST"; else echo available=0; fi
+        elif [ -d /data/adb/ap ] && [ -f "${'$'}KPM_RUNTIME_PROBE_SOURCE" ]; then
+          KPM_PROBE=/data/local/tmp/vpnhide_kpm_probe.${'$'}${'$'}
+          if cp "${'$'}KPM_RUNTIME_PROBE_SOURCE" "${'$'}KPM_PROBE" && chmod 700 "${'$'}KPM_PROBE"; then
+            "${'$'}KPM_PROBE" --apatch-kpm-list 2>/dev/null || echo available=0
+          else
+            echo available=0
+          fi
+          rm -f "${'$'}KPM_PROBE"
+        else
+          echo available=0
+        fi'
       emit_file lsposed_state $LSPOSED_STATE_FILE
       emit_cmd getenforce getenforce
       # Is a KPM runtime present? Either APatch's native KernelPatch (loads KPMs

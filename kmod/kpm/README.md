@@ -10,7 +10,7 @@ The `.ko` needs per-GKI kernel headers + `Module.symvers` (the DDK build
 matrix) and a kernel that allows loading unsigned modules. That leaves a
 real gap:
 
-- **Non-GKI / old kernels** — e.g. **4.14** ([#33](https://github.com/okhsunrog/vpnhide/issues/33)): no GKI KMI, no DDK build.
+- **Non-GKI / old kernels** — e.g. **4.9 and 4.14** ([#33](https://github.com/okhsunrog/vpnhide/issues/33)): no GKI KMI, no DDK build.
 - **Proprietary kernels with no source or headers** — e.g. **HyperOS 5.4**
   (the crash report on [#35](https://github.com/okhsunrog/vpnhide/issues/35)): can't build a `.ko`, can't patch the source.
 - **Locked-down module signing** — `insmod` rejected; a KPM is loaded via
@@ -45,10 +45,12 @@ kmod/
 | Filtering algorithms | ✅ `shared/vpnhide_logic.h` | seq-buffer compaction, UID parse — freestanding, included by both backends |
 | Hook glue / struct access / control | ❌ per-backend | incompatible include worlds (`<linux/*.h>` vs KernelPatch `-nostdinc`) |
 
-The implementation relies on three design rules:
+The implementation relies on four design rules:
 
 1. **One source + a runtime `kver` offset table** (`kver_offsets.h`) produces
-   one binary for the supported 4.14–6.12 kernel families.
+   one binary for the supported Android kernel families: 4.9, 4.14, 4.19,
+   5.4, 5.10, 5.15, 6.1, 6.6, and 6.12. Other minor families are rejected
+   rather than guessed from a nearby layout.
 2. **Per-call state via `fargs->local.dataN`** keeps before/after callback
    state attached to the invocation even if the task migrates between CPUs.
 3. **Reuse the generated matcher** — gets the `if<N>` pattern (#86) the
@@ -56,7 +58,7 @@ The implementation relies on three design rules:
    its argument/register mapping is not stable across tested kernels.
 4. **Prefer the kernel's user-copy wrappers.** If a build inlines those
    wrappers and exposes only the raw architecture routines, the KPM uses the
-   raw routines only on 4.14/4.19 (where they bracket user access themselves)
+   raw routines only on 4.9/4.14/4.19 (where they bracket user access themselves)
    or when the kernel reports hardware PAN support.
 
 ## KernelPatch API used
@@ -124,8 +126,14 @@ Supported runtimes — pick whichever matches the device's root:
 
 Persistence: a one-shot runtime `sc_kpm_load` is **lost on reboot**. The
 vpnhide KPM module therefore ships `vpnhide.kpm` plus boot scripts: KPatch-Next
-loads via its runtime `kpatch` CLI, while APatch/FolkPatch defers to the
-activator and uses the saved SuperKey or trusted `su` token when present.
+loads through the vpnhide activator's `--load-only` path and its runtime
+`kpatch` CLI, while APatch/FolkPatch defers to the service activator and uses
+the saved SuperKey or trusted `su` token when present. Before either load path
+invokes KernelPatch, the activator validates the leading `major.minor` family
+from `uname -r` against 4.9, 4.14, 4.19, 5.4, 5.10, 5.15, 6.1, 6.6, and 6.12.
+The KPM repeats that check from KernelPatch's numeric `kver` at init, which is
+the authoritative safety boundary; userspace preflight provides an actionable
+`unsupported_kernel` status to the app.
 
 Targeting / control plane: our target-UID set is delivered via the module's
 own `KPM_CTL0` supercall + load-args (the shape the QEMU harness exercises) —
@@ -163,9 +171,10 @@ reference images:
 
 | Reference image | Source/build path |
 |---|---|
-| 4.14.336 | pinned upstream source, legacy QEMU builder |
-| 4.19.325 | pinned upstream source, legacy QEMU builder |
-| android11-5.4 | pinned AOSP common source, legacy QEMU builder |
+| android10-4.9 | pinned AOSP common `deprecated/android-4.9-q`, Cuttlefish config |
+| android10-4.14 | pinned AOSP common `deprecated/android-4.14-q`, Cuttlefish config |
+| android10-4.19 | pinned AOSP common `deprecated/android-4.19-q`, Cuttlefish config |
+| android11-5.4 | pinned AOSP common source, GKI config |
 | android12-5.10 | Android DDK GKI |
 | android13-5.10 | Android DDK GKI |
 | android13-5.15 | Android DDK GKI |
