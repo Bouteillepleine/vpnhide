@@ -190,7 +190,7 @@ keep_mode() {
 
 echo "------------------------- KPM test output -------------------------"
 for log in "$NT_LOG" "$TG_LOG"; do
-	grep -E 'KREL|KPMLOAD|KVER|IPROUTE2|VEC |BIND_|PANIC' "$log" 2>/dev/null | sed "s|^|[$(basename "$log")] |" || true
+	grep -E 'KREL|KPMLOAD|KVER|KPMLOG|IPROUTE2|VEC |BIND_|PANIC' "$log" 2>/dev/null | sed "s|^|[$(basename "$log")] |" || true
 done
 echo "-------------------------------------------------------------------"
 

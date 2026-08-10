@@ -22,6 +22,7 @@ echo "KREL=$(uname -r)"
 # Did KernelPatch load our KPM and install hooks?
 if dmesg | grep -q "KPM hooks installed"; then echo "KPMLOAD=ok"; else echo "KPMLOAD=FAIL"; fi
 echo "KVER=$(dmesg | grep -oE 'kver=0x[0-9a-f]+' | head -1)"
+dmesg | grep 'vpnhide:' | tail -20 | sed 's/^/KPMLOG=/'
 
 # user-mode net so apk can fetch iproute2 (busybox ip can't add dummy devs)
 ip link set eth0 up 2>/dev/null

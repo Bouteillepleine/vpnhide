@@ -103,8 +103,13 @@ static struct vpnhide_stat_entry
 /* Kernel functions resolved at init via kallsyms. */
 static unsigned long (*_copy_from_user)(void *, const void *, unsigned long);
 static unsigned long (*_copy_to_user)(void *, const void *, unsigned long);
+static uint64_t (*_read_sanitised_ftr_reg)(uint32_t);
 static void (*_skb_trim)(void *, unsigned int);
 static int (*_netdev_get_name)(void *, char *, int);
+
+/* Linux sys_reg(3, 0, 0, 7, 1); ID_AA64MMFR1_EL1.PAN is bits [23:20]. */
+#define VPNHIDE_SYS_ID_AA64MMFR1_EL1 0x180720u
+#define VPNHIDE_ID_AA64MMFR1_PAN_SHIFT 20u
 
 #define vpnhide_dbg(fmt, ...)                                   \
 	do {                                                    \
@@ -1183,23 +1188,50 @@ static unsigned long lookup_fn(const char *name)
 	return q.addr;
 }
 
+static int raw_usercopy_is_safe(void)
+{
+	uint64_t mmfr1;
+
+	/* 4.14/4.19 __arch_copy_*_user assembly brackets the copy with
+	 * uaccess_enable_not_uao itself. From 5.x onward that moved into the
+	 * inline raw_copy_*_user wrapper, which may not have a callable symbol. */
+	if ((unsigned int)kver < VPNHIDE_KVER(5, 0, 0))
+		return 1;
+	if (!_read_sanitised_ftr_reg)
+		return 0;
+	mmfr1 = _read_sanitised_ftr_reg(VPNHIDE_SYS_ID_AA64MMFR1_EL1);
+	/* With hardware PAN, __arch_copy_*_user uses unprivileged LDTR/STTR
+	 * accesses and does not need the software-PAN TTBR0 switch. */
+	return ((mmfr1 >> VPNHIDE_ID_AA64MMFR1_PAN_SHIFT) & 0xfu) != 0;
+}
+
 static int resolve_symbols(void)
 {
-	/* Require the generic `_copy_*_user` wrappers, NOT the raw
-	 * `__arch_copy_*_user`. The wrapper does the uaccess enable/disable
-	 * (access_ok + the TTBR0 switch / PAN toggle) around the copy; the raw
-	 * asm only copies. On a kernel using software PAN
-	 * (CONFIG_ARM64_SW_TTBR0_PAN — old ARMv8.0 cores with no hardware PAN,
-	 * and the QEMU harness on `-cpu cortex-a57`) the TTBR0 switch lives in
-	 * the C wrapper on >=5.x, so calling the raw routine directly faults on
-	 * the unmapped user page (caught by the 5.4 harness run). The wrapper is
-	 * correct under both hardware and software PAN. Loading without both
-	 * wrappers would make ioctl and ctl0 user-memory access unsafe. */
+	/* Prefer the generic wrappers: they perform the software-PAN TTBR0 switch
+	 * where required. Some builds inline every wrapper and expose only the raw
+	 * architecture routines, so accept those only where raw_usercopy_is_safe()
+	 * can prove they do not bypass software PAN. */
 	_copy_from_user = (void *)kallsyms_lookup_name("_copy_from_user");
 	_copy_to_user = (void *)kallsyms_lookup_name("_copy_to_user");
 	if (!_copy_from_user || !_copy_to_user) {
-		logki(MODNAME ": required uaccess wrappers unavailable\n");
-		return -1;
+		_read_sanitised_ftr_reg =
+			(void *)kallsyms_lookup_name("read_sanitised_ftr_reg");
+		if (!raw_usercopy_is_safe()) {
+			logki(MODNAME
+			      ": uaccess wrappers absent and raw copy is unsafe\n");
+			return -1;
+		}
+		if (!_copy_from_user)
+			_copy_from_user = (void *)kallsyms_lookup_name(
+				"__arch_copy_from_user");
+		if (!_copy_to_user)
+			_copy_to_user = (void *)kallsyms_lookup_name(
+				"__arch_copy_to_user");
+		if (!_copy_from_user || !_copy_to_user) {
+			logki(MODNAME ": user-copy symbols unavailable\n");
+			return -1;
+		}
+		logki(MODNAME ": using safe raw user-copy routines\n");
 	}
 
 	_skb_trim = (void *)kallsyms_lookup_name("__skb_trim");

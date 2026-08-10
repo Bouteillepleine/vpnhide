@@ -54,6 +54,10 @@ The implementation relies on three design rules:
 3. **Reuse the generated matcher** — gets the `if<N>` pattern (#86) the
    generated interface list defines; `rt_fill_info` remains unhooked because
    its argument/register mapping is not stable across tested kernels.
+4. **Prefer the kernel's user-copy wrappers.** If a build inlines those
+   wrappers and exposes only the raw architecture routines, the KPM uses the
+   raw routines only on 4.14/4.19 (where they bracket user access themselves)
+   or when the kernel reports hardware PAN support.
 
 ## KernelPatch API used
 
