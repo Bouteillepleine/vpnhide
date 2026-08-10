@@ -27,9 +27,9 @@ vpnhide solves both problems with a layered architecture:
 **Layer 1 — Java API (lsposed module):** hooks `system_server`, not the target app. `NetworkCapabilities`, `NetworkInfo`, and `LinkProperties` are filtered at the Binder level *before* data reaches the app's process. The app receives clean data over IPC — no injection into its process, nothing for anti-tamper to detect. The same module also hides selected apps from observer apps at the `PackageManager` level (the **Apps** role).
 
 **Layer 2 — Native (kmod, KPM, or Zygisk):** covers native detection paths. Exactly one native backend should be active:
-- **kmod** (recommended for supported GKI kernels) — kernel-level `kretprobe` hooks. Filters `ioctl` (SIOCGIFFLAGS, SIOCGIFNAME, SIOCGIFCONF), `getifaddrs`/netlink dumps (RTM_GETLINK, RTM_GETADDR), routes, and `/proc/net/route` reads before the syscall returns to userspace. Zero footprint in the target process: no library injection, nothing to detect.
-- **KPM** (beta) — a KernelPatch Module with the same purpose as kmod, but without a GKI-variant-specific `.ko`. Useful for old/non-GKI 4.14 / 4.19 / 5.4 kernels and cases where the `.ko` cannot load. Requires a KernelPatch runtime: APatch or KPatch-Next-Module.
-- **Zygisk** — fallback when a kernel-level backend is not possible. It inline-hooks `libc.so` inside the target process, so banking and anti-fraud apps may detect it. For those apps, leave Native off and rely on the Java layer.
+- **kmod** (recommended for supported GKI kernels) — kernel-level `kprobe`/`kretprobe` hooks. Filters `ioctl`, `getifaddrs`/netlink interface, address, route, and policy-rule dumps, and rejects `SO_BINDTODEVICE` / `SO_BINDTOIFINDEX` for hidden interfaces before socket state changes. Zero footprint in the target process: no library injection, nothing to detect.
+- **KPM** (beta) — a KernelPatch Module implementing the same 11 logical kernel hooks without a GKI-variant-specific `.ko`. Useful for old/non-GKI 4.14 / 4.19 / 5.4 kernels and cases where the `.ko` cannot load. Requires a KernelPatch runtime: APatch or KPatch-Next-Module.
+- **Zygisk** — fallback when a kernel-level backend is not possible. Its `libc.so` inline hooks include best-effort `setsockopt` filtering, run inside the target process, and can be bypassed by direct syscalls, so banking and anti-fraud apps may detect it. For those apps, leave Native off and rely on the Java layer.
 
 **Layer 3 — Ports module (portshide):** a separate Magisk module. It blocks selected apps from reaching `127.0.0.1` / `::1` (via iptables), so they can't detect a locally bound VPN / proxy daemon by its open port (the **Ports** role).
 
@@ -39,7 +39,7 @@ The target app's process is completely untouched when using LSPosed + a kernel-l
 
 vpnhide hides three things from selected apps, all configured per app via the four **J / N / A / P** roles (Java, Native, Apps, Ports):
 
-1. **Interface hiding** — the main goal. It removes VPN interfaces and routes from native APIs (`ioctl`, `getifaddrs`, `/proc/net/*`, `NetworkInterface`) and from Java APIs (`NetworkCapabilities`, `NetworkInfo`, `LinkProperties`). It is delivered by two roles together — **Java (J)** and **Native (N)** — toggled independently.
+1. **Interface hiding** — the main goal. It removes VPN interfaces and routes from native APIs (`ioctl`, `getifaddrs`, netlink, `/proc/net/*`, `NetworkInterface`), prevents binding sockets to a hidden interface, and sanitizes Java APIs (`NetworkCapabilities`, `NetworkInfo`, `LinkProperties`). It is delivered by two roles together — **Java (J)** and **Native (N)** — toggled independently.
 2. **Port hiding** — blocks localhost access for selected apps so they cannot detect Clash, sing-box, V2Ray, Happ, and similar tools by probing local ports (the **Ports (P)** role).
 3. **App hiding** — hides selected installed apps from selected observer apps. Useful against package visibility checks, for example when an app tries to determine whether a VPN or proxy client is installed (the **Apps (A)** role).
 
@@ -189,29 +189,33 @@ Any issues found are shown as actionable cards with specific instructions.
 | 7 | netlink `RTM_GETLINK` dump | | x | x | x | |
 | 8 | netlink `RTM_GETADDR` dump (IPv4 + IPv6) | | x | x | x | |
 | 9 | netlink `RTM_GETROUTE` dump | | x | x | x | |
-| 10 | `/proc/net/route` | blocked | x | x | x | |
-| 11 | `/proc/net/ipv6_route` | blocked | x | x | x | |
-| 12 | `/proc/net/if_inet6` | blocked | | | x | |
-| 13 | `/proc/net/tcp`, `tcp6` | blocked | | | x | |
-| 14 | `/proc/net/udp`, `udp6` | blocked | | | | |
-| 15 | `/proc/net/dev` | blocked | | | | |
-| 16 | `/proc/net/fib_trie` | blocked | | | | |
-| 17 | `/sys/class/net/tun0/` | blocked | | | | |
-| 18 | `NetworkCapabilities` (hasTransport, NOT_VPN, transportInfo) | | | | | x |
-| 19 | `NetworkInfo` (getType, getTypeName) | | | | | x |
-| 20 | `ConnectivityManager.getActiveNetwork()` | | | | | x |
-| 21 | `ConnectivityManager.getAllNetworks()` + VPN scan | | | | | x |
-| 22 | `LinkProperties` (interfaceName) | | | | | x |
-| 23 | `LinkProperties` (routes via VPN interfaces) | | | | | x |
-| 24 | `NetworkInterface.getNetworkInterfaces()` | | x | x | x | |
-| 25 | `System.getProperty` (proxy settings) | | | | x | |
-| 26 | `/proc/net/route` via Java `FileInputStream` | blocked | x | x | x | |
+| 10 | netlink `RTM_GETRULE` policy rules | | x | x | | |
+| 11 | Public `/32` or `/128` host route to the VPN server | | x | x | | |
+| 12 | `SO_BINDTODEVICE` / `SO_BINDTOIFINDEX` | | x | x | libc | |
+| 13 | `/proc/net/route` | blocked | x | x | x | |
+| 14 | `/proc/net/ipv6_route` | blocked | x | x | x | |
+| 15 | `/proc/net/if_inet6` | blocked | | | x | |
+| 16 | `/proc/net/tcp`, `tcp6` | blocked | | | x | |
+| 17 | `/proc/net/udp`, `udp6` | blocked | | | | |
+| 18 | `/proc/net/dev` | blocked | | | | |
+| 19 | `/proc/net/fib_trie` | blocked | | | | |
+| 20 | `/sys/class/net/tun0/` | blocked | | | | |
+| 21 | `NetworkCapabilities` (hasTransport, NOT_VPN, transportInfo) | | | | | x |
+| 22 | `NetworkInfo` (getType, getTypeName) | | | | | x |
+| 23 | `ConnectivityManager.getActiveNetwork()` | | | | | x |
+| 24 | `ConnectivityManager.getAllNetworks()` + VPN scan | | | | | x |
+| 25 | `LinkProperties` (interfaceName) | | | | | x |
+| 26 | `LinkProperties` (routes via VPN interfaces) | | | | | x |
+| 27 | `NetworkInterface.getNetworkInterfaces()` | | x | x | x | |
+| 28 | `/proc/net/route` via Java `FileInputStream` | blocked | x | x | x | |
 
 **blocked** = on stock-enforcing builds (Android 10+) SELinux usually denies untrusted apps access to that `/proc/net/*` / `/sys` file. But **SELinux policy is configured differently across devices and ROMs** (OEM and custom ROMs, `permissive` builds), so the vpnhide layers filter these paths anyway and never rely on SELinux.
 
-Important: **netlink dumps (rows 7-9) are not restricted by SELinux** — a regular app reads interfaces, addresses, and routes directly over `NETLINK_ROUTE`. This is exactly how detectors like RKNHardering bypass the `/proc/net/route` denial (see [issue #86](https://github.com/okhsunrog/vpnhide/issues/86)). So the vectors actually reachable by a regular app are rows 1-9 and 24; the active Native backend handles them. Kernel-level backends (kmod/KPM) do this with no target-process footprint; Zygisk covers libc-routed paths but remains detectable and raw-syscall-bypassable. Everything else is either often SELinux-blocked on stock (device-dependent) or goes through Java APIs and is covered by LSPosed.
+**libc** = best-effort Zygisk coverage: a direct syscall bypasses the inline hook.
 
-KPM is beta: its coverage mirrors the `.ko` columns above, but there are minor hook-parity gaps versus the stable `.ko`.
+Important: `ioctl` and netlink dumps are available to a regular app without help from SELinux; on Linux 5.7+, so is the first socket-interface bind. This is how detectors such as RKNHardering bypass the `/proc/net/route` denial through netlink (see [issue #86](https://github.com/okhsunrog/vpnhide/issues/86)). Kernel-level backends (kmod/KPM) cover the native paths marked above with no target-process footprint. Zygisk covers libc-routed calls only; a direct raw syscall bypasses its hooks. On older kernels, the kernel itself rejects an unprivileged interface bind. Everything else is either often SELinux-blocked on stock (device-dependent) or goes through Java APIs and is covered by LSPosed.
+
+KPM is beta: it implements the same 11 logical kernel hooks as the `.ko`, while the full vector map documents the remaining ABI and behavior differences on older kernels.
 
 The full vector map — per-layer breakdown, SELinux caveats, and known gaps — lives in [docs/detection-vectors.md](docs/detection-vectors.md).
 

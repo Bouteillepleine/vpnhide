@@ -27,9 +27,9 @@ vpnhide решает обе проблемы многослойной архит
 **Уровень 1 — Java API (модуль lsposed):** хукает `system_server`, а не целевое приложение. `NetworkCapabilities`, `NetworkInfo` и `LinkProperties` фильтруются на уровне Binder *до того*, как данные попадут в процесс приложения. Приложение получает чистые данные через IPC — никаких инъекций в его процесс, нечего обнаруживать. Этот же модуль скрывает выбранные приложения от приложений-наблюдателей на уровне `PackageManager` (роль Apps).
 
 **Уровень 2 — нативный (kmod, KPM или Zygisk):** покрывает нативные пути обнаружения. Активным должен быть ровно один Native-бэкенд:
-- **kmod** (рекомендуется для поддерживаемых GKI-ядер) — хуки `kretprobe` на уровне ядра. Фильтрует `ioctl` (SIOCGIFFLAGS, SIOCGIFNAME, SIOCGIFCONF), `getifaddrs`/netlink-дампы (RTM_GETLINK, RTM_GETADDR), маршруты и `/proc/net/route` до возврата системного вызова в пользовательское пространство. Нулевой след в процессе приложения: никаких инъекций библиотек, нечего обнаруживать.
-- **KPM** (бета) — KernelPatch Module с тем же назначением, что и kmod, но без привязки к GKI-варианту. Полезен для старых/non-GKI ядер 4.14 / 4.19 / 5.4 и ситуаций, где `.ko` не может загрузиться. Требует KernelPatch runtime: APatch или KPatch-Next-Module.
-- **Zygisk** — запасной вариант, если kernel-level backend поставить нельзя. Inline-хуки `libc.so` работают внутри процесса приложения, поэтому банковские и anti-fraud приложения могут их обнаруживать. Для таких приложений лучше оставлять Native выключенным и полагаться на Java-уровень.
+- **kmod** (рекомендуется для поддерживаемых GKI-ядер) — хуки `kprobe`/`kretprobe` на уровне ядра. Фильтрует `ioctl`, `getifaddrs`/netlink-дампы интерфейсов, адресов, маршрутов и policy rules, а также отклоняет `SO_BINDTODEVICE` / `SO_BINDTOIFINDEX` для скрытых интерфейсов до изменения состояния сокета. Нулевой след в процессе приложения: никаких инъекций библиотек, нечего обнаруживать.
+- **KPM** (бета) — KernelPatch Module с теми же 11 логическими kernel-хуками, но без привязки к GKI-варианту `.ko`. Полезен для старых/non-GKI ядер 4.14 / 4.19 / 5.4 и ситуаций, где `.ko` не может загрузиться. Требует KernelPatch runtime: APatch или KPatch-Next-Module.
+- **Zygisk** — запасной вариант, если kernel-level backend поставить нельзя. Inline-хуки `libc.so`, включая best-effort фильтрацию `setsockopt`, работают внутри процесса приложения и обходятся прямыми системными вызовами, поэтому банковские и anti-fraud приложения могут их обнаруживать. Для таких приложений лучше оставлять Native выключенным и полагаться на Java-уровень.
 
 **Уровень 3 — модуль скрытия портов (portshide):** отдельный Magisk-модуль. Через iptables блокирует выбранным приложениям доступ к `127.0.0.1` / `::1`, чтобы они не могли обнаружить локально запущенный VPN / proxy-демон по открытому порту (роль Ports).
 
@@ -39,7 +39,7 @@ vpnhide решает обе проблемы многослойной архит
 
 vpnhide скрывает от выбранных приложений три вещи — всё настраивается пер-апп через четыре роли **J / N / A / P** (Java, Native, Apps, Ports):
 
-1. **Скрытие интерфейса** — главная задача. Убирает VPN-интерфейсы и маршруты из нативных API (`ioctl`, `getifaddrs`, `/proc/net/*`, `NetworkInterface`) и из Java API (`NetworkCapabilities`, `NetworkInfo`, `LinkProperties`). Его дают две роли сразу — **Java (J)** и **Native (N)**, они включаются независимо.
+1. **Скрытие интерфейса** — главная задача. Убирает VPN-интерфейсы и маршруты из нативных API (`ioctl`, `getifaddrs`, netlink, `/proc/net/*`, `NetworkInterface`), не позволяет привязать сокет к скрытому интерфейсу и очищает Java API (`NetworkCapabilities`, `NetworkInfo`, `LinkProperties`). Его дают две роли сразу — **Java (J)** и **Native (N)**, они включаются независимо.
 2. **Скрытие портов** — блокирует доступ к localhost для выбранных приложений, чтобы они не могли обнаружить Clash, sing-box, V2Ray, Happ и подобные инструменты через проверку локальных портов (роль **Ports (P)**).
 3. **Скрытие приложений** — позволяет скрыть выбранные установленные приложения от выбранных приложений-наблюдателей. Полезно против проверок package visibility, например когда приложение пытается определить, установлен ли на устройстве VPN или proxy-клиент (роль **Apps (A)**).
 
@@ -189,29 +189,33 @@ su -c /data/adb/modules/vpnhide_ports/activator
 | 7 | netlink `RTM_GETLINK` дамп | | x | x | x | |
 | 8 | netlink `RTM_GETADDR` дамп (IPv4 + IPv6) | | x | x | x | |
 | 9 | netlink `RTM_GETROUTE` дамп | | x | x | x | |
-| 10 | `/proc/net/route` | блок. | x | x | x | |
-| 11 | `/proc/net/ipv6_route` | блок. | x | x | x | |
-| 12 | `/proc/net/if_inet6` | блок. | | | x | |
-| 13 | `/proc/net/tcp`, `tcp6` | блок. | | | x | |
-| 14 | `/proc/net/udp`, `udp6` | блок. | | | | |
-| 15 | `/proc/net/dev` | блок. | | | | |
-| 16 | `/proc/net/fib_trie` | блок. | | | | |
-| 17 | `/sys/class/net/tun0/` | блок. | | | | |
-| 18 | `NetworkCapabilities` (hasTransport, NOT_VPN, transportInfo) | | | | | x |
-| 19 | `NetworkInfo` (getType, getTypeName) | | | | | x |
-| 20 | `ConnectivityManager.getActiveNetwork()` | | | | | x |
-| 21 | `ConnectivityManager.getAllNetworks()` + VPN-сканирование | | | | | x |
-| 22 | `LinkProperties` (interfaceName) | | | | | x |
-| 23 | `LinkProperties` (маршруты через VPN-интерфейсы) | | | | | x |
-| 24 | `NetworkInterface.getNetworkInterfaces()` | | x | x | x | |
-| 25 | `System.getProperty` (настройки прокси) | | | | x | |
-| 26 | `/proc/net/route` через Java `FileInputStream` | блок. | x | x | x | |
+| 10 | netlink `RTM_GETRULE` (policy rules) | | x | x | | |
+| 11 | Публичный `/32` или `/128` host-route к VPN-серверу | | x | x | | |
+| 12 | `SO_BINDTODEVICE` / `SO_BINDTOIFINDEX` | | x | x | libc | |
+| 13 | `/proc/net/route` | блок. | x | x | x | |
+| 14 | `/proc/net/ipv6_route` | блок. | x | x | x | |
+| 15 | `/proc/net/if_inet6` | блок. | | | x | |
+| 16 | `/proc/net/tcp`, `tcp6` | блок. | | | x | |
+| 17 | `/proc/net/udp`, `udp6` | блок. | | | | |
+| 18 | `/proc/net/dev` | блок. | | | | |
+| 19 | `/proc/net/fib_trie` | блок. | | | | |
+| 20 | `/sys/class/net/tun0/` | блок. | | | | |
+| 21 | `NetworkCapabilities` (hasTransport, NOT_VPN, transportInfo) | | | | | x |
+| 22 | `NetworkInfo` (getType, getTypeName) | | | | | x |
+| 23 | `ConnectivityManager.getActiveNetwork()` | | | | | x |
+| 24 | `ConnectivityManager.getAllNetworks()` + VPN-сканирование | | | | | x |
+| 25 | `LinkProperties` (interfaceName) | | | | | x |
+| 26 | `LinkProperties` (маршруты через VPN-интерфейсы) | | | | | x |
+| 27 | `NetworkInterface.getNetworkInterfaces()` | | x | x | x | |
+| 28 | `/proc/net/route` через Java `FileInputStream` | блок. | x | x | x | |
 
 **блок.** = на сток-enforcing сборках (Android 10+) SELinux обычно запрещает обычным приложениям доступ к этому файлу `/proc/net/*` / `/sys`. Но политика SELinux настроена **по-разному на разных устройствах и прошивках** (OEM- и кастомные ROM, `permissive`-сборки), поэтому слои vpnhide всё равно фильтруют эти пути и не полагаются на SELinux.
 
-Важно: **netlink-дампы (строки 7–9) SELinux не ограничивает** — обычное приложение читает интерфейсы, адреса и маршруты через `NETLINK_ROUTE` напрямую. Именно так детекторы вроде RKNHardering обходят блокировку `/proc/net/route` (см. [issue #86](https://github.com/okhsunrog/vpnhide/issues/86)). Поэтому векторы, реально доступные обычному приложению, — это строки 1–9 и 24; их закрывает активный Native-бэкенд. Kernel-level варианты (kmod/KPM) закрывают их без следа в процессе; Zygisk закрывает libc-пути, но остаётся обнаружимым и обходится raw syscall. Остальное либо часто блокируется SELinux на стоке (но это зависит от устройства), либо идёт через Java API и покрывается LSPosed.
+**libc** = best-effort покрытие Zygisk: прямой системный вызов обходит inline-хук.
 
-KPM в бете: его покрытие повторяет колонки `.ko` выше, но есть небольшие расхождения в паритете хуков относительно стабильного `.ko`.
+Важно: `ioctl` и netlink-дампы доступны обычному приложению без помощи SELinux; на Linux 5.7+ это относится и к первой привязке сокета к интерфейсу. Именно через netlink детекторы вроде RKNHardering обходят блокировку `/proc/net/route` (см. [issue #86](https://github.com/okhsunrog/vpnhide/issues/86)). Kernel-level варианты (kmod/KPM) закрывают отмеченные в таблице нативные пути без следа в процессе. Zygisk закрывает только вызовы, проходящие через libc; прямой raw syscall обходит его хуки. На более старых ядрах привязку непривилегированного сокета отклоняет само ядро. Остальное либо часто блокируется SELinux на стоке (но это зависит от устройства), либо идёт через Java API и покрывается LSPosed.
+
+KPM в бете: он реализует те же 11 логических kernel-хуков, что и `.ko`, но отдельные различия ABI и поведения на старых ядрах перечислены в полной карте векторов.
 
 Полная карта векторов — с разбивкой по слоям, нюансами SELinux и известными пробелами — в [docs/detection-vectors.md](docs/detection-vectors.md).
 
