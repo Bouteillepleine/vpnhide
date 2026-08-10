@@ -133,7 +133,15 @@ saw a one-interface discrepancy. `sock_ioctl_ret` now also handles the
 `ifc_req == NULL` path — it rcu-enumerates the socket's netns netdevs and subtracts
 `sizeof(struct ifreq)` per *IPv4-addressed* VPN iface (matched by `ifa_label`, the
 exact set/naming `inet_gifconf` would have emitted), so the size query agrees with
-the filtered fill. Validated by the harness `ifconf_size_probe` vector.
+the filtered fill. Validated by the harness `ifconf_probe` vector.
+
+All three native implementations also clear the compacted part of the
+kernel-written buffer before shortening `ifc_len`. Without that cleanup, a
+caller could scan its oversized buffer past the reported length and recover a
+removed VPN name (or detect duplicated entries left by compaction). The QEMU
+probe starts with a zeroed oversized buffer and verifies that no interface
+names remain in this tail; it does not require or assume that bytes beyond the
+kernel's original result are overwritten.
 
 **One narrow `SIOCGIFCONF` gap still open:**
 

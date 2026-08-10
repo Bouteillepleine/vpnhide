@@ -116,6 +116,27 @@ if [ -z "$GAI" ] && [ -n "${VPNHIDE_GAI_REQUIRED:-}" ]; then
 	exit 2
 fi
 
+# --- static SIOCGIFCONF probe (visible entries + stale tail) ----------------
+IFC=""
+if [ -n "${VPNHIDE_IFC_BIN:-}" ] && [ -x "${VPNHIDE_IFC_BIN:-}" ]; then
+	IFC="$VPNHIDE_IFC_BIN"
+	echo "[run-kpm] ifconf probe: prebuilt ($IFC)"
+else
+	IFC_CC="${VPNHIDE_IFC_CC:-$(find "$HOME/Android/Sdk/ndk" -type f -path '*/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android*-clang' 2>/dev/null | sort | tail -1 || true)}"
+	if [ -n "$IFC_CC" ] && [ -x "$IFC_CC" ]; then
+		IFC="$CACHE/ifconf"
+		"$IFC_CC" -static -O2 -Wall -Wextra -Werror \
+			-o "$IFC" "$HERE/ifconf-probe.c" 2>/dev/null || IFC=""
+	fi
+	[ -n "$IFC" ] && echo "[run-kpm] ifconf probe built ($(basename "$IFC_CC"))" || \
+		echo "[run-kpm] no bionic toolchain/binary — skipping SIOCGIFCONF tail probe"
+fi
+
+if [ -z "$IFC" ] && [ -n "${VPNHIDE_IFC_REQUIRED:-}" ]; then
+	echo "ERROR: ifconf probe is required here (VPNHIDE_IFC_REQUIRED set) but unavailable."
+	exit 2
+fi
+
 # --- state-aware socket binding probe ----------------------------------------
 BIND=""
 if [ -n "${VPNHIDE_BIND_BIN:-}" ] && [ -x "${VPNHIDE_BIND_BIN:-}" ]; then
@@ -154,6 +175,7 @@ boot_phase() {
 	cp "$HERE/init-kpm.sh" "$rfs/init"
 	chmod +x "$rfs/init"
 	[ -n "$GAI" ] && { cp "$GAI" "$rfs/gai"; chmod +x "$rfs/gai"; }
+	[ -n "$IFC" ] && { cp "$IFC" "$rfs/ifconf"; chmod +x "$rfs/ifconf"; }
 	[ -n "$BIND" ] && { cp "$BIND" "$rfs/bind-probe"; chmod +x "$rfs/bind-probe"; }
 	( cd "$rfs" && find . | cpio -o -H newc 2>/dev/null | gzip > "$WORK/initramfs.$tag.gz" )
 
@@ -175,6 +197,7 @@ NT_LOG="$(boot_phase "" notarget)"
 TG_LOG="$(boot_phase $'0\n5555' target)"
 
 vec_count() { grep -oE "VEC $1=[0-9]+" "$2" | head -1 | grep -oE '[0-9]+$' || echo "-1"; }
+ifc_count() { grep -oE "$1=[0-9]+" "$2" | head -1 | grep -oE '[0-9]+$' || echo "-1"; }
 panic_count() { grep -oE 'PANIC=[0-9]+' "$1" | head -1 | grep -oE '[0-9]+$' || echo "1"; }
 kpmload() { grep -q 'KPMLOAD=ok' "$1" && echo ok || echo FAIL; }
 keep_mode() {
@@ -286,6 +309,22 @@ elif [ "$nt_keep_errno" -eq 0 ] && [ "$nt_keep_state" -eq 1 ] && \
 else
 	echo "RESULT keep_bind_device=FAIL (nt_errno=$nt_keep_errno nt_state=$nt_keep_state tg_errno=$tg_keep_errno tg_state=$tg_keep_state)"; FAIL=$((FAIL+1))
 fi
+
+if [ -z "$IFC" ]; then
+	echo "RESULT ifconf_tail=SKIP (no ifconf probe available)"
+else
+	nt_ifc_vpn="$(ifc_count IFCONF_FILL_VPN "$NT_LOG")"
+	tg_ifc_vpn="$(ifc_count IFCONF_FILL_VPN "$TG_LOG")"
+	nt_ifc_tail="$(ifc_count IFCONF_TAIL "$NT_LOG")"
+	tg_ifc_tail="$(ifc_count IFCONF_TAIL "$TG_LOG")"
+	if [ "$nt_ifc_vpn" -gt 0 ] && [ "$tg_ifc_vpn" -eq 0 ] && \
+		[ "$nt_ifc_tail" -eq 0 ] && [ "$tg_ifc_tail" -eq 0 ]; then
+		echo "RESULT ifconf_tail=PASS (nt_vpn=$nt_ifc_vpn tg_vpn=$tg_ifc_vpn nt_tail=$nt_ifc_tail tg_tail=$tg_ifc_tail)"; PASS=$((PASS+1))
+	else
+		echo "RESULT ifconf_tail=FAIL (nt_vpn=$nt_ifc_vpn tg_vpn=$tg_ifc_vpn nt_tail=$nt_ifc_tail tg_tail=$tg_ifc_tail)"; FAIL=$((FAIL+1))
+	fi
+fi
+
 for vec in proc_route_v4 getifaddrs proc_route_v6 siocgifconf dev_ioctl netlink_route4 hostroute4 netlink_route6 hostroute6 policy_rule gai_getifaddrs; do
 	# The gai_getifaddrs vector only exists when the bionic probe is available
 	# (baked VPNHIDE_GAI_BIN, or built from an NDK on this host). If neither is

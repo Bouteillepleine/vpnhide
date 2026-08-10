@@ -84,6 +84,9 @@ if [ -x /gai ]; then
 	echo "VEC gai_getifaddrs=$(printf '%s\n' "$GAI_OUT" | sed -n 's/^GAI_VPN0=//p' | head -1)"
 	echo "VEC keep_gai_getifaddrs=$(printf '%s\n' "$GAI_OUT" | sed -n 's/^GAI_OTHER=//p' | head -1)"
 fi
+if [ -x /ifconf ]; then
+	/ifconf 2>/dev/null
+fi
 
 PANIC=$(dmesg | grep -ci 'Unable to handle\|Internal error\|Oops\|BUG:\|Kernel panic')
 echo "PANIC=$PANIC"

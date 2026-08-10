@@ -42,7 +42,7 @@ Vectors exercised (`init.sh`):
 |---|---|---|
 | getifaddrs | `ip addr show` | `rtnl_fill_ifinfo` + `inet*_fill_ifaddr` |
 | bionic getifaddrs | `/gai` static NDK probe | `rtnl_fill_ifinfo` + `inet*_fill_ifaddr` |
-| SIOCGIFCONF | `ifconfig -a` | `sock_ioctl` |
+| SIOCGIFCONF | `ifconfig -a` + `/ifconf` oversized-buffer probe | `sock_ioctl` |
 | dev ioctl by name | `ifconfig vpn0` | `dev_ioctl` |
 | /proc/net/route | `cat /proc/net/route` | `fib_route_seq_show` |
 | /proc/net/ipv6_route | `cat /proc/net/ipv6_route` | `ipv6_route_seq_show` |
@@ -78,8 +78,9 @@ to use prebuilt artifacts (CI) instead of the local cache. It also honors
 `VPNHIDE_GAI_BIN` for a prebuilt static bionic `getifaddrs()` probe and
 `VPNHIDE_GAI_REQUIRED=1` to fail instead of silently skipping that native probe.
 `VPNHIDE_IFC_BIN` / `VPNHIDE_IFC_REQUIRED=1` control the `SIOCGIFCONF`
-size-query probe, and `VPNHIDE_BIND_BIN` / `VPNHIDE_BIND_REQUIRED=1` provide the
-equivalent control for the state-aware socket-bind probe.
+size-query and stale-tail probe, and `VPNHIDE_BIND_BIN` /
+`VPNHIDE_BIND_REQUIRED=1` provide the equivalent control for the state-aware
+socket-bind probe.
 
 Requirements: `docker` (for build-kernel.sh), `qemu-system-aarch64`, `cpio`,
 `curl`.

@@ -720,17 +720,25 @@ static void dev_ioctl_after(hook_fargs5_t *fargs, void *udata)
 
 static int filter_ifconf(void *uifc)
 {
-	char ifc[16]; /* struct ifconf snapshot: len@0 (int), req@8 (ptr) */
 	char e[VPNHIDE_IFREQ_SZ];
+	char zero[VPNHIDE_IFREQ_SZ] = { 0 };
 	char *req;
 	int len, n, i, dst = 0;
 
-	if (!_copy_from_user || !_copy_to_user)
+	uint32_t req_lo = 0, req_hi = 0;
+	long rc_len, rc_lo, rc_hi;
+
+	if (!uifc || !_copy_from_user || !_copy_to_user)
 		return 0;
-	if (_copy_from_user(ifc, uifc, sizeof(ifc)))
+	/* Read the UAPI pointer as two fixed-width words. The 5.10/5.15 KPM QEMU
+	 * targets preserved only its low word when it was copied directly into a
+	 * pointer-typed local; reconstructing both halves keeps the arm64 address. */
+	rc_len = _copy_from_user(&len, uifc, sizeof(len));
+	rc_lo = _copy_from_user(&req_lo, (char *)uifc + 8, sizeof(req_lo));
+	rc_hi = _copy_from_user(&req_hi, (char *)uifc + 12, sizeof(req_hi));
+	req = (char *)(unsigned long)(((uint64_t)req_hi << 32) | req_lo);
+	if (rc_len || rc_lo || rc_hi)
 		return 0;
-	len = *(int *)ifc;
-	req = *(char **)(ifc + 8);
 	if (!req || len <= 0)
 		return 0;
 
@@ -750,6 +758,16 @@ static int filter_ifconf(void *uifc)
 	}
 	if (dst != n) {
 		int newlen = dst * VPNHIDE_IFREQ_SZ;
+		int tail;
+
+		/* The shortened length does not make the old entries disappear from
+		 * the caller-owned buffer. Clear only the kernel-written slots removed
+		 * by compaction, leaving unused caller capacity untouched. */
+		for (tail = dst; tail < n; tail++) {
+			if (_copy_to_user(req + (long)tail * VPNHIDE_IFREQ_SZ,
+					  zero, VPNHIDE_IFREQ_SZ))
+				return 0;
+		}
 
 		if (_copy_to_user(uifc, &newlen, sizeof(newlen)))
 			return 0; /* failed to shrink ifc_len */
@@ -759,14 +777,21 @@ static int filter_ifconf(void *uifc)
 	return 0;
 }
 
-static void sock_ioctl_after(hook_fargs3_t *fargs, void *udata)
+static void sock_ioctl_before(hook_fargs3_t *fargs, void *udata)
 {
 	unsigned long cmd = (unsigned long)fargs->arg1;
-	void *argp = (void *)fargs->arg2;
+
+	fargs->local.data0 = 0;
+	if (cmd != VPNHIDE_SIOCGIFCONF || !hook_active(VPNHIDE_HOOK_SOCK_IOCTL))
+		return;
+	fargs->local.data0 = fargs->arg2;
+}
+
+static void sock_ioctl_after(hook_fargs3_t *fargs, void *udata)
+{
+	void *argp = (void *)fargs->local.data0;
 
 	if ((long)fargs->ret != 0 || !argp)
-		return;
-	if (cmd != VPNHIDE_SIOCGIFCONF || !hook_active(VPNHIDE_HOOK_SOCK_IOCTL))
 		return;
 	if (filter_ifconf(argp))
 		record_hook_hit(VPNHIDE_HOOK_SOCK_IOCTL);
@@ -1343,8 +1368,8 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 	}
 	install_hook("dev_ioctl", 5, 0, (void *)dev_ioctl_after,
 		     VPNHIDE_HOOK_DEV_IOCTL);
-	install_hook("sock_ioctl", 3, 0, (void *)sock_ioctl_after,
-		     VPNHIDE_HOOK_SOCK_IOCTL);
+	install_hook("sock_ioctl", 3, (void *)sock_ioctl_before,
+		     (void *)sock_ioctl_after, VPNHIDE_HOOK_SOCK_IOCTL);
 	if (off->skb_len)
 		install_hook("rtnl_fill_ifinfo", 12, (void *)rtnl_fill_before,
 			     (void *)rtnl_fill_after,
@@ -1538,7 +1563,8 @@ static long vpnhide_kpm_exit(void *__user reserved)
 		hook_unwrap((void *)fn, 0, (void *)dev_ioctl_after);
 	fn = lookup_fn("sock_ioctl");
 	if (fn)
-		hook_unwrap((void *)fn, 0, (void *)sock_ioctl_after);
+		hook_unwrap((void *)fn, (void *)sock_ioctl_before,
+			    (void *)sock_ioctl_after);
 	fn = lookup_fn("fib_dump_info");
 	if (fn)
 		hook_unwrap((void *)fn, (void *)fib_dump_before,

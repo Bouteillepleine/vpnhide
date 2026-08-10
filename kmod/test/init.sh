@@ -158,35 +158,38 @@ ifc_field() {
 	/ifconf 2>/dev/null | sed -n "s/^$1=//p" | head -1
 }
 
-# SIOCGIFCONF size-query path: the legacy two-step probe (NULL ifc_req to learn
-# the size, then a sized fill). A target's size query must (a) agree with its
-# own filtered fill and (b) drop below the non-target size query — i.e. vpn0's
-# address was subtracted from the count, not just from the buffer.
-check_ifconf_size() {
+# SIOCGIFCONF probe: the target's size query must agree with its filtered fill,
+# drop below the non-target size, and leave no stale names past ifc_len.
+check_ifconf() {
 	if [ ! -x /ifconf ]; then
-		echo "RESULT ifconf_size_probe=SKIP (no ifconf probe available)"
+		echo "RESULT ifconf_probe=SKIP (no ifconf probe available)"
 		return
 	fi
 
 	set_target 5555
 	_nt_size=$(ifc_field IFCONF_SIZE)
+	_nt_tail=$(ifc_field IFCONF_TAIL)
 	set_target 0
 	_tg_size=$(ifc_field IFCONF_SIZE)
 	_tg_fill=$(ifc_field IFCONF_FILL)
 	_tg_vpn=$(ifc_field IFCONF_FILL_VPN)
+	_tg_tail=$(ifc_field IFCONF_TAIL)
 	[ -n "$_nt_size" ] || _nt_size=-1
 	[ -n "$_tg_size" ] || _tg_size=-1
 	[ -n "$_tg_fill" ] || _tg_fill=-1
 	[ -n "$_tg_vpn" ] || _tg_vpn=-1
+	[ -n "$_nt_tail" ] || _nt_tail=-1
+	[ -n "$_tg_tail" ] || _tg_tail=-1
 
 	# tg_vpn==0 guards against matching two equally-broken numbers: the fill
 	# must actually be vpn-free for the size==fill agreement to mean anything.
-	if [ "$_tg_vpn" -eq 0 ] && [ "$_tg_size" -eq "$_tg_fill" ] &&
+	if [ "$_tg_vpn" -eq 0 ] && [ "$_nt_tail" -eq 0 ] &&
+		[ "$_tg_tail" -eq 0 ] && [ "$_tg_size" -eq "$_tg_fill" ] &&
 		[ "$_nt_size" -gt "$_tg_size" ]; then
-		echo "RESULT ifconf_size_probe=PASS (nt_size=$_nt_size tg_size=$_tg_size tg_fill=$_tg_fill)"
+		echo "RESULT ifconf_probe=PASS (nt_size=$_nt_size tg_size=$_tg_size tg_fill=$_tg_fill nt_tail=$_nt_tail tg_tail=$_tg_tail)"
 		PASS=$((PASS + 1))
 	else
-		echo "RESULT ifconf_size_probe=FAIL (nt_size=$_nt_size tg_size=$_tg_size tg_fill=$_tg_fill tg_vpn=$_tg_vpn)"
+		echo "RESULT ifconf_probe=FAIL (nt_size=$_nt_size tg_size=$_tg_size tg_fill=$_tg_fill tg_vpn=$_tg_vpn nt_tail=$_nt_tail tg_tail=$_tg_tail)"
 		FAIL=$((FAIL + 1))
 	fi
 }
@@ -312,7 +315,7 @@ check_hide netlink_route6  "ip -6 route show table all"   "vpn0"   # rt6_fill_no
 check_hide hostroute6      "ip -6 route show table all"   "2001:4860" # rt6_fill_node public host-route
 check_hide policy_rule     "ip rule show"                 "199"    # fib_nl_fill_rule
 check_gai
-check_ifconf_size                                                  # sock_ioctl size-query
+check_ifconf                                                       # sock_ioctl size/tail
 check_socket_bind                                                  # interface socket binding
 
 # Non-VPN entries must survive target filtering. This catches over-trimming
