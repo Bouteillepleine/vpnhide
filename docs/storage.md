@@ -205,6 +205,8 @@ wire. So: one shared core, thin per-target front-ends.
 
 ```
 crates/
+  apatch-abi/                # read-only/load supercall command compatibility,
+                             #   shared by the KPM activator and APK probe.
   protocol/                 # lib, NO serde — the wire (parse/format), shared by
                             #   the Zygisk .so and the activator.
   activator/

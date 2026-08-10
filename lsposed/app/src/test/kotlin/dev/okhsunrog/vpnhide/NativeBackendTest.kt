@@ -1,7 +1,9 @@
 package dev.okhsunrog.vpnhide
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NativeBackendTest {
@@ -278,5 +280,24 @@ class NativeBackendTest {
             )
         val state = detectKpmModule(sections, selfPkg = "self", currentBootId = "boot-1") as ModuleState.Installed
         assertEquals(false, state.active)
+    }
+
+    @Test
+    fun `standalone runtime KPM is detected without flashable module`() {
+        assertTrue(standaloneKpmLoaded(ModuleState.NotInstalled, "available=1\nvpnhide\n"))
+        assertTrue(standaloneKpmLoaded(ModuleState.NotInstalled, "available=1\n0 vpnhide loaded\n"))
+    }
+
+    @Test
+    fun `runtime KPM is not standalone when flashable module is installed`() {
+        val installed = ModuleState.Installed(version = "1.0", active = true, targetCount = 0)
+        assertFalse(standaloneKpmLoaded(installed, "available=1\nvpnhide\n"))
+    }
+
+    @Test
+    fun `unavailable runtime list or another KPM is not a standalone vpnhide install`() {
+        assertFalse(standaloneKpmLoaded(ModuleState.NotInstalled, "available=0\n"))
+        assertFalse(standaloneKpmLoaded(ModuleState.NotInstalled, "available=1\nother_module\n"))
+        assertFalse(standaloneKpmLoaded(ModuleState.NotInstalled, "available=1\nvpnhide_next\n"))
     }
 }

@@ -515,8 +515,13 @@ version = "1.1.1"
 dependencies = [
  "serde",
  "serde_json",
+ "vpnhide_apatch_abi",
  "vpnhide_protocol",
 ]
+
+[[package]]
+name = "vpnhide_apatch_abi"
+version = "1.1.1"
 
 [[package]]
 name = "vpnhide_protocol"

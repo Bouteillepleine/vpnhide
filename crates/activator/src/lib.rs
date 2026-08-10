@@ -20,6 +20,11 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use serde::Deserialize;
+use vpnhide_apatch_abi::{
+    APATCH_SUPERCALL_NR, CommandStyle as ApatchCommandStyle,
+    command_candidates as apatch_command_candidates_for_hint, encode_command as supercall_cmd,
+    parse_kernel_version_hint as parse_apatch_kernel_version_hint,
+};
 use vpnhide_protocol::Target;
 use vpnhide_protocol::hook_ids::{HOOK_NAMES, KERNEL_HOOK_MASK, ZYGISK_HOOK_MASK};
 use vpnhide_protocol::{Kind, MAX_TARGET_UIDS, format_config, parse_config, peek_kind};
@@ -59,18 +64,12 @@ const KPM_SUPPORTED_KERNEL_PAIRS: &[(u32, u32)] = &[
 // lock-step instead of restating the literal 64.
 const MAX_NATIVE_TARGETS: usize = MAX_TARGET_UIDS;
 const PM_READY_ATTEMPTS: u32 = 60;
-const APATCH_SUPERCALL_NR: c_long = 45;
-const APATCH_SUPERCALL_DEFAULT_VERSION_CODE: c_long = 0x000d00;
-const APATCH_SUPERCALL_MAGIC: c_long = 0x1158;
 const APATCH_TRUSTED_SU_KEY: &str = "su";
 const SUPERCALL_HELLO: c_long = 0x1000;
 const SUPERCALL_HELLO_MAGIC: c_long = 0x11581158;
 const SUPERCALL_KPM_LOAD: c_long = 0x1020;
 const SUPERCALL_KPM_CONTROL: c_long = 0x1022;
 const SUPERCALL_KPM_LIST: c_long = 0x1031;
-const APATCH_SUPERCALL_VERSION_FALLBACKS: &[c_long] = &[
-    0x000d02, 0x000d01, 0x000c02, 0x000c01, 0x000c00, 0x000b01, 0x000b00, 0x000a05,
-];
 
 unsafe extern "C" {
     fn syscall(num: c_long, ...) -> c_long;
@@ -78,12 +77,6 @@ unsafe extern "C" {
 }
 
 const LOCK_EX: c_int = 2;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ApatchCommandStyle {
-    Versioned(c_long),
-    Raw,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PmReadyWait {

@@ -271,6 +271,15 @@ the app when Vector is active.
 - Reader: app root snapshot/dashboard/startup cleanup.
 - Lifetime: per app launch, stale records removed when boot_id changes.
 
+`/data/user/0/dev.okhsunrog.vpnhide/files/vhprobe`
+
+- Format: executable Rust diagnostic probe extracted from the APK asset.
+- Writer/reader: the app overwrites it on launch; root diagnostics copy it to
+  `/data/local/tmp/vpnhide_vhprobe` for root-differential checks or to the
+  per-process `/data/local/tmp/vpnhide_kpm_probe.<pid>` for APatch KPM listing.
+- Lifetime: app-private and replaced on launch. Every `/data/local/tmp` copy is
+  deleted immediately after execution.
+
 ### `cacheDir`
 
 Used for temporary debug/export files and a copied read-only LSPosed config DB:
@@ -342,7 +351,7 @@ zygote app fork:
 |---|---|
 | In-kernel per boot | `/proc/vpnhide_ctl` state, KPM in-kernel state, iptables chains |
 | Per boot / last apply files | `/data/adb/vpnhide_kmod/load_status`, `/data/adb/vpnhide_kmod/load_dmesg`, `/data/adb/vpnhide_kpm/load_status`, `/data/adb/vpnhide_ports/load_status`, `/data/adb/vpnhide_ports/load_log`, `/data/system/vpnhide_lsposed_state` |
-| Per app launch | `filesDir/vpnhide_zygisk_active` |
+| Per app launch | `filesDir/vpnhide_zygisk_active`, `filesDir/vhprobe` |
 | Persistent root-managed | `/data/system/vpnhide_config.json`, `/data/adb/vpnhide/superkey` |
 | Module-dir derived state | `/data/adb/modules/vpnhide_zygisk/targets.txt` |
 | Removed on module uninstall | `/data/adb/vpnhide_kmod/`, `/data/adb/vpnhide_kpm/`, `/data/adb/vpnhide_zygisk/`, `/data/adb/vpnhide_ports/` when empty after deleting module-specific files |

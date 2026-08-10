@@ -439,11 +439,13 @@ fn pm_ready_check_matches_literal_package_token() {
 fn apatch_supercall_command_keeps_kpm_command_in_low_bits() {
     assert_eq!(
         supercall_cmd(
-            ApatchCommandStyle::Versioned(APATCH_SUPERCALL_DEFAULT_VERSION_CODE),
+            ApatchCommandStyle::Versioned(
+                vpnhide_apatch_abi::APATCH_SUPERCALL_DEFAULT_VERSION_CODE
+            ),
             SUPERCALL_KPM_CONTROL,
         ),
-        (APATCH_SUPERCALL_DEFAULT_VERSION_CODE << 32)
-            | (APATCH_SUPERCALL_MAGIC << 16)
+        (vpnhide_apatch_abi::APATCH_SUPERCALL_DEFAULT_VERSION_CODE << 32)
+            | (vpnhide_apatch_abi::APATCH_SUPERCALL_MAGIC << 16)
             | SUPERCALL_KPM_CONTROL,
     );
     assert_eq!(

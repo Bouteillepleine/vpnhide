@@ -388,25 +388,7 @@ fn apatch_output_len(rc: c_long, out: &[u8]) -> usize {
 }
 
 pub(crate) fn apatch_command_candidates() -> Vec<ApatchCommandStyle> {
-    let mut styles = Vec::new();
-    if let Some(version) = apatch_kernel_version_hint() {
-        push_apatch_style(&mut styles, ApatchCommandStyle::Versioned(version));
-    }
-    push_apatch_style(
-        &mut styles,
-        ApatchCommandStyle::Versioned(APATCH_SUPERCALL_DEFAULT_VERSION_CODE),
-    );
-    for version in APATCH_SUPERCALL_VERSION_FALLBACKS {
-        push_apatch_style(&mut styles, ApatchCommandStyle::Versioned(*version));
-    }
-    push_apatch_style(&mut styles, ApatchCommandStyle::Raw);
-    styles
-}
-
-fn push_apatch_style(styles: &mut Vec<ApatchCommandStyle>, style: ApatchCommandStyle) {
-    if !styles.contains(&style) {
-        styles.push(style);
-    }
+    apatch_command_candidates_for_hint(apatch_kernel_version_hint())
 }
 
 fn apatch_kernel_version_hint() -> Option<c_long> {
@@ -415,35 +397,6 @@ fn apatch_kernel_version_hint() -> Option<c_long> {
         return None;
     }
     parse_apatch_kernel_version_hint(&String::from_utf8_lossy(&out.stdout))
-}
-
-pub(crate) fn parse_apatch_kernel_version_hint(log: &str) -> Option<c_long> {
-    const MARKER: &str = "KP KernelPatch Version:";
-    for line in log.lines().rev() {
-        let Some((_, tail)) = line.split_once(MARKER) else {
-            continue;
-        };
-        let Some(value) = tail.split_whitespace().next() else {
-            continue;
-        };
-        let value = value.trim_start_matches("0x");
-        if value.is_empty() {
-            continue;
-        }
-        if let Ok(version) = c_long::from_str_radix(value, 16) {
-            return Some(version);
-        }
-    }
-    None
-}
-
-pub(crate) fn supercall_cmd(style: ApatchCommandStyle, cmd: c_long) -> c_long {
-    match style {
-        ApatchCommandStyle::Versioned(version) => {
-            (version << 32) | (APATCH_SUPERCALL_MAGIC << 16) | (cmd & 0xffff)
-        }
-        ApatchCommandStyle::Raw => cmd,
-    }
 }
 
 fn supercall_ok(rc: c_long, op: &str) -> Result<()> {

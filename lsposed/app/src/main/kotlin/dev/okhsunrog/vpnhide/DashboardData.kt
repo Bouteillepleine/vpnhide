@@ -830,94 +830,6 @@ private fun renderKmodProblem(
             },
     )
 
-internal sealed interface KpmProblemKind {
-    val reason: ModuleBrokenReason?
-
-    data class UnsupportedKernel(
-        val unameR: String,
-    ) : KpmProblemKind {
-        override val reason get() = ModuleBrokenReason.UnsupportedKernel
-    }
-
-    // The activator binary itself is missing from the module directory — a
-    // corrupted or partial KPM install (see kmod/kpm/module/service.sh).
-    // [path] is the path the boot script tried to exec.
-    data class ActivatorMissing(
-        val path: String,
-    ) : KpmProblemKind {
-        override val reason get() = ModuleBrokenReason.KpmActivatorMissing
-    }
-
-    // The activator ran but exited non-zero for a reason we don't have a
-    // named diagnosis for. [detail] is the raw `rc=<code> <captured output>`
-    // the boot script wrote — the KPM analogue of kmod's raw insmod stderr.
-    // Null reason (mirrors KmodProblemKind.LoadFailed): an untriaged exit
-    // code isn't a confident enough diagnosis to paint the module card red.
-    data class LoadFailed(
-        val detail: String,
-    ) : KpmProblemKind {
-        override val reason: ModuleBrokenReason? get() = null
-    }
-}
-
-/**
- * Diagnose a KPM install that's present but didn't load in either activator
- * path: service-time APatch/FolkPatch or post-fs-data KPatch-Next. Conflict and
- * awaiting-authentication are recoverable states handled by their dedicated
- * warnings. All other fresh failures use the stable `reason` field when known
- * and retain the raw detail as a fallback for older module builds.
- */
-internal fun classifyKpmProblem(
-    kpm: ModuleState,
-    loadStatusSection: String,
-    currentBootId: String,
-): KpmProblemKind? {
-    if (kpm !is ModuleState.Installed || kpm.active) return null
-    val load = parseKeyValueLines(loadStatusSection)
-    val bootId = load["boot_id"]?.trim()
-    val runtime = load["runtime"]?.trim()
-    if (runtime !in setOf("activator", "kpatch-next") ||
-        load["loaded"]?.trim() != "0" ||
-        bootId.isNullOrEmpty() ||
-        bootId != currentBootId.trim()
-    ) {
-        return null
-    }
-    val reason = load["reason"]?.trim()
-    if (reason == "unsupported_kernel") {
-        return KpmProblemKind.UnsupportedKernel(load["uname_r"]?.trim().orEmpty().ifBlank { "?" })
-    }
-    val detail = load["detail"]?.trim().orEmpty()
-    val missingPrefix = "activator missing at "
-    return if (reason == "missing_activator" || detail.startsWith(missingPrefix)) {
-        KpmProblemKind.ActivatorMissing(detail.removePrefix(missingPrefix))
-    } else {
-        KpmProblemKind.LoadFailed(detail)
-    }
-}
-
-private fun renderKpmProblem(
-    kind: KpmProblemKind,
-    res: android.content.res.Resources,
-): ModuleProblem =
-    ModuleProblem(
-        reason = kind.reason,
-        text =
-            when (kind) {
-                is KpmProblemKind.UnsupportedKernel -> {
-                    res.getString(R.string.dashboard_issue_kpm_unsupported_kernel, kind.unameR)
-                }
-
-                is KpmProblemKind.ActivatorMissing -> {
-                    res.getString(R.string.dashboard_issue_kpm_activator_missing, kind.path)
-                }
-
-                is KpmProblemKind.LoadFailed -> {
-                    res.getString(R.string.dashboard_issue_kpm_load_failed, kind.detail)
-                }
-            },
-    )
-
 // ── LSPosed state resolution (pure, unit-tested) ─────────────────────────
 
 /**
@@ -1289,11 +1201,15 @@ internal suspend fun loadDashboardState(
     val zygiskStatusRaw = shellSnapshot["zygisk_status"].orEmpty()
     val zygisk = rawNativeBackends.zygisk.withTargetCount(nativeTargetCount)
     val kpmRaw = rawNativeBackends.kpm.withTargetCount(nativeTargetCount)
+    val standaloneKpm = standaloneKpmLoaded(kpmRaw, shellSnapshot["kpm_runtime_modules"].orEmpty())
     val ports = detectPortsModule(shellSnapshot, selfPkg).withTargetCount(countPackages(targetsSnapshot.portsObservers))
     val kmodTargetCount = (kmodRaw as? ModuleState.Installed)?.targetCount ?: 0
     val kpmTargetCount = (kpmRaw as? ModuleState.Installed)?.targetCount ?: 0
     val zygiskTargetCount = (zygisk as? ModuleState.Installed)?.targetCount ?: 0
-    VpnHideLog.i(TAG, "modules: kmodRaw=$kmodRaw kpmRaw=$kpmRaw zygisk=$zygisk ports=$ports")
+    VpnHideLog.i(
+        TAG,
+        "modules: kmodRaw=$kmodRaw kpmRaw=$kpmRaw standaloneKpm=$standaloneKpm zygisk=$zygisk ports=$ports",
+    )
     StartupTrace.mark("dashboard_modules_done")
 
     // Recommendation based purely on the kernel — used by the install card,
@@ -1352,7 +1268,7 @@ internal suspend fun loadDashboardState(
     // installed yet. Wrong-variant / broken / unsupported-kernel cases
     // already emit a red error below with the same CTA — showing both
     // duplicates the instruction.
-    val nativeInstallRecommendation = kernelRecommendation?.takeIf { backends.noneInstalled }
+    val nativeInstallRecommendation = kernelRecommendation?.takeIf { backends.noneInstalled && !standaloneKpm }
     VpnHideLog.i(
         TAG,
         "nativeInstallRecommendation=$nativeInstallRecommendation " +
@@ -1413,7 +1329,9 @@ internal suspend fun loadDashboardState(
 
     // ── Messages ──
     val hasNative = backends.anyInstalled
-    if (!hasNative) {
+    if (standaloneKpm) {
+        err(res.getString(R.string.dashboard_issue_kpm_standalone_install), "vpnhide-kpm.zip")
+    } else if (!hasNative) {
         err(res.getString(R.string.dashboard_issue_no_native))
     }
     if (lsposedFramework is LsposedFramework.NotInstalled && lsposed !is LsposedState.Active) {

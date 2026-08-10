@@ -43,6 +43,17 @@ and execs it via `su`; it emits the same JSON as the in-process JNI path
 replaced an earlier gobley/UniFFI binding — the whole native surface is now one
 JSON-returning function built with plain cargo-ndk.)
 
+The same Rust executable also has a read-only `--apatch-kpm-list` mode used by
+the dashboard's installation-integrity check. Together with `kpatch kpm list`
+on KPatch-Next, it detects a runtime-loaded `vpnhide` KPM when the
+`/data/adb/modules/vpnhide_kpm` flashable module is absent. That combination
+indicates that the user loaded or embedded the inner `vpnhide.kpm` file without
+installing the complete `vpnhide-kpm.zip`; the app explains that the raw file
+lacks the activator, boot scripts, and config delivery, then directs the user to
+remove the raw KPM, install the ZIP through the root manager's Modules screen,
+and reboot. APatch authentication uses the saved root-only SuperKey or its
+trusted `su` token; the probe never prints either credential.
+
 ## 3. Per-check outcome (`CheckOutcome`)
 
 `Leak` · `HiddenByBackend` · `HiddenBySelinux` · `NothingToLeak` ·

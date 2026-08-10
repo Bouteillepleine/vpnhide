@@ -236,6 +236,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
+name = "vpnhide_apatch_abi"
+version = "1.1.1"
+
+[[package]]
 name = "vpnhide_checks"
 version = "1.1.1"
 dependencies = [
@@ -243,6 +247,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "vpnhide_apatch_abi",
 ]
 
 [[package]]

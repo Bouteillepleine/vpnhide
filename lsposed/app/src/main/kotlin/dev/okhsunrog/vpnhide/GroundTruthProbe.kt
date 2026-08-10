@@ -56,6 +56,9 @@ object GroundTruthProbe {
         return runCatching { org.json.JSONObject(json).getBoolean("routed") }.getOrNull()
     }
 
+    /** Prepare the shared root-executable probe for batched runtime checks. */
+    fun prepare(context: Context): File? = extractBinary(context)
+
     private fun extractBinary(context: Context): File? =
         runCatching {
             val dest = File(context.filesDir, "vhprobe")
