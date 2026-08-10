@@ -26,6 +26,17 @@ jobs:
       ddkqemu: ${{ steps.img.outputs.ddkqemu }}
       kpmlegacy: ${{ steps.img.outputs.kpmlegacy }}
     steps:
+      # `ci` and `ddk-qemu` are floating tags — the publisher overwrites them
+      # in place, so nothing to keep in sync here. `kpm-qemu-legacy` is dated:
+      # the same literal lives in `qemu-image.yml` (job `build-legacy`) and the
+      # two must be bumped together, or CI pulls a tag that was never pushed.
+      #
+      # The date is a manual marker, not a pin the registry enforces: editing
+      # `.github/docker/kpm-qemu-legacy/Dockerfile` re-triggers `qemu-image.yml`
+      # and overwrites whatever tag is hardcoded there. Bump the date in BOTH
+      # files as part of any change to that Dockerfile or to the kernels
+      # `kmod/test/build-source-kernel.sh` bakes in, so an old CI run re-run
+      # later still resolves to the image it was green against.
       - id: img
         env:
           REPO: ${{ github.repository }}
