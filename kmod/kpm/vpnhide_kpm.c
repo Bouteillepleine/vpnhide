@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 /*
- * vpnhide — KernelPatch Module (KPM) backend.  *** WIP ***
+ * vpnhide — KernelPatch Module (KPM) backend.  *** BETA ***
  *
  * A third native backend alongside the kretprobe `.ko`, for kernels the
  * `.ko` can't serve: non-GKI / proprietary kernels with no published
@@ -9,25 +9,25 @@
  * NOT insmod — so it also works where module signing blocks a `.ko`.
  *
  * STATUS: builds (`make kpm`) and runs end-to-end under QEMU via the KPM
- * harness (../test/run-kpm.sh). The original 10 enumeration hooks are
- * A/B-validated across the complete supported range; socket-bind denial adds
- * state-level checks that verify the socket stayed unbound, not just errno.
- * The procfs control plane is still TODO (A/B uses load-args). Every per-kver
+ * harness (../test/run-kpm.sh). CI boots representative images for every
+ * offset table and checks all enumeration vectors; socket-bind denial adds a
+ * state-level check that verifies the socket stayed unbound, not just errno.
+ * Runtime config/status/stats use KernelPatch's ctl0 supercall; the QEMU A/B
+ * harness also retains decimal load-args for headless bring-up. Every per-kver
  * offset must pass the harness before that version ships — a wrong offset is a
  * contained QEMU panic / A/B failure here, but a bootloop on a real device.
  *
- * DESIGN (how this differs from soranerai's prototype, deliberately):
- *   - ONE source + a runtime kver offset table (kver_offsets.h), not three
- *     per-version copies → one binary across 4.x/5.x/6.x.
- *   - Per-call state via `fargs->local.dataN`, NOT a per-CPU MPIDR stash
- *     (which races when a thread migrates between the before/after callback).
+ * DESIGN:
+ *   - One source plus a runtime kver offset table (kver_offsets.h), producing
+ *     one binary across the supported 4.14-6.12 kernel families.
+ *   - Per-call state lives in `fargs->local.dataN`, so a task migrating CPUs
+ *     between the before/after callbacks cannot mix state with another call.
  *   - Filtering algorithms shared with the `.ko` via ../shared/vpnhide_logic.h.
  *   - VPN-name matching from the generated single source of truth
  *     (../generated/iface_lists.h → data/interfaces.toml), incl. the `if<N>`
- *     pattern (issue #86) that the hardcoded community lists miss.
- *   - rt_fill_info (single-route lookup) is intentionally NOT hooked: the
- *     QEMU harness proved its arg→register ABI is unstable. soranerai hooks
- *     it; we don't.
+ *     pattern (issue #86).
+ *   - rt_fill_info (single-route lookup) is intentionally not hooked because
+ *     its argument/register mapping is not stable across tested kernels.
  */
 #pragma GCC visibility push(hidden)
 #include <compiler.h>
@@ -46,10 +46,10 @@
 #include "kver_offsets.h"
 
 KPM_NAME("vpnhide");
-KPM_VERSION("0.0.1-wip");
+KPM_VERSION(VPNHIDE_KPM_BUILD_VERSION);
 KPM_LICENSE("GPL v2"); /* GPL to use GPL-only kernel symbols at runtime */
 KPM_AUTHOR("okhsunrog");
-KPM_DESCRIPTION("Hide VPN interfaces from selected UIDs (KPM backend, WIP)");
+KPM_DESCRIPTION("Hide VPN interfaces from selected UIDs (KPM backend, beta)");
 
 #define MODNAME "vpnhide"
 /* Mirror of vpnhide_protocol::MAX_TARGET_UIDS (crates/protocol/src/lib.rs); the
@@ -100,14 +100,7 @@ static unsigned long long stats_counts[MAX_TARGET_UIDS][VPNHIDE_HOOK_COUNT];
 static struct vpnhide_stat_entry
 	stats_snapshot[MAX_TARGET_UIDS * VPNHIDE_HOOK_COUNT];
 
-/* kernel functions resolved at init via kallsyms */
-static void *(*_proc_create_data)(const char *, uint16_t, void *, void *,
-				  void *);
-static void (*_remove_proc_entry)(const char *, void *);
-static int (*_single_open)(void *, void *, void *);
-static int (*_single_release)(void *, void *);
-static void *_seq_read, *_seq_lseek;
-static void (*_seq_printf)(void *, const char *, ...);
+/* Kernel functions resolved at init via kallsyms. */
 static unsigned long (*_copy_from_user)(void *, const void *, unsigned long);
 static unsigned long (*_copy_to_user)(void *, const void *, unsigned long);
 static void (*_skb_trim)(void *, unsigned int);
@@ -360,16 +353,15 @@ static int kpm_is_public_host_route6(void *rt, void *dev)
 }
 
 /* ================================================================== */
-/*  Hook 1 (PoC): fib_route_seq_show — /proc/net/route                */
+/*  Hook 1: fib_route_seq_show — /proc/net/route                      */
 /*  arg0 = struct seq_file *.  Compact VPN lines out of this call's    */
 /*  newly-written region using the shared seq-line compactor.          */
 /* ================================================================== */
 
 static void fib_route_before(hook_fargs2_t *fargs, void *udata)
 {
-	/* Stash seq_file->count at entry so the after-callback only touches
-	 * THIS call's output, not earlier entries. (Correctness fix the .ko
-	 * already does; soranerai re-scans the whole buffer each call.) */
+	/* Stash seq_file->count at entry so the after-callback only touches this
+	 * call's output, not entries already present in the buffer. */
 	void *seq = (void *)fargs->arg0;
 	unsigned long count =
 		seq ? *(unsigned long *)((char *)seq + off->seqfile_count) : 0;
@@ -425,7 +417,7 @@ static void ipv6_route_after(hook_fargs2_t *fargs, void *udata)
 }
 
 /* ================================================================== */
-/*  Hook 2 (PoC): rtnl_fill_ifinfo — RTM_NEWLINK (getifaddrs path)    */
+/*  Hook 2: rtnl_fill_ifinfo — RTM_NEWLINK (getifaddrs path)          */
 /*  arg0 = skb, arg1 = net_device.  If the dev is a VPN iface and the  */
 /*  caller is a target, undo whatever the fill wrote (skb_trim back to  */
 /*  the saved length) and return 0 — same approach as the .ko.         */
@@ -1056,11 +1048,12 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
 }
 
 /*
- * HOOK COVERAGE — full parity with vpnhide_kmod.c (the .ko). The original 10
- * enumeration hooks are QEMU-validated A/B on android12-5.10 (no panic).
- * Mirror the .ko's logic; reuse shared/vpnhide_logic.h. Per-version struct
- * offsets live in kver_offsets.h — a wrong offset is a contained QEMU A/B fail
- * or panic here, a bootloop on a real device.
+ * HOOK COVERAGE — parity with vpnhide_kmod.c (the .ko). CI exercises these
+ * paths in booted QEMU images for 4.14, 4.19, 5.4, 5.10, 5.15, 6.1, 6.6, and
+ * 6.12. Filtering logic shared with the .ko lives in
+ * shared/vpnhide_logic.h; version-specific field offsets live in
+ * kver_offsets.h. QEMU coverage is the pre-merge safety gate, not a claim of
+ * testing every vendor kernel or device configuration.
  *
  *   fib_route_seq_show     /proc/net/route        ✓ (seq compactor)
  *   ipv6_route_seq_show    /proc/net/ipv6_route   ✓ (seq compactor)
@@ -1073,14 +1066,14 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
  *                                                   public /32 host-route via a
  *                                                   physical uplink, the .ko's
  *                                                   is_public_host_route_via_
- *                                                   physical — A/B on every kver
+ *                                                   physical — QEMU matrix:
  *                                                   5.10/5.15/6.1/6.12 + legacy
  *                                                   5.4/4.19/4.14)
  *   rt6_fill_node          RTM_GETROUTE v6 dump   ✓ (fib6_info nexthop +
  *                                                   public /128 host-route via a
  *                                                   physical uplink, the .ko's
  *                                                   is_public_host_route6_via_
- *                                                   physical — A/B on every kver
+ *                                                   physical — QEMU matrix:
  *                                                   5.10/5.15/6.1/6.12 + legacy
  *                                                   5.4/4.19/4.14)
  *   fib_nl_fill_rule       RTM_GETRULE            ✓ (fib_rule iif/oif/uid)
@@ -1088,8 +1081,9 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
  *                                                   state-aware raw-syscall test)
  *   ( rt_fill_info — intentionally NOT hooked; unstable arg->reg ABI )
  *
- * Both host-route predicates (v4 + v6) and their address/iface logic are now
- * shared with the .ko via shared/vpnhide_logic.h, and cover EVERY supported kver.
+ * Both host-route predicates (v4 + v6) and their address/iface logic are
+ * shared with the .ko via shared/vpnhide_logic.h and used by every selected
+ * offset table.
  * IPv4 needs no offset (fib_rt_info.dst/dst_len at a constant +12/+16 on 5.6+;
  * dst/dst_len passed as args 6/7 on <5.6). IPv6 reads the route's rt6key from
  * fib6_info.fib6_dst (64 on 5.4/4.19/5.10..6.6, 80 on 6.12) or, on the 4.14
@@ -1103,22 +1097,9 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
 /*
  * The KPM has no file or node: its control/stats channel is the KernelPatch
  * `ctl0` supercall, carrying the §4 wire format (config in, stats/status out —
- * see vpnhide_kpm_ctl0). A procfs mirror is intentionally NOT created: it would
- * need the version-specific proc_ops/file_operations ABI guessed without real
- * headers (the likely cause of the HyperOS-5.4 crash report), and ctl0 needs no
- * such guessing.
- *
- * proc create/remove glue stub left below for the (deferred) optional mirror.
- */
-
-/*
- * proc_create needs a `struct proc_ops` (>=5.6) or a `struct file_operations`
- * (<5.6). We don't have the real headers, so the field layout is a mock —
- * and getting it wrong is the likely cause of the HyperOS-5.4 crash report.
- * off->proc_uses_proc_ops selects which mock to register.
- * TODO: define both mock layouts + the targets/debug show/open handlers, and
- * register the matching one. Kept as a stub here so the skeleton stays focused
- * on the hooks; see kver_offsets.h for the ABI flag.
+ * see vpnhide_kpm_ctl0). A procfs mirror is intentionally not created because
+ * its proc_ops/file_operations ABI would add another kernel-version-dependent
+ * structure layout. ctl0 avoids that dependency entirely.
  */
 
 /* ------------------------------------------------------------------ */
@@ -1128,9 +1109,9 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
 /*
  * Resolve a hook target by name, tolerating compiler-renamed clones. GCC may
  * emit a static function as `name.isra.N` / `name.constprop.N` (a specialised
- * clone) — kallsyms_lookup_name("name") then misses it. Android *device*
- * kernels are clang-built (name intact), but a gcc-built kernel (incl. our
- * QEMU test kernels) renames e.g. fib_nl_fill_rule -> fib_nl_fill_rule.isra.N.
+ * clone) — kallsyms_lookup_name("name") then misses it. The clang-built GKI
+ * images usually retain the plain name, while gcc-built legacy QEMU images can
+ * rename e.g. fib_nl_fill_rule -> fib_nl_fill_rule.isra.N.
  * Fall back to the first symbol equal to `name`, or `name.` + suffix — the
  * dot only appears on compiler clones, so this never matches an unrelated fn.
  */
@@ -1177,14 +1158,6 @@ static unsigned long lookup_fn(const char *name)
 
 static int resolve_symbols(void)
 {
-	_proc_create_data = (void *)kallsyms_lookup_name("proc_create_data");
-	_remove_proc_entry = (void *)kallsyms_lookup_name("remove_proc_entry");
-	_single_open = (void *)kallsyms_lookup_name("single_open");
-	_single_release = (void *)kallsyms_lookup_name("single_release");
-	_seq_read = (void *)kallsyms_lookup_name("seq_read");
-	_seq_lseek = (void *)kallsyms_lookup_name("seq_lseek");
-	_seq_printf = (void *)kallsyms_lookup_name("seq_printf");
-
 	/* Prefer the generic `_copy_*_user` wrappers, NOT the raw
 	 * `__arch_copy_*_user`. The wrapper does the uaccess enable/disable
 	 * (access_ok + the TTBR0 switch / PAN toggle) around the copy; the raw
@@ -1210,7 +1183,8 @@ static int resolve_symbols(void)
 		_skb_trim = (void *)kallsyms_lookup_name("skb_trim");
 	_netdev_get_name = (void *)lookup_fn("netdev_get_name");
 
-	/* Hooks need these; proc is best-effort. */
+	/* skb trimming is the only global prerequisite. Hooks that need another
+	 * helper gate their own behavior or registration below. */
 	return _skb_trim ? 0 : -1;
 }
 
@@ -1537,8 +1511,6 @@ static long vpnhide_kpm_exit(void *__user reserved)
 		}
 	}
 
-	/* No /proc node to remove: the KPM's control channel is the ctl0
-	 * supercall, not procfs (the optional mirror was never created). */
 	logki(MODNAME ": KPM unloaded\n");
 	return 0;
 }

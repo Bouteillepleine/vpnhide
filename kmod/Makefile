@@ -7,6 +7,7 @@ ifeq ($(KERNELRELEASE),)
 
 # clang is needed by both backends; prefer $(CLANG_DIR) if the .env set it.
 CLANG := $(if $(CLANG_DIR),$(CLANG_DIR)/clang,clang)
+VPNHIDE_KPM_BUILD_VERSION ?= $(shell sed -n '1p' $(CURDIR)/../VERSION)
 
 # ================================================================== #
 #  KPM backend — relocatable `.kpm`, KernelPatch headers, NO kernel  #
@@ -39,7 +40,9 @@ KPM_CFLAGS := -target aarch64-linux-android -fuse-ld=lld -nostdlib \
 	-fvisibility=hidden -mno-outline-atomics \
 	-fno-stack-protector -fno-common -fno-builtin -ffreestanding \
 	-fno-asynchronous-unwind-tables -fno-unwind-tables -nostdinc \
-	-D__KERNEL__ -DCONFIG_ARM64 -DMODNAME=\"vpnhide\"
+	-Wall -Wextra -Werror -Wno-unused-parameter \
+	-D__KERNEL__ -DCONFIG_ARM64 -DMODNAME=\"vpnhide\" \
+	-DVPNHIDE_KPM_BUILD_VERSION=\"$(VPNHIDE_KPM_BUILD_VERSION)\"
 
 .PHONY: all strip clean kpm kpm-clean
 

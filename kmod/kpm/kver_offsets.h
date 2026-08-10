@@ -11,16 +11,12 @@
  * the real kernel headers (`-nostdinc`). So we keep a small offset table
  * keyed on the running kernel version, selected at init.
  *
- * This is the difference between our approach and soranerai's KPM, which
- * ships three near-identical source files (4.14 / 5.4 / 6.1) with the
- * offsets baked in. One source + one runtime table = one binary for all.
- *
- * VALUES MUST BE PROVEN, NOT GUESSED. Each non-TODO value below is either
- * (a) confirmed by soranerai on a real device, or (b) trivially stable
- * (e.g. net_device.name is the first member on every version). Every new
- * value has to pass the QEMU KPM harness (see kmod/kpm/README.md) before
- * it ships — a wrong offset here is a kernel panic / bootloop, not a soft
- * failure like a kretprobe that won't register.
+ * One source plus this runtime table produces one binary for the supported
+ * kernel families. Offsets are derived from the matching AOSP, upstream, or
+ * DDK kernel sources and then exercised by a booted QEMU image. A new or
+ * changed table must pass the KPM harness (see kmod/kpm/README.md) before it
+ * ships. This validates the reference configurations used by CI; it does not
+ * imply testing on every vendor kernel or physical device.
  */
 #ifndef VPNHIDE_KVER_OFFSETS_H
 #define VPNHIDE_KVER_OFFSETS_H
@@ -49,11 +45,11 @@ struct vpnhide_offsets {
 	unsigned int seqfile_buf;
 	unsigned int seqfile_count;
 
-	/* in_ifaddr.ifa_dev (-> in_device.dev -> net_device).  [TODO 5.4/4.14] */
+	/* in_ifaddr.ifa_dev (-> in_device.dev -> net_device). */
 	unsigned int in_ifaddr_ifa_dev;
 	unsigned int in_device_dev;
 
-	/* inet6_ifaddr.idev (-> inet6_dev.dev -> net_device). [TODO 5.4/4.14] */
+	/* inet6_ifaddr.idev (-> inet6_dev.dev -> net_device). */
 	unsigned int inet6_ifaddr_idev;
 	unsigned int inet6_dev_dev;
 
@@ -107,22 +103,17 @@ struct vpnhide_offsets {
 	unsigned int fib_rule_oifname;
 	unsigned int fib_rule_uid_start;
 	unsigned int fib_rule_uid_end;
-
-	/* 1 if procfs uses `struct proc_ops` (>=5.6), 0 if `file_operations`
-	 * (<5.6). Mixing these up is the most likely cause of the
-	 * /proc/vpnhide_targets crash reported on HyperOS 5.4. */
-	int proc_uses_proc_ops;
 };
 
 /*
  * GKI 6.1 (android14-6.1, derived from AOSP common source + QEMU-validated).
  * Also covers 6.6 (android15-6.6): every offset here is byte-identical on 6.6,
- * confirmed by a separate 9/9 harness run on a DDK-built 6.6 GKI Image.
+ * exercised by a separate harness run on a DDK-built 6.6 GKI Image.
  * inet6_ifaddr's prefix up to dad_work is identical to 5.10, so idev@168
- * (NOT the 216 first taken from soranerai — left a note, the harness decides).
+ * The getifaddrs harness confirms inet6_ifaddr.idev at 168 for these images.
  * fib_dump_info uses the fib_rt_info* form (arg 4, like 5.10); fib_info and
  * fib_rule layouts match 5.10; fib6_info has an ANDROID_KABI_RESERVE before
- * fib6_nh[]. procfs is proc_ops (>=5.6).
+ * fib6_nh[].
  */
 static const struct vpnhide_offsets vpnhide_off_6_1 = {
 	.skb_len = 112, /* modern head + _nfct (conntrack on in GKI 6.1) */
@@ -154,10 +145,9 @@ static const struct vpnhide_offsets vpnhide_off_6_1 = {
 	.fib_rule_oifname = 104,
 	.fib_rule_uid_start = 120,
 	.fib_rule_uid_end = 124,
-	.proc_uses_proc_ops = 1,
 };
 
-/* 6.12 (android16-6.12) — QEMU-validated 9/9. Identical to 6.1 EXCEPT struct
+/* 6.12 (android16-6.12) — QEMU-validated. Identical to 6.1 EXCEPT struct
  * fib6_info inserted `struct hlist_node gc_link` (16 B) after `expires`,
  * shifting nh@176 and fib6_nh[]@192 (6.1 is 160/176). (fib_info also gained a
  * `pfsrc_removed` bool, but it fits the existing pad so nh stays @104.) */
@@ -192,10 +182,9 @@ static const struct vpnhide_offsets vpnhide_off_6_12 = {
 	.fib_rule_oifname = 104,
 	.fib_rule_uid_start = 120,
 	.fib_rule_uid_end = 124,
-	.proc_uses_proc_ops = 1,
 };
 
-/* 5.10 (android12-5.10) — QEMU-validated 9/9. (5.15 has a different fib6_info
+/* 5.10 (android12-5.10) — QEMU-validated. (5.15 has a different fib6_info
  * and gets its own table below.) */
 static const struct vpnhide_offsets vpnhide_off_5_x = {
 	.skb_len = 112, /* GKI 5.10 has CONFIG_NF_CONNTRACK=y: _nfct@104,
@@ -235,7 +224,6 @@ static const struct vpnhide_offsets vpnhide_off_5_x = {
 	.fib_rule_oifname = 104,
 	.fib_rule_uid_start = 120,
 	.fib_rule_uid_end = 124,
-	.proc_uses_proc_ops = 1, /* 5.6+; for <5.6 use file_operations below */
 };
 
 /* 5.15 (android13-5.15, derived from source + QEMU-validated). Identical to
@@ -272,7 +260,6 @@ static const struct vpnhide_offsets vpnhide_off_5_15 = {
 	.fib_rule_oifname = 104,
 	.fib_rule_uid_start = 120,
 	.fib_rule_uid_end = 124,
-	.proc_uses_proc_ops = 1,
 };
 
 /* 5.4 (android11-5.4, derived from AOSP common source + QEMU-validated).
@@ -281,12 +268,11 @@ static const struct vpnhide_offsets vpnhide_off_5_15 = {
  *     directly at arg 9, 11 args) — not the fib_rt_info* form 5.10 has.
  *   - struct fib6_info has no ANDROID_KABI_RESERVE before fib6_nh[] here, so
  *     fib6_nh[]@160 (vs 5.10's 168).
- * procfs is file_operations (<5.6). */
+ */
 static const struct vpnhide_offsets vpnhide_off_5_4 = {
 	.skb_len = 112, /* modern sk_buff head + _nfct (CONFIG_NF_CONNTRACK) ->
-			 * len@112. Real 5.4 devices carry conntrack, so this is
-			 * the device-faithful value; a conntrack-less kernel would
-			 * be @104 (cf. the 5.10 test kernel). */
+			 * len@112 in the android11-5.4 reference config. A
+			 * conntrack-less vendor config would instead use @104. */
 	.netdev_name = 0,
 	.socket_sk = 24,
 	.sock_net = 48,
@@ -318,15 +304,14 @@ static const struct vpnhide_offsets vpnhide_off_5_4 = {
 	.fib_rule_oifname = 104,
 	.fib_rule_uid_start = 120,
 	.fib_rule_uid_end = 124,
-	.proc_uses_proc_ops = 0, /* <5.6 → file_operations */
 };
 
 /* 4.19 (vanilla 4.19.325, derived from source + QEMU-validated). Pre-nexthop
  * kernel: fib_info/fib6_info have NO `struct nexthop *nh` field (so the nh
  * guards in dev_from_fib*_info skip), and fib_dump_info uses the legacy <5.6
  * prototype (fib_info* directly at arg 9). Unlike 4.14 it already has the
- * struct fib6_info IPv6 route model (4.14 still uses rt6_info). procfs is
- * file_operations (<5.6). */
+ * struct fib6_info IPv6 route model (4.14 still uses rt6_info).
+ */
 static const struct vpnhide_offsets vpnhide_off_4_19 = {
 	/* XFRM + conntrack + bridge-netfilter fields put sk_buff.len at 128 on
 	 * the 4.19 image we validate with. A smaller value trims netlink dumps
@@ -366,18 +351,17 @@ static const struct vpnhide_offsets vpnhide_off_4_19 = {
 	.fib_rule_oifname = 104,
 	.fib_rule_uid_start = 120,
 	.fib_rule_uid_end = 124,
-	.proc_uses_proc_ops = 0, /* <5.6 → file_operations */
 };
 
-/* 4.14 (vanilla 4.14.336, derived from source + QEMU-validated, 9/9). Oldest
+/* 4.14 (vanilla 4.14.336, derived from source + QEMU-validated). Oldest
  * target and the most structurally different: fib_dump_info uses the legacy
  * <5.6 prototype (fi at arg 9), there are no nexthop objects, and IPv6 still
  * uses struct rt6_info (not fib6_info) — so the IPv6 dev comes from the
- * embedded dst_entry (rt6_via_dst) rather than a fib6_nh walk. procfs is
- * file_operations (<5.6). */
+ * embedded dst_entry (rt6_via_dst) rather than a fib6_nh walk.
+ */
 static const struct vpnhide_offsets vpnhide_off_4_x = {
-	/* XFRM + conntrack + bridge-netfilter fields put sk_buff.len at 128 on
-	 * the 4.14 images we validate with, including sunfish 4.14.302. */
+	/* XFRM + conntrack + bridge-netfilter fields put sk_buff.len at 128 in
+	 * the 4.14 reference image. */
 	.skb_len = 128,
 	.netdev_name = 0,
 	.socket_sk = 32,
@@ -417,13 +401,12 @@ static const struct vpnhide_offsets vpnhide_off_4_x = {
 	.fib_rule_oifname = 104,
 	.fib_rule_uid_start = 120,
 	.fib_rule_uid_end = 124,
-	.proc_uses_proc_ops = 0, /* <5.6 → file_operations */
 };
 
 /*
  * Select the offset table for the running kernel. Returns NULL for an
  * unsupported version — the caller MUST refuse to install hooks then
- * (kpm-spore does the same: unknown version → bail, never guess).
+ * rather than selecting an unverified layout.
  */
 static inline const struct vpnhide_offsets *
 vpnhide_select_offsets(unsigned int kver)
@@ -431,13 +414,13 @@ vpnhide_select_offsets(unsigned int kver)
 	if (kver >= VPNHIDE_KVER(6, 12, 0))
 		return &vpnhide_off_6_12; /* 6.12: fib6_info gained gc_link */
 	if (kver >= VPNHIDE_KVER(6, 0, 0))
-		return &vpnhide_off_6_1; /* 6.0–6.11 — 6.1 + 6.6 proven identical */
+		return &vpnhide_off_6_1; /* 6.0–6.11; validated on 6.1 + 6.6 images */
 	if (kver >= VPNHIDE_KVER(5, 15, 0))
 		return &vpnhide_off_5_15; /* 5.15+: fib6_info gained offload fields */
 	if (kver >= VPNHIDE_KVER(5, 6, 0))
 		return &vpnhide_off_5_x; /* 5.6–5.14 */
 	if (kver >= VPNHIDE_KVER(5, 0, 0))
-		return &vpnhide_off_5_4; /* 5.0–5.5: legacy fib_dump_info + proc */
+		return &vpnhide_off_5_4; /* 5.0–5.5: legacy fib_dump_info */
 	if (kver >= VPNHIDE_KVER(4, 19, 0))
 		return &vpnhide_off_4_19; /* 4.19: fib6_info, no nexthop objects */
 	if (kver >= VPNHIDE_KVER(4, 0, 0))

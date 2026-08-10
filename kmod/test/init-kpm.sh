@@ -53,7 +53,8 @@ fi
 # public IP through an RTM_GETROUTE dump even though vpn0 is hidden, so they must
 # be hidden for a target the way the .ko hides them. eth0 is not a VPN iface, so
 # this exercises the public-host-route path, not iface_is_vpn. The KPM now covers
-# both v4 and v6 on every supported kernel (5.x/6.x fib6_info + 4.14 rt6_info), so
+# both v4 and v6 on every reference kernel in the CI matrix (5.x/6.x fib6_info
+# plus the 4.14 rt6_info path), so
 # no per-kver gate is needed here.
 ip route add 1.2.3.4/32 dev eth0 2>/dev/null
 ip -6 route add 2001:4860:4860::8888/128 dev eth0 2>/dev/null

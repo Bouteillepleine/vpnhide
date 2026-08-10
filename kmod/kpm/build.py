@@ -2,8 +2,8 @@
 """Build the vpnhide KPM and package it as an installable KernelSU/Magisk
 module zip — single entry point for CI and local builds.
 
-The `.kpm` is one cross-version relocatable object (it loads on every kernel
-3.18–6.12 and on both KernelPatch runtimes), so unlike the `.ko` there is no
+The `.kpm` is one cross-version relocatable object (it supports kernels
+4.14–6.12 on both KernelPatch runtimes), so unlike the `.ko` there is no
 per-KMI matrix: one build, one zip.
 
 Build step: `make -C kmod kpm` (host clang, no kernel tree — only the
@@ -49,10 +49,12 @@ def main() -> int:
     kmod_dir = kpm_dir.parent
     repo_root = kmod_dir.parent
     activator = build_activator_bin(repo_root, "kpm")
+    build_version = get_build_version(repo_root)
 
     # Build the .kpm. `make` decides whether anything needs rebuilding; pass
     # CLANG_DIR through if the caller set it (CI / direnv .env).
     make_cmd = ["make", "-C", str(kmod_dir), "kpm"]
+    make_cmd.append(f"VPNHIDE_KPM_BUILD_VERSION={build_version}")
     clang_dir = os.environ.get("CLANG_DIR")
     if clang_dir:
         make_cmd.append(f"CLANG_DIR={clang_dir}")
@@ -74,7 +76,6 @@ def main() -> int:
 
     # Stamp the effective build version into the staged module.prop without
     # touching the committed file (keeps PR diffs from churning it).
-    build_version = get_build_version(repo_root)
     module_prop = staging / "module.prop"
     content = module_prop.read_text(encoding="utf-8")
     content = re.sub(r"^version=.*", f"version=v{build_version}", content, flags=re.MULTILINE)

@@ -25,7 +25,7 @@ This is **additive, not a replacement.** Mainstream GKI users stay on the
 QEMU-tested `.ko` (no extra dependency). The KPM extends reach to the
 segment above, at the cost of a KernelPatch runtime dependency.
 
-## Architecture (and how it differs from the community prototypes)
+## Architecture
 
 ```
 kmod/
@@ -34,7 +34,7 @@ kmod/
   shared/vpnhide_logic.h         # shared filtering algorithms (freestanding)
   vpnhide_kmod.c                 # backend A: kretprobes + bind entry redirect
   kpm/
-    vpnhide_kpm.c                # backend C: KPM glue (hooks, proc, lifecycle)
+    vpnhide_kpm.c                # backend C: KPM hooks, control, lifecycle
     kver_offsets.h               # runtime per-version struct-offset table
     README.md                    # this file
 ```
@@ -43,18 +43,17 @@ kmod/
 |---|---|---|
 | VPN-name matcher | ✅ as-is | `generated/iface_lists.h`, from `data/interfaces.toml` |
 | Filtering algorithms | ✅ `shared/vpnhide_logic.h` | seq-buffer compaction, UID parse — freestanding, included by both backends |
-| Hook glue / struct access / proc | ❌ per-backend | incompatible include worlds (`<linux/*.h>` vs KernelPatch `-nostdinc`) |
+| Hook glue / struct access / control | ❌ per-backend | incompatible include worlds (`<linux/*.h>` vs KernelPatch `-nostdinc`) |
 
-Three deliberate improvements over [soranerai's prototype](https://github.com/soranerai/vpnhide/tree/kernelpatch-(outdated)) (which did the
-legwork and tested on-device — credit due):
+The implementation relies on three design rules:
 
-1. **One source + a runtime `kver` offset table** (`kver_offsets.h`), not
-   three near-identical per-version files → one binary for 4.x/5.x/6.x.
-2. **Per-call state via `fargs->local.dataN`**, not a per-CPU MPIDR stash
-   (which races when a thread migrates between the before/after callback).
+1. **One source + a runtime `kver` offset table** (`kver_offsets.h`) produces
+   one binary for the supported 4.14–6.12 kernel families.
+2. **Per-call state via `fargs->local.dataN`** keeps before/after callback
+   state attached to the invocation even if the task migrates between CPUs.
 3. **Reuse the generated matcher** — gets the `if<N>` pattern (#86) the
-   hardcoded community lists miss; and **don't hook `rt_fill_info`** (our
-   QEMU harness proved its arg→register ABI is unstable).
+   generated interface list defines; `rt_fill_info` remains unhooked because
+   its argument/register mapping is not stable across tested kernels.
 
 ## KernelPatch API used
 
@@ -141,98 +140,54 @@ bootloop**, where the `.ko`'s kretprobe would just fail to register. So:
 - **Every offset and every hook must pass the QEMU KPM harness first**
   (`../test/run-kpm.sh` — patches a KernelPatch kernel, boots it, runs the
   A/B vector assertions: target UID sees nothing, non-target sees `vpn0`, no
-  panic). This harness is the whole reason the `.ko` is trusted; the KPM has
-  the equivalent now, and a new offset table for a version is only as
-  trustworthy as a green harness run on that version.
+  panic). This is a repeatable pre-merge regression gate, not a substitute for
+  testing a particular vendor kernel and device configuration.
 - Test with ephemeral **Load** (lost on reboot) before **Embed**.
 - Patch the **inactive A/B slot** so a bad build falls back to the
   unpatched kernel.
 
-## Status & backlog
+## Validation and support boundary
 
-- [x] Shared filtering logic extracted (`../shared/vpnhide_logic.h`)
-- [x] KPM skeleton + 2 PoC hooks (`fib_route_seq_show`, `rtnl_fill_ifinfo`)
-- [x] **Compiles against `bmax121/KernelPatch` → valid `.kpm` ELF** (self-contained matcher; `hook_fargs12_t` is the max bucket — rtnl reads arg0/arg1 only)
-- [x] **Runtime `kver` detection** from KernelPatch's `kver` (common.h)
-- [x] Target UIDs via load-args / `ctl0` supercall (reuses the shared parser)
-- [x] **QEMU KPM harness** (`../test/run-kpm.sh`) — patches a GKI Image with
-      KernelPatch, embeds the `.kpm`, boots under QEMU, two-boot A/B. **Both
-      PoC hooks PASS on android12-5.10**: root sees `vpn0` when not targeted,
-      not when targeted; no panic. Validates the inline hooks + the 5.x
-      offsets (skb.len=104) + `fargs->local` state passing on a real kernel.
-- [x] **All 11 logical hooks ported + QEMU-validated** on android12-5.10 (no panic),
-      full native-vector parity with the `.ko`: `fib_route_seq_show`,
-      `ipv6_route_seq_show`, `rtnl_fill_ifinfo`, `inet_fill_ifaddr`,
-      `inet6_fill_ifaddr`, `dev_ioctl`, `sock_ioctl`, `fib_dump_info` (#86),
-      `rt6_fill_node`, `fib_nl_fill_rule`, plus pre-mutation
-      `SO_BINDTODEVICE` / `SO_BINDTOIFINDEX` denial. The bind probe checks the
-      socket's post-call state from another UID, so errno-only masking cannot
-      pass. The deep-struct ones use 5.10
-      offsets derived from source (`fib_info`, `fib6_info`, `inet6_ifaddr`,
-      `fib_rule`); a static `getifaddrs()` probe (`gai-probe.c`) proves the
-      address path is closed (target getifaddrs vpn0: 3 → 0).
-- [x] Runtime kver offset table (`kver_offsets.h`) — **6.12 + 6.6 + 6.1 + 5.15 + 5.10 + 5.4 + 4.19 + 4.14, all full + QEMU-validated 9/9** (the complete Android kernel range, 8→16)
-- [x] KernelPatch submodule under `kmod/third_party/KernelPatch`; `make kpm`
-      works without an external checkout, and `KP_DIR=...` remains available
-      for local experiments.
-- [x] `kmod/kpm/build.py` packages the cross-version flashable KPM module zip.
-- [x] CI KPM gates build the `.kpm` against the submodule and run the GKI +
-      legacy QEMU KPM harnesses.
-- [x] **6.12 (android16-6.12) — full parity, QEMU-validated 9/9** on a DDK GKI
-      Image. Two version-specific changes vs 6.1: (a) `struct fib6_info` gained
-      `gc_link` → `fib6_nh[]`@192; (b) the big **`struct net_device`
-      cacheline-group reorg** moved `name` off offset 0 → `netdev_name`@296
-      (derived by compiling `offsetof(struct net_device, name)` against the
-      6.12 headers, then harness-confirmed). This is the first version where
-      `name` isn't first, so the table's `netdev_name` field finally earns its
-      keep — every name-based hook (link/addr/route dumps) depends on it.
-- [x] **6.6 (android15-6.6) — full parity, QEMU-validated 9/9** on a DDK GKI
-      Image. Every offset is byte-identical to 6.1 (unlike the 5.10→5.15 jump),
-      so it shares the 6.1 table; the run just confirms it.
-- [x] **5.15 (android13-5.15) — full parity, QEMU-validated 9/9** on a DDK GKI
-      Image. Caught a latent bug: 5.15's `struct fib6_info` gained
-      `offload`/`offload_failed` (like 6.1), so `nh`@160 / `fib6_nh`@176 — the
-      old table silently routed 5.15 through 5.10's 152/168 and would misread
-      the IPv6 route dev. Now its own entry; everything else matches 5.10.
-- [x] **6.1 (android14-6.1) — full parity, QEMU-validated 9/9** on a DDK-built
-      (clang) GKI Image. Derived from source: idev@168 (the `inet6_ifaddr`
-      prefix is byte-identical to 5.10, so the on-device 216 first taken from
-      soranerai was wrong — the `getifaddrs()` probe confirms 168), fib_info
-      96/104/128 + fib_dump via `fib_rt_info*`@arg4 (= 5.10), fib6_info
-      nh@160 / fib6_nh@176 (ANDROID_KABI_RESERVE before fib6_nh), skb.len@112.
-- [x] **4.14 now full parity, QEMU-validated 9/9** (was 7). The oldest/most
-      divergent target: IPv4 route dump via the legacy arg-9 fib_info (no
-      nexthop objects); IPv6 route dump hooks `rt6_fill_node(struct rt6_info*)`
-      — pre-`fib6_info`, so the dev is read straight from the embedded
-      `dst_entry` (`rt6_via_dst`, dev@0); policy rules resolve through the
-      `.isra` fuzzy fallback. `skb.len`@104 (older sk_buff head).
-- [x] **4.19 (vanilla 4.19.325) — full parity, QEMU-validated 9/9.** Pre-nexthop
-      kernel: fib_info/fib6_info have no `struct nexthop` field (the nh guards
-      skip), fib_dump_info uses the legacy `<5.6` prototype (fib_info* at arg 9,
-      shared with 5.4). Already has the `struct fib6_info` IPv6 model (4.14 does
-      not). One config-sensitive offset: `fib6_nh.nh_dev` sits at +16 in
-      `fib6_nh` (pre-`fib_nh_common`), and `CONFIG_IPV6_ROUTER_PREF` (Android-
-      common, validated =y) shifts `fib6_nh` to @160 → dev@176.
-- [x] **5.4 (android11-5.4) — full parity, QEMU-validated 9/9** on a from-source
-      `5.4.302` Image. All vectors pass incl. both route dumps and policy rules.
-      Notable per-version work that landed here:
-      - `fib_dump_info` is the legacy `<5.6` prototype on 5.4 (fib_info passed
-        *directly* at arg 9, not via `fib_rt_info`) — the hook is now
-        table-driven (`fib_dump_fi_arg` / `fib_dump_fi_via_fri`) and unified on
-        a 12-arg frame, so one callback serves 5.4 and 5.10.
-      - `struct fib6_info` has no `ANDROID_KABI_RESERVE` here → `fib6_nh[]`@160
-        (5.10 is 168); `inet6_ifaddr.idev`@168; `skb.len`@112 (conntrack on).
-      - **Fuzzy symbol resolution**: gcc renames static fns to `name.isra.N` /
-        `name.constprop.N`, which `kallsyms_lookup_name` misses. Hook lookups
-        now fall back to the `name.`-prefixed clone (`kallsyms_on_each_symbol`),
-        so e.g. `fib_nl_fill_rule.isra.21` is hooked. Clang device kernels keep
-        the plain name (exact match wins first); this just hardens gcc kernels.
-- [ ] proc_ops vs file_operations mock per kver (the HyperOS-5.4 crash class) — A/B currently uses load-args, so proc isn't on the critical path
-- [ ] Confirm offsets on the closed-kernel targets with soranerai & cyberc3dr (real devices)
-- [ ] Wire the `.ko` to `../shared/vpnhide_logic.h` (mechanical; gate on a local `.ko` harness run)
+The KPM implements the same 11 logical kernel hooks as the `.ko`, including
+pre-mutation denial of `SO_BINDTODEVICE` and `SO_BINDTOIFINDEX`. The bind probe
+checks socket state from another UID so an errno-only override cannot pass.
+Shared host tests cover the filtering and wire-format logic.
+
+CI builds one relocatable `.kpm`, embeds it with KernelPatch, and boots these
+reference images:
+
+| Reference image | Source/build path |
+|---|---|
+| 4.14.336 | pinned upstream source, legacy QEMU builder |
+| 4.19.325 | pinned upstream source, legacy QEMU builder |
+| android11-5.4 | pinned AOSP common source, legacy QEMU builder |
+| android12-5.10 | Android DDK GKI |
+| android13-5.15 | Android DDK GKI |
+| android14-6.1 | Android DDK GKI |
+| android15-6.6 | Android DDK GKI |
+| android16-6.12 | Android DDK GKI |
+
+For each image, the harness runs target/non-target A/B checks for interface,
+address, route, policy-rule, ioctl, and socket-bind behavior and checks for a
+kernel panic. The field offsets in `kver_offsets.h` come from the corresponding
+kernel sources and are accepted only after this harness passes.
+
+This matrix validates those reference kernel configurations under QEMU. Vendor
+trees can change structure layouts, compiler-generated symbols, configs, or CFI
+behavior without changing the reported kernel version. Therefore the version
+selector is a compatibility policy, not certification of every device in that
+range. Test a specific device with an ephemeral KPM load before embedding it.
+
+The KernelPatch submodule makes `make -C kmod kpm` reproducible without an
+external checkout. `kmod/kpm/build.py` packages the same artifact and the
+activator as `vpnhide-kpm.zip`; CI uses those repository entry points.
 
 ## Credits
 
-- [soranerai](https://github.com/soranerai/vpnhide) — first working KPM ports (4.14/5.4/6.1) + on-device testing.
-- [cyberc3dr](https://github.com/cyberc3dr/vpnhide-driver) — in-tree kernel patches + a real proprietary-kernel (HyperOS) test device.
-- [bmax121/KernelPatch](https://github.com/bmax121/KernelPatch) & [KernelSU-Next/KPatch-Next](https://github.com/KernelSU-Next/KPatch-Next) — the runtime.
+- [soranerai](https://github.com/soranerai/vpnhide) — earlier KPM prototype
+  referenced during the initial backend design.
+- [cyberc3dr](https://github.com/cyberc3dr/vpnhide-driver) — earlier in-tree
+  kernel implementation referenced during the initial backend design.
+- [bmax121/KernelPatch](https://github.com/bmax121/KernelPatch) and
+  [KernelSU-Next/KPatch-Next](https://github.com/KernelSU-Next/KPatch-Next) —
+  KernelPatch runtimes and module APIs used by this backend.
