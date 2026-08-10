@@ -109,8 +109,8 @@ struct vpnhide_offsets {
  * GKI 6.1 (android14-6.1, derived from AOSP common source + QEMU-validated).
  * Also covers 6.6 (android15-6.6): every offset here is byte-identical on 6.6,
  * exercised by a separate harness run on a DDK-built 6.6 GKI Image.
- * inet6_ifaddr's prefix up to dad_work is identical to 5.10, so idev@168
- * The getifaddrs harness confirms inet6_ifaddr.idev at 168 for these images.
+ * inet6_ifaddr's prefix up to dad_work is identical to 5.10, so idev@168; the
+ * getifaddrs harness confirms that offset for these reference images.
  * fib_dump_info uses the fib_rt_info* form (arg 4, like 5.10); fib_info and
  * fib_rule layouts match 5.10; fib6_info has an ANDROID_KABI_RESERVE before
  * fib6_nh[].
@@ -411,6 +411,8 @@ static const struct vpnhide_offsets vpnhide_off_4_x = {
 static inline const struct vpnhide_offsets *
 vpnhide_select_offsets(unsigned int kver)
 {
+	if (kver < VPNHIDE_KVER(4, 14, 0) || kver >= VPNHIDE_KVER(6, 13, 0))
+		return 0;
 	if (kver >= VPNHIDE_KVER(6, 12, 0))
 		return &vpnhide_off_6_12; /* 6.12: fib6_info gained gc_link */
 	if (kver >= VPNHIDE_KVER(6, 0, 0))
@@ -423,9 +425,7 @@ vpnhide_select_offsets(unsigned int kver)
 		return &vpnhide_off_5_4; /* 5.0–5.5: legacy fib_dump_info */
 	if (kver >= VPNHIDE_KVER(4, 19, 0))
 		return &vpnhide_off_4_19; /* 4.19: fib6_info, no nexthop objects */
-	if (kver >= VPNHIDE_KVER(4, 0, 0))
-		return &vpnhide_off_4_x;
-	return 0; /* unsupported → do not install */
+	return &vpnhide_off_4_x; /* 4.14–4.18 */
 }
 
 #endif /* VPNHIDE_KVER_OFFSETS_H */

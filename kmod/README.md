@@ -2,7 +2,9 @@
 
 Kernel-probe module that hides VPN interfaces from selected apps. Part of [vpnhide](../README.md).
 
-Zero footprint in the target app's process -- no modified function prologues, no framework classes, no anonymous memory regions. Invisible to aggressive anti-tamper SDKs.
+The module does not modify the target app's process: there are no userspace
+function patches, injected framework classes, or module-owned anonymous memory
+regions. Detection paths outside the hooks listed below remain out of scope.
 
 ## What it hooks
 
@@ -30,7 +32,9 @@ Kernel kretprobes modify kernel function behavior, not userspace code. The targe
 
 ## GKI compatibility
 
-All symbols used (`register_kretprobe`, `proc_create`, `seq_read`, etc.) are part of the stable GKI KMI, so the same `Module.symvers` CRCs work across all devices running the same GKI generation. The C source is identical across generations -- only the kernel headers and CRCs differ.
+The exported symbols used by the module are part of the GKI KMI. A build targets
+one GKI generation and its matching headers/CRCs; the C source stays identical
+across generations.
 
 CI builds are provided for all 7 GKI generations: `android12-5.10` through `android16-6.12`.
 
@@ -81,12 +85,15 @@ The app writes to **two layers** simultaneously:
 
 ## Combined use with system_server hooks
 
-For apps with aggressive anti-tamper SDKs, full VPN hiding requires covering both native and Java API detection paths -- without placing any hooks in the target app's process:
+Covering both native and Java API detection paths requires two layers, without
+placing vpnhide hooks in the target app's process:
 
 - **vpnhide-kmod** (this module) covers the native side: `ioctl`, `getifaddrs()` (netlink), `/proc/net/route`, `/proc/net/ipv6_route`, netlink address/route/rule dumps, and pre-mutation `SO_BINDTODEVICE` / `SO_BINDTOIFINDEX` denial.
 - **[lsposed](../lsposed/)** hooks `writeToParcel()` on `NetworkCapabilities`, `NetworkInfo`, `LinkProperties` inside `system_server` -- stripping VPN data before Binder serialization reaches the app.
 
-Together they provide complete VPN hiding without any hooks in the target app's process.
+Together they cover the detection paths documented in
+[`docs/detection-vectors.md`](../docs/detection-vectors.md). That document also
+lists known gaps and environment-dependent signals.
 
 KPM is the other kernel-level Native backend for this same role. Do not run KPM
 and the `.ko` at the same time; choose one kernel backend, then pair it with
@@ -105,8 +112,11 @@ LSPosed for Java APIs.
 kretprobes instrument kernel functions by replacing their return address on the stack. Unlike userspace inline hooks (which modify instruction bytes), kretprobes:
 
 - Don't modify the target function's code in a way visible to userspace -- `/proc/self/maps` and the function's ELF bytes are unchanged
-- Can't be detected by the target app -- the app can only inspect its own process memory, not kernel data structures
-- Work on any function visible in `/proc/kallsyms`, including static (non-exported) functions
+- Keep the instrumentation outside the target app's process; kernel-level
+  observability still depends on the device's access controls and debug surface
+- Can target eligible non-inlined functions with available symbols, including
+  static functions; kprobe blacklists and compiler inlining can still prevent
+  registration or leave a symbol off the live path
 
 ### dev_ioctl calling convention (GKI 6.1, arm64)
 

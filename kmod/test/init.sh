@@ -3,10 +3,11 @@
 #
 # Boots inside a minimal Alpine initramfs, loads /vpnhide_kmod.ko, fabricates
 # a VPN-like interface (`vpn0`, a dummy netdev whose name matches the VPN
-# prefix list), then exercises every detection vector twice — once as a
-# non-target UID (must still see vpn0) and once as a target UID (must NOT
-# see vpn0). Emits machine-parseable `RESULT <vector>=PASS|FAIL` lines plus a
-# final `SUMMARY` line, then powers off so QEMU exits.
+# prefix list), then exercises the available detection vectors twice — once as
+# a non-target UID (must still see vpn0) and once as a target UID (must NOT see
+# vpn0). Optional native probes emit SKIP when not supplied. The driver emits
+# machine-parseable `RESULT <vector>=PASS|FAIL|SKIP` lines plus a final `SUMMARY`
+# line, then powers off so QEMU exits.
 #
 # Output is consumed by run.sh on the host via the serial console.
 set +e

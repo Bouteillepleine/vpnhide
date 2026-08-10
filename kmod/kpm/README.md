@@ -17,9 +17,9 @@ real gap:
   the KernelPatch supercall, not the module loader.
 
 A KPM is compiled against KernelPatch's *own* headers (`-nostdinc`), needs
-**no kernel headers and no `Module.symvers`**, resolves every kernel symbol
-at load time via `kallsyms_lookup_name`, and installs **inline** hooks
-(cheaper than kretprobe traps, with first-class arg/return rewriting).
+**no kernel headers and no `Module.symvers`**, resolves its required hook targets
+at load time via `kallsyms_lookup_name`, and installs **inline** hooks with
+direct argument and return-value rewriting.
 
 This is **additive, not a replacement.** Mainstream GKI users stay on the
 QEMU-tested `.ko` (no extra dependency). The KPM extends reach to the
@@ -62,8 +62,8 @@ The implementation relies on three design rules:
 - Hooking: `hook_wrap(func, argno, before, after, udata)` /
   `hook_unwrap(...)`; callbacks get `hook_fargsN_t *` with `arg0..argN`,
   writable `ret`, `skip_origin`, and `local.data0..7` (`<hook.h>`).
-- Symbols: runtime `kallsyms_lookup_name` (incl. static functions);
-  `kfunc_match_cfi` for CFI jump tables (`<kallsyms.h>`, `<ksyms.h>`).
+- Symbols: runtime `kallsyms_lookup_name`, with a bounded fallback for GCC
+  `.isra.N` / `.constprop.N` clones (`<kallsyms.h>`).
 - Control: userspace talks to the module via the supercall (`syscall 45`)
   → `sc_kpm_control` → the module's `KPM_CTL0` handler.
 
@@ -133,9 +133,10 @@ or KPatch-Next `kpatch kpm ctl0`.
 
 ## Safety — read before testing on a device
 
-Inline hooks have **no kprobe safety net**: a wrong offset in
-`kver_offsets.h` or a mismatched kernel **corrupts kernel text → panic /
-bootloop**, where the `.ko`'s kretprobe would just fail to register. So:
+Inline hooks have **no kprobe safety net**: a wrong field offset in
+`kver_offsets.h` can cause invalid kernel-memory access or data corruption, and
+a mismatched hook ABI can panic or bootloop the kernel. The `.ko` avoids the
+offset table but can still fail to register a probe. Therefore:
 
 - **Every offset and every hook must pass the QEMU KPM harness first**
   (`../test/run-kpm.sh` — patches a KernelPatch kernel, boots it, runs the
@@ -162,7 +163,9 @@ reference images:
 | 4.19.325 | pinned upstream source, legacy QEMU builder |
 | android11-5.4 | pinned AOSP common source, legacy QEMU builder |
 | android12-5.10 | Android DDK GKI |
+| android13-5.10 | Android DDK GKI |
 | android13-5.15 | Android DDK GKI |
+| android14-5.15 | Android DDK GKI |
 | android14-6.1 | Android DDK GKI |
 | android15-6.6 | Android DDK GKI |
 | android16-6.12 | Android DDK GKI |

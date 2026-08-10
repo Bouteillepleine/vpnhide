@@ -5,8 +5,8 @@
  * A third native backend alongside the kretprobe `.ko`, for kernels the
  * `.ko` can't serve: non-GKI / proprietary kernels with no published
  * headers or Module.symvers (e.g. kernel 4.14 — issue #33; HyperOS 5.4).
- * Loaded by the KernelPatch runtime (target: KPatch-Next on KernelSU-Next),
- * NOT insmod — so it also works where module signing blocks a `.ko`.
+ * Loaded by the KernelPatch runtime used by APatch or KPatch-Next, NOT insmod
+ * — so it also works where module signing blocks a `.ko`.
  *
  * STATUS: builds (`make kpm`) and runs end-to-end under QEMU via the KPM
  * harness (../test/run-kpm.sh). CI boots representative images for every
@@ -14,8 +14,8 @@
  * state-level check that verifies the socket stayed unbound, not just errno.
  * Runtime config/status/stats use KernelPatch's ctl0 supercall; the QEMU A/B
  * harness also retains decimal load-args for headless bring-up. Every per-kver
- * offset must pass the harness before that version ships — a wrong offset is a
- * contained QEMU panic / A/B failure here, but a bootloop on a real device.
+ * offset must pass the harness before that version ships — a wrong offset can
+ * become a contained QEMU panic / A/B failure here or a bootloop on a device.
  *
  * DESIGN:
  *   - One source plus a runtime kver offset table (kver_offsets.h), producing
@@ -274,7 +274,7 @@ static int iface_is_vpn(const char *name)
 	return vpnhide_iface_is_vpn(buf);
 }
 
-/* Read net_device.name given a net_device* (name is at offset 0 everywhere). */
+/* Read net_device.name at the selected table's version-specific offset. */
 static const char *netdev_name(void *dev)
 {
 	return dev ? (const char *)((char *)dev + off->netdev_name) : 0;
@@ -1112,8 +1112,9 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
  * clone) — kallsyms_lookup_name("name") then misses it. The clang-built GKI
  * images usually retain the plain name, while gcc-built legacy QEMU images can
  * rename e.g. fib_nl_fill_rule -> fib_nl_fill_rule.isra.N.
- * Fall back to the first symbol equal to `name`, or `name.` + suffix — the
- * dot only appears on compiler clones, so this never matches an unrelated fn.
+ * Fall back only to compiler clone forms observed in supported reference
+ * kernels. Other dotted symbols (for example cold fragments) are not valid
+ * substitutes for the complete function.
  */
 struct vpnhide_sym_q {
 	const char *base;
@@ -1121,17 +1122,43 @@ struct vpnhide_sym_q {
 	unsigned long addr;
 };
 
+static const char *vpnhide_skip_prefix(const char *value, const char *prefix)
+{
+	int i;
+
+	for (i = 0; prefix[i]; i++)
+		if (value[i] != prefix[i])
+			return 0;
+	return value + i;
+}
+
+static int vpnhide_is_clone_suffix(const char *suffix)
+{
+	const char *number = vpnhide_skip_prefix(suffix, ".isra.");
+
+	if (!number)
+		number = vpnhide_skip_prefix(suffix, ".constprop.");
+	if (!number || *number < '0' || *number > '9')
+		return 0;
+	do {
+		number++;
+	} while (*number >= '0' && *number <= '9');
+	return *number == '\0';
+}
+
 static int vpnhide_sym_cb(void *data, const char *name, struct module *mod,
 			  unsigned long addr)
 {
 	struct vpnhide_sym_q *q = data;
+	const char *suffix;
 	int i;
 
 	(void)mod;
 	for (i = 0; i < q->baselen; i++)
 		if (name[i] != q->base[i])
 			return 0;
-	if (name[q->baselen] == '\0' || name[q->baselen] == '.') {
+	suffix = name + q->baselen;
+	if (vpnhide_is_clone_suffix(suffix)) {
 		q->addr = addr;
 		return 1; /* found — stop iterating */
 	}
@@ -1158,7 +1185,7 @@ static unsigned long lookup_fn(const char *name)
 
 static int resolve_symbols(void)
 {
-	/* Prefer the generic `_copy_*_user` wrappers, NOT the raw
+	/* Require the generic `_copy_*_user` wrappers, NOT the raw
 	 * `__arch_copy_*_user`. The wrapper does the uaccess enable/disable
 	 * (access_ok + the TTBR0 switch / PAN toggle) around the copy; the raw
 	 * asm only copies. On a kernel using software PAN
@@ -1166,26 +1193,25 @@ static int resolve_symbols(void)
 	 * and the QEMU harness on `-cpu cortex-a57`) the TTBR0 switch lives in
 	 * the C wrapper on >=5.x, so calling the raw routine directly faults on
 	 * the unmapped user page (caught by the 5.4 harness run). The wrapper is
-	 * correct under both hardware and software PAN; fall back to the raw
-	 * symbol only if the wrapper is absent. */
+	 * correct under both hardware and software PAN. Loading without both
+	 * wrappers would make ioctl and ctl0 user-memory access unsafe. */
 	_copy_from_user = (void *)kallsyms_lookup_name("_copy_from_user");
-	if (!_copy_from_user)
-		_copy_from_user =
-			(void *)kallsyms_lookup_name("__arch_copy_from_user");
-
 	_copy_to_user = (void *)kallsyms_lookup_name("_copy_to_user");
-	if (!_copy_to_user)
-		_copy_to_user =
-			(void *)kallsyms_lookup_name("__arch_copy_to_user");
+	if (!_copy_from_user || !_copy_to_user) {
+		logki(MODNAME ": required uaccess wrappers unavailable\n");
+		return -1;
+	}
 
 	_skb_trim = (void *)kallsyms_lookup_name("__skb_trim");
 	if (!_skb_trim)
 		_skb_trim = (void *)kallsyms_lookup_name("skb_trim");
 	_netdev_get_name = (void *)lookup_fn("netdev_get_name");
 
-	/* skb trimming is the only global prerequisite. Hooks that need another
-	 * helper gate their own behavior or registration below. */
-	return _skb_trim ? 0 : -1;
+	if (!_skb_trim) {
+		logki(MODNAME ": skb trim helper unavailable\n");
+		return -1;
+	}
+	return 0;
 }
 
 /*
@@ -1268,12 +1294,12 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 	apply_targets(args);
 
 	/*
-	 * Install hooks. Each one is gated on the offset(s) it dereferences
-	 * being known for this kernel version (0 => not installed), so a
-	 * partially-filled offset table is SAFE: a hook never runs with a
-	 * wrong/zero offset and panics. seq_file + ioctl hooks need only
-	 * stable offsets (seqfile_count, uapi ifreq) so they install whenever
-	 * the symbol exists. install_hook records each into installed_hooks.
+	 * Install hooks. Fields used as availability gates are nonzero only where
+	 * the corresponding layout is defined. Zero is also a valid offset for
+	 * several fields, so it is not a general validity marker; every selected
+	 * table must still be derived and tested as a complete unit. seq_file and
+	 * ioctl hooks use layouts shared by all supported tables. install_hook
+	 * records each successful registration in installed_hooks.
 	 */
 	if (off->seqfile_count) {
 		install_hook("fib_route_seq_show", 2, (void *)fib_route_before,

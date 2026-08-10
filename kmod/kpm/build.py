@@ -2,9 +2,9 @@
 """Build the vpnhide KPM and package it as an installable KernelSU/Magisk
 module zip — single entry point for CI and local builds.
 
-The `.kpm` is one cross-version relocatable object (it supports kernels
-4.14–6.12 on both KernelPatch runtimes), so unlike the `.ko` there is no
-per-KMI matrix: one build, one zip.
+The `.kpm` is one cross-version relocatable object with reference layouts for
+4.14–6.12 on both KernelPatch runtimes, so unlike the `.ko` there is no per-KMI
+build matrix: one build, one zip.
 
 Build step: `make -C kmod kpm` (host clang, no kernel tree — only the
 KernelPatch submodule headers). Set CLANG_DIR to pick a specific clang;

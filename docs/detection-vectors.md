@@ -149,8 +149,7 @@ the filtered fill. Validated by the harness `ifconf_size_probe` vector.
 The KPM backend's `filter_ifconf` compacts the fill the same way the `.ko` does,
 but does not yet reduce the `ifc_req == NULL` size query (it would need raw netdev
 walking by per-kver offset rather than the `.ko`'s rcu helpers); the size-query
-subcase is therefore `.ko`-only for now, tracked with the KPM's other WIP parity
-items.
+subcase is therefore `.ko`-only for now and remains a known KPM gap.
 
 ### 3B. Route table — "is the default route a tunnel?"
 

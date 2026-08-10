@@ -6,7 +6,7 @@
 # RESULT/SUMMARY lines.
 #
 # Usage:  kmod/test/run.sh [kmi]      (default: android12-5.10)
-# Exit:   0 = all vectors PASS, no panic; non-zero otherwise.
+# Exit:   0 = all emitted vectors PASS, no panic; non-zero otherwise.
 set -euo pipefail
 
 KMI="${1:-android12-5.10}"

@@ -13,9 +13,8 @@
  * this header `#include`s anything, one of the two backends stops
  * compiling.
  *
- * The algorithms here are intentionally byte-identical to the seq-file
- * compaction in `vpnhide_kmod.c` (`fib_route_ret` / `ipv6_route_ret`),
- * so adopting this header in the `.ko` later is a mechanical change.
+ * Both native backends call these implementations directly so their route
+ * filtering and configuration parsing stay behaviorally aligned.
  */
 #ifndef VPNHIDE_SHARED_LOGIC_H
 #define VPNHIDE_SHARED_LOGIC_H

@@ -756,8 +756,8 @@ static int sock_ioctl_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 	if (!hook_active(VPNHIDE_HOOK_SOCK_IOCTL))
 		return 0;
 
-	/* sock_ioctl only runs for socket files, so file->private_data is the
-	 * struct socket (same thing sock_from_file() returns). Stable uapi. */
+	/* sock_ioctl is the socket file_operations callback, so private_data is
+	 * the struct socket, matching sock_from_file()'s internal invariant. */
 	file = (struct file *)regs->regs[0];
 	sock = file ? file->private_data : NULL;
 	data->net = (sock && sock->sk) ? sock_net(sock->sk) : NULL;
