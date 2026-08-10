@@ -1,8 +1,9 @@
 name: QEMU Test Images
 
 # Bakes the per-KMI kmod test images (ddk-min + qemu + a virtio GKI kernel)
-# used by the kmod QEMU runtime gate. Kernels change seldom, so this runs only
-# when the recipe changes, monthly, or on demand — not per PR.
+# used by the kmod QEMU runtime gate. Kernel commits are pinned in the matrix;
+# this runs when the recipe changes, monthly to refresh image dependencies, or
+# on demand — not per PR.
 
 on:
   push:
@@ -34,14 +35,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        kmi:
-          - android12-5.10
-          - android13-5.10
-          - android13-5.15
-          - android14-5.15
-          - android14-6.1
-          - android15-6.6
-          - android16-6.12
+        include:
+          - kmi: android12-5.10
+            kernel_commit: 1290154c48656bd1012a837076a0fbe379330eb3
+          - kmi: android13-5.10
+            kernel_commit: 0e7b22b8ec1e944e03b3ab937657aff77f67822e
+          - kmi: android13-5.15
+            kernel_commit: fe59c182e7da104c649b661eac72fb2a2da0bb01
+          - kmi: android14-5.15
+            kernel_commit: f9b6dcd0cc376e7e90e86d06ec344202425d6878
+          - kmi: android14-6.1
+            kernel_commit: 3f3ca1c40482a51cc007a86606ea1516fd4c5077
+          - kmi: android15-6.6
+            kernel_commit: cf8ba5678385b2b8832ed2e87c035925eb12bc4a
+          - kmi: android16-6.12
+            kernel_commit: 309759bcbe6d85ba8c702d8e1c83be556304722d
     steps:
       - uses: actions/checkout@v7
 
@@ -83,7 +91,9 @@ jobs:
         with:
           context: .
           file: .github/docker/ddk-qemu/Dockerfile
-          build-args: KMI=${{ matrix.kmi }}
+          build-args: |
+            KMI=${{ matrix.kmi }}
+            KERNEL_COMMIT=${{ matrix.kernel_commit }}
           push: true
           tags: ${{ steps.img.outputs.image }}
           # Keep reading any existing per-KMI GHA cache entries while they
