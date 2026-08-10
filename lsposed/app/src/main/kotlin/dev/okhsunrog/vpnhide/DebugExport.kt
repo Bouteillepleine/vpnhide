@@ -77,7 +77,7 @@ internal suspend fun exportDebugZip(
                     context = context,
                     shellSnapshot = shellSnapshot,
                     counterBaseline = counterBaseline,
-                    results = checkResults,
+                    report = report,
                 )
             files["dmesg_vpnhide.txt"] = filterVpnHideDmesg(dmesg)
             files["dmesg_full.txt"] = dmesg.ifBlank { "(no dmesg entries)" }
