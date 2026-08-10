@@ -235,6 +235,12 @@ zygisk/                     # cdylib — the injected .so. deps: protocol (+ sha
   Boot mode waits indefinitely for PackageManager readiness; Save mode keeps a
   bounded wait so the UI cannot hang forever. Then it reads the canonical,
   resolves, and writes its channel.
+- **KPM load preflight:** the KPM activator parses only the leading numeric
+  `major.minor` from `uname -r`; patchlevels and Android/vendor suffixes do not
+  affect the offset-table family. It refuses an unknown or unsupported family
+  before invoking KernelPatch, and the KPM repeats the authoritative check in
+  kernel context. KPatch-Next uses `activator --load-only` during post-fs-data
+  so this validation does not wait for PackageManager.
 
 ### 4.2 The native channels
 

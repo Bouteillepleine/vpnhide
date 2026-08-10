@@ -78,12 +78,14 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 ### `/data/adb/modules/vpnhide_kpm/`
 
 - `module.prop`: module metadata.
-- `post-fs-data.sh`: loads KPM automatically on keyless KPatch-Next; on
-  APatch/FolkPatch records a deferred status and leaves load/config to service.
+- `post-fs-data.sh`: asks `activator --load-only` to validate the running
+  major.minor kernel family and load KPM automatically on keyless KPatch-Next;
+  on APatch/FolkPatch records a deferred status and leaves load/config to service.
 - `service.sh`: starts `activator --boot-wait` in the background.
 - `uninstall.sh`: removes KPM-specific persistent status, the ctl0 lock, and
   legacy targets under `/data/adb/vpnhide_kpm/`.
 - `activator`: Rust bin that refuses to run when the `.ko` backend is present,
+  refuses unsupported kernel families before invoking KernelPatch,
   reads optional `/data/adb/vpnhide/superkey`, loads/configures KPM through
   APatch/FolkPatch direct supercalls or KPatch-Next `kpatch kpm load` +
   `kpatch kpm ctl0` (including the standalone KPatch-Next-Module CLI path).
@@ -129,7 +131,7 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 
 | File | Format | Writer | Reader | Lifetime |
 |---|---|---|---|---|
-| `load_status` | `key=value`: timestamp, uname_r, runtime, loaded, detail | `kmod/kpm/module/post-fs-data.sh` | app dashboard | overwritten each boot |
+| `load_status` | `key=value`: timestamp, boot_id, uname_r, runtime, loaded, reason, detail | KPM `post-fs-data.sh` / `service.sh` | app dashboard | overwritten each boot |
 | `ctl.lock` | empty advisory-lock inode, mode `0600` | KPM activator | KPM activators serialize ctl0 config/status/stats calls with `flock` | while the module is installed; removed on uninstall |
 
 ### `/data/adb/vpnhide_ports/`
@@ -300,13 +302,14 @@ post-fs-data:
     -> write /data/adb/vpnhide_kmod/load_status and load_dmesg
   KPM post-fs-data
     -> refuse if .ko module is installed+enabled
-    -> keyless KPatch-Next: load vpnhide.kpm
+    -> keyless KPatch-Next: activator validates uname major.minor, then loads vpnhide.kpm
     -> APatch/FolkPatch: defer to service activator; service tries saved key,
        then trusted su token, else writes awaiting_superkey
 
 service:
   kmod / KPM / Zygisk service.sh
     -> start that module's activator with --boot-wait in the background
+    -> KPM activator rejects unsupported kernels before waiting for PackageManager
     -> activator waits for PackageManager to expose dev.okhsunrog.vpnhide
     -> kmod activator also waits for /proc/vpnhide_ctl
     -> KPM activator uses saved APatch SuperKey or trusted su token when present

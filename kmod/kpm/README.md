@@ -126,8 +126,14 @@ Supported runtimes — pick whichever matches the device's root:
 
 Persistence: a one-shot runtime `sc_kpm_load` is **lost on reboot**. The
 vpnhide KPM module therefore ships `vpnhide.kpm` plus boot scripts: KPatch-Next
-loads via its runtime `kpatch` CLI, while APatch/FolkPatch defers to the
-activator and uses the saved SuperKey or trusted `su` token when present.
+loads through the vpnhide activator's `--load-only` path and its runtime
+`kpatch` CLI, while APatch/FolkPatch defers to the service activator and uses
+the saved SuperKey or trusted `su` token when present. Before either load path
+invokes KernelPatch, the activator validates the leading `major.minor` family
+from `uname -r` against 4.9, 4.14, 4.19, 5.4, 5.10, 5.15, 6.1, 6.6, and 6.12.
+The KPM repeats that check from KernelPatch's numeric `kver` at init, which is
+the authoritative safety boundary; userspace preflight provides an actionable
+`unsupported_kernel` status to the app.
 
 Targeting / control plane: our target-UID set is delivered via the module's
 own `KPM_CTL0` supercall + load-args (the shape the QEMU harness exercises) —

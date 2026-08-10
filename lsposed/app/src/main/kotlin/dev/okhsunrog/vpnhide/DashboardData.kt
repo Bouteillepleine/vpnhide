@@ -833,6 +833,12 @@ private fun renderKmodProblem(
 internal sealed interface KpmProblemKind {
     val reason: ModuleBrokenReason?
 
+    data class UnsupportedKernel(
+        val unameR: String,
+    ) : KpmProblemKind {
+        override val reason get() = ModuleBrokenReason.UnsupportedKernel
+    }
+
     // The activator binary itself is missing from the module directory — a
     // corrupted or partial KPM install (see kmod/kpm/module/service.sh).
     // [path] is the path the boot script tried to exec.
@@ -855,17 +861,11 @@ internal sealed interface KpmProblemKind {
 }
 
 /**
- * Diagnose a KPM install that's present but didn't load, for the
- * `runtime=activator` outcomes the boot script (kmod/kpm/module/service.sh)
- * writes. The other two runtimes it can write — `conflict` (a co-installed
- * .ko took the single-active slot) and `apatch` (dormant, awaiting a saved
- * superkey) — are expected, recoverable states already handled separately as
- * warnings by [kpmDeferredForConflict] / [kpmAwaitingSuperkey]; this function
- * only fires for `runtime=activator`, so it can never double up with those.
- * `runtime=activator` itself covers both the success case (`loaded=1`, which
- * the `!kpm.active` guard below already excludes) and the failure cases this
- * diagnoses — the KPM analogue of classifyKmodProblem's LoadFailed fallback,
- * sourced from the activator's own captured detail instead of insmod stderr.
+ * Diagnose a KPM install that's present but didn't load in either activator
+ * path: service-time APatch/FolkPatch or post-fs-data KPatch-Next. Conflict and
+ * awaiting-authentication are recoverable states handled by their dedicated
+ * warnings. All other fresh failures use the stable `reason` field when known
+ * and retain the raw detail as a fallback for older module builds.
  */
 internal fun classifyKpmProblem(
     kpm: ModuleState,
@@ -875,16 +875,21 @@ internal fun classifyKpmProblem(
     if (kpm !is ModuleState.Installed || kpm.active) return null
     val load = parseKeyValueLines(loadStatusSection)
     val bootId = load["boot_id"]?.trim()
-    if (load["runtime"]?.trim() != "activator" ||
+    val runtime = load["runtime"]?.trim()
+    if (runtime !in setOf("activator", "kpatch-next") ||
         load["loaded"]?.trim() != "0" ||
         bootId.isNullOrEmpty() ||
         bootId != currentBootId.trim()
     ) {
         return null
     }
+    val reason = load["reason"]?.trim()
+    if (reason == "unsupported_kernel") {
+        return KpmProblemKind.UnsupportedKernel(load["uname_r"]?.trim().orEmpty().ifBlank { "?" })
+    }
     val detail = load["detail"]?.trim().orEmpty()
     val missingPrefix = "activator missing at "
-    return if (detail.startsWith(missingPrefix)) {
+    return if (reason == "missing_activator" || detail.startsWith(missingPrefix)) {
         KpmProblemKind.ActivatorMissing(detail.removePrefix(missingPrefix))
     } else {
         KpmProblemKind.LoadFailed(detail)
@@ -899,6 +904,10 @@ private fun renderKpmProblem(
         reason = kind.reason,
         text =
             when (kind) {
+                is KpmProblemKind.UnsupportedKernel -> {
+                    res.getString(R.string.dashboard_issue_kpm_unsupported_kernel, kind.unameR)
+                }
+
                 is KpmProblemKind.ActivatorMissing -> {
                     res.getString(R.string.dashboard_issue_kpm_activator_missing, kind.path)
                 }

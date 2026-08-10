@@ -20,7 +20,8 @@ write_status() {
         printf 'uname_r=%s\n' "$(uname -r 2>/dev/null)"
         printf 'runtime=%s\n' "$1"
         printf 'loaded=%s\n' "$2"
-        printf 'detail=%s\n' "$(sanitize "$3")"
+        printf 'reason=%s\n' "$3"
+        printf 'detail=%s\n' "$(sanitize "$4")"
     } > "$STATUS_FILE.tmp" && mv "$STATUS_FILE.tmp" "$STATUS_FILE"
     chmod 0644 "$STATUS_FILE" 2>/dev/null
 }
@@ -33,17 +34,17 @@ apply_at_boot() {
     if [ -d /data/adb/modules/vpnhide_kmod ] && \
        [ ! -f /data/adb/modules/vpnhide_kmod/disable ]; then
         log -t vpnhide "kpm: .ko backend present — not configuring KPM (single-active)"
-        write_status conflict 0 "vpnhide_kmod present"
+        write_status conflict 0 conflicting_backend "vpnhide_kmod present"
         return 0
     fi
     if [ ! -x "$ACTIVATOR" ]; then
         log -t vpnhide "kpm: activator missing at $ACTIVATOR"
-        write_status activator 0 "activator missing at $ACTIVATOR"
+        write_status activator 0 missing_activator "activator missing at $ACTIVATOR"
         return 1
     fi
     if [ ! -f "$KPM" ]; then
         log -t vpnhide "kpm: KPM missing at $KPM"
-        write_status activator 0 "vpnhide.kpm missing at $KPM"
+        write_status activator 0 missing_kpm "vpnhide.kpm missing at $KPM"
         return 1
     fi
 
@@ -52,25 +53,30 @@ apply_at_boot() {
     case "$rc" in
         0)
             log -t vpnhide "kpm: activator finished boot config"
-            write_status activator 1 configured
+            write_status activator 1 ok configured
             ;;
         3)
             # EXIT_DEFERRED_CONFLICT: the activator found the .ko present (e.g.
             # it loaded during the PackageManager wait) and stood down. Record
             # the truthful conflict status rather than a false `configured`.
             log -t vpnhide "kpm: activator deferred to .ko (single-active)"
-            write_status conflict 0 "vpnhide_kmod present"
+            write_status conflict 0 conflicting_backend "vpnhide_kmod present"
             ;;
         4)
             # EXIT_AWAITING_AUTHENTICATION: APatch/FolkPatch is available but
             # no saved superkey or trusted su grant authenticated yet.
             log -t vpnhide "kpm: awaiting APatch authentication"
-            write_status apatch 0 awaiting_superkey
+            write_status apatch 0 awaiting_superkey awaiting_superkey
+            return 0
+            ;;
+        5)
+            log -t vpnhide "kpm: unsupported kernel $(uname -r 2>/dev/null)"
+            write_status activator 0 unsupported_kernel "unsupported kernel $(uname -r 2>/dev/null)"
             return 0
             ;;
         *)
             log -t vpnhide "kpm: activator failed rc=$rc"
-            write_status activator 0 "rc=$rc $out"
+            write_status activator 0 activation_failed "rc=$rc $out"
             return "$rc"
             ;;
     esac

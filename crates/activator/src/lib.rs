@@ -42,6 +42,18 @@ const PORTS_LOAD_STATUS: &str = "/data/adb/vpnhide_ports/load_status";
 const PORTS_LOAD_LOG: &str = "/data/adb/vpnhide_ports/load_log";
 const KPM_CTL_LOCK: &str = "/data/adb/vpnhide_kpm/ctl.lock";
 const KPM_TRUNCATION_MARKER: &str = "# vpnhide truncated";
+pub const KPM_SUPPORTED_KERNEL_FAMILIES: &str = "4.9, 4.14, 4.19, 5.4, 5.10, 5.15, 6.1, 6.6, 6.12";
+const KPM_SUPPORTED_KERNEL_PAIRS: &[(u32, u32)] = &[
+    (4, 9),
+    (4, 14),
+    (4, 19),
+    (5, 4),
+    (5, 10),
+    (5, 15),
+    (6, 1),
+    (6, 6),
+    (6, 12),
+];
 // The native-target cap is owned by the shared protocol crate (and mirrored by
 // the C backends' `#define MAX_TARGET_UIDS`); alias it here so all three stay in
 // lock-step instead of restating the literal 64.
@@ -143,6 +155,10 @@ pub enum KpmBootOutcome {
     /// key, so the service records it as deferred rather than parsing an error
     /// message to guess what happened.
     AwaitingAuthentication,
+    /// The running kernel's major.minor family has no validated KPM offset
+    /// table. The KPM itself performs the same authoritative check at init;
+    /// this userspace preflight exists so boot diagnostics can name the cause.
+    UnsupportedKernel,
 }
 
 pub fn activate_kpm() -> Result<()> {
@@ -153,6 +169,26 @@ pub fn activate_kpm() -> Result<()> {
 
 pub fn activate_kpm_boot() -> Result<KpmBootOutcome> {
     activate_kpm_with_pm_wait(PmReadyWait::Forever, false)
+}
+
+/// Load the KPM without waiting for PackageManager or delivering config.
+/// KPatch-Next calls this during post-fs-data; configuration still happens
+/// later through `activate_kpm_boot` once package UIDs can be resolved.
+pub fn load_kpm_boot() -> Result<KpmBootOutcome> {
+    if skip_kpm_for_kmod_conflict(false)? {
+        return Ok(KpmBootOutcome::DeferredConflict);
+    }
+    if !running_kernel_supports_kpm()? {
+        return Ok(KpmBootOutcome::UnsupportedKernel);
+    }
+    let client = match KpmClient::detect_outcome()? {
+        KpmClientDetection::Ready(client) => client,
+        KpmClientDetection::AwaitingAuthentication(_) => {
+            return Ok(KpmBootOutcome::AwaitingAuthentication);
+        }
+    };
+    client.ensure_loaded()?;
+    Ok(KpmBootOutcome::Configured)
 }
 
 pub fn read_kpm_status() -> Result<String> {
@@ -179,6 +215,16 @@ fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Resu
     if skip_kpm_for_kmod_conflict(conflict_is_error)? {
         return Ok(KpmBootOutcome::DeferredConflict);
     }
+    if !running_kernel_supports_kpm()? {
+        if conflict_is_error {
+            let release = running_kernel_release()?;
+            return Err(format!(
+                "unsupported kernel {release}; KPM supports {KPM_SUPPORTED_KERNEL_FAMILIES}"
+            )
+            .into());
+        }
+        return Ok(KpmBootOutcome::UnsupportedKernel);
+    }
     let wire = project_native_with_pm_wait(&read_canonical()?, NativeHookFamily::Kernel, wait)?;
     // Re-check after the (possibly long) PackageManager wait: the .ko may have
     // been loaded meanwhile, in which case we must not configure the KPM.
@@ -195,6 +241,63 @@ fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Resu
     client.ensure_loaded()?;
     client.ctl0_config(&wire)?;
     Ok(KpmBootOutcome::Configured)
+}
+
+fn running_kernel_release() -> Result<String> {
+    let out = Command::new("uname").arg("-r").output()?;
+    if !out.status.success() {
+        return Err(format!("uname -r failed with status {}", out.status).into());
+    }
+    let release = String::from_utf8(out.stdout)?.trim().to_owned();
+    if release.is_empty() {
+        return Err("uname -r returned an empty kernel release".into());
+    }
+    Ok(release)
+}
+
+fn running_kernel_supports_kpm() -> Result<bool> {
+    let release = running_kernel_release()?;
+    Ok(kernel_release_supports_kpm(&release))
+}
+
+fn kernel_release_supports_kpm(release: &str) -> bool {
+    parse_kernel_family(release).is_some_and(|family| KPM_SUPPORTED_KERNEL_PAIRS.contains(&family))
+}
+
+/// Parse only the leading Linux major.minor pair. Android kernels commonly
+/// append patchlevels and arbitrary vendor/KMI suffixes, which do not affect
+/// KPM offset-table selection. Requiring a boundary after minor avoids prefix
+/// confusion such as treating 6.10 as 6.1.
+fn parse_kernel_family(release: &str) -> Option<(u32, u32)> {
+    let bytes = release.trim().as_bytes();
+    let major_end = bytes.iter().position(|byte| *byte == b'.')?;
+    if major_end == 0 {
+        return None;
+    }
+    let major = std::str::from_utf8(&bytes[..major_end])
+        .ok()?
+        .parse()
+        .ok()?;
+    let minor_start = major_end + 1;
+    let minor_len = bytes[minor_start..]
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    if minor_len == 0 {
+        return None;
+    }
+    let minor_end = minor_start + minor_len;
+    if bytes
+        .get(minor_end)
+        .is_some_and(|byte| !matches!(byte, b'.' | b'-' | b'+'))
+    {
+        return None;
+    }
+    let minor = std::str::from_utf8(&bytes[minor_start..minor_end])
+        .ok()?
+        .parse()
+        .ok()?;
+    Some((major, minor))
 }
 
 pub fn activate_ports() -> Result<PortsActivationReport> {

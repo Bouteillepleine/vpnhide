@@ -46,6 +46,25 @@ class ClassifyKpmProblemTest {
     }
 
     @Test
+    fun `unsupported kernel is a named diagnosis`() {
+        val status =
+            "runtime=activator\nloaded=0\nboot_id=boot-1\nuname_r=4.4.302-vendor\n" +
+                "reason=unsupported_kernel\ndetail=unsupported kernel 4.4.302-vendor\n"
+        val kind = classifyKpmProblem(installed(active = false), status, "boot-1")
+        assertEquals(KpmProblemKind.UnsupportedKernel("4.4.302-vendor"), kind)
+        assertEquals(ModuleBrokenReason.UnsupportedKernel, kind?.reason)
+    }
+
+    @Test
+    fun `KPatch-Next load failure is diagnosed too`() {
+        val status =
+            "runtime=kpatch-next\nloaded=0\nboot_id=boot-1\nreason=load_failed\n" +
+                "detail=rc=1 kpatch CLI not found\n"
+        val kind = classifyKpmProblem(installed(active = false), status, "boot-1")
+        assertEquals(KpmProblemKind.LoadFailed("rc=1 kpatch CLI not found"), kind)
+    }
+
+    @Test
     fun `stale boot id is ignored`() {
         val status = "runtime=activator\nloaded=0\nboot_id=boot-0\ndetail=rc=1 boom\n"
         assertNull(classifyKpmProblem(installed(active = false), status, "boot-1"))

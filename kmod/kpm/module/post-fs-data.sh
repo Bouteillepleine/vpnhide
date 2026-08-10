@@ -6,7 +6,8 @@
 # resolves UIDs). See docs/protocol.md §7.4.
 #
 # Runtime split (protocol §7.4):
-#   - KPatch-Next (Magisk / KSU), keyless (d05): load here, fully automatic.
+#   - KPatch-Next (Magisk / KSU), keyless (d05): the activator validates the
+#     running kernel and loads here, without waiting for PackageManager.
 #   - APatch/FolkPatch: post-fs-data records a deferred status; service.sh
 #     can load/configure later through the activator's direct supercall path
 #     with a saved /data/adb/vpnhide/superkey or the runtime's trusted `su`
@@ -28,6 +29,7 @@
 
 MODDIR="${0%/*}"
 KPM="$MODDIR/vpnhide.kpm"
+ACTIVATOR="$MODDIR/activator"
 STATUS_DIR="/data/adb/vpnhide_kpm"
 STATUS_FILE="$STATUS_DIR/load_status"
 
@@ -38,7 +40,7 @@ sanitize() {
     printf '%s' "$1" | tr '\n\r\t' '   ' | sed 's/  */ /g'
 }
 
-# runtime, loaded(0/1), detail
+# runtime, loaded(0/1), reason, detail
 write_status() {
     {
         printf 'timestamp=%s\n' "$(date +%s 2>/dev/null)"
@@ -46,61 +48,57 @@ write_status() {
         printf 'uname_r=%s\n' "$(uname -r 2>/dev/null)"
         printf 'runtime=%s\n' "$1"
         printf 'loaded=%s\n' "$2"
-        printf 'detail=%s\n' "$(sanitize "$3")"
+        printf 'reason=%s\n' "$3"
+        printf 'detail=%s\n' "$(sanitize "$4")"
     } > "$STATUS_FILE.tmp" && mv "$STATUS_FILE.tmp" "$STATUS_FILE"
     chmod 0644 "$STATUS_FILE" 2>/dev/null
-}
-
-# Locate the KPatch-Next CLI (`kpatch`). It ships as the KPatch-Next-Module on
-# any manager (Magisk / KSU / KSU-Next — bin path confirmed on a Pixel 8 Pro);
-# also accept it on PATH. APatch is handled earlier (its own supercall branch),
-# not here.
-find_kpatch() {
-    for c in \
-        kpatch \
-        /data/adb/modules/KPatch-Next/bin/kpatch \
-        /data/adb/modules/kpatch-next/bin/kpatch
-    do
-        if command -v "$c" >/dev/null 2>&1; then echo "$c"; return 0; fi
-        [ -x "$c" ] && { echo "$c"; return 0; }
-    done
-    return 1
 }
 
 # --- single-active guard (§1.5): defer to the .ko if it's installed+enabled --
 if [ -d /data/adb/modules/vpnhide_kmod ] && \
    [ ! -f /data/adb/modules/vpnhide_kmod/disable ]; then
     log -t vpnhide "kpm: .ko backend present — not loading KPM (single-active)"
-    write_status conflict 0 "vpnhide_kmod present"
+    write_status conflict 0 conflicting_backend "vpnhide_kmod present"
     exit 0
 fi
 
 if [ ! -f "$KPM" ]; then
-    write_status unknown 0 "vpnhide.kpm not found at $KPM"
+    write_status unknown 0 missing_kpm "vpnhide.kpm not found at $KPM"
+    exit 1
+fi
+
+if [ ! -x "$ACTIVATOR" ]; then
+    write_status activator 0 missing_activator "activator missing at $ACTIVATOR"
     exit 1
 fi
 
 # --- APatch/FolkPatch: service activator owns load/config -------------------
 if [ -d /data/adb/ap ]; then
     log -t vpnhide "kpm: APatch/FolkPatch runtime — deferring load to service activator"
-    write_status apatch 0 awaiting_superkey
+    write_status apatch 0 awaiting_superkey awaiting_superkey
     exit 0
 fi
-
-KPATCH="$(find_kpatch)" || {
-    log -t vpnhide "kpm: kpatch CLI not found — cannot load"
-    write_status unknown 0 "kpatch CLI not found"
-    exit 1
-}
 
 # --- KPatch-Next (Magisk / KSU): keyless, load now --------------------------
-# Keyless: the superkey argument is omitted (protocol §7.3).
-LOAD_OUT="$("$KPATCH" kpm load "$KPM" 2>&1)"
-if "$KPATCH" kpm list 2>/dev/null | grep -q vpnhide; then
-    log -t vpnhide "kpm: loaded (kpatch-next)"
-    write_status kpatch-next 1 "$LOAD_OUT"
-    exit 0
-fi
-log -t vpnhide "kpm: load failed: $LOAD_OUT"
-write_status kpatch-next 0 "$LOAD_OUT"
-exit 1
+LOAD_OUT="$("$ACTIVATOR" --load-only 2>&1)"
+rc=$?
+case "$rc" in
+    0)
+        log -t vpnhide "kpm: loaded (kpatch-next)"
+        write_status kpatch-next 1 ok "$LOAD_OUT"
+        ;;
+    3)
+        log -t vpnhide "kpm: activator deferred to .ko (single-active)"
+        write_status conflict 0 conflicting_backend "vpnhide_kmod present"
+        ;;
+    5)
+        log -t vpnhide "kpm: unsupported kernel $(uname -r 2>/dev/null)"
+        write_status kpatch-next 0 unsupported_kernel "unsupported kernel $(uname -r 2>/dev/null)"
+        ;;
+    *)
+        log -t vpnhide "kpm: load failed rc=$rc: $LOAD_OUT"
+        write_status kpatch-next 0 load_failed "rc=$rc $LOAD_OUT"
+        exit "$rc"
+        ;;
+esac
+exit 0
