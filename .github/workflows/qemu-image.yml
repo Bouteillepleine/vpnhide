@@ -140,6 +140,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Unlike the per-KMI images above (tagged by KMI, overwritten in place),
+      # this one is dated so a CI run stays reproducible. The same literal is
+      # consumed by the `setup` job in `ci.yml` — bump both together, or CI
+      # pulls a tag that was never pushed.
+      #
+      # Nothing in the registry enforces the date: `push` to main with a change
+      # under `paths` re-runs this job and overwrites whatever tag is hardcoded
+      # here. So bump it as part of any change to the Dockerfile or to the
+      # kernels `kmod/test/build-source-kernel.sh` bakes in. Expect the legacy
+      # CI jobs to fail on that one push until this job finishes publishing the
+      # new tag.
       - id: img
         env:
           REPO: ${{ github.repository }}
