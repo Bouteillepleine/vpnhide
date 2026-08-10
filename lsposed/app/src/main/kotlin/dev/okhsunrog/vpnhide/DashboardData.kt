@@ -1282,12 +1282,7 @@ internal suspend fun loadDashboardState(
     val hookProps = parseLsposedStateMetadata(lsposedStateRaw)
     val hookVersion = hookProps["version"]
     val hookBootId = hookProps["boot_id"]
-    val hooksActiveThisBoot =
-        lsposedStatus?.backend ==
-            HookIds.Backend.LSPOSED.id
-                .toLong() &&
-            hookBootId != null &&
-            hookBootId == currentBootId.trim()
+    val hooksActiveThisBoot = lsposedHooksActiveThisBoot(lsposedStateRaw, currentBootId)
     val lsposedTargetCount = countPackages(targetsSnapshot.lsposedTargets)
     val lsposedFramework = detectLsposedFramework(shellSnapshot)
     val lsposedConfig =

@@ -20,6 +20,24 @@ internal enum class CheckLayer { NATIVE, JAVA }
 internal enum class DiagnosticGate { VPN_OFF, SELF_NOT_ROUTED, NEEDS_RESTART, ROUTED }
 
 /**
+ * Fold the three independent gate signals — VPN presence, this app's self-in-tunnel
+ * routing, and a pending self-restart — into one [DiagnosticGate], worst-first, so
+ * the dashboard, the live cache, and the debug export classify the run the same way.
+ * Only [DiagnosticGate.ROUTED] means "measured; verdicts are meaningful".
+ */
+internal fun resolveDiagnosticGate(
+    vpnActive: Boolean,
+    selfRouted: Boolean?,
+    selfNeedsRestart: Boolean,
+): DiagnosticGate =
+    when {
+        !vpnActive -> DiagnosticGate.VPN_OFF
+        selfNeedsRestart -> DiagnosticGate.NEEDS_RESTART
+        selfRouted == false -> DiagnosticGate.SELF_NOT_ROUTED
+        else -> DiagnosticGate.ROUTED
+    }
+
+/**
  * One fully-classified check: the root-differential [outcome] plus the evidence
  * behind it — the app-view [appDetail], the root [groundTruthDetail] (native
  * probes run as root), and, for native probes, the hooks that should cover the

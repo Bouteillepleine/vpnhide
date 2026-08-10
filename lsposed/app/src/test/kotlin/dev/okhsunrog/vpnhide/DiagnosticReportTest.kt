@@ -114,4 +114,55 @@ class DiagnosticReportTest {
         assertTrue(r.native.checks.isEmpty())
         assertTrue(r.java.checks.isEmpty())
     }
+
+    @Test
+    fun `gate folds the three signals worst-first`() {
+        assertEquals(DiagnosticGate.VPN_OFF, resolveDiagnosticGate(vpnActive = false, selfRouted = true, selfNeedsRestart = false))
+        assertEquals(DiagnosticGate.NEEDS_RESTART, resolveDiagnosticGate(vpnActive = true, selfRouted = true, selfNeedsRestart = true))
+        assertEquals(
+            DiagnosticGate.SELF_NOT_ROUTED,
+            resolveDiagnosticGate(vpnActive = true, selfRouted = false, selfNeedsRestart = false),
+        )
+        assertEquals(DiagnosticGate.ROUTED, resolveDiagnosticGate(vpnActive = true, selfRouted = true, selfNeedsRestart = false))
+        // A null self-routed answer (no root) does not block.
+        assertEquals(DiagnosticGate.ROUTED, resolveDiagnosticGate(vpnActive = true, selfRouted = null, selfNeedsRestart = false))
+    }
+
+    // ── renderers carry the attribution the old bundle dropped ─────────────
+
+    private fun leakReport() =
+        report(
+            results =
+                CheckResults(
+                    native =
+                        listOf(
+                            CheckResult(
+                                name = "ioctl SIOCGIFFLAGS tun0",
+                                passed = false,
+                                detail = "tun0 is visible!",
+                                outcome = CheckOutcome.Leak,
+                                groundTruthDetail = "root: tun0 up",
+                            ),
+                        ),
+                    nativeOutcomes = mapOf("ioctl_flags" to CheckOutcome.Leak),
+                ),
+        )
+
+    @Test
+    fun `diagnostics text carries the outcome, the ground truth and the verdict`() {
+        val text = leakReport().toDiagnosticsText()
+        assertTrue("gate is recorded", text.contains("gate: routed"))
+        assertTrue("outcome token, not a PASS/FAIL badge", text.contains("[leak] ioctl SIOCGIFFLAGS tun0"))
+        assertTrue("the root ground truth is included", text.contains("root: tun0 up"))
+        assertTrue("the native verdict is Broken", text.contains("broken"))
+    }
+
+    @Test
+    fun `diagnostics json serializes outcome and verdict`() {
+        val json = leakReport().toJson()
+        assertTrue(json.contains("\"outcome\": \"leak\""))
+        assertTrue(json.contains("\"verdict\": \"broken\""))
+        assertTrue(json.contains("\"groundTruthDetail\": \"root: tun0 up\""))
+        assertTrue(json.contains("\"id\": \"ioctl_flags\""))
+    }
 }
