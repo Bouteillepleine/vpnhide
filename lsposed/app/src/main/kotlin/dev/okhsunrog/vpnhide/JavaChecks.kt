@@ -77,10 +77,6 @@ internal data class CheckResults(
     // Remaining Java probes (active-network, push callback, routes, proxy) —
     // the slow push-callback check lives here, so it runs in a second phase.
     val extraJava: List<CheckResult> = emptyList(),
-    // Honest per-check outcome for the Rust native checks, keyed by spec id —
-    // the who-hid-it differential (app view vs root ground truth). Empty when the
-    // ground-truth probe couldn't run.
-    val nativeOutcomes: Map<String, CheckOutcome> = emptyMap(),
 ) {
     val nativeAll get() = native + nativeExtra
     val java get() = coreJava + extraJava
@@ -130,11 +126,9 @@ internal fun runCoreChecks(
     // differential. Join both back to the specs by stable id.
     val nativeAppView = NativeProbe.runAll()
     val nativeGroundTruth = GroundTruthProbe.run(context)
-    // One pass builds both the per-check UI results and the outcome map (keyed by
-    // spec id for the agent bridge / dashboard). The outcome — the root-differential
-    // attribution — rides along on each CheckResult so the UI is a pure function of
-    // the list.
-    val nativeOutcomes = LinkedHashMap<String, CheckOutcome>()
+    // The root-differential outcome rides along on each CheckResult, so the UI and
+    // the report are a pure function of the list — no parallel outcome map to keep
+    // in sync (buildDiagnosticReport derives the by-id map when it needs one).
     val native =
         NATIVE_CHECKS.map { spec ->
             val out =
@@ -143,7 +137,6 @@ internal fun runCoreChecks(
             val groundTruth = nativeGroundTruth[spec.id]
             val outcome = classifyNativeOutcome(out, groundTruth)
             VpnHideLog.i(TAG, "[outcome] ${spec.id}: ${outcome.token()}")
-            nativeOutcomes[spec.id] = outcome
             nativeCheckResult(res.getString(spec.labelRes), out, outcome, groundTruth?.detail)
         }
 
@@ -170,7 +163,6 @@ internal fun runCoreChecks(
         native = native,
         nativeExtra = nativeExtra,
         coreJava = coreJava,
-        nativeOutcomes = nativeOutcomes,
     )
 }
 

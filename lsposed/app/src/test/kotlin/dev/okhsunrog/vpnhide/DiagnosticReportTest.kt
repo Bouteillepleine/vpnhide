@@ -26,24 +26,32 @@ class DiagnosticReportTest {
         complete: Boolean = true,
     ) = buildDiagnosticReport(gate, results, backend, lsposedActive, complete)
 
+    /** Native results in the real NATIVE_CHECKS order, carrying the given per-id
+     * outcomes; every other probe is left unmeasured. The builder derives the
+     * by-id outcome map from this list — there is no separate map to pass. */
+    private fun nativeResults(vararg outcomes: Pair<String, CheckOutcome>): List<CheckResult> {
+        val byId = outcomes.toMap()
+        return NATIVE_CHECKS.map { spec -> CheckResult(spec.id, passed = null, detail = "", outcome = byId[spec.id]) }
+    }
+
     // ── native verdict folds off the owned outcomes ────────────────────────
 
     @Test
     fun `native verdict is Broken when an owned vector leaks and nothing hid`() {
-        val r = report(results = CheckResults(native = emptyList(), nativeOutcomes = mapOf("ioctl_flags" to CheckOutcome.Leak)))
+        val r = report(results = CheckResults(native = nativeResults("ioctl_flags" to CheckOutcome.Leak)))
         assertEquals(Verdict.Broken, r.native.verdict)
     }
 
     @Test
     fun `native verdict is Partial when it hides some but an owned vector leaks`() {
-        val outcomes = mapOf("ioctl_flags" to CheckOutcome.Leak, "getifaddrs" to CheckOutcome.HiddenByBackend)
-        assertEquals(Verdict.Partial, report(results = CheckResults(native = emptyList(), nativeOutcomes = outcomes)).native.verdict)
+        val native = nativeResults("ioctl_flags" to CheckOutcome.Leak, "getifaddrs" to CheckOutcome.HiddenByBackend)
+        assertEquals(Verdict.Partial, report(results = CheckResults(native = native)).native.verdict)
     }
 
     @Test
     fun `native verdict is Ok when nothing owned leaks`() {
-        val outcomes = mapOf("ioctl_flags" to CheckOutcome.HiddenByBackend)
-        assertEquals(Verdict.Ok, report(results = CheckResults(native = emptyList(), nativeOutcomes = outcomes)).native.verdict)
+        val native = nativeResults("ioctl_flags" to CheckOutcome.HiddenByBackend)
+        assertEquals(Verdict.Ok, report(results = CheckResults(native = native)).native.verdict)
     }
 
     // ── unowned leaks are surfaced separately, never against the verdict ────
@@ -52,7 +60,7 @@ class DiagnosticReportTest {
     fun `a kernel-only leak under zygisk is unowned, not a verdict leak`() {
         // netlink_getrule (fib_nl_fill_rule) has no zygisk hook → out of scope for
         // the zygisk tile, so the verdict stays Ok and the leak is counted as unowned.
-        val r = report(results = CheckResults(native = emptyList(), nativeOutcomes = mapOf("netlink_getrule" to CheckOutcome.Leak)))
+        val r = report(results = CheckResults(native = nativeResults("netlink_getrule" to CheckOutcome.Leak)))
         assertEquals(Verdict.Ok, r.native.verdict)
         assertEquals(1, r.native.unownedLeaks)
     }
@@ -69,24 +77,28 @@ class DiagnosticReportTest {
 
     // ── per-check attribution carries through verbatim ─────────────────────
 
+    /** Full native list with the first probe (ioctl_flags) carrying a rich leak +
+     * root ground-truth, the rest unmeasured — the shape a real leaking run has. */
+    private fun ioctlFlagsLeakNative(): List<CheckResult> =
+        NATIVE_CHECKS.map { spec ->
+            if (spec.id == "ioctl_flags") {
+                CheckResult(
+                    name = "ioctl SIOCGIFFLAGS tun0",
+                    passed = false,
+                    detail = "tun0 is visible!",
+                    outcome = CheckOutcome.Leak,
+                    groundTruthDetail = "root: tun0 up",
+                )
+            } else {
+                CheckResult(spec.id, passed = null, detail = "", outcome = null)
+            }
+        }
+
     @Test
     fun `native check carries id, outcome, ground truth and owned flag`() {
-        val results =
-            CheckResults(
-                native =
-                    listOf(
-                        CheckResult(
-                            name = "ioctl SIOCGIFFLAGS tun0",
-                            passed = false,
-                            detail = "tun0 is visible!",
-                            outcome = CheckOutcome.Leak,
-                            groundTruthDetail = "root: tun0 up",
-                        ),
-                    ),
-                nativeOutcomes = mapOf("ioctl_flags" to CheckOutcome.Leak),
-            )
-        val check = report(results = results).native.checks.single { it.layer == CheckLayer.NATIVE }
-        assertEquals("ioctl_flags", check.id) // stable id joined from NATIVE_CHECKS, not an index
+        val checks = report(results = CheckResults(native = ioctlFlagsLeakNative())).native.checks
+        val check = checks.first { it.id == "ioctl_flags" }
+        assertEquals("ioctl SIOCGIFFLAGS tun0", check.label) // localized label off the result
         assertEquals(CheckOutcome.Leak, check.outcome)
         assertEquals("root: tun0 up", check.groundTruthDetail)
         assertTrue("ioctl_flags is zygisk-owned via zygisk_ioctl", check.owned)
@@ -130,23 +142,7 @@ class DiagnosticReportTest {
 
     // ── renderers carry the attribution the old bundle dropped ─────────────
 
-    private fun leakReport() =
-        report(
-            results =
-                CheckResults(
-                    native =
-                        listOf(
-                            CheckResult(
-                                name = "ioctl SIOCGIFFLAGS tun0",
-                                passed = false,
-                                detail = "tun0 is visible!",
-                                outcome = CheckOutcome.Leak,
-                                groundTruthDetail = "root: tun0 up",
-                            ),
-                        ),
-                    nativeOutcomes = mapOf("ioctl_flags" to CheckOutcome.Leak),
-                ),
-        )
+    private fun leakReport() = report(results = CheckResults(native = ioctlFlagsLeakNative()))
 
     @Test
     fun `diagnostics text carries the outcome, the ground truth and the verdict`() {

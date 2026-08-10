@@ -104,7 +104,11 @@ internal fun buildDiagnosticReport(
     lsposedActive: Boolean,
     complete: Boolean,
 ): DiagnosticReport {
-    val nativeOutcomes = results?.nativeOutcomes ?: emptyMap()
+    val nativeChecks = nativeDiagnosticChecks(results, backend)
+    // The per-check outcome is the single source of truth; the by-id map the layer
+    // summary needs is derived here (owned spec checks only), not stored a second
+    // time on CheckResults.
+    val nativeOutcomes = nativeChecks.filter { it.id.isNotEmpty() }.associate { it.id to it.outcome }
     val unowned =
         if (results == null) {
             0
@@ -119,7 +123,7 @@ internal fun buildDiagnosticReport(
                 backend = backend.id,
                 status = summarizeNativeLayer(backend, nativeOutcomes),
                 unownedLeaks = unowned,
-                checks = nativeDiagnosticChecks(results, backend),
+                checks = nativeChecks,
             ),
         java =
             LayerReport(
