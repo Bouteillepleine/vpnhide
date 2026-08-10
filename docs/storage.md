@@ -95,7 +95,7 @@ Shape (illustrative):
   },
   "settings": {
     "rememberSuperkey": false,
-    "experimentalFilesystemHiding": false
+    "kernelBootFeatures": []
   }
 }
 ```
@@ -138,10 +138,12 @@ selection; the native wire carries the resolved `hookmask`.
 The `rememberSuperkey` boolean lives here (it is a preference, not a secret). The
 superkey itself does **not** (§6).
 
-`experimentalFilesystemHiding` is the desired boot state for the optional
-`.ko` VFS probes. The kmod post-fs-data loader asks its Rust activator to parse
-this field before `insmod`; changing it in the app therefore requires a reboot.
-When false, the VFS probes are never registered.
+`kernelBootFeatures` is the desired set of optional, reboot-gated kernel
+features. The current `filesystem_iface_paths` entry enables the `.ko` VFS
+probes. The kmod post-fs-data loader asks its Rust activator whether that entry
+is present before `insmod`; changing the list in the app therefore requires a
+reboot. When an entry is absent, its probes are never registered. Unknown names
+are preserved so newer versions can extend the list without a schema migration.
 
 Ports are intentionally controlled in the canonical JSON, not in the native text
 protocol. `"ports": true` with no `portPolicy` is the legacy/default behavior:

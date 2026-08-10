@@ -70,6 +70,40 @@ impl Hook {
         1u32 << self as u32
     }
 
+    /// This hook's canonical config name.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::FibRouteSeqShow => "fib_route_seq_show",
+            Self::Ipv6RouteSeqShow => "ipv6_route_seq_show",
+            Self::RtnlFillIfinfo => "rtnl_fill_ifinfo",
+            Self::InetFillIfaddr => "inet_fill_ifaddr",
+            Self::Inet6FillIfaddr => "inet6_fill_ifaddr",
+            Self::DevIoctl => "dev_ioctl",
+            Self::SockIoctl => "sock_ioctl",
+            Self::FibDumpInfo => "fib_dump_info",
+            Self::Rt6FillNode => "rt6_fill_node",
+            Self::FibNlFillRule => "fib_nl_fill_rule",
+            Self::LsposedLinkProperties => "lsposed_link_properties",
+            Self::LsposedNetworkCapabilities => "lsposed_network_capabilities",
+            Self::LsposedNetworkInfo => "lsposed_network_info",
+            Self::LsposedNetwork => "lsposed_network",
+            Self::LsposedConnectivityResult => "lsposed_connectivity_result",
+            Self::LsposedConnectivityCallback => "lsposed_connectivity_callback",
+            Self::LsposedConnectivityNetwork => "lsposed_connectivity_network",
+            Self::LsposedPackageVisibility => "lsposed_package_visibility",
+            Self::ZygiskIoctl => "zygisk_ioctl",
+            Self::ZygiskGetifaddrs => "zygisk_getifaddrs",
+            Self::ZygiskOpenat => "zygisk_openat",
+            Self::ZygiskRecvmsg => "zygisk_recvmsg",
+            Self::ZygiskRecv => "zygisk_recv",
+            Self::ZygiskRecvfrom => "zygisk_recvfrom",
+            Self::ZygiskRecvfromChk => "zygisk_recvfrom_chk",
+            Self::SocketBindInterface => "socket_bind_interface",
+            Self::ZygiskSetsockopt => "zygisk_setsockopt",
+            Self::FilesystemIfacePaths => "filesystem_iface_paths",
+        }
+    }
+
     /// Resolve a canonical config hook name.
     pub fn from_name(name: &str) -> Option<Self> {
         match name {

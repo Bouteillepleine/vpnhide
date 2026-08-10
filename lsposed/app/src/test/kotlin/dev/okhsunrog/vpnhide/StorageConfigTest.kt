@@ -64,7 +64,7 @@ class StorageConfigTest {
                       },
                       "settings": {
                         "rememberSuperkey": true,
-                        "experimentalFilesystemHiding": true,
+                        "kernelBootFeatures": ["filesystem_iface_paths", "future_feature"],
                         "autoHideVpnServices": false,
                         "autoHideVpnName": true,
                         "autoHideExcludedPackages": ["com.vpn.false_positive"],
@@ -79,7 +79,7 @@ class StorageConfigTest {
         assertEquals(
             CanonicalSettings(
                 rememberSuperkey = true,
-                experimentalFilesystemHiding = true,
+                kernelBootFeatures = setOf("filesystem_iface_paths", "future_feature"),
                 autoHideVpnServices = false,
                 autoHideVpnName = true,
                 autoHideExcludedPackages = setOf("com.vpn.false_positive"),
@@ -97,6 +97,7 @@ class StorageConfigTest {
             cfg.apps.getValue("com.bank").native,
         )
         assertTrue(cfg.apps.getValue("dev.okhsunrog.vpnhide").hidden)
+        assertEquals(cfg, requireNotNull(parseCanonicalConfig(canonicalConfigJson(cfg))))
     }
 
     @Test

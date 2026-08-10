@@ -1,11 +1,13 @@
 use std::{env, process};
 
-use vpnhide_activator::{activate_kmod, activate_kmod_boot, filesystem_hiding_enabled};
+use vpnhide_activator::{activate_kmod, activate_kmod_boot, kernel_boot_feature_enabled};
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
-    if args.as_slice() == ["filesystem-hiding-enabled"] {
-        match filesystem_hiding_enabled() {
+    if let [command, feature] = args.as_slice()
+        && command == "boot-feature-enabled"
+    {
+        match kernel_boot_feature_enabled(feature) {
             Ok(true) => return,
             Ok(false) => process::exit(1),
             Err(e) => {
@@ -19,7 +21,7 @@ fn main() {
         [] => false,
         [arg] if arg == "--boot-wait" => true,
         _ => {
-            eprintln!("usage: activator [--boot-wait|filesystem-hiding-enabled]");
+            eprintln!("usage: activator [--boot-wait|boot-feature-enabled <name>]");
             process::exit(2);
         }
     };

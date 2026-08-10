@@ -29,7 +29,13 @@ internal fun FilesystemHidingSettingsSection() {
     val scope = rememberCoroutineScope()
     val targets by TargetsCache.snapshot.collectAsState()
     var saving by remember { mutableStateOf(false) }
-    val enabled = targets?.canonicalConfig?.settings?.experimentalFilesystemHiding == true
+    val enabledFeatures =
+        targets
+            ?.canonicalConfig
+            ?.settings
+            ?.kernelBootFeatures
+            .orEmpty()
+    val enabled = KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS in enabledFeatures
 
     LaunchedEffect(Unit) { TargetsCache.ensureLoaded(scope, context) }
 
@@ -62,7 +68,15 @@ private fun writeFilesystemHidingSetting(enabled: Boolean): Int {
     val base = buildCanonicalConfigFromTargetsSnapshot(snapshot)
     val canonical =
         base.copy(
-            settings = base.settings.copy(experimentalFilesystemHiding = enabled),
+            settings =
+                base.settings.copy(
+                    kernelBootFeatures =
+                        if (enabled) {
+                            base.settings.kernelBootFeatures + KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS
+                        } else {
+                            base.settings.kernelBootFeatures - KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS
+                        },
+                ),
         )
     return CanonicalConfigRepository
         .persist(canonical, activation = CanonicalActivation(native = false))

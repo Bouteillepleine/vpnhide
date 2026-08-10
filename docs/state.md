@@ -20,7 +20,7 @@ The single managed desired-state file.
 
 - Format: JSON object, `version: 1`, `debug: Boolean`, `apps: { package ->
   roles }`, `settings.rememberSuperkey: Boolean`,
-  `settings.experimentalFilesystemHiding: Boolean`,
+  `settings.kernelBootFeatures: [feature name]`,
   `settings.autoHideVpnServices: Boolean`, `settings.autoHideVpnName: Boolean`,
   `settings.autoHiddenPackages: [package]`.
 - Roles per package: `java`, `native` (`Boolean` or hook-name array),

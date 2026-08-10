@@ -54,7 +54,7 @@ if [ -r /proc/config.gz ]; then
 fi
 
 FILESYSTEM_HIDING=0
-if [ -x "$ACTIVATOR" ] && "$ACTIVATOR" filesystem-hiding-enabled >/dev/null 2>&1; then
+if [ -x "$ACTIVATOR" ] && "$ACTIVATOR" boot-feature-enabled filesystem_iface_paths >/dev/null 2>&1; then
     FILESYSTEM_HIDING=1
 fi
 

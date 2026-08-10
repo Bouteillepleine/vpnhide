@@ -105,12 +105,12 @@ pub fn read_canonical() -> Result<String> {
     }
 }
 
-/// Read the reboot-gated .ko VFS setting without waiting for PackageManager.
-/// The kmod post-fs-data loader uses the exit status of its thin binary before
-/// insmod, so disabled boots never register the hot-path probes at all.
-pub fn filesystem_hiding_enabled() -> Result<bool> {
+/// Read one reboot-gated kernel feature without waiting for PackageManager.
+/// Boot loaders query features before loading their backend, so disabled
+/// features never register their probes at all.
+pub fn kernel_boot_feature_enabled(feature: &str) -> Result<bool> {
     let config = parse_canonical(&read_canonical()?)?;
-    Ok(config.settings.experimental_filesystem_hiding)
+    Ok(config.settings.kernel_boot_features.contains(feature))
 }
 
 pub fn activate_kmod() -> Result<()> {
