@@ -400,8 +400,8 @@ private const val TAG = LogTags.DASHBOARD
 // Non-GKI kernel series KernelPatch (the KPM runtime) supports but the .ko does
 // not: no GKI KMI, no DDK build. Mirrors the sub-5.10 rows of the KPM kver
 // offset table in kmod/kpm/kver_offsets.h. GKI series (5.10+) prefer the .ko;
-// anything below 4.14 isn't in the table and falls back to zygisk.
-internal val KPM_NON_GKI_SERIES = setOf("4.14", "4.19", "5.4")
+// other series aren't in the table and fall back to zygisk.
+internal val KPM_NON_GKI_SERIES = setOf("4.9", "4.14", "4.19", "5.4")
 
 internal fun parseKernelSeries(raw: String): String? = Regex("""\b(\d+\.\d+)""").find(raw)?.groupValues?.get(1)
 
@@ -429,13 +429,13 @@ internal fun parseKernelAndroidBranch(raw: String): String? =
  *       - 5.10 / 5.15 have two shipping variants each → return the
  *         primary plus an alternative via `variantAmbiguous=true`;
  *         the UI shows "try primary, if it doesn't load try alt".
- *  3. Non-GKI kernels that KernelPatch covers (4.14 / 4.19 / 5.4 —
+ *  3. Non-GKI kernels that KernelPatch covers (4.9 / 4.14 / 4.19 / 5.4 —
  *     no GKI KMI, no DDK kmod build) → KPM (beta), the single
  *     universal binary. [kpatchRuntimeAvailable] decides whether the
  *     UI also asks the user to install the KPatch-Next-Module first.
- *  4. Pre-4.14 series or unparseable kernel version → fall back to
- *     zygisk (recommended=Zygisk); KernelPatch's kver offset table
- *     starts at 4.14, and no kmod build loads against such kernels.
+ *  4. Any other series or an unparseable kernel version → fall back to
+ *     zygisk (recommended=Zygisk); the KPM offset table has no validated
+ *     layout for it, and no kmod build loads against such kernels.
  *
  * Returns `null` only if [kernelRaw] is blank (no uname output).
  * `deviceAndroidLabel` is only reflected back in the returned
@@ -526,7 +526,7 @@ internal fun buildNativeInstallRecommendation(
         )
     }
 
-    // Non-GKI kernels KernelPatch supports (4.14 / 4.19 / 5.4) — no GKI KMI and
+    // Non-GKI kernels KernelPatch supports (4.9 / 4.14 / 4.19 / 5.4) — no GKI KMI and
     // no DDK kmod build, but they're in the KPM kver offset table
     // (kmod/kpm/kver_offsets.h). Recommend the universal KPM (beta).
     if (kernelSeries in KPM_NON_GKI_SERIES) {
