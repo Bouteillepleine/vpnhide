@@ -540,8 +540,8 @@ fn is_siocgif(request: libc::c_ulong) -> bool {
     (0x8910..=0x8970).contains(&(request as u32))
 }
 
-/// Walk the `ifreq[]` array inside an `ifconf` and remove VPN entries
-/// by shifting non-VPN entries forward, then adjusting `ifc_len`.
+/// Walk the `ifreq[]` array inside an `ifconf`, shift non-VPN entries forward,
+/// clear the removed part of the kernel-written range, and adjust `ifc_len`.
 ///
 /// # Safety
 ///
@@ -577,7 +577,72 @@ unsafe fn filter_ifconf(ifc: *mut ifconf) {
         dst += 1;
     }
 
+    if dst != n {
+        // A caller can inspect its buffer past the shortened ifc_len. Erase
+        // only slots returned by the kernel and removed by compaction.
+        unsafe {
+            core::ptr::write_bytes(ifc.ifc_req.offset(dst as isize), 0, (n - dst) as usize);
+        }
+    }
+
     ifc.ifc_len = dst * entry_size;
+}
+
+#[cfg(test)]
+mod ifconf_tests {
+    use super::{filter_ifconf, ifconf};
+
+    fn named_ifreq(name: &[u8]) -> libc::ifreq {
+        assert!(name.len() < libc::IFNAMSIZ);
+        let mut entry = unsafe { core::mem::zeroed::<libc::ifreq>() };
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                name.as_ptr(),
+                entry.ifr_name.as_mut_ptr().cast::<u8>(),
+                name.len(),
+            );
+        }
+        entry
+    }
+
+    fn name(entry: &libc::ifreq) -> &[u8] {
+        let bytes = unsafe {
+            core::slice::from_raw_parts(entry.ifr_name.as_ptr().cast::<u8>(), entry.ifr_name.len())
+        };
+        &bytes[..bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len())]
+    }
+
+    #[test]
+    fn compaction_clears_only_the_removed_kernel_output() {
+        let mut entries = [
+            named_ifreq(b"eth0"),
+            named_ifreq(b"tun0"),
+            named_ifreq(b"wlan0"),
+            named_ifreq(b"caller-owned"),
+        ];
+        let entry_size = core::mem::size_of::<libc::ifreq>();
+        let mut conf = ifconf {
+            ifc_len: (3 * entry_size) as libc::c_int,
+            ifc_req: entries.as_mut_ptr(),
+        };
+
+        unsafe { filter_ifconf(&mut conf) };
+
+        assert_eq!(conf.ifc_len, (2 * entry_size) as libc::c_int);
+        assert_eq!(name(&entries[0]), b"eth0");
+        assert_eq!(name(&entries[1]), b"wlan0");
+        assert!(
+            unsafe {
+                core::slice::from_raw_parts(
+                    (&entries[2] as *const libc::ifreq).cast::<u8>(),
+                    entry_size,
+                )
+            }
+            .iter()
+            .all(|b| *b == 0)
+        );
+        assert_eq!(name(&entries[3]), b"caller-owned");
+    }
 }
 
 // ============================================================================

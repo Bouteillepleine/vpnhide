@@ -1,14 +1,16 @@
 /*
  * SIOCGIFCONF probe for the kmod harness — exercises the legacy ioctl
- * enumeration path, specifically the two-step "size query then fill" sequence
- * the `ip addr`/`ifconfig` shell vectors don't isolate.
+ * enumeration path, including the two-step "size query then fill" sequence
+ * and bytes left in the caller-owned buffer past the returned length.
  *
  * The classic caller first issues SIOCGIFCONF with ifc_req == NULL to learn how
  * big a buffer it needs (the kernel returns ifc_len = N * sizeof(struct ifreq)
  * without copying anything), then issues a sized call to fill it. If the kmod
  * filters the fill but leaves the size query unfiltered, the two disagree by
  * one interface for a hidden VPN — a detectable tell. This probe reports both
- * so the harness can assert they stay consistent.
+ * so the harness can assert they stay consistent. The fill buffer starts
+ * zeroed and is deliberately oversized, so any non-empty name after the
+ * returned entries is stale output left behind by in-place filtering.
  *
  * Build (static, runs on the Alpine VM regardless of its libc):
  *   <ndk>/aarch64-linux-android35-clang -static -O2 -o ifconf ifconf-probe.c
@@ -16,6 +18,8 @@
  *   IFCONF_SIZE=<n>      ifreqs reported by the NULL size-query
  *   IFCONF_FILL=<n>      ifreqs returned by a real fill
  *   IFCONF_FILL_VPN=<n>  of the fill entries, how many name "vpn0"
+ *   IFCONF_TAIL=<n>      non-empty names after the returned entries
+ *   IFCONF_TAIL_VPN=<n>  of those stale names, how many name "vpn0"
  */
 #include <net/if.h>
 #include <stdio.h>
@@ -28,11 +32,12 @@ int main(void)
 {
 	struct ifconf ifc;
 	struct ifreq buf[64];
-	int fd, i, size_n, fill_n, vpn = 0;
+	int fd, i, size_n, fill_n, vpn = 0, tail = 0, tail_vpn = 0;
 
 	fd = socket(AF_INET, SOCK_DGRAM, 0);
 	if (fd < 0) {
-		printf("IFCONF_SIZE=-1\nIFCONF_FILL=-1\nIFCONF_FILL_VPN=-1\n");
+		printf("IFCONF_SIZE=-1\nIFCONF_FILL=-1\nIFCONF_FILL_VPN=-1\n"
+		       "IFCONF_TAIL=-1\nIFCONF_TAIL_VPN=-1\n");
 		return 2;
 	}
 
@@ -47,21 +52,30 @@ int main(void)
 	size_n = ifc.ifc_len / (int)sizeof(struct ifreq);
 
 	/* Step 2: real fill into a fixed buffer. */
+	memset(buf, 0, sizeof(buf));
 	ifc.ifc_len = (int)sizeof(buf);
 	ifc.ifc_req = buf;
 	if (ioctl(fd, SIOCGIFCONF, &ifc) < 0) {
-		printf("IFCONF_SIZE=%d\nIFCONF_FILL=-1\nIFCONF_FILL_VPN=-1\n",
+		printf("IFCONF_SIZE=%d\nIFCONF_FILL=-1\nIFCONF_FILL_VPN=-1\n"
+		       "IFCONF_TAIL=-1\nIFCONF_TAIL_VPN=-1\n",
 		       size_n);
 		close(fd);
 		return 2;
 	}
 	fill_n = ifc.ifc_len / (int)sizeof(struct ifreq);
 	for (i = 0; i < fill_n; i++)
-		if (strcmp(buf[i].ifr_name, "vpn0") == 0)
+		if (strncmp(buf[i].ifr_name, "vpn0", IFNAMSIZ) == 0)
 			vpn++;
+	for (i = fill_n; i < (int)(sizeof(buf) / sizeof(buf[0])); i++) {
+		if (buf[i].ifr_name[0] != '\0')
+			tail++;
+		if (strncmp(buf[i].ifr_name, "vpn0", IFNAMSIZ) == 0)
+			tail_vpn++;
+	}
 
 	close(fd);
-	printf("IFCONF_SIZE=%d\nIFCONF_FILL=%d\nIFCONF_FILL_VPN=%d\n", size_n,
-	       fill_n, vpn);
+	printf("IFCONF_SIZE=%d\nIFCONF_FILL=%d\nIFCONF_FILL_VPN=%d\n"
+	       "IFCONF_TAIL=%d\nIFCONF_TAIL_VPN=%d\n",
+	       size_n, fill_n, vpn, tail, tail_vpn);
 	return 0;
 }

@@ -778,10 +778,10 @@ static int sock_ioctl_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
  * are safe in this context (it's the same userspace the original
  * sock_ioctl handler accessed). PAN/uaccess primitives are honoured.
  *
- * Faults are handled cleanly: if the user buffer was unmapped or
- * raced, the copy fails with -EFAULT and we report COPY_FAULT to the
- * caller, who skips the ifc_len rewrite to avoid a half-filtered
- * array (`buffer compacted, length unchanged`) escaping to userspace.
+ * If the caller races by unmapping its buffer, uaccess reports a fault and
+ * filtering stops. The buffer may already be partly rewritten, so the caller
+ * keeps the original ifc_len rather than receiving a shortened length that
+ * claims the incomplete transformation succeeded.
  */
 enum filter_ifconf_result {
 	FILTER_IFCONF_NO_CHANGE,
@@ -789,8 +789,9 @@ enum filter_ifconf_result {
 	FILTER_IFCONF_COPY_FAULT,
 };
 
-/* Compact VPN entries out of the userspace ifreq array. The caller is
- * responsible for updating `ifc_len` only on FILTER_IFCONF_CHANGED. */
+/* Compact VPN entries out of the userspace ifreq array and clear the slots
+ * removed from the kernel-written range. The caller is responsible for
+ * updating `ifc_len` only on FILTER_IFCONF_CHANGED. */
 static enum filter_ifconf_result filter_ifconf_buf(struct ifreq __user *usr_ifr,
 						   int n, int *out_len)
 {
@@ -812,6 +813,13 @@ static enum filter_ifconf_result filter_ifconf_buf(struct ifreq __user *usr_ifr,
 
 	if (dst == n)
 		return FILTER_IFCONF_NO_CHANGE;
+
+	/* Shortening ifc_len alone leaves the removed kernel output readable in
+	 * the caller-owned tail. Clear only slots the kernel returned, never the
+	 * unused remainder of the caller's buffer. */
+	if (clear_user(&usr_ifr[dst], (n - dst) * sizeof(struct ifreq)))
+		return FILTER_IFCONF_COPY_FAULT;
+
 	*out_len = dst * (int)sizeof(struct ifreq);
 	return FILTER_IFCONF_CHANGED;
 }

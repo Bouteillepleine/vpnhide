@@ -59,10 +59,10 @@ if [ -z "$GAI" ] && [ -n "${VPNHIDE_GAI_REQUIRED:-}" ]; then
 	exit 2
 fi
 
-# --- static SIOCGIFCONF probe (validates the ifconf size-query path) ---------
+# --- static SIOCGIFCONF probe (validates size query + stale tail) ------------
 # Reuses the same bionic toolchain as the getifaddrs probe (any libc would do
 # for this one, but keep it consistent). Built only if a toolchain is around;
-# the harness SKIPs the size-probe vectors when it's missing.
+# the harness SKIPs the probe when it's missing.
 IFC=""
 if [ -n "${VPNHIDE_IFC_BIN:-}" ] && [ -x "${VPNHIDE_IFC_BIN:-}" ]; then
 	IFC="$VPNHIDE_IFC_BIN"
@@ -74,12 +74,12 @@ else
 		"$IFC_CC" -static -O2 -o "$IFC" "$HERE/ifconf-probe.c" 2>/dev/null || IFC=""
 	fi
 	[ -n "$IFC" ] && echo "[run] ifconf probe built ($(basename "$IFC_CC"))" || \
-		echo "[run] no bionic toolchain/binary — skipping SIOCGIFCONF size-probe vector"
+		echo "[run] no bionic toolchain/binary — skipping SIOCGIFCONF probe"
 fi
 
 if [ -z "$IFC" ] && [ -n "${VPNHIDE_IFC_REQUIRED:-}" ]; then
 	echo "ERROR: ifconf probe is required here (VPNHIDE_IFC_REQUIRED set) but" \
-	     "unavailable. Refusing to pass with the SIOCGIFCONF size-query path unchecked."
+	     "unavailable. Refusing to pass with SIOCGIFCONF size/tail behavior unchecked."
 	exit 2
 fi
 

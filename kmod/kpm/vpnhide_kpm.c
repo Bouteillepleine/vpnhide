@@ -722,6 +722,7 @@ static int filter_ifconf(void *uifc)
 {
 	char ifc[16]; /* struct ifconf snapshot: len@0 (int), req@8 (ptr) */
 	char e[VPNHIDE_IFREQ_SZ];
+	char zero[VPNHIDE_IFREQ_SZ] = { 0 };
 	char *req;
 	int len, n, i, dst = 0;
 
@@ -750,6 +751,16 @@ static int filter_ifconf(void *uifc)
 	}
 	if (dst != n) {
 		int newlen = dst * VPNHIDE_IFREQ_SZ;
+		int tail;
+
+		/* The shortened length does not make the old entries disappear from
+		 * the caller-owned buffer. Clear only the kernel-written slots removed
+		 * by compaction, leaving unused caller capacity untouched. */
+		for (tail = dst; tail < n; tail++) {
+			if (_copy_to_user(req + (long)tail * VPNHIDE_IFREQ_SZ,
+					  zero, VPNHIDE_IFREQ_SZ))
+				return 0;
+		}
 
 		if (_copy_to_user(uifc, &newlen, sizeof(newlen)))
 			return 0; /* failed to shrink ifc_len */

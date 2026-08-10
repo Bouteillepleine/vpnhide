@@ -95,7 +95,7 @@ COPY --from=gai /opt/bind-probe /opt/qemu/bind-probe
 # cache. VPNHIDE_QEMU_KSRC is the kernel tree to build the test module against;
 # VPNHIDE_KP_BIN is the baked KernelPatch tool/runtime dir (KPM only);
 # VPNHIDE_GAI_BIN is the prebuilt bionic getifaddrs probe;
-# VPNHIDE_IFC_BIN is the prebuilt SIOCGIFCONF size-query probe;
+# VPNHIDE_IFC_BIN is the prebuilt SIOCGIFCONF size/tail probe;
 # VPNHIDE_BIND_BIN is the state-aware raw-syscall socket bind probe.
 ENV VPNHIDE_QEMU_IMAGE=/opt/qemu/Image
 ENV VPNHIDE_QEMU_ROOTFS=/opt/qemu/alpine-minirootfs.tar.gz
