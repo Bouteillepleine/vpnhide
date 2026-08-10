@@ -80,12 +80,13 @@ fn apatch_kpm_list() -> Option<String> {
                 )
             };
             if rc >= 0 {
-                let length =
-                    if rc > 0 {
-                        usize::try_from(rc).unwrap_or(buffer.len()).min(buffer.len())
-                    } else {
-                        buffer.iter().position(|byte| *byte == 0).unwrap_or(0)
-                    };
+                let length = if rc > 0 {
+                    usize::try_from(rc)
+                        .unwrap_or(buffer.len())
+                        .min(buffer.len())
+                } else {
+                    buffer.iter().position(|byte| *byte == 0).unwrap_or(0)
+                };
                 return Some(String::from_utf8_lossy(&buffer[..length]).into_owned());
             }
         }
@@ -107,7 +108,8 @@ mod tests {
 
     #[test]
     fn parses_latest_apatch_version_hint_from_dmesg() {
-        let log = "old\nKP KernelPatch Version: 000d02\nnoise\nKP KernelPatch Version: 000d03-extra\n";
+        let log =
+            "old\nKP KernelPatch Version: 000d02\nnoise\nKP KernelPatch Version: 000d03-extra\n";
         assert_eq!(parse_kernel_version_hint(log), Some(0x000d03));
     }
 }
