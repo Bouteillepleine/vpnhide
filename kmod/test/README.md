@@ -1,8 +1,9 @@
 # kmod QEMU test harness
 
-Boots a real GKI kernel under `qemu-system-aarch64` and runs the vpnhide
-kernel module against fabricated VPN state, asserting that every detection
-vector is hidden from a *target* UID but still visible to a *non-target* UID.
+Boots a reference kernel under `qemu-system-aarch64` and runs the vpnhide
+kernel module against fabricated VPN state. It compares the enabled vectors for
+a *target* UID and a *non-target* UID; optional native probes are reported as
+skipped when their binaries are unavailable.
 
 This exists because compilation and source-level signature checks are **not
 sufficient** for this module: it reads syscall/netlink arguments straight out
@@ -17,7 +18,7 @@ register bug was found — see Design decisions.)
 Per kernel version, the harness validates:
 
 - the module **loads** (symbol resolution against that kernel),
-- all hooks **register**,
+- hook registration is reported for diagnosis,
 - each detection vector is actually **filtered** for a target UID (A/B: a
   non-target sees the fabricated `vpn0`, a target does not),
 - non-VPN entries such as `eth0`, the main policy rule, and bionic
@@ -26,6 +27,13 @@ Per kernel version, the harness validates:
   `dev_ioctl`, and the main policy rule) are **exactly unchanged** between the
   non-target and target passes; aggregate counters (`ip route show table all`
   and bionic `getifaddrs()` non-vpn rows) must stay positive,
+- raw `SO_BINDTODEVICE` (with and without a trailing NUL) and
+  `SO_BINDTOIFINDEX` calls bind `vpn0` for a non-target but return `ENODEV` and
+  leave the socket unbound for a target; binding physical `eth0` still works,
+- malformed option pointers and lengths preserve native errors and leave the
+  socket unbound instead of being dereferenced or fingerprinting the hook,
+- ordinary `rmmod` is refused and leaves the module/control plane active — the
+  entry-kprobe replacement text intentionally remains resident until reboot,
 - **no kernel panic** across the whole hook set.
 
 Vectors exercised (`init.sh`):
@@ -41,6 +49,7 @@ Vectors exercised (`init.sh`):
 | netlink route dump v4 | `ip route show table all` | `fib_dump_info` |
 | netlink route dump v6 | `ip -6 route show table all` | `rt6_fill_node` |
 | policy rules | `ip rule show` | `fib_nl_fill_rule` |
+| socket bind by name/index | `/bind-probe` static NDK raw-syscall probe | `socket_bind_interface` |
 
 **Limits:** GitHub/QEMU runners have no KVM, so the VM runs under TCG (software
 emulation) — correct, just slow. The test kernel is *our* `kernel/common` build
@@ -60,12 +69,17 @@ kmod/test/build-kernel.sh android12-5.10
 kmod/test/run.sh android12-5.10
 ```
 
-`run.sh` exits 0 only if every vector passes and there was no panic. Artifacts
+`run.sh` exits 0 when every emitted vector passes and there was no panic.
+Optional probes can be made mandatory with their `*_REQUIRED` variables.
+Artifacts
 (kernels, modules, the Alpine rootfs) are cached under `.cache/` (gitignored).
 `run.sh` honors `VPNHIDE_QEMU_IMAGE` / `VPNHIDE_QEMU_ROOTFS` / `VPNHIDE_QEMU_KO`
 to use prebuilt artifacts (CI) instead of the local cache. It also honors
 `VPNHIDE_GAI_BIN` for a prebuilt static bionic `getifaddrs()` probe and
 `VPNHIDE_GAI_REQUIRED=1` to fail instead of silently skipping that native probe.
+`VPNHIDE_IFC_BIN` / `VPNHIDE_IFC_REQUIRED=1` control the `SIOCGIFCONF`
+size-query probe, and `VPNHIDE_BIND_BIN` / `VPNHIDE_BIND_REQUIRED=1` provide the
+equivalent control for the state-aware socket-bind probe.
 
 Requirements: `docker` (for build-kernel.sh), `qemu-system-aarch64`, `cpio`,
 `curl`.
@@ -96,10 +110,14 @@ setup. The KPM loads at boot (KernelPatch hijacks `paging_init`), so there
 is no insmod and no `/proc` dependency — target UIDs are passed via the
 embedded extra-args (`kptools -A`). The A/B is done across **two boots**
 (no target → root sees `vpn0`; target=0 → root doesn't), driven by
-`init-kpm.sh`. All 10 hooks are validated 9/9 with no panic across the full
-kernel range — 4.14, 4.19, 5.4, 5.10, 5.15, 6.1, 6.6, 6.12 (the GKI ones via
+`init-kpm.sh`. The original 10 enumeration hooks plus socket-bind state checks
+run with no panic across the CI reference set — 4.14, 4.19, 5.4, 5.10, 5.15,
+6.1, 6.6, 6.12 (the GKI ones via
 the DDK `Image`, the older ones via a from-source `Image` passed with
-`VPNHIDE_QEMU_IMAGE=`).
+`VPNHIDE_QEMU_IMAGE=`). Legacy kernels that natively require `CAP_NET_RAW` for
+the first bind (or predate `SO_BINDTOIFINDEX`) must preserve the same errno and
+socket state for targets, and report that vector as protected-by-kernel rather
+than pretending the KPM hook fired.
 
 ```sh
 make -C kmod kpm                 # build vpnhide.kpm

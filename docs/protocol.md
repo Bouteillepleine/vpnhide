@@ -369,16 +369,17 @@ backend = "kernel"
 Each backend applies `mask & own_hooks` and ignores foreign bits. A config mask
 is global; a backend only acts on its own bits.
 
-Current kernel hooks (`.ko` / KPM, 10): `fib_route_seq_show`,
+Current kernel hooks (`.ko` / KPM, 11): `fib_route_seq_show`,
 `ipv6_route_seq_show`, `rtnl_fill_ifinfo`, `inet_fill_ifaddr`,
 `inet6_fill_ifaddr`, `dev_ioctl`, `sock_ioctl`, `fib_dump_info`, `rt6_fill_node`,
-`fib_nl_fill_rule`. Current LSPosed Java hooks (8): `lsposed_link_properties`,
+`fib_nl_fill_rule`, `socket_bind_interface`. Current LSPosed Java hooks (8):
+`lsposed_link_properties`,
 `lsposed_network_capabilities`, `lsposed_network_info`, `lsposed_network`,
 `lsposed_connectivity_result`, `lsposed_connectivity_callback`,
 `lsposed_connectivity_network`, `lsposed_package_visibility`. Current Zygisk
-libc hooks (7): `zygisk_ioctl`, `zygisk_getifaddrs`, `zygisk_openat`,
+libc hooks (8): `zygisk_ioctl`, `zygisk_getifaddrs`, `zygisk_openat`,
 `zygisk_recvmsg`, `zygisk_recv`, `zygisk_recvfrom`,
-`zygisk_recvfrom_chk`.
+`zygisk_recvfrom_chk`, `zygisk_setsockopt`.
 
 ### 5.1 Error codes (`status`)
 

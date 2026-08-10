@@ -65,7 +65,9 @@ adb shell "su -c 'cat /proc/vpnhide_ctl'"
 
 **`insmod: Exec format error`** — symvers CRC mismatch. Rebuild via the DDK container (`./kmod/build.py --kmi <kmi>`); the container image carries matched symvers.
 
-**`insmod: File exists`** — module already loaded. `rmmod vpnhide_kmod` first.
+**`insmod: File exists`** — module already loaded. The module is intentionally
+non-unloadable because root module managers replace or remove it across a
+reboot; reboot before loading a different build.
 
 **kretprobe not firing** — check `dmesg | grep vpnhide` for registration messages and `/proc/vpnhide_ctl` for correct UIDs. Target app UIDs change on reinstall — re-resolve via the VPN Hide app.
 

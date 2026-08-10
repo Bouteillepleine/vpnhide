@@ -20,6 +20,7 @@ class StorageConfigTest {
                 "fib_dump_info",
                 "rt6_fill_node",
                 "fib_nl_fill_rule",
+                "socket_bind_interface",
             ),
             NativeKernelHookEntries.map { it.hookName },
         )
@@ -32,6 +33,7 @@ class StorageConfigTest {
                 "zygisk_recv",
                 "zygisk_recvfrom",
                 "zygisk_recvfrom_chk",
+                "zygisk_setsockopt",
             ),
             ZygiskNativeHookEntries.map { it.hookName },
         )

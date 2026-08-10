@@ -22,6 +22,7 @@ echo "KREL=$(uname -r)"
 # Did KernelPatch load our KPM and install hooks?
 if dmesg | grep -q "KPM hooks installed"; then echo "KPMLOAD=ok"; else echo "KPMLOAD=FAIL"; fi
 echo "KVER=$(dmesg | grep -oE 'kver=0x[0-9a-f]+' | head -1)"
+dmesg | grep 'vpnhide:' | tail -20 | sed 's/^/KPMLOG=/'
 
 # user-mode net so apk can fetch iproute2 (busybox ip can't add dummy devs)
 ip link set eth0 up 2>/dev/null
@@ -40,12 +41,21 @@ ip -6 addr add fd00:9::1/64 dev vpn0 2>/dev/null
 ip -6 route add fd00:99::/64 dev vpn0 2>/dev/null
 ip rule add uidrange 0-0 table 199 2>/dev/null
 
+# The bind probe's actor runs as uid 5555 and issues a raw setsockopt syscall;
+# a separate non-target observer inspects the same socket afterwards.  The host
+# harness compares these raw fields across the notarget and target boots.
+VPN0_IFINDEX=$(cat /sys/class/net/vpn0/ifindex 2>/dev/null)
+if [ -x /bind-probe ] && [ -n "$VPN0_IFINDEX" ]; then
+	/bind-probe vpn0 "$VPN0_IFINDEX" 2>/dev/null
+fi
+
 # Public /32 + /128 host-routes pinned to the physical uplink (eth0) — the routes
 # a VPN client installs so tunnel packets reach the server. They leak the server's
 # public IP through an RTM_GETROUTE dump even though vpn0 is hidden, so they must
 # be hidden for a target the way the .ko hides them. eth0 is not a VPN iface, so
 # this exercises the public-host-route path, not iface_is_vpn. The KPM now covers
-# both v4 and v6 on every supported kernel (5.x/6.x fib6_info + 4.14 rt6_info), so
+# both v4 and v6 on every reference kernel in the CI matrix (5.x/6.x fib6_info
+# plus the 4.14 rt6_info path), so
 # no per-kver gate is needed here.
 ip route add 1.2.3.4/32 dev eth0 2>/dev/null
 ip -6 route add 2001:4860:4860::8888/128 dev eth0 2>/dev/null

@@ -36,9 +36,9 @@ fn projects_native_roles_to_wire() {
         project_native_with_resolver(&cfg, &resolver),
         "vpnhide 1 config\n\
          debug 1\n\
-         target 0x278b 0x3ff\n\
+         target 0x278b 0x20003ff\n\
          target 0x27fa 0x40\n\
-         target 0xf69cb 0x3ff\n",
+         target 0xf69cb 0x20003ff\n",
     );
 }
 
@@ -72,7 +72,7 @@ fn projects_backend_specific_native_hook_overrides() {
               "native": {
                 "enabled": true,
                 "kernel": ["sock_ioctl"],
-                "zygisk": ["zygisk_ioctl", "zygisk_recvfrom_chk"]
+                "zygisk": ["zygisk_ioctl", "zygisk_recvfrom_chk", "zygisk_setsockopt"]
               }
             }
           }
@@ -91,7 +91,7 @@ fn projects_backend_specific_native_hook_overrides() {
         project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Zygisk),
         "vpnhide 1 config\n\
          debug 0\n\
-         target 0x27fa 0x1040000\n",
+         target 0x27fa 0x5040000\n",
     );
 }
 
@@ -118,7 +118,7 @@ fn legacy_native_hook_list_is_kernel_only_and_zygisk_defaults_to_all() {
         project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Zygisk),
         "vpnhide 1 config\n\
          debug 0\n\
-         target 0x27fa 0x1fc0000\n",
+         target 0x27fa 0x5fc0000\n",
     );
 }
 
@@ -199,8 +199,8 @@ fn parses_per_hook_java_selection_without_breaking_native() {
         project_native_with_resolver(&cfg, &resolver),
         "vpnhide 1 config\n\
          debug 0\n\
-         target 0x278b 0x3ff\n\
-         target 0x278c 0x3ff\n",
+         target 0x278b 0x20003ff\n\
+         target 0x278c 0x20003ff\n",
     );
 }
 

@@ -1,12 +1,14 @@
 # vpnhide -- Kernel module
 
-kretprobe-based kernel module that hides VPN interfaces from selected apps. Part of [vpnhide](../README.md).
+Kernel-probe module that hides VPN interfaces from selected apps. Part of [vpnhide](../README.md).
 
-Zero footprint in the target app's process -- no modified function prologues, no framework classes, no anonymous memory regions. Invisible to aggressive anti-tamper SDKs.
+The module does not modify the target app's process: there are no userspace
+function patches, injected framework classes, or module-owned anonymous memory
+regions. Detection paths outside the hooks listed below remain out of scope.
 
 ## What it hooks
 
-| kretprobe target | What it filters | Detection path covered |
+| Hook target | What it filters | Detection path covered |
 |---|---|---|
 | `dev_ioctl` | `SIOCGIFFLAGS`, `SIOCGIFNAME`, and other per-interface ioctls: returns `-ENODEV` for VPN interfaces | Direct `ioctl()` calls from native code (Flutter/Dart, JNI, C/C++) |
 | `sock_ioctl` | `SIOCGIFCONF`: compacts VPN entries out of the returned interface array | Interface enumeration via `ioctl(SIOCGIFCONF)` |
@@ -18,6 +20,7 @@ Zero footprint in the target app's process -- no modified function prologues, no
 | `fib_dump_info` | Trims IPv4 VPN route entries and public physical-interface host-route hints from netlink route dumps via `skb_trim` | RTM_GETROUTE route table dumps |
 | `rt6_fill_node` | Trims IPv6 VPN route entries from netlink route dump replies via `skb_trim` | IPv6 RTM_GETROUTE dumps |
 | `fib_nl_fill_rule` | Trims target-UID policy rules and VPN interface rules from netlink rule dumps via `skb_trim` | RTM_GETRULE policy routing dumps |
+| `sock_setsockopt` / `sk_setsockopt` entry redirect | Returns `-ENODEV` for hidden VPN names and indices before socket state changes | Raw `SO_BINDTODEVICE` / `SO_BINDTOIFINDEX` calls |
 
 All filtering is **per-UID**: only processes whose UID is a `target` in the config written to `/proc/vpnhide_ctl` see the filtered view. Everyone else (system services, VPN client, NFC subsystem) sees the real data.
 
@@ -29,7 +32,9 @@ Kernel kretprobes modify kernel function behavior, not userspace code. The targe
 
 ## GKI compatibility
 
-All symbols used (`register_kretprobe`, `proc_create`, `seq_read`, etc.) are part of the stable GKI KMI, so the same `Module.symvers` CRCs work across all devices running the same GKI generation. The C source is identical across generations -- only the kernel headers and CRCs differ.
+The exported symbols used by the module are part of the GKI KMI. A build targets
+one GKI generation and its matching headers/CRCs; the C source stays identical
+across generations.
 
 CI builds are provided for all 7 GKI generations: `android12-5.10` through `android16-6.12`.
 
@@ -51,6 +56,10 @@ See [BUILDING.md](BUILDING.md) for the full guide (DDK Docker build, kernel sour
 2. KernelSU-Next manager -> Modules -> Install from storage
 3. Reboot
 
+The loaded `.ko` intentionally remains resident until reboot. Disable, update,
+or remove it through the root module manager and reboot to apply that change;
+ordinary `rmmod` is not supported.
+
 On boot:
 - `post-fs-data.sh` runs `insmod` to load the kernel module
 - `service.sh` runs the Rust activator, which reads `/data/system/vpnhide_config.json`, resolves package names via `pm list packages -U --user all`, and emits a `vpnhide 1 config` snapshot (docs/protocol.md) to `/proc/vpnhide_ctl`
@@ -65,8 +74,9 @@ On boot:
 adb shell su -c '/data/adb/modules/vpnhide_kmod/activator'
 
 # Or push a control-config snapshot straight to the kernel (docs/protocol.md):
-# header + folded debug flag + one target line per UID (0x3ff = all hooks).
-adb shell su -c 'printf "vpnhide 1 config\ndebug 0\ntarget 0x28b7 0x3ff\n" > /proc/vpnhide_ctl'
+# header + folded debug flag + one target line per UID
+# (0x20003ff = all current kernel hooks).
+adb shell su -c 'printf "vpnhide 1 config\ndebug 0\ntarget 0x28b7 0x20003ff\n" > /proc/vpnhide_ctl'
 ```
 
 The app writes to **two layers** simultaneously:
@@ -75,12 +85,15 @@ The app writes to **two layers** simultaneously:
 
 ## Combined use with system_server hooks
 
-For apps with aggressive anti-tamper SDKs, full VPN hiding requires covering both native and Java API detection paths -- without placing any hooks in the target app's process:
+Covering both native and Java API detection paths requires two layers, without
+placing vpnhide hooks in the target app's process:
 
-- **vpnhide-kmod** (this module) covers the native side: `ioctl`, `getifaddrs()` (netlink), `/proc/net/route`, `/proc/net/ipv6_route`, netlink address enumeration, netlink route dumps, and policy routing rule dumps.
+- **vpnhide-kmod** (this module) covers the native side: `ioctl`, `getifaddrs()` (netlink), `/proc/net/route`, `/proc/net/ipv6_route`, netlink address/route/rule dumps, and pre-mutation `SO_BINDTODEVICE` / `SO_BINDTOIFINDEX` denial.
 - **[lsposed](../lsposed/)** hooks `writeToParcel()` on `NetworkCapabilities`, `NetworkInfo`, `LinkProperties` inside `system_server` -- stripping VPN data before Binder serialization reaches the app.
 
-Together they provide complete VPN hiding without any hooks in the target app's process.
+Together they cover the detection paths documented in
+[`docs/detection-vectors.md`](../docs/detection-vectors.md). That document also
+lists known gaps and environment-dependent signals.
 
 KPM is the other kernel-level Native backend for this same role. Do not run KPM
 and the `.ko` at the same time; choose one kernel backend, then pair it with
@@ -99,8 +112,11 @@ LSPosed for Java APIs.
 kretprobes instrument kernel functions by replacing their return address on the stack. Unlike userspace inline hooks (which modify instruction bytes), kretprobes:
 
 - Don't modify the target function's code in a way visible to userspace -- `/proc/self/maps` and the function's ELF bytes are unchanged
-- Can't be detected by the target app -- the app can only inspect its own process memory, not kernel data structures
-- Work on any function visible in `/proc/kallsyms`, including static (non-exported) functions
+- Keep the instrumentation outside the target app's process; kernel-level
+  observability still depends on the device's access controls and debug surface
+- Can target eligible non-inlined functions with available symbols, including
+  static functions; kprobe blacklists and compiler inlining can still prevent
+  registration or leave a symbol off the live path
 
 ### dev_ioctl calling convention (GKI 6.1, arm64)
 
@@ -118,9 +134,9 @@ int dev_ioctl(struct net *net,       // x0
 
 `SIOCGIFCONF` does NOT go through `dev_ioctl()`. The call path is `sock_ioctl → dev_ifconf()` -- a completely separate function from `dev_ioctl`, which handles `SIOCGIFFLAGS`, `SIOCGIFNAME`, etc.
 
-The natural choice would be to hook `dev_ifconf` directly, but on GKI 5.10 (Clang LTO) the linker inlines `dev_ifconf` into `sock_do_ioctl`. The `dev_ifconf` symbol stays in `kallsyms` as a dead stub, so `register_kretprobe` succeeds but the probe never fires. Confirmed by disassembly on Xiaomi 13 Lite (5.10.136) and Lenovo Legion 2 Pro (5.10.101): no `bl dev_ifconf` in `sock_do_ioctl`. On 6.1+, `SIOCGIFCONF` was moved out of `sock_do_ioctl` and is dispatched directly from `sock_ioctl`, so hooking `sock_do_ioctl` would miss it on newer kernels too.
+The natural choice would be to hook `dev_ifconf` directly, but Clang LTO can inline it into `sock_do_ioctl` while leaving an unused `dev_ifconf` symbol in `kallsyms`. A kretprobe can then register successfully without observing the live path. On 6.1+, `SIOCGIFCONF` is dispatched directly from `sock_ioctl`, so `sock_do_ioctl` is not a cross-version hook point either.
 
-`sock_ioctl` is the correct hook point because (1) it is the `file_operations->unlocked_ioctl` callback for socket fds — used as a function pointer, so LTO can never inline it; (2) all socket ioctls, including `SIOCGIFCONF`, pass through it on every kernel version (5.10 through 6.12+); (3) after `sock_ioctl` returns, the ifconf data (ifreq array + `ifc_len`) is already in userspace, so we filter it uniformly via `copy_from_user`/`copy_to_user` regardless of kernel version.
+`sock_ioctl` is the stable hook point because (1) it is the `file_operations->unlocked_ioctl` callback for socket fds and therefore remains address-taken; (2) the supported GKI paths dispatch socket ioctls through it; and (3) after it returns, the ifconf data (ifreq array + `ifc_len`) is already in userspace, so the module can filter it uniformly via `copy_from_user`/`copy_to_user`.
 
 The entry handler stashes the userspace `argp`; the return handler reads back the buffer, compacts out VPN entries, and updates `ifc_len` via `put_user`. Cost is one `cmd == SIOCGIFCONF` compare per socket ioctl for non-target paths.
 

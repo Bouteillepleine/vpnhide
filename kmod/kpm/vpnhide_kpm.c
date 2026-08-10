@@ -1,33 +1,33 @@
 // SPDX-License-Identifier: MIT
 /*
- * vpnhide — KernelPatch Module (KPM) backend.  *** WIP ***
+ * vpnhide — KernelPatch Module (KPM) backend.  *** BETA ***
  *
  * A third native backend alongside the kretprobe `.ko`, for kernels the
  * `.ko` can't serve: non-GKI / proprietary kernels with no published
  * headers or Module.symvers (e.g. kernel 4.14 — issue #33; HyperOS 5.4).
- * Loaded by the KernelPatch runtime (target: KPatch-Next on KernelSU-Next),
- * NOT insmod — so it also works where module signing blocks a `.ko`.
+ * Loaded by the KernelPatch runtime used by APatch or KPatch-Next, NOT insmod
+ * — so it also works where module signing blocks a `.ko`.
  *
  * STATUS: builds (`make kpm`) and runs end-to-end under QEMU via the KPM
- * harness (../test/run-kpm.sh). All 10 hooks are A/B-validated with no panic
- * (full native-vector parity with the .ko) on FIVE kernels, each a separate
- * from-source QEMU Image: 4.14, 4.19, 5.4, 5.10 and 6.1 (9/9 vectors apiece).
- * The procfs control plane is still TODO (A/B uses load-args). Every per-kver
- * offset must pass the harness before that version ships — a wrong offset is a
- * contained QEMU panic / A/B failure here, but a bootloop on a real device.
+ * harness (../test/run-kpm.sh). CI boots representative images for every
+ * offset table and checks all enumeration vectors; socket-bind denial adds a
+ * state-level check that verifies the socket stayed unbound, not just errno.
+ * Runtime config/status/stats use KernelPatch's ctl0 supercall; the QEMU A/B
+ * harness also retains decimal load-args for headless bring-up. Every per-kver
+ * offset must pass the harness before that version ships — a wrong offset can
+ * become a contained QEMU panic / A/B failure here or a bootloop on a device.
  *
- * DESIGN (how this differs from soranerai's prototype, deliberately):
- *   - ONE source + a runtime kver offset table (kver_offsets.h), not three
- *     per-version copies → one binary across 4.x/5.x/6.x.
- *   - Per-call state via `fargs->local.dataN`, NOT a per-CPU MPIDR stash
- *     (which races when a thread migrates between the before/after callback).
+ * DESIGN:
+ *   - One source plus a runtime kver offset table (kver_offsets.h), producing
+ *     one binary across the supported 4.14-6.12 kernel families.
+ *   - Per-call state lives in `fargs->local.dataN`, so a task migrating CPUs
+ *     between the before/after callbacks cannot mix state with another call.
  *   - Filtering algorithms shared with the `.ko` via ../shared/vpnhide_logic.h.
  *   - VPN-name matching from the generated single source of truth
  *     (../generated/iface_lists.h → data/interfaces.toml), incl. the `if<N>`
- *     pattern (issue #86) that the hardcoded community lists miss.
- *   - rt_fill_info (single-route lookup) is intentionally NOT hooked: the
- *     QEMU harness proved its arg→register ABI is unstable. soranerai hooks
- *     it; we don't.
+ *     pattern (issue #86).
+ *   - rt_fill_info (single-route lookup) is intentionally not hooked because
+ *     its argument/register mapping is not stable across tested kernels.
  */
 #pragma GCC visibility push(hidden)
 #include <compiler.h>
@@ -46,10 +46,10 @@
 #include "kver_offsets.h"
 
 KPM_NAME("vpnhide");
-KPM_VERSION("0.0.1-wip");
+KPM_VERSION(VPNHIDE_KPM_BUILD_VERSION);
 KPM_LICENSE("GPL v2"); /* GPL to use GPL-only kernel symbols at runtime */
 KPM_AUTHOR("okhsunrog");
-KPM_DESCRIPTION("Hide VPN interfaces from selected UIDs (KPM backend, WIP)");
+KPM_DESCRIPTION("Hide VPN interfaces from selected UIDs (KPM backend, beta)");
 
 #define MODNAME "vpnhide"
 /* Mirror of vpnhide_protocol::MAX_TARGET_UIDS (crates/protocol/src/lib.rs); the
@@ -100,17 +100,16 @@ static unsigned long long stats_counts[MAX_TARGET_UIDS][VPNHIDE_HOOK_COUNT];
 static struct vpnhide_stat_entry
 	stats_snapshot[MAX_TARGET_UIDS * VPNHIDE_HOOK_COUNT];
 
-/* kernel functions resolved at init via kallsyms */
-static void *(*_proc_create_data)(const char *, uint16_t, void *, void *,
-				  void *);
-static void (*_remove_proc_entry)(const char *, void *);
-static int (*_single_open)(void *, void *, void *);
-static int (*_single_release)(void *, void *);
-static void *_seq_read, *_seq_lseek;
-static void (*_seq_printf)(void *, const char *, ...);
+/* Kernel functions resolved at init via kallsyms. */
 static unsigned long (*_copy_from_user)(void *, const void *, unsigned long);
 static unsigned long (*_copy_to_user)(void *, const void *, unsigned long);
+static uint64_t (*_read_sanitised_ftr_reg)(uint32_t);
 static void (*_skb_trim)(void *, unsigned int);
+static int (*_netdev_get_name)(void *, char *, int);
+
+/* Linux sys_reg(3, 0, 0, 7, 1); ID_AA64MMFR1_EL1.PAN is bits [23:20]. */
+#define VPNHIDE_SYS_ID_AA64MMFR1_EL1 0x180720u
+#define VPNHIDE_ID_AA64MMFR1_PAN_SHIFT 20u
 
 #define vpnhide_dbg(fmt, ...)                                   \
 	do {                                                    \
@@ -280,7 +279,7 @@ static int iface_is_vpn(const char *name)
 	return vpnhide_iface_is_vpn(buf);
 }
 
-/* Read net_device.name given a net_device* (name is at offset 0 everywhere). */
+/* Read net_device.name at the selected table's version-specific offset. */
 static const char *netdev_name(void *dev)
 {
 	return dev ? (const char *)((char *)dev + off->netdev_name) : 0;
@@ -359,16 +358,15 @@ static int kpm_is_public_host_route6(void *rt, void *dev)
 }
 
 /* ================================================================== */
-/*  Hook 1 (PoC): fib_route_seq_show — /proc/net/route                */
+/*  Hook 1: fib_route_seq_show — /proc/net/route                      */
 /*  arg0 = struct seq_file *.  Compact VPN lines out of this call's    */
 /*  newly-written region using the shared seq-line compactor.          */
 /* ================================================================== */
 
 static void fib_route_before(hook_fargs2_t *fargs, void *udata)
 {
-	/* Stash seq_file->count at entry so the after-callback only touches
-	 * THIS call's output, not earlier entries. (Correctness fix the .ko
-	 * already does; soranerai re-scans the whole buffer each call.) */
+	/* Stash seq_file->count at entry so the after-callback only touches this
+	 * call's output, not entries already present in the buffer. */
 	void *seq = (void *)fargs->arg0;
 	unsigned long count =
 		seq ? *(unsigned long *)((char *)seq + off->seqfile_count) : 0;
@@ -424,7 +422,7 @@ static void ipv6_route_after(hook_fargs2_t *fargs, void *udata)
 }
 
 /* ================================================================== */
-/*  Hook 2 (PoC): rtnl_fill_ifinfo — RTM_NEWLINK (getifaddrs path)    */
+/*  Hook 2: rtnl_fill_ifinfo — RTM_NEWLINK (getifaddrs path)          */
 /*  arg0 = skb, arg1 = net_device.  If the dev is a VPN iface and the  */
 /*  caller is a target, undo whatever the fill wrote (skb_trim back to  */
 /*  the saved length) and return 0 — same approach as the .ko.         */
@@ -477,6 +475,200 @@ static void rtnl_fill_after(hook_fargs12_t *fargs, void *udata)
 static int ptr_is_kernel(const void *p)
 {
 	return ((unsigned long)p >> 48) == 0xffffUL;
+}
+
+/* ================================================================== */
+/*  Hook 11: socket interface binding                                 */
+/*                                                                    */
+/*  A target must not be able to use SO_BINDTODEVICE or               */
+/*  SO_BINDTOIFINDEX as an oracle for a hidden VPN interface. KPM can */
+/*  refuse before the original function mutates sk_bound_dev_if: set  */
+/*  skip_origin and return ENODEV.                                    */
+/*                                                                    */
+/*  5.9+ passes optval as the two-register sockptr_t aggregate. We    */
+/*  copy it once into hook_fargs.local and rewrite the aggregate to a  */
+/*  KERNEL_SOCKPTR pointing at that per-call snapshot. Thus a second   */
+/*  userspace thread cannot swap a checked physical name/index for a  */
+/*  VPN one between this callback and the kernel's own copy. Before   */
+/*  5.7 the first bind already requires CAP_NET_RAW, so KPM leaves it */
+/*  entirely to the native path and preserves its exact errno. On     */
+/*  5.7-5.8 a deeper *_bindto*_locked hook sees the resolved ifindex  */
+/*  after the user copy but still before the socket mutation.          */
+/* ================================================================== */
+
+#define VPNHIDE_SOL_SOCKET 1u
+#define VPNHIDE_SO_BINDTODEVICE 25u
+#define VPNHIDE_SO_BINDTOIFINDEX 62u
+
+static int sockopt_uses_sockptr(void)
+{
+	return (unsigned int)kver >= VPNHIDE_KVER(5, 9, 0);
+}
+
+static int sockopt_takes_sk(void)
+{
+	return (unsigned int)kver >= VPNHIDE_KVER(6, 1, 0);
+}
+
+static int socket_bind_uses_index_hook(void)
+{
+	return (unsigned int)kver >= VPNHIDE_KVER(5, 7, 0) &&
+	       (unsigned int)kver < VPNHIDE_KVER(5, 9, 0);
+}
+
+static const char *socket_bind_index_hook_name(void)
+{
+	return (unsigned int)kver < VPNHIDE_KVER(5, 8, 0) ?
+		       "sock_setbindtodevice_locked" :
+		       "sock_bindtoindex_locked";
+}
+
+static int copy_sockopt_bytes(hook_fargs8_t *fargs, void *dst, unsigned int len)
+{
+	const unsigned char *src = (const unsigned char *)fargs->arg3;
+	unsigned char *out = (unsigned char *)dst;
+	unsigned int i;
+
+	if (!src)
+		return -1;
+	/* sockptr_t.is_kernel is the second eightbyte (arg4). It is trustworthy
+	 * because the syscall wrapper, not userspace, constructs sockptr_t. Never
+	 * infer this from the numeric pointer value: an app may pass a 0xffff...
+	 * address deliberately, and directly dereferencing it would panic instead
+	 * of producing the native EFAULT. This wrapper is used only on 5.9+. */
+	if (sockopt_uses_sockptr() && fargs->arg4) {
+		for (i = 0; i < len; i++)
+			out[i] = src[i];
+		return 0;
+	}
+	if (!_copy_from_user || _copy_from_user(dst, src, len) != 0)
+		return -1;
+	return 0;
+}
+
+static unsigned int sockopt_len(const hook_fargs8_t *fargs)
+{
+	return (unsigned int)(sockopt_uses_sockptr() ? fargs->arg5 :
+						       fargs->arg4);
+}
+
+static void *sockopt_sk(const hook_fargs8_t *fargs, int takes_sk)
+{
+	void *sock;
+
+	if (takes_sk)
+		return (void *)fargs->arg0;
+	sock = (void *)fargs->arg0;
+	return sock ? *(void **)((char *)sock + off->socket_sk) : 0;
+}
+
+static void freeze_sockptr(hook_fargs8_t *fargs, void *snapshot)
+{
+	if (!sockopt_uses_sockptr())
+		return;
+	/* sockptr_t { pointer, is_kernel:1 } occupies x3+x4 on arm64. */
+	fargs->arg3 = (uint64_t)snapshot;
+	fargs->arg4 = 1;
+}
+
+static void deny_socket_bind(void *raw_fargs)
+{
+	hook_fargs0_t *fargs = (hook_fargs0_t *)raw_fargs;
+
+	fargs->ret = VPNHIDE_ENODEV;
+	fargs->skip_origin = 1;
+	record_hook_hit(VPNHIDE_HOOK_SOCKET_BIND_INTERFACE);
+}
+
+/* Return true for a hidden or currently unknown positive index. Linux accepts
+ * an unknown positive index and leaves the socket waiting for a future device,
+ * so allowing it would bypass a name/index check performed only once. */
+static int socket_bind_ifindex_hidden(void *sk, int ifindex)
+{
+	void *net = sk ? *(void **)((char *)sk + off->sock_net) : 0;
+	char name[VPNHIDE_IFNAMSIZ];
+	unsigned int i;
+
+	if (ifindex <= 0)
+		return 0;
+	if (!net || !_netdev_get_name)
+		return 1;
+	for (i = 0; i < VPNHIDE_IFNAMSIZ; i++)
+		name[i] = 0;
+	return _netdev_get_name(net, name, ifindex) != 0 || iface_is_vpn(name);
+}
+
+static void socket_bind_index_before(hook_fargs4_t *fargs, void *udata)
+{
+	int ifindex = (int)fargs->arg1;
+
+	if (!hook_active(VPNHIDE_HOOK_SOCKET_BIND_INTERFACE))
+		return;
+	if (socket_bind_ifindex_hidden((void *)fargs->arg0, ifindex))
+		deny_socket_bind(fargs);
+}
+
+static void socket_bind_before_common(hook_fargs8_t *fargs, int takes_sk)
+{
+	unsigned int optname = (unsigned int)fargs->arg2;
+	unsigned int optlen;
+	unsigned char *snapshot = (unsigned char *)&fargs->local;
+	unsigned int i;
+
+	if ((unsigned int)fargs->arg1 != VPNHIDE_SOL_SOCKET ||
+	    !hook_active(VPNHIDE_HOOK_SOCKET_BIND_INTERFACE))
+		return;
+	if (optname != VPNHIDE_SO_BINDTODEVICE &&
+	    optname != VPNHIDE_SO_BINDTOIFINDEX)
+		return;
+	/* Before 5.7 the native capability gate owns this vector. On 5.7-5.8
+	 * the resolved-index hook owns it so the old user-pointer ABI cannot
+	 * introduce a check/use race. This wrapper is authoritative only once
+	 * sockptr_t can carry our immutable kernel snapshot. */
+	if (!sockopt_uses_sockptr())
+		return;
+
+	optlen = sockopt_len(fargs);
+	if (optname == VPNHIDE_SO_BINDTODEVICE) {
+		unsigned int copy_len = optlen;
+
+		/* The downstream helper takes int and returns EINVAL first. */
+		if ((int)optlen < 0)
+			return;
+		if (copy_len > VPNHIDE_IFNAMSIZ - 1)
+			copy_len = VPNHIDE_IFNAMSIZ - 1;
+		for (i = 0; i < VPNHIDE_IFNAMSIZ; i++)
+			snapshot[i] = 0;
+		if (copy_len && copy_sockopt_bytes(fargs, snapshot, copy_len))
+			return; /* let the original produce EFAULT */
+		freeze_sockptr(fargs, snapshot);
+		if (snapshot[0] && iface_is_vpn((const char *)snapshot))
+			deny_socket_bind(fargs);
+		return;
+	}
+
+	if (optlen < sizeof(int))
+		return;
+	if (copy_sockopt_bytes(fargs, snapshot, sizeof(int)))
+		return;
+	freeze_sockptr(fargs, snapshot);
+	{
+		int ifindex = *(int *)snapshot;
+		void *sk = sockopt_sk(fargs, takes_sk);
+
+		if (socket_bind_ifindex_hidden(sk, ifindex))
+			deny_socket_bind(fargs);
+	}
+}
+
+static void socket_bind_sock_before(hook_fargs8_t *fargs, void *udata)
+{
+	socket_bind_before_common(fargs, 0);
+}
+
+static void socket_bind_sk_before(hook_fargs8_t *fargs, void *udata)
+{
+	socket_bind_before_common(fargs, 1);
 }
 
 /* SIOCGIF* range (0x8910..0x8930). SIOCGIFCONF (0x8912) goes via sock_ioctl,
@@ -861,11 +1053,12 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
 }
 
 /*
- * HOOK COVERAGE — full parity with vpnhide_kmod.c (the .ko). All 10 hooks
- * ported and QEMU-validated A/B on android12-5.10 (no panic). Mirror the
- * .ko's logic; reuse shared/vpnhide_logic.h. Per-version struct offsets live
- * in kver_offsets.h (5.10 only so far) — a wrong offset is a contained QEMU
- * A/B fail / panic here, a bootloop on a real device.
+ * HOOK COVERAGE — parity with vpnhide_kmod.c (the .ko). CI exercises these
+ * paths in booted QEMU images for 4.14, 4.19, 5.4, 5.10, 5.15, 6.1, 6.6, and
+ * 6.12. Filtering logic shared with the .ko lives in
+ * shared/vpnhide_logic.h; version-specific field offsets live in
+ * kver_offsets.h. QEMU coverage is the pre-merge safety gate, not a claim of
+ * testing every vendor kernel or device configuration.
  *
  *   fib_route_seq_show     /proc/net/route        ✓ (seq compactor)
  *   ipv6_route_seq_show    /proc/net/ipv6_route   ✓ (seq compactor)
@@ -878,21 +1071,24 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
  *                                                   public /32 host-route via a
  *                                                   physical uplink, the .ko's
  *                                                   is_public_host_route_via_
- *                                                   physical — A/B on every kver
+ *                                                   physical — QEMU matrix:
  *                                                   5.10/5.15/6.1/6.12 + legacy
  *                                                   5.4/4.19/4.14)
  *   rt6_fill_node          RTM_GETROUTE v6 dump   ✓ (fib6_info nexthop +
  *                                                   public /128 host-route via a
  *                                                   physical uplink, the .ko's
  *                                                   is_public_host_route6_via_
- *                                                   physical — A/B on every kver
+ *                                                   physical — QEMU matrix:
  *                                                   5.10/5.15/6.1/6.12 + legacy
  *                                                   5.4/4.19/4.14)
  *   fib_nl_fill_rule       RTM_GETRULE            ✓ (fib_rule iif/oif/uid)
+ *   socket_bind_interface SO_BINDTODEVICE/index  ✓ (pre-mutation ENODEV;
+ *                                                   state-aware raw-syscall test)
  *   ( rt_fill_info — intentionally NOT hooked; unstable arg->reg ABI )
  *
- * Both host-route predicates (v4 + v6) and their address/iface logic are now
- * shared with the .ko via shared/vpnhide_logic.h, and cover EVERY supported kver.
+ * Both host-route predicates (v4 + v6) and their address/iface logic are
+ * shared with the .ko via shared/vpnhide_logic.h and used by every selected
+ * offset table.
  * IPv4 needs no offset (fib_rt_info.dst/dst_len at a constant +12/+16 on 5.6+;
  * dst/dst_len passed as args 6/7 on <5.6). IPv6 reads the route's rt6key from
  * fib6_info.fib6_dst (64 on 5.4/4.19/5.10..6.6, 80 on 6.12) or, on the 4.14
@@ -906,22 +1102,9 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
 /*
  * The KPM has no file or node: its control/stats channel is the KernelPatch
  * `ctl0` supercall, carrying the §4 wire format (config in, stats/status out —
- * see vpnhide_kpm_ctl0). A procfs mirror is intentionally NOT created: it would
- * need the version-specific proc_ops/file_operations ABI guessed without real
- * headers (the likely cause of the HyperOS-5.4 crash report), and ctl0 needs no
- * such guessing.
- *
- * proc create/remove glue stub left below for the (deferred) optional mirror.
- */
-
-/*
- * proc_create needs a `struct proc_ops` (>=5.6) or a `struct file_operations`
- * (<5.6). We don't have the real headers, so the field layout is a mock —
- * and getting it wrong is the likely cause of the HyperOS-5.4 crash report.
- * off->proc_uses_proc_ops selects which mock to register.
- * TODO: define both mock layouts + the targets/debug show/open handlers, and
- * register the matching one. Kept as a stub here so the skeleton stays focused
- * on the hooks; see kver_offsets.h for the ABI flag.
+ * see vpnhide_kpm_ctl0). A procfs mirror is intentionally not created because
+ * its proc_ops/file_operations ABI would add another kernel-version-dependent
+ * structure layout. ctl0 avoids that dependency entirely.
  */
 
 /* ------------------------------------------------------------------ */
@@ -931,11 +1114,12 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
 /*
  * Resolve a hook target by name, tolerating compiler-renamed clones. GCC may
  * emit a static function as `name.isra.N` / `name.constprop.N` (a specialised
- * clone) — kallsyms_lookup_name("name") then misses it. Android *device*
- * kernels are clang-built (name intact), but a gcc-built kernel (incl. our
- * QEMU test kernels) renames e.g. fib_nl_fill_rule -> fib_nl_fill_rule.isra.N.
- * Fall back to the first symbol equal to `name`, or `name.` + suffix — the
- * dot only appears on compiler clones, so this never matches an unrelated fn.
+ * clone) — kallsyms_lookup_name("name") then misses it. The clang-built GKI
+ * images usually retain the plain name, while gcc-built legacy QEMU images can
+ * rename e.g. fib_nl_fill_rule -> fib_nl_fill_rule.isra.N.
+ * Fall back only to compiler clone forms observed in supported reference
+ * kernels. Other dotted symbols (for example cold fragments) are not valid
+ * substitutes for the complete function.
  */
 struct vpnhide_sym_q {
 	const char *base;
@@ -943,17 +1127,43 @@ struct vpnhide_sym_q {
 	unsigned long addr;
 };
 
+static const char *vpnhide_skip_prefix(const char *value, const char *prefix)
+{
+	int i;
+
+	for (i = 0; prefix[i]; i++)
+		if (value[i] != prefix[i])
+			return 0;
+	return value + i;
+}
+
+static int vpnhide_is_clone_suffix(const char *suffix)
+{
+	const char *number = vpnhide_skip_prefix(suffix, ".isra.");
+
+	if (!number)
+		number = vpnhide_skip_prefix(suffix, ".constprop.");
+	if (!number || *number < '0' || *number > '9')
+		return 0;
+	do {
+		number++;
+	} while (*number >= '0' && *number <= '9');
+	return *number == '\0';
+}
+
 static int vpnhide_sym_cb(void *data, const char *name, struct module *mod,
 			  unsigned long addr)
 {
 	struct vpnhide_sym_q *q = data;
+	const char *suffix;
 	int i;
 
 	(void)mod;
 	for (i = 0; i < q->baselen; i++)
 		if (name[i] != q->base[i])
 			return 0;
-	if (name[q->baselen] == '\0' || name[q->baselen] == '.') {
+	suffix = name + q->baselen;
+	if (vpnhide_is_clone_suffix(suffix)) {
 		q->addr = addr;
 		return 1; /* found — stop iterating */
 	}
@@ -978,42 +1188,62 @@ static unsigned long lookup_fn(const char *name)
 	return q.addr;
 }
 
+static int raw_usercopy_is_safe(void)
+{
+	uint64_t mmfr1;
+
+	/* 4.14/4.19 __arch_copy_*_user assembly brackets the copy with
+	 * uaccess_enable_not_uao itself. From 5.x onward that moved into the
+	 * inline raw_copy_*_user wrapper, which may not have a callable symbol. */
+	if ((unsigned int)kver < VPNHIDE_KVER(5, 0, 0))
+		return 1;
+	if (!_read_sanitised_ftr_reg)
+		return 0;
+	mmfr1 = _read_sanitised_ftr_reg(VPNHIDE_SYS_ID_AA64MMFR1_EL1);
+	/* With hardware PAN, __arch_copy_*_user uses unprivileged LDTR/STTR
+	 * accesses and does not need the software-PAN TTBR0 switch. */
+	return ((mmfr1 >> VPNHIDE_ID_AA64MMFR1_PAN_SHIFT) & 0xfu) != 0;
+}
+
 static int resolve_symbols(void)
 {
-	_proc_create_data = (void *)kallsyms_lookup_name("proc_create_data");
-	_remove_proc_entry = (void *)kallsyms_lookup_name("remove_proc_entry");
-	_single_open = (void *)kallsyms_lookup_name("single_open");
-	_single_release = (void *)kallsyms_lookup_name("single_release");
-	_seq_read = (void *)kallsyms_lookup_name("seq_read");
-	_seq_lseek = (void *)kallsyms_lookup_name("seq_lseek");
-	_seq_printf = (void *)kallsyms_lookup_name("seq_printf");
-
-	/* Prefer the generic `_copy_*_user` wrappers, NOT the raw
-	 * `__arch_copy_*_user`. The wrapper does the uaccess enable/disable
-	 * (access_ok + the TTBR0 switch / PAN toggle) around the copy; the raw
-	 * asm only copies. On a kernel using software PAN
-	 * (CONFIG_ARM64_SW_TTBR0_PAN — old ARMv8.0 cores with no hardware PAN,
-	 * and the QEMU harness on `-cpu cortex-a57`) the TTBR0 switch lives in
-	 * the C wrapper on >=5.x, so calling the raw routine directly faults on
-	 * the unmapped user page (caught by the 5.4 harness run). The wrapper is
-	 * correct under both hardware and software PAN; fall back to the raw
-	 * symbol only if the wrapper is absent. */
+	/* Prefer the generic wrappers: they perform the software-PAN TTBR0 switch
+	 * where required. Some builds inline every wrapper and expose only the raw
+	 * architecture routines, so accept those only where raw_usercopy_is_safe()
+	 * can prove they do not bypass software PAN. */
 	_copy_from_user = (void *)kallsyms_lookup_name("_copy_from_user");
-	if (!_copy_from_user)
-		_copy_from_user =
-			(void *)kallsyms_lookup_name("__arch_copy_from_user");
-
 	_copy_to_user = (void *)kallsyms_lookup_name("_copy_to_user");
-	if (!_copy_to_user)
-		_copy_to_user =
-			(void *)kallsyms_lookup_name("__arch_copy_to_user");
+	if (!_copy_from_user || !_copy_to_user) {
+		_read_sanitised_ftr_reg =
+			(void *)kallsyms_lookup_name("read_sanitised_ftr_reg");
+		if (!raw_usercopy_is_safe()) {
+			logki(MODNAME
+			      ": uaccess wrappers absent and raw copy is unsafe\n");
+			return -1;
+		}
+		if (!_copy_from_user)
+			_copy_from_user = (void *)kallsyms_lookup_name(
+				"__arch_copy_from_user");
+		if (!_copy_to_user)
+			_copy_to_user = (void *)kallsyms_lookup_name(
+				"__arch_copy_to_user");
+		if (!_copy_from_user || !_copy_to_user) {
+			logki(MODNAME ": user-copy symbols unavailable\n");
+			return -1;
+		}
+		logki(MODNAME ": using safe raw user-copy routines\n");
+	}
 
 	_skb_trim = (void *)kallsyms_lookup_name("__skb_trim");
 	if (!_skb_trim)
 		_skb_trim = (void *)kallsyms_lookup_name("skb_trim");
+	_netdev_get_name = (void *)lookup_fn("netdev_get_name");
 
-	/* Hooks need these; proc is best-effort. */
-	return _skb_trim ? 0 : -1;
+	if (!_skb_trim) {
+		logki(MODNAME ": skb trim helper unavailable\n");
+		return -1;
+	}
+	return 0;
 }
 
 /*
@@ -1049,15 +1279,18 @@ static void apply_targets(const char *s)
 
 /* Resolve `name`, wrap it, and record the install in `installed_hooks` so the
  * status channel (§4.3 `hooks`) reflects what actually took. */
-static void install_hook(const char *name, int argno, void *before, void *after,
-			 uint32_t hook_id)
+static int install_hook(const char *name, int argno, void *before, void *after,
+			uint32_t hook_id)
 {
 	unsigned long fn = lookup_fn(name);
 
 	if (!fn)
-		return;
-	if (hook_wrap((void *)fn, argno, before, after, 0) == HOOK_NO_ERR)
+		return 0;
+	if (hook_wrap((void *)fn, argno, before, after, 0) == HOOK_NO_ERR) {
 		installed_hooks |= (1u << hook_id);
+		return 1;
+	}
+	return 0;
 }
 
 static long vpnhide_kpm_init(const char *args, const char *event,
@@ -1093,12 +1326,12 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 	apply_targets(args);
 
 	/*
-	 * Install hooks. Each one is gated on the offset(s) it dereferences
-	 * being known for this kernel version (0 => not installed), so a
-	 * partially-filled offset table is SAFE: a hook never runs with a
-	 * wrong/zero offset and panics. seq_file + ioctl hooks need only
-	 * stable offsets (seqfile_count, uapi ifreq) so they install whenever
-	 * the symbol exists. install_hook records each into installed_hooks.
+	 * Install hooks. Fields used as availability gates are nonzero only where
+	 * the corresponding layout is defined. Zero is also a valid offset for
+	 * several fields, so it is not a general validity marker; every selected
+	 * table must still be derived and tested as a complete unit. seq_file and
+	 * ioctl hooks use layouts shared by all supported tables. install_hook
+	 * records each successful registration in installed_hooks.
 	 */
 	if (off->seqfile_count) {
 		install_hook("fib_route_seq_show", 2, (void *)fib_route_before,
@@ -1137,6 +1370,40 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 		install_hook("fib_nl_fill_rule", 7, (void *)fib_rule_before,
 			     (void *)fib_rule_after,
 			     VPNHIDE_HOOK_FIB_NL_FILL_RULE);
+	if (_netdev_get_name && off->sock_net && off->socket_sk) {
+		int bind_ok;
+
+		if (socket_bind_uses_index_hook()) {
+			/* 5.7-5.8 still pass a raw user pointer to sock_setsockopt.
+			 * Hook the resolved index instead, after the user copy and name
+			 * lookup but before sk_bound_dev_if changes. A missing static
+			 * symbol leaves status partial rather than accepting a TOCTOU. */
+			bind_ok = install_hook(
+				socket_bind_index_hook_name(), 2,
+				(void *)socket_bind_index_before, 0,
+				VPNHIDE_HOOK_SOCKET_BIND_INTERFACE);
+		} else {
+			bind_ok = install_hook(
+				"sock_setsockopt", 6,
+				(void *)socket_bind_sock_before, 0,
+				VPNHIDE_HOOK_SOCKET_BIND_INTERFACE);
+
+			/* 6.1+ generic sockets may have sk_setsockopt inlined into
+			 * the exported wrapper under LTO, while MPTCP calls the
+			 * standalone symbol directly. Cover both call graphs. */
+			if (sockopt_takes_sk())
+				bind_ok =
+					install_hook(
+						"sk_setsockopt", 6,
+						(void *)socket_bind_sk_before,
+						0,
+						VPNHIDE_HOOK_SOCKET_BIND_INTERFACE) &&
+					bind_ok;
+		}
+		if (!bind_ok)
+			installed_hooks &=
+				~(1u << VPNHIDE_HOOK_SOCKET_BIND_INTERFACE);
+	}
 
 	/* Healthy iff every kernel-owned hook installed; otherwise honestly
 	 * report partial — the `hooks` mask carries which ones (§5.1). A kver
@@ -1284,9 +1551,24 @@ static long vpnhide_kpm_exit(void *__user reserved)
 	if (fn)
 		hook_unwrap((void *)fn, (void *)fib_rule_before,
 			    (void *)fib_rule_after);
+	if (off && socket_bind_uses_index_hook()) {
+		fn = lookup_fn(socket_bind_index_hook_name());
+		if (fn)
+			hook_unwrap((void *)fn,
+				    (void *)socket_bind_index_before, 0);
+	} else {
+		fn = lookup_fn("sock_setsockopt");
+		if (fn)
+			hook_unwrap((void *)fn, (void *)socket_bind_sock_before,
+				    0);
+		if (off && sockopt_takes_sk()) {
+			fn = lookup_fn("sk_setsockopt");
+			if (fn)
+				hook_unwrap((void *)fn,
+					    (void *)socket_bind_sk_before, 0);
+		}
+	}
 
-	/* No /proc node to remove: the KPM's control channel is the ctl0
-	 * supercall, not procfs (the optional mirror was never created). */
 	logki(MODNAME ": KPM unloaded\n");
 	return 0;
 }
