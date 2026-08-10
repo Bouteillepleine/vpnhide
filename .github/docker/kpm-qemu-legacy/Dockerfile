@@ -64,7 +64,7 @@ FROM debian:trixie-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        qemu-system-arm cpio gzip curl ca-certificates make clang lld && \
+        qemu-system-arm cpio gzip curl ca-certificates git make clang lld && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=legacy-build /opt/qemu/legacy /opt/qemu/legacy
