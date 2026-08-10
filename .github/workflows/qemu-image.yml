@@ -9,6 +9,7 @@ on:
   push:
     branches: [main]
     paths:
+      - .dockerignore
       - .github/docker/ddk-qemu/Dockerfile
       - .github/docker/kpm-qemu-legacy/Dockerfile
       - .github/workflows/qemu-image.yml
@@ -20,6 +21,16 @@ on:
   schedule:
     - cron: '0 4 1 * *'
   workflow_dispatch:
+    inputs:
+      target:
+        description: Image set to build
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - ddk
+          - legacy
 
 permissions:
   packages: write
@@ -31,6 +42,7 @@ concurrency:
 
 jobs:
   build-push:
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'ddk'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -102,15 +114,16 @@ jobs:
           # practical reuse.
           cache-from: type=gha,scope=ddk-qemu-${{ matrix.kmi }}
 
-  # One lightweight image with the 3 from-source legacy kernels (4.14/4.19/5.4)
-  # for the KPM harness. Not a matrix — a single image with all three Images,
+  # One image with the 4 from-source legacy kernels (4.9/4.14/4.19/5.4)
+  # for the KPM harness. Not a matrix — a single image with all four Images,
   # built by build-source-kernel.sh (Bootlin gcc, no DDK, no kernel tree).
   build-legacy:
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'legacy'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      # Three gcc kernel builds + the AOSP 5.4 checkout are disk-hungry.
+      # Four gcc AOSP kernel builds are disk-hungry.
       - name: Free up disk space
         uses: jlumbroso/free-disk-space@main
         with:
@@ -130,7 +143,7 @@ jobs:
       - id: img
         env:
           REPO: ${{ github.repository }}
-        run: echo "image=ghcr.io/${REPO,,}/kpm-qemu-legacy:latest" >> "$GITHUB_OUTPUT"
+        run: echo "image=ghcr.io/${REPO,,}/kpm-qemu-legacy:aosp-20260810" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v7

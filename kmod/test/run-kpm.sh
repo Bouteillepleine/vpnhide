@@ -39,7 +39,7 @@ ALPINE_URL="https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-
 KP_RELEASE="${VPNHIDE_KP_RELEASE:-}" # empty = latest
 SKEY="vpnhide-qemu-test"
 # QEMU CPU model. `max` is fastest and fine for 5.10+, but older kernels
-# (< 5.10, e.g. 5.4 / 4.19 / 4.14) fault on its newer features before the
+# (< 5.10, e.g. 5.4 / 4.19 / 4.14 / 4.9) fault on its newer features before the
 # console comes up — use `cortex-a57` for those.  Override:
 # VPNHIDE_QEMU_CPU=cortex-a57
 QEMU_CPU="${VPNHIDE_QEMU_CPU:-max}"
@@ -220,7 +220,7 @@ echo "-------------------------------------------------------------------"
 [ "$(kpmload "$NT_LOG")" = ok ] || { echo "ERROR: KPM did not load (notarget boot)"; tail -20 "$NT_LOG"; exit 1; }
 [ "$(kpmload "$TG_LOG")" = ok ] || { echo "ERROR: KPM did not load (target boot)"; tail -20 "$TG_LOG"; exit 1; }
 
-PASS=0; FAIL=0
+PASS=0; NATIVE=0; NA=0; SKIP=0; FAIL=0
 
 bind_field() {
 	local key="$1" log="$2"
@@ -237,18 +237,29 @@ check_bind_pair() {
 
 	if [ -z "$nt_errno" ] || [ -z "$nt_state" ] || [ -z "$tg_errno" ] || [ -z "$tg_state" ]; then
 		echo "RESULT $vec=SKIP (socket bind probe unavailable)"
+		SKIP=$((SKIP+1))
 		return
 	fi
-	# SO_BINDTODEVICE needs CAP_NET_RAW on 4.14/4.19/5.4; SO_BINDTOIFINDEX is
-	# absent before 5.4 (ENOPROTOOPT from both set and get). Either native result
-	# already closes this vector, so there is no target A/B distinction to demand.
+	# SO_BINDTODEVICE needs CAP_NET_RAW on 4.9/4.14/4.19/5.4; SO_BINDTOIFINDEX is
+	# absent before 5.7 (ENOPROTOOPT from both set and get). Report those proven
+	# kernel properties separately: they close the vector but do not exercise the
+	# KPM bind hook. SKIP is reserved for a probe that did not run.
 	if [ "$nt_errno" -ne 0 ] &&
 		{ [ "$nt_state" -eq 0 ] || [ "$nt_state" -eq "$((-nt_errno))" ]; }; then
 		if [ "$tg_errno" -eq "$nt_errno" ] && [ "$tg_state" -eq "$nt_state" ]; then
-			echo "RESULT $vec=SKIP (identical kernel-native denial/unsupported errno=$nt_errno)"
-			return
+			if [ "$prefix" = BIND_INDEX ] && [ "$nt_errno" -eq 92 ]; then
+				echo "RESULT $vec=NOT-APPLICABLE (kernel has no SO_BINDTOIFINDEX)"
+				NA=$((NA+1))
+				return
+			fi
+			if { [ "$prefix" = BIND_NAME_RAW ] || [ "$prefix" = BIND_NAME_NUL ]; } &&
+				[ "$nt_errno" -eq 1 ]; then
+				echo "RESULT $vec=NATIVE-COVERED (CAP_NET_RAW gate denied and socket stayed unbound)"
+				NATIVE=$((NATIVE+1))
+				return
+			fi
 		fi
-		echo "RESULT $vec=FAIL (native result changed: nt_errno=$nt_errno nt_state=$nt_state tg_errno=$tg_errno tg_state=$tg_state)"
+		echo "RESULT $vec=FAIL (unexpected native result: nt_errno=$nt_errno nt_state=$nt_state tg_errno=$tg_errno tg_state=$tg_state)"
 		FAIL=$((FAIL+1))
 		return
 	fi
@@ -273,6 +284,7 @@ tg_bad_state="$(bind_field BIND_BADPTR_STATE "$TG_LOG")"
 if [ -z "$nt_bad_errno" ] || [ -z "$nt_bad_state" ] || \
 	[ -z "$tg_bad_errno" ] || [ -z "$tg_bad_state" ]; then
 	echo "RESULT bind_bad_pointer=SKIP (socket bind probe unavailable)"
+	SKIP=$((SKIP+1))
 elif [ "$nt_bad_errno" -ne 0 ] && [ "$nt_bad_state" -eq 0 ] && \
 	[ "$tg_bad_errno" -ne 0 ] && [ "$tg_bad_state" -eq 0 ]; then
 	echo "RESULT bind_bad_pointer=PASS (safe rejection+unbound)"; PASS=$((PASS+1))
@@ -287,6 +299,7 @@ tg_badlen_state="$(bind_field BIND_BADLEN_STATE "$TG_LOG")"
 if [ -z "$nt_badlen_errno" ] || [ -z "$nt_badlen_state" ] || \
 	[ -z "$tg_badlen_errno" ] || [ -z "$tg_badlen_state" ]; then
 	echo "RESULT bind_bad_length=SKIP (socket bind probe unavailable)"
+	SKIP=$((SKIP+1))
 elif [ "$nt_badlen_errno" -ne 0 ] && [ "$nt_badlen_state" -eq 0 ] && \
 	[ "$tg_badlen_errno" -eq "$nt_badlen_errno" ] && [ "$tg_badlen_state" -eq 0 ]; then
 	echo "RESULT bind_bad_length=PASS (identical native rejection+unbound)"; PASS=$((PASS+1))
@@ -300,9 +313,12 @@ tg_keep_errno="$(bind_field BIND_KEEP_ERRNO "$TG_LOG")"
 tg_keep_state="$(bind_field BIND_KEEP_STATE "$TG_LOG")"
 if [ -z "$nt_keep_errno" ] || [ -z "$tg_keep_errno" ]; then
 	echo "RESULT keep_bind_device=SKIP (socket bind probe unavailable)"
+	SKIP=$((SKIP+1))
 elif [ "$nt_keep_errno" -ne 0 ] && [ "${nt_keep_state:--1}" -eq 0 ] && \
-	[ "$tg_keep_errno" -eq "$nt_keep_errno" ] && [ "${tg_keep_state:--1}" -eq "$nt_keep_state" ]; then
-	echo "RESULT keep_bind_device=SKIP (identical kernel-native CAP_NET_RAW denial)"
+	[ "$nt_keep_errno" -eq 1 ] && [ "$tg_keep_errno" -eq "$nt_keep_errno" ] && \
+	[ "${tg_keep_state:--1}" -eq "$nt_keep_state" ]; then
+	echo "RESULT keep_bind_device=NATIVE-COVERED (CAP_NET_RAW behavior preserved)"
+	NATIVE=$((NATIVE+1))
 elif [ "$nt_keep_errno" -eq 0 ] && [ "$nt_keep_state" -eq 1 ] && \
 	[ "$tg_keep_errno" -eq 0 ] && [ "$tg_keep_state" -eq 1 ]; then
 	echo "RESULT keep_bind_device=PASS (physical bind preserved)"; PASS=$((PASS+1))
@@ -312,6 +328,7 @@ fi
 
 if [ -z "$IFC" ]; then
 	echo "RESULT ifconf_tail=SKIP (no ifconf probe available)"
+	SKIP=$((SKIP+1))
 else
 	nt_ifc_vpn="$(ifc_count IFCONF_FILL_VPN "$NT_LOG")"
 	tg_ifc_vpn="$(ifc_count IFCONF_FILL_VPN "$TG_LOG")"
@@ -330,12 +347,12 @@ for vec in proc_route_v4 getifaddrs proc_route_v6 siocgifconf dev_ioctl netlink_
 	# (baked VPNHIDE_GAI_BIN, or built from an NDK on this host). If neither is
 	# present the probe can't run, so skip the vector instead of failing it.
 	if [ "$vec" = gai_getifaddrs ] && [ -z "$GAI" ]; then
-		echo "RESULT $vec=SKIP (no bionic getifaddrs probe available)"; continue
+		echo "RESULT $vec=SKIP (no bionic getifaddrs probe available)"; SKIP=$((SKIP+1)); continue
 	fi
 	# init-kpm.sh emits `VEC <name>=SKIP` for a vector that doesn't apply to the
 	# running kernel (e.g. the host-route on non-GKI <5.6 kernels).
 	if grep -q "VEC $vec=SKIP" "$NT_LOG"; then
-		echo "RESULT $vec=SKIP (not supported on this kernel)"; continue
+		echo "RESULT $vec=NOT-APPLICABLE (not supported on this kernel)"; NA=$((NA+1)); continue
 	fi
 	nt="$(vec_count "$vec" "$NT_LOG")"
 	tg="$(vec_count "$vec" "$TG_LOG")"
@@ -348,7 +365,7 @@ done
 
 for vec in keep_proc_route_v4 keep_getifaddrs keep_siocgifconf keep_dev_ioctl keep_netlink_route4 keep_policy_rule keep_gai_getifaddrs; do
 	if [ "$vec" = keep_gai_getifaddrs ] && [ -z "$GAI" ]; then
-		echo "RESULT $vec=SKIP (no bionic getifaddrs probe available)"; continue
+		echo "RESULT $vec=SKIP (no bionic getifaddrs probe available)"; SKIP=$((SKIP+1)); continue
 	fi
 	nt="$(vec_count "$vec" "$NT_LOG")"
 	tg="$(vec_count "$vec" "$TG_LOG")"
@@ -367,6 +384,6 @@ for vec in keep_proc_route_v4 keep_getifaddrs keep_siocgifconf keep_dev_ioctl ke
 done
 
 PANIC=$(( $(panic_count "$NT_LOG") + $(panic_count "$TG_LOG") ))
-echo "SUMMARY pass=$PASS fail=$FAIL panic=$PANIC"
+echo "SUMMARY pass=$PASS native-covered=$NATIVE not-applicable=$NA skip=$SKIP fail=$FAIL panic=$PANIC"
 [ "$FAIL" -eq 0 ] && [ "$PANIC" -eq 0 ] && { echo "[run-kpm] $KMI: PASS"; exit 0; }
 echo "[run-kpm] $KMI: FAIL"; exit 1

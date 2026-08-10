@@ -12,8 +12,8 @@
  * keyed on the running kernel version, selected at init.
  *
  * One source plus this runtime table produces one binary for the supported
- * kernel families. Offsets are derived from the matching AOSP, upstream, or
- * DDK kernel sources and then exercised by a booted QEMU image. A new or
+ * kernel families. Offsets are derived from the matching AOSP or DDK kernel
+ * sources and then exercised by a booted QEMU image. A new or
  * changed table must pass the KPM harness (see kmod/kpm/README.md) before it
  * ships. This validates the reference configurations used by CI; it does not
  * imply testing on every vendor kernel or physical device.
@@ -24,6 +24,8 @@
 /* KernelPatch exposes the running kernel version as `kver` (see
  * <kpmodule.h>). Encoding matches LINUX_VERSION_CODE: (a<<16)|(b<<8)|c. */
 #define VPNHIDE_KVER(a, b, c) (((a) << 16) + ((b) << 8) + (c))
+#define VPNHIDE_KVER_FAMILY(k, a, b) \
+	(((k) >> 8) == (VPNHIDE_KVER(a, b, 0) >> 8))
 
 struct vpnhide_offsets {
 	/* sk_buff.len — saved before a netlink fill, restored via skb_trim. */
@@ -83,7 +85,7 @@ struct vpnhide_offsets {
 	/* fib6_info.fib6_dst (struct rt6key { in6_addr addr@0; int plen@16; }) —
 	 * the destination of an IPv6 route, used to spot a public /128 host-route
 	 * pinned to a physical uplink. 0 disables that check for this version
-	 * (e.g. the pre-fib6_info 4.14 rt6_info path, and the non-GKI kernels that
+	 * (e.g. the pre-fib6_info 4.9/4.14 rt6_info path, and kernels that
 	 * the QEMU matrix can't validate — a wrong offset here would fault). */
 	unsigned int fib6_info_fib6_dst;
 
@@ -262,7 +264,7 @@ static const struct vpnhide_offsets vpnhide_off_5_15 = {
 	.fib_rule_uid_end = 124,
 };
 
-/* 5.4 (android11-5.4, derived from AOSP common source + QEMU-validated).
+/* 5.4 (android11-5.4 AOSP common gki_defconfig + QEMU-validated).
  * Mostly identical to 5.10, with two version-specific differences:
  *   - fib_dump_info still uses the legacy <5.6 prototype (fib_info* passed
  *     directly at arg 9, 11 args) — not the fib_rt_info* form 5.10 has.
@@ -280,8 +282,8 @@ static const struct vpnhide_offsets vpnhide_off_5_4 = {
 	.seqfile_count = 24,
 	.in_ifaddr_ifa_dev = 24, /* hash(16)+ifa_next(8) — same as 5.10 */
 	.in_device_dev = 0,
-	.inet6_ifaddr_idev =
-		168, /* rt_priority present + post-4.15 timer_list */
+	/* gki_defconfig's workqueue/debug layout puts idev after dad_work @216. */
+	.inet6_ifaddr_idev = 216,
 	.inet6_dev_dev = 0,
 	.addr_fill_argno = 3,
 	/* fib_info identical to 5.10: fib_nhs@96, nh@104, fib_nh[]@128. */
@@ -306,17 +308,18 @@ static const struct vpnhide_offsets vpnhide_off_5_4 = {
 	.fib_rule_uid_end = 124,
 };
 
-/* 4.19 (vanilla 4.19.325, derived from source + QEMU-validated). Pre-nexthop
+/* 4.19 (AOSP common android-4.19-q cuttlefish_defconfig + QEMU-validated).
+ * Pre-nexthop
  * kernel: fib_info/fib6_info have NO `struct nexthop *nh` field (so the nh
  * guards in dev_from_fib*_info skip), and fib_dump_info uses the legacy <5.6
  * prototype (fib_info* directly at arg 9). Unlike 4.14 it already has the
  * struct fib6_info IPv6 route model (4.14 still uses rt6_info).
  */
 static const struct vpnhide_offsets vpnhide_off_4_19 = {
-	/* XFRM + conntrack + bridge-netfilter fields put sk_buff.len at 128 on
-	 * the 4.19 image we validate with. A smaller value trims netlink dumps
+	/* The Android Cuttlefish reference config puts sk_buff.len at 120. A wrong
+	 * value trims netlink dumps
 	 * back to a pointer field and can make getifaddrs() look completely empty. */
-	.skb_len = 128,
+	.skb_len = 120,
 	.netdev_name = 0,
 	.socket_sk = 32,
 	.sock_net = 48,
@@ -353,16 +356,14 @@ static const struct vpnhide_offsets vpnhide_off_4_19 = {
 	.fib_rule_uid_end = 124,
 };
 
-/* 4.14 (vanilla 4.14.336, derived from source + QEMU-validated). Oldest
- * target and the most structurally different: fib_dump_info uses the legacy
+/* 4.14 (AOSP common android-4.14-q cuttlefish_defconfig + QEMU-validated).
+ * fib_dump_info uses the legacy
  * <5.6 prototype (fi at arg 9), there are no nexthop objects, and IPv6 still
  * uses struct rt6_info (not fib6_info) — so the IPv6 dev comes from the
  * embedded dst_entry (rt6_via_dst) rather than a fib6_nh walk.
  */
-static const struct vpnhide_offsets vpnhide_off_4_x = {
-	/* XFRM + conntrack + bridge-netfilter fields put sk_buff.len at 128 in
-	 * the 4.14 reference image. */
-	.skb_len = 128,
+static const struct vpnhide_offsets vpnhide_off_4_14 = {
+	.skb_len = 120,
 	.netdev_name = 0,
 	.socket_sk = 32,
 	.sock_net = 48,
@@ -403,6 +404,41 @@ static const struct vpnhide_offsets vpnhide_off_4_x = {
 	.fib_rule_uid_end = 124,
 };
 
+/* 4.9 (AOSP common android-4.9-q cuttlefish_defconfig + QEMU-validated).
+ * The route/ioctl ABIs match the 4.14 table, but the older delayed_work layout
+ * moves inet6_ifaddr.idev to 184. Keep this separate: using the 4.14 offset
+ * makes RTM_GETADDR dereference unrelated state on 4.9. */
+static const struct vpnhide_offsets vpnhide_off_4_9 = {
+	.skb_len = 120,
+	.netdev_name = 0,
+	.socket_sk = 32,
+	.sock_net = 48,
+	.seqfile_buf = 0,
+	.seqfile_count = 24,
+	.in_ifaddr_ifa_dev = 24,
+	.in_device_dev = 0,
+	.inet6_ifaddr_idev = 184,
+	.inet6_dev_dev = 0,
+	.addr_fill_argno = 6,
+	.fib_info_fib_nhs = 80,
+	.fib_info_nh = 0,
+	.fib_info_fib_nh = 104,
+	.fib_dump_fi_arg = 9,
+	.fib_dump_fi_via_fri = 0,
+	.fib6_info_nh = 0,
+	.fib6_info_fib6_nh = 0,
+	.rt6_via_dst = 1,
+	/* Android 4.9 starts dst_entry with rcu_head + child; dev follows at +24.
+	 * Android 4.14 moved dev to the first field, hence its separate +0 value. */
+	.rt6_dst_dev = 24,
+	.rt6_dst = 256,
+	.fib_rule_table = 36,
+	.fib_rule_iifname = 88,
+	.fib_rule_oifname = 104,
+	.fib_rule_uid_start = 120,
+	.fib_rule_uid_end = 124,
+};
+
 /*
  * Select the offset table for the running kernel. Returns NULL for an
  * unsupported version — the caller MUST refuse to install hooks then
@@ -411,21 +447,23 @@ static const struct vpnhide_offsets vpnhide_off_4_x = {
 static inline const struct vpnhide_offsets *
 vpnhide_select_offsets(unsigned int kver)
 {
-	if (kver < VPNHIDE_KVER(4, 14, 0) || kver >= VPNHIDE_KVER(6, 13, 0))
-		return 0;
-	if (kver >= VPNHIDE_KVER(6, 12, 0))
-		return &vpnhide_off_6_12; /* 6.12: fib6_info gained gc_link */
-	if (kver >= VPNHIDE_KVER(6, 0, 0))
-		return &vpnhide_off_6_1; /* 6.0–6.11; validated on 6.1 + 6.6 images */
-	if (kver >= VPNHIDE_KVER(5, 15, 0))
-		return &vpnhide_off_5_15; /* 5.15+: fib6_info gained offload fields */
-	if (kver >= VPNHIDE_KVER(5, 6, 0))
-		return &vpnhide_off_5_x; /* 5.6–5.14 */
-	if (kver >= VPNHIDE_KVER(5, 0, 0))
-		return &vpnhide_off_5_4; /* 5.0–5.5: legacy fib_dump_info */
-	if (kver >= VPNHIDE_KVER(4, 19, 0))
-		return &vpnhide_off_4_19; /* 4.19: fib6_info, no nexthop objects */
-	return &vpnhide_off_4_x; /* 4.14–4.18 */
+	if (VPNHIDE_KVER_FAMILY(kver, 6, 12))
+		return &vpnhide_off_6_12;
+	if (VPNHIDE_KVER_FAMILY(kver, 6, 1) || VPNHIDE_KVER_FAMILY(kver, 6, 6))
+		return &vpnhide_off_6_1;
+	if (VPNHIDE_KVER_FAMILY(kver, 5, 15))
+		return &vpnhide_off_5_15;
+	if (VPNHIDE_KVER_FAMILY(kver, 5, 10))
+		return &vpnhide_off_5_x;
+	if (VPNHIDE_KVER_FAMILY(kver, 5, 4))
+		return &vpnhide_off_5_4;
+	if (VPNHIDE_KVER_FAMILY(kver, 4, 19))
+		return &vpnhide_off_4_19;
+	if (VPNHIDE_KVER_FAMILY(kver, 4, 14))
+		return &vpnhide_off_4_14;
+	if (VPNHIDE_KVER_FAMILY(kver, 4, 9))
+		return &vpnhide_off_4_9;
+	return 0; /* never guess a layout for an unvalidated minor family */
 }
 
 #endif /* VPNHIDE_KVER_OFFSETS_H */

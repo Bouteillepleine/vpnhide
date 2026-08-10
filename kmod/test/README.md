@@ -112,13 +112,13 @@ is no insmod and no `/proc` dependency — target UIDs are passed via the
 embedded extra-args (`kptools -A`). The A/B is done across **two boots**
 (no target → root sees `vpn0`; target=0 → root doesn't), driven by
 `init-kpm.sh`. The original 10 enumeration hooks plus socket-bind state checks
-run with no panic across the CI reference set — 4.14, 4.19, 5.4, 5.10, 5.15,
-6.1, 6.6, 6.12 (the GKI ones via
-the DDK `Image`, the older ones via a from-source `Image` passed with
+run with no panic across the CI reference set — 4.9, 4.14, 4.19, 5.4, 5.10,
+5.15, 6.1, 6.6, 6.12 (the modern GKI ones via
+the DDK `Image`, the legacy AOSP ones via a from-source `Image` passed with
 `VPNHIDE_QEMU_IMAGE=`). Legacy kernels that natively require `CAP_NET_RAW` for
-the first bind (or predate `SO_BINDTOIFINDEX`) must preserve the same errno and
-socket state for targets, and report that vector as protected-by-kernel rather
-than pretending the KPM hook fired.
+the first bind report `NATIVE-COVERED`; kernels that predate
+`SO_BINDTOIFINDEX` report `NOT-APPLICABLE`. `SKIP` is reserved for a probe that
+did not run, so neither result pretends that the KPM bind hook fired.
 
 ```sh
 make -C kmod kpm                 # build vpnhide.kpm
@@ -128,7 +128,7 @@ kmod/test/run-kpm.sh android12-5.10
 Two knobs the KPM harness needs that the `.ko` one doesn't:
 
 - **`VPNHIDE_QEMU_CPU`** — defaults to `max`, but kernels older than 5.10
-  (4.14/4.19/5.4) fault on `max`'s newer CPU features before the console comes
+  (4.9/4.14/4.19/5.4) fault on `max`'s newer CPU features before the console comes
   up, so they need `VPNHIDE_QEMU_CPU=cortex-a57`. KernelPatch also writes its
   restore region into kernel text, so the boot args carry `rodata=off` (some
   from-source layouts otherwise put that page read-only → early abort).
