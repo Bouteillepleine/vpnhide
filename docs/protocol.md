@@ -62,12 +62,14 @@ co-residents: they wrap the *same* kernel functions
 (`rtnl_fill_ifinfo`, `inet6_fill_ifaddr`, `fib_route_seq_show`, …), and running
 both at once hard-froze a device (kretprobe + KernelPatch inline hook on one
 symbol, deadlocking the netlink path on the first target enumeration — observed
-on a Pixel 8 Pro, 6.1). So at init each kernel backend MUST detect the other and
-refuse: the KPM resolves a `.ko` marker via kallsyms (the `.ko` is a real module;
-the reverse uses the KPM's `/proc` marker), and a refusal is surfaced as
-`status.error = conflicting_backend` (§4.3/§5.1) — a readable state, not a silent
-no-op. This does not weaken §1.2's "backends don't know about each other" for
-*state*: it is a one-bit liveness check at load, not shared runtime state.
+on a Pixel 8 Pro, 6.1). Every shipped KPM load/configuration path therefore
+checks for an installed or live `.ko` first and refuses with
+`conflicting_backend` (§5.1). The check is in the boot scripts and activator,
+not in either kernel backend: KPM deliberately exposes no stable `/proc` or
+module marker, and an in-kernel check during the unordered post-fs-data load
+window would itself be racy. Loading either artifact manually outside the
+shipped activation path bypasses this guard, is unsupported, and can freeze the
+device.
 
 ### 1.3 Channels
 
@@ -134,13 +136,14 @@ actually *loaded* (read from each backend's `status`, §4.3). The app:
 3. if more than one native backend is loaded, **warns the user** (a second loaded
    backend is a misconfiguration to clean up, not a supported mode).
 
-Two backstops make this safe even if the app's policy is wrong or not yet run:
+Two backstops make this safe before the app's policy has run:
 
-- **Kernel guard.** A native kernel backend refuses to *install hooks* if the
-  other kernel backend is already present (KPM checks for the `.ko` via kallsyms;
-  the `.ko` checks the KPM's `/proc` marker) and reports
-  `status.error = conflicting_backend` (§5.1). This prevents the deadlock at the
-  source, independent of userspace.
+- **Guarded KPM delivery.** The KPM boot scripts reject an enabled `.ko` module
+  before loading KPM. The activator repeats the check, including the live
+  `/proc/vpnhide_ctl` endpoint, before every KPM load/configuration attempt and
+  reports `conflicting_backend` (§5.1). Repeating it closes the interval between
+  early boot and config delivery without requiring either backend to discover
+  the other in kernel space.
 - **No self-activation of dangerous overlap.** Boot scripts may *load* a backend,
   but the single-active decision is the app's; a loaded-but-unconfigured native
   backend filters nothing.
@@ -341,10 +344,9 @@ error <code>
 
 `status` exists because a kernel backend can refuse or only partially install for
 reasons the app cannot otherwise see (no node, no logs unless `debug`). It turns
-those into a readable state instead of a silent no-op — most importantly the
-mutually-exclusive-backend case (§1.2): when the KPM detects the `.ko` (or vice
-versa) it refuses and reports `error = conflicting_backend`, which the app
-surfaces as "disable the other backend".
+those into a readable state instead of a silent no-op. The delivery layer uses
+the same error vocabulary for activation failures; in particular, the KPM boot
+status reports `conflicting_backend` when its guard detects the `.ko` (§1.2).
 
 ### 4.4 Numeric primitive
 
@@ -458,7 +460,7 @@ of:
 |---|---|---|
 | `0x0` | `ok` | healthy; every requested, owned hook installed |
 | `0x1` | `unsupported_kver` | no offset table for the running kernel — refused, no hooks |
-| `0x2` | `conflicting_backend` | the *other* kernel backend (`.ko`↔KPM) is loaded — refused (§1.2) |
+| `0x2` | `conflicting_backend` | KPM activation found the `.ko` installed or live and refused before loading/configuring KPM (§1.2) |
 | `0x3` | `symbol_resolution_failed` | a required kallsyms symbol was missing — refused |
 | `0x4` | `partial_hooks` | installed, but some owned hooks did not resolve (see the `hooks` mask) |
 
