@@ -28,7 +28,7 @@ can't raise the app count because stats won't fit" conflates the two.
 | constraint | where | value | binds at |
 |---|---|---|---|
 | `MAX_TARGET_UIDS` | `crates/protocol/src/lib.rs`, mirrored in both backends | 64 | **64 targets — currently binding** |
-| `KPM_ARGS_LEN` | `kmod/third_party/KernelPatch/kernel/include/kpmodule.h` | 1024 B | ~190 targets |
+| `KPM_ARGS_LEN` | `kmod/third_party/KernelPatch/kernel/include/kpmodule.h` | 1024 B | ~190 targets sharing one mask; fewer with many distinct masks |
 | `ctl_write` payload cap | `kmod/vpnhide_kmod.c` (`count > PAGE_SIZE`) | 4096 B | ~800 targets |
 | parse scratch on the kernel stack | `ctl_write`, `vpnhide_kpm_ctl0` | 8 B/target | thousands (16 KiB arm64 stack, shared with a 4 KiB reply buffer in the KPM) |
 
@@ -151,8 +151,8 @@ Nothing here should be trusted because it is written down. The control-side
 figure is guarded by a test — `crates/protocol` asserts that all
 `MAX_TARGET_UIDS` targets, using maximum-width UIDs and one shared full mask,
 fit in `KPM_ARGS_LEN` with room for its trailing NUL. Arbitrary per-app masks
-can cost more group headers, so their formatted byte length still has to be
-checked before KPM delivery.
+can cost more group headers, so the activator also checks the formatted wire's
+actual byte length before KPM delivery.
 
 The telemetry table is not guarded, because its input is a usage profile rather
 than a constant. To redo it, format `n` uids × `k` hooks with

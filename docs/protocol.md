@@ -559,8 +559,10 @@ paginates. Therefore:
    bigger buffer or accepts the partial. (This is exactly the §4.1 rule that a
    trailing `\n` is optional on read but meaningful here.)
 
-On write, the whole snapshot must fit in `args`; bound it by `MAX_TARGET_UIDS`
-and have the parser truncate honestly at that ceiling (already the case for
+On write, the whole snapshot must fit in `args`, including its trailing NUL.
+Bound it by `MAX_TARGET_UIDS`, check the formatted byte length before the
+supercall (distinct per-app masks cost extra group headers), and have the parser
+reject honestly at its target ceiling (already the case for
 `vpnhide_parse_config(..., MAX_TARGET_UIDS)`).
 
 ### 7.3 Delivery

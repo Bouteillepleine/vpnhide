@@ -576,6 +576,33 @@ fn projection_is_bounded_to_backend_target_capacity() {
 }
 
 #[test]
+fn kpm_rejects_a_valid_config_that_exceeds_its_argument_buffer() {
+    // MAX_TARGET_UIDS alone is not enough to prove transport fit: distinct
+    // per-app masks each need their own group header. Keep this valid at the
+    // protocol layer and make the KPM transport boundary reject it clearly.
+    let targets = (0..MAX_NATIVE_TARGETS as u32)
+        .map(|offset| Target {
+            uid: u32::MAX - offset,
+            hookmask: offset + 1,
+        })
+        .collect::<Vec<_>>();
+    let wire = format_config(false, NO_DEFAULT_MASK, &targets);
+
+    assert!(parse_config(wire.as_bytes()).is_some());
+    assert!(wire.len() >= KPM_ARGS_LEN);
+    let error = validate_kpm_config_wire(&wire).unwrap_err().to_string();
+    assert!(error.contains(&wire.len().to_string()));
+    assert!(error.contains(&(KPM_ARGS_LEN - 1).to_string()));
+    assert!(error.contains("distinct per-app hook selections"));
+}
+
+#[test]
+fn kpm_accepts_the_largest_argument_that_leaves_room_for_nul() {
+    assert!(validate_kpm_config_wire(&"x".repeat(KPM_ARGS_LEN - 1)).is_ok());
+    assert!(validate_kpm_config_wire(&"x".repeat(KPM_ARGS_LEN)).is_err());
+}
+
+#[test]
 fn kpatch_ctl0_accepts_config_target_count_exit_codes() {
     let one_target = "vpnhide 2 config\ndebug 0\ntargets 1 123\nend 1\n";
     assert!(kpatch_ctl0_config_status_ok(

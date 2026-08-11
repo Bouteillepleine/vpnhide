@@ -27,7 +27,9 @@ use vpnhide_apatch_abi::{
 };
 use vpnhide_protocol::Target;
 use vpnhide_protocol::hook_ids::{HOOK_NAMES, KERNEL_HOOK_MASK, ZYGISK_HOOK_MASK};
-use vpnhide_protocol::{Kind, MAX_TARGET_UIDS, format_config, parse_config, peek_kind};
+use vpnhide_protocol::{
+    KPM_ARGS_LEN, Kind, MAX_TARGET_UIDS, format_config, parse_config, peek_kind,
+};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 

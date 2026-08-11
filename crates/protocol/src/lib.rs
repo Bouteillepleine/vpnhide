@@ -348,9 +348,7 @@ pub fn parse_config(buf: &[u8]) -> Option<Config> {
                 for tok in it {
                     // A malformed uid inside a group is NOT skipped: it would
                     // desync the `end` count, so the payload is rejected.
-                    let Some(uid) = parse_hex_bare(tok, 32) else {
-                        return None;
-                    };
+                    let uid = parse_hex_bare(tok, 32)?;
                     uids_seen += 1;
                     if !set_target(&mut cfg.targets, uid as u32, mask as u32) {
                         return None; // over the backend ceiling
