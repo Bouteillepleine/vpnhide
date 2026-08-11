@@ -1282,12 +1282,7 @@ internal suspend fun loadDashboardState(
     val hookProps = parseLsposedStateMetadata(lsposedStateRaw)
     val hookVersion = hookProps["version"]
     val hookBootId = hookProps["boot_id"]
-    val hooksActiveThisBoot =
-        lsposedStatus?.backend ==
-            HookIds.Backend.LSPOSED.id
-                .toLong() &&
-            hookBootId != null &&
-            hookBootId == currentBootId.trim()
+    val hooksActiveThisBoot = lsposedHooksActiveThisBoot(lsposedStateRaw, currentBootId)
     val lsposedTargetCount = countPackages(targetsSnapshot.lsposedTargets)
     val lsposedFramework = detectLsposedFramework(shellSnapshot)
     val lsposedConfig =
@@ -1653,18 +1648,20 @@ internal suspend fun loadDashboardState(
                         ProtectionCheck.NoVpn
                     }
                 } else {
-                    // Tiles judge each backend on the vectors it owns; unowned leaks
-                    // (out of scope for the tile) are surfaced via the hero warning below.
-                    val native = summarizeNativeLayer(nativeBackend, checks.nativeOutcomes)
-                    val java = summarizeJavaLayer(lsposed is LsposedState.Active, checks.java)
-                    // Rust-probe leaks the tile doesn't own, plus any Java-native
-                    // probe (nativeExtra) that saw the VPN — the latter has no
-                    // outcome, so fold its raw fails in here so they still warn.
-                    unownedNativeLeakCount =
-                        unownedNativeLeaks(nativeBackend, checks.nativeOutcomes) +
-                        checks.nativeExtra.count { it.passed == false }
-                    VpnHideLog.i(TAG, "nativeLayer=$native javaLayer=$java unownedLeaks=$unownedNativeLeakCount")
-                    ProtectionCheck.Checked(native, java)
+                    // Derive tiles from the one canonical report (the same object the
+                    // debug bundle renders), so the on-screen verdict and the exported
+                    // one can never diverge. Tiles judge each backend on the vectors it
+                    // owns; unowned leaks are surfaced via the hero warning below.
+                    val report =
+                        buildDiagnosticReport(
+                            gate = DiagnosticGate.ROUTED,
+                            results = checks,
+                            backend = nativeBackend,
+                            lsposedActive = lsposed is LsposedState.Active,
+                            complete = true,
+                        )
+                    unownedNativeLeakCount = report.native.unownedLeaks
+                    ProtectionCheck.Checked(report.native.status, report.java.status)
                 }
             }
         }

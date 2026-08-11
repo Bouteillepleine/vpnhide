@@ -657,13 +657,12 @@ private fun LayerStatus.toAgentStatus(): String =
 
 private fun CheckResults.toAgentDiagnosticsReport(): AgentDiagnosticsReport {
     val score = all.score()
-    // Native checks (in NATIVE_CHECKS order) carry the root-differential outcome;
-    // Java checks carry the gate-derived outcome on the result itself. nativeExtra
-    // (Java-implemented native-level probes) has no outcome.
+    // Every check carries its own root-differential/gate outcome now, so no join
+    // back to NATIVE_CHECKS by index. nativeExtra (Java-implemented native-level
+    // probes) has no root differential and reports on the tri-state only.
     val nativeWithOutcomes =
-        native.mapIndexed { i, cr ->
-            cr.toAgentCheckResult(nativeOutcomes[NATIVE_CHECKS.getOrNull(i)?.id]?.token())
-        } + nativeExtra.map { it.toAgentCheckResult(null) }
+        native.map { it.toAgentCheckResult(it.outcome?.token()) } +
+            nativeExtra.map { it.toAgentCheckResult(null) }
     return AgentDiagnosticsReport(
         state = "ready",
         score = AgentCheckScore(score.passed, score.total),

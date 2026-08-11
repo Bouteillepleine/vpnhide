@@ -240,7 +240,7 @@ internal object LogcatRecorder {
                     buildDiagnosticSummaryText(
                         context = context,
                         selfNeedsRestart = recording.selfNeedsRestart,
-                        results = null,
+                        report = null,
                         shellSnapshot = shellSnapshot,
                         loggingSession = loggingSession,
                         captureKind = "full_system_logcat",

@@ -23,7 +23,7 @@ internal fun buildHookDiagnosticsText(
     context: Context,
     shellSnapshot: DebugShellSnapshot,
     counterBaseline: DebugShellSnapshot? = null,
-    results: CheckResults? = null,
+    report: DiagnosticReport? = null,
 ): String {
     val rootSnapshot = RootSnapshot(shellSnapshot.sections)
     val currentState = buildStatisticsState(rootSnapshot)
@@ -36,6 +36,12 @@ internal fun buildHookDiagnosticsText(
     // every delta as n/a, defeating the before/after report.
     val hasBaseline = counterBaseline != null
     val statusByBackend = statusByBackend(shellSnapshot)
+    val nativeChecksById =
+        report
+            ?.native
+            ?.checks
+            ?.associateBy { it.id }
+            .orEmpty()
 
     return buildString {
         appendLine("Hook diagnostics")
@@ -57,7 +63,7 @@ internal fun buildHookDiagnosticsText(
         appendLine("=== Native diagnostic checks and expected hooks ===")
         appendNativeChecks(
             context = context,
-            results = results,
+            checksById = nativeChecksById,
             statusByBackend = statusByBackend,
             counters = currentCounters,
             baselineCounters = baselineCounters,
@@ -149,25 +155,18 @@ private fun StringBuilder.appendCounterDelta(
 
 private fun StringBuilder.appendNativeChecks(
     context: Context,
-    results: CheckResults?,
+    checksById: Map<String, DiagnosticCheck>,
     statusByBackend: Map<HookIds.Backend, Protocol.Status?>,
     counters: Map<CounterKey, Long>,
     baselineCounters: Map<CounterKey, Long>,
     hasBaseline: Boolean,
 ) {
-    val byName =
-        results
-            ?.native
-            ?.mapIndexedNotNull { index, result ->
-                NATIVE_CHECKS.getOrNull(index)?.id?.let { it to result }
-            }.orEmpty()
-            .toMap()
-
     for (spec in NATIVE_CHECKS) {
-        val result = byName[spec.id]
-        appendLine("${spec.id}: ${result?.name ?: context.getString(spec.labelRes)}")
-        appendLine("  result=${result?.passed?.let(::badge) ?: "(not run)"}")
-        result?.detail?.takeIf { it.isNotBlank() }?.let { appendLine("  detail=$it") }
+        val check = checksById[spec.id]
+        appendLine("${spec.id}: ${check?.label ?: context.getString(spec.labelRes)}")
+        appendLine("  result=${check?.outcome?.token() ?: "(not run)"}")
+        check?.appDetail?.takeIf { it.isNotBlank() }?.let { appendLine("  detail=$it") }
+        check?.groundTruthDetail?.let { appendLine("  root=$it") }
         if (spec.expectedHooks.isEmpty()) {
             appendLine("  expected hooks: none registered; this probe is covered outside the hook registry")
         } else {
@@ -178,8 +177,6 @@ private fun StringBuilder.appendNativeChecks(
         }
     }
 }
-
-private fun badge(passed: Boolean): String = if (passed) "PASS" else "FAIL"
 
 private fun formatHookWithOwners(
     hook: HookIds.Hook,

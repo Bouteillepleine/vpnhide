@@ -54,35 +54,30 @@ internal suspend fun exportDebugZip(
             restoreAttempted = true
             val completedLoggingSession = loggingSession.withRestore(restore)
 
-            // 4. Collect everything into named files — each section is its own
-            //    builder below.
+            // 4. Fold the run into the one canonical report (the same object the
+            //    dashboard renders), then collect everything into named files.
+            val report = buildExportDiagnosticReport(context, checkResults, shellSnapshot, selfNeedsRestart)
             val files =
                 linkedMapOf(
                     "summary.txt" to
                         buildDiagnosticSummaryText(
                             context = context,
                             selfNeedsRestart = selfNeedsRestart,
-                            results = checkResults,
+                            report = report,
                             shellSnapshot = shellSnapshot,
                             loggingSession = completedLoggingSession,
                             captureKind = "debug_zip",
                         ),
-                    "diagnostics.txt" to buildDiagnosticsText(checkResults),
+                    "diagnostics.txt" to report.toDiagnosticsText(),
+                    "diagnostics.json" to report.toJson(),
                 )
-            files.putAll(
-                buildCommonDiagnosticTextFiles(
-                    context = context,
-                    selfNeedsRestart = selfNeedsRestart,
-                    shellSnapshot = shellSnapshot,
-                    loggingSession = completedLoggingSession,
-                ),
-            )
+            files.putAll(buildCommonDiagnosticTextFiles(context, selfNeedsRestart, shellSnapshot, completedLoggingSession))
             files["hook_report.txt"] =
                 buildHookDiagnosticsText(
                     context = context,
                     shellSnapshot = shellSnapshot,
                     counterBaseline = counterBaseline,
-                    results = checkResults,
+                    report = report,
                 )
             files["dmesg_vpnhide.txt"] = filterVpnHideDmesg(dmesg)
             files["dmesg_full.txt"] = dmesg.ifBlank { "(no dmesg entries)" }
@@ -108,34 +103,58 @@ internal suspend fun exportDebugZip(
         }
     }
 
-// ── Debug-zip section builders (each produces one file in the export) ─────
+/**
+ * Fold the forced capture run into the canonical [DiagnosticReport]. Derives the
+ * gate (VPN presence + self-in-tunnel + pending restart), the active native backend,
+ * and the Java-layer liveness from the same helpers the dashboard uses, so the
+ * bundle's verdict is identical to the on-screen one.
+ */
+private suspend fun buildExportDiagnosticReport(
+    context: Context,
+    checkResults: CheckResults,
+    shellSnapshot: DebugShellSnapshot,
+    selfNeedsRestart: Boolean,
+): DiagnosticReport =
+    buildDiagnosticReport(
+        gate =
+            resolveDiagnosticGate(
+                vpnActive = isVpnActive(),
+                selfRouted = GroundTruthProbe.selfRoutedThroughVpn(context),
+                selfNeedsRestart = selfNeedsRestart,
+            ),
+        results = checkResults,
+        backend = displayNativeBackend(detectNativeBackendStates(shellSnapshot.sections)),
+        lsposedActive =
+            lsposedHooksActiveThisBoot(
+                shellSnapshot.sections["lsposed_state"].orEmpty(),
+                shellSnapshot.sections["current_boot_id"].orEmpty(),
+            ),
+        complete = true,
+    )
 
-private fun badge(passed: Boolean?): String =
-    when (passed) {
-        true -> "PASS"
-        false -> "FAIL"
-        null -> "INFO"
-    }
+// ── Debug-zip section builders (each produces one file in the export) ─────
 
 internal fun buildDiagnosticSummaryText(
     context: Context,
     selfNeedsRestart: Boolean,
-    results: CheckResults?,
+    report: DiagnosticReport?,
     shellSnapshot: DebugShellSnapshot,
     loggingSession: DebugCaptureLoggingSession,
     captureKind: String,
 ): String =
     buildString {
-        appendLine("Diagnostic bundle schema: 3")
+        appendLine("Diagnostic bundle schema: 4")
         appendLine("Capture type: $captureKind")
         appendLine("Generated: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.US).format(Date())}")
         appendLine("App package: ${context.packageName}")
         appendLine("App version: ${appVersionText(context)}")
-        if (results == null) {
+        if (report == null) {
             appendLine("Diagnostics: not run")
         } else {
-            val score = results.all.score()
-            appendLine("Diagnostics: ${score.passed}/${score.total} passed")
+            appendLine("Diagnostics gate: ${report.gate.name.lowercase()}")
+            appendLine("Native verdict: ${report.native.verdictLabel()}")
+            appendLine("Java verdict: ${report.java.verdictLabel()}")
+            appendLine("Outcomes: ${report.outcomeTally()}")
         }
         appendLine("selfNeedsRestart: $selfNeedsRestart")
         appendLine("debugCaptureForced: ${loggingSession.forced}")
@@ -187,24 +206,6 @@ internal fun writeDiagnosticZip(
         }
     }
 }
-
-private fun buildDiagnosticsText(results: CheckResults): String =
-    buildString {
-        val score = results.all.score()
-        appendLine("=== Diagnostics: ${score.passed}/${score.total} passed ===")
-        appendLine()
-        appendLine("--- Native level ---")
-        for (c in results.nativeAll) {
-            appendLine("[${badge(c.passed)}] ${c.name}")
-            appendLine("  ${c.detail}")
-        }
-        appendLine()
-        appendLine("--- Java API level ---")
-        for (c in results.java) {
-            appendLine("[${badge(c.passed)}] ${c.name}")
-            appendLine("  ${c.detail}")
-        }
-    }
 
 private fun buildDeviceInfoText(
     context: Context,

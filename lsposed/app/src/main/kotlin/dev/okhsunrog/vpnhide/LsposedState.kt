@@ -34,6 +34,24 @@ internal fun parseLsposedStateMetadata(raw: String): Map<String, String> =
             key to value
         }.toMap()
 
+/**
+ * Are the LSPosed hooks live *this boot*? True when the state file reports the
+ * LSPosed backend and its stamped boot_id matches the current one — the same test
+ * [resolveLsposedState] applies for [LsposedState.Active]. Extracted so the
+ * dashboard and the debug export derive "Java layer active" from one place.
+ */
+internal fun lsposedHooksActiveThisBoot(
+    stateRaw: String,
+    currentBootId: String,
+): Boolean {
+    val hookBootId = parseLsposedStateMetadata(stateRaw)[LsposedStateMetadata.BOOT_ID]
+    return Protocol.parseStatus(stateRaw)?.backend ==
+        HookIds.Backend.LSPOSED.id
+            .toLong() &&
+        hookBootId != null &&
+        hookBootId == currentBootId.trim()
+}
+
 internal fun formatLsposedState(
     status: Protocol.Status,
     metadata: Map<String, String>,
