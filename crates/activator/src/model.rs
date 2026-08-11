@@ -477,10 +477,6 @@ impl PortUidPolicy {
     }
 }
 
-pub fn project_ports(json: &str) -> Result<PortsRuleset> {
-    project_ports_with_pm_wait(json, PmReadyWait::Bounded(PM_READY_ATTEMPTS))
-}
-
 pub(crate) fn project_ports_with_pm_wait(json: &str, wait: PmReadyWait) -> Result<PortsRuleset> {
     let cfg = parse_canonical(json)?;
     if !has_ports_targets(&cfg) {

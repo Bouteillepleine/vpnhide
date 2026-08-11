@@ -9,8 +9,6 @@
 //! Roles (§1.4): backends PARSE config and EMIT stats/status. The activator
 //! also uses this crate to FORMAT config snapshots for native backends.
 
-#![allow(dead_code)]
-
 pub mod generated;
 
 pub use generated::hook_ids;
@@ -172,39 +170,11 @@ fn tokens(line: &[u8]) -> impl Iterator<Item = &[u8]> {
     line.split(|&b| is_sep(b)).filter(|t| !t.is_empty())
 }
 
-/// Parse the one numeric primitive (§4.4): `0x` (mandatory) + ≥1 hex digit, any
-/// case on read; reject if it overflows `BITS` (32/64). Returns `None` on any
-/// malformation — the caller skips the line (or rejects, for the header).
-fn parse_hex(tok: &[u8], bits: u32) -> Option<u64> {
-    if tok.len() < 3 || tok[0] != b'0' || (tok[1] != b'x' && tok[1] != b'X') {
-        return None;
-    }
-    let max: u64 = if bits >= 64 {
-        u64::MAX
-    } else {
-        u32::MAX as u64
-    };
-    let mut v: u64 = 0;
-    for &c in &tok[2..] {
-        let d = match c {
-            b'0'..=b'9' => (c - b'0') as u64,
-            b'a'..=b'f' => (c - b'a' + 10) as u64,
-            b'A'..=b'F' => (c - b'A' + 10) as u64,
-            _ => return None,
-        };
-        if v > (max - d) / 16 {
-            return None; // width overflow
-        }
-        v = v * 16 + d;
-    }
-    Some(v)
-}
-
 /// Bare hex, no `0x`: the numeric primitive of the v2 `config` payload (§4.4).
 /// The prefix costs two bytes on every number, and the KPM's config transport
 /// caps the whole payload at 1024 bytes — that is a real ceiling on how many
-/// apps fit, so the prefix buys nothing worth its width here. `stats`/`status`
-/// stay on prefixed hex via [`parse_hex`]: they are still version 1.
+/// apps fit, so the prefix buys nothing worth its width here. Telemetry output
+/// remains prefixed because its wire formats are still version 1.
 fn parse_hex_bare(tok: &[u8], bits: u32) -> Option<u64> {
     if tok.is_empty() {
         return None;

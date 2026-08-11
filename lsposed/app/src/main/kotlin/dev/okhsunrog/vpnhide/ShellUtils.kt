@@ -182,20 +182,6 @@ internal fun isVpnActiveFromStates(vpnIfaces: List<Pair<String, String>>): Boole
 internal fun isVpnActiveFromSnapshot(raw: String): Boolean = isVpnActiveFromStates(parseVpnIfaceStates(raw))
 
 /**
- * Single source of truth for the live shell probe. Startup paths should prefer
- * [isVpnActiveFromSnapshot] over this function when a root snapshot already
- * exists, so Dashboard and Diagnostics don't drift during one launch.
- */
-internal fun isVpnActiveBlocking(): Boolean {
-    val (exitCode, output) =
-        suExec(
-            "grep -H . /sys/class/net/*/operstate 2>/dev/null",
-        )
-    if (exitCode != 0) return false
-    return isVpnActiveFromSnapshot(output)
-}
-
-/**
  * Why startup root-state preparation failed, so the UI can tell the user the
  * truth instead of always blaming root permissions. The distinction is known at
  * the point of failure (not parsed back out of a string).

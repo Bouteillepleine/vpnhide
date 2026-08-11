@@ -221,7 +221,7 @@ crates/
     src/bin/kmod.rs         #   project_native(json) → write("/proc/vpnhide_ctl")
     src/bin/kpm.rs          #   project_native(json) → APatch/FolkPatch supercall / KPatch-Next `kpatch`
     src/bin/zygisk.rs       #   project_native(json) → write_atomic(module_dir file)
-    src/bin/ports.rs        #   project_ports(json) → iptables-restore/ip6tables-restore
+    src/bin/ports.rs        #   activate_ports() → iptables-restore/ip6tables-restore
 zygisk/                     # cdylib — the injected .so. deps: protocol (+ shadowhook).
                             #   Lean: no serde, no JSON in every app process.
 ```
