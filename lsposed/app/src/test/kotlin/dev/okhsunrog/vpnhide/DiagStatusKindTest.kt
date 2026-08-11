@@ -11,7 +11,7 @@ import org.junit.Test
  * left as a trivial kind→(label,colour) lookup that needs no instrumentation.
  */
 class DiagStatusKindTest {
-    private fun check(outcome: CheckOutcome) = CheckResult("c", passed = null, detail = "", outcome = outcome)
+    private fun check(outcome: CheckOutcome) = CheckResult("c", detail = "", outcome = outcome)
 
     @Test
     fun `each outcome maps to its screen bucket`() {

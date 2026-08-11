@@ -17,26 +17,6 @@ internal data class NativeCheckSpec(
 )
 
 /**
- * Map a native probe status to the tri-state the UI uses: PASS → true (leak
- * blocked), FAIL → false (leak detected), NETWORK_BLOCKED → null (probe
- * couldn't run, e.g. ECONNREFUSED from `socket()` when the app has no network
- * permission). Single source so the Diagnostics list and the Dashboard summary
- * read the status the same way.
- */
-internal fun CheckStatus.toPassed(): Boolean? =
-    when (this) {
-        CheckStatus.PASS -> true
-
-        // Legacy tri-state: a SELinux-blocked read is "no VPN visible" (green) for
-        // the current UI. The honest split (SELinux vs backend) lives in CheckOutcome.
-        CheckStatus.SELINUX_BLOCKED -> true
-
-        CheckStatus.FAIL -> false
-
-        CheckStatus.NETWORK_BLOCKED -> null
-    }
-
-/**
  * The native probe suite, in display order. The probes themselves run in Rust
  * (one JSON call via [dev.okhsunrog.vpnhide.checks.NativeProbe]); these specs
  * carry the display label and the expected-hook coverage, joined to the probe

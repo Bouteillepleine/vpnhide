@@ -52,15 +52,10 @@ private const val TAG = LogTags.TEST
 
 data class CheckResult(
     val name: String,
-    // Raw tri-state observation from the probe (true = clean, false = leak, null =
-    // could not run). Java/nativeExtra probes have no root differential, so this is
-    // their only raw signal — [outcome] is derived from it at construction via
-    // [javaCheck]. Kept for now as the producer-side raw input; consumers read [outcome].
-    val passed: Boolean?,
     val detail: String,
-    // The who-hid-it classification. Native probes get it from the root differential
-    // ([classifyNativeOutcome]); Java/nativeExtra probes from [classifyJavaOutcome].
-    // Always set — the single per-check truth every consumer renders.
+    // The who-hid-it classification — the single per-check truth every consumer
+    // renders. Native probes get it from the root differential ([classifyNativeOutcome]);
+    // Java/nativeExtra probes from their raw observation via [classifyJavaOutcome].
     val outcome: CheckOutcome,
     // The root ground-truth probe's own detail for native checks — what root saw on
     // this surface. Shown next to the app-view detail so the verdict is explained
@@ -80,7 +75,7 @@ internal fun javaCheck(
     name: String,
     clean: Boolean?,
     detail: String,
-): CheckResult = CheckResult(name, clean, detail, outcome = classifyJavaOutcome(clean))
+): CheckResult = CheckResult(name, detail, outcome = classifyJavaOutcome(clean))
 
 internal data class CheckResults(
     // Rust native probes (in-process app view) from the fast phase.
@@ -100,16 +95,17 @@ internal data class CheckResults(
     val all get() = nativeAll + java
 }
 
-/** Number of passed checks out of those that actually ran (NETWORK_BLOCKED
- * probes report `passed == null` and are excluded from the denominator). */
+/** Vectors the app is protected on out of those actually measured — the numerator
+ * counts every non-leak measured outcome, the denominator excludes NotMeasured
+ * (probes that couldn't run). Read off [CheckResult.outcome]; backs the agent bridge. */
 internal data class CheckScore(
     val passed: Int,
     val total: Int,
 )
 
-internal fun List<CheckResult>.score(): CheckScore {
-    val scored = filter { it.passed != null }
-    return CheckScore(passed = scored.count { it.passed == true }, total = scored.size)
+internal fun Iterable<CheckResult>.protectionScore(): CheckScore {
+    val measured = filter { it.outcome !is CheckOutcome.NotMeasured }
+    return CheckScore(passed = measured.count { it.outcome !is CheckOutcome.Leak }, total = measured.size)
 }
 
 internal suspend fun isVpnActive(): Boolean {
@@ -203,10 +199,10 @@ internal fun runExtraJavaChecks(
 private fun List<CheckResult>.logged(): List<CheckResult> =
     onEach { c ->
         val status =
-            when (c.passed) {
-                true -> "PASS"
-                false -> "FAIL"
-                null -> "SKIP"
+            when (c.outcome) {
+                CheckOutcome.Leak -> "FAIL"
+                is CheckOutcome.NotMeasured -> "SKIP"
+                else -> "PASS"
             }
         VpnHideLog.i(TAG, "[${c.name}] $status: ${c.detail}")
     }
@@ -226,7 +222,7 @@ private fun nativeCheckResult(
     groundTruthDetail: String? = null,
 ): CheckResult {
     VpnHideLog.i(TAG, "[$name] ${out.status}: ${out.detail}")
-    return CheckResult(name, out.status.toPassed(), out.detail, outcome = outcome, groundTruthDetail = groundTruthDetail)
+    return CheckResult(name, out.detail, outcome = outcome, groundTruthDetail = groundTruthDetail)
 }
 
 // ==========================================================================

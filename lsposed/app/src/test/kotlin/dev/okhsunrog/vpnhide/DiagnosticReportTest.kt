@@ -34,7 +34,6 @@ class DiagnosticReportTest {
         return NATIVE_CHECKS.map { spec ->
             CheckResult(
                 spec.id,
-                passed = null,
                 detail = "",
                 outcome = byId[spec.id] ?: CheckOutcome.NotMeasured(NotMeasuredReason.NoGroundTruth),
             )
@@ -91,13 +90,12 @@ class DiagnosticReportTest {
             if (spec.id == "ioctl_flags") {
                 CheckResult(
                     name = "ioctl SIOCGIFFLAGS tun0",
-                    passed = false,
                     detail = "tun0 is visible!",
                     outcome = CheckOutcome.Leak,
                     groundTruthDetail = "root: tun0 up",
                 )
             } else {
-                CheckResult(spec.id, passed = null, detail = "", outcome = CheckOutcome.NotMeasured(NotMeasuredReason.NoGroundTruth))
+                CheckResult(spec.id, detail = "", outcome = CheckOutcome.NotMeasured(NotMeasuredReason.NoGroundTruth))
             }
         }
 
@@ -116,7 +114,7 @@ class DiagnosticReportTest {
         val results =
             CheckResults(
                 native = emptyList(),
-                coreJava = listOf(CheckResult("hasTransport(VPN)", passed = false, detail = "VPN!", outcome = CheckOutcome.Leak)),
+                coreJava = listOf(CheckResult("hasTransport(VPN)", detail = "VPN!", outcome = CheckOutcome.Leak)),
             )
         val r = report(results = results)
         val javaCheck = r.java.checks.single()
