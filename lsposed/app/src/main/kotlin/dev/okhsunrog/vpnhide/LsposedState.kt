@@ -45,9 +45,7 @@ internal fun lsposedHooksActiveThisBoot(
     currentBootId: String,
 ): Boolean {
     val hookBootId = parseLsposedStateMetadata(stateRaw)[LsposedStateMetadata.BOOT_ID]
-    return Protocol.parseStatus(stateRaw)?.backend ==
-        HookIds.Backend.LSPOSED.id
-            .toLong() &&
+    return Protocol.parseStatus(stateRaw)?.backendId == HookIds.Backend.LSPOSED &&
         hookBootId != null &&
         hookBootId == currentBootId.trim()
 }

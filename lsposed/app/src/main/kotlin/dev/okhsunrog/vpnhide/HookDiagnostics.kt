@@ -17,8 +17,6 @@ private val BACKEND_STATE_SECTIONS =
         HookIds.Backend.LSPOSED to "lsposed_state",
     )
 
-private val STATUS_ERRORS_BY_CODE = HookIds.StatusError.entries.associateBy { it.code.toLong() }
-
 internal fun buildHookDiagnosticsText(
     context: Context,
     shellSnapshot: DebugShellSnapshot,
@@ -89,7 +87,7 @@ private fun StringBuilder.appendBackendStatus(
             appendLine("  note: Zygisk currently publishes heartbeat/config evidence but no counters")
         }
     } else {
-        val errorName = STATUS_ERRORS_BY_CODE[status.error]?.name ?: "UNKNOWN"
+        val errorName = status.statusError?.name ?: "UNKNOWN"
         appendLine("  status.backend=${status.backend}")
         appendLine("  status.kver=0x${status.kver.toString(16)}")
         appendLine("  status.hooks=0x${status.hooks.toString(16)}")

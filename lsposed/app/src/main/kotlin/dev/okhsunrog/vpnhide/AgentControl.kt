@@ -727,19 +727,9 @@ private fun BackendStatistics.toAgentBackendStatistics(): AgentBackendStatistics
 private fun BackendStatistics.statisticsStatusName(): String =
     when {
         unavailableReason != null -> "unavailable"
-
         status == null -> "no_data"
-
-        status.error ==
-            HookIds.StatusError.OK.code
-                .toLong()
-        -> "ok"
-
-        status.error ==
-            HookIds.StatusError.PARTIAL_HOOKS.code
-                .toLong()
-        -> "partial"
-
+        status.statusError == HookIds.StatusError.OK -> "ok"
+        status.statusError == HookIds.StatusError.PARTIAL_HOOKS -> "partial"
         else -> "error"
     }
 
