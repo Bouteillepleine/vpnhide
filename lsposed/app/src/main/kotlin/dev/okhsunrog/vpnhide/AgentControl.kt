@@ -36,22 +36,26 @@ internal object AgentControl {
      */
     suspend fun runFullDiagnostics(context: Context): AgentDiagnosticsReport =
         withAppContext(context) { context ->
-            val results = DiagnosticsCache.awaitFullResults(context)
-            if (results == null) {
-                val gatedState =
-                    if ((DiagnosticsCache.state.value as? DiagnosticsCache.State.Blocked)?.gate == DiagnosticGate.SELF_NOT_ROUTED) {
-                        "self_not_routed"
-                    } else {
-                        "vpn_off"
-                    }
-                AgentDiagnosticsReport(
-                    state = gatedState,
-                    score = AgentCheckScore(0, 0),
-                    nativeChecks = emptyList(),
-                    javaChecks = emptyList(),
-                )
-            } else {
-                results.toAgentDiagnosticsReport()
+            // awaitTerminal carries the reason (blocked gate / failed) instead of
+            // re-reading state.value after a null (a race) — same fix as the dashboard.
+            when (val terminal = DiagnosticsCache.awaitTerminal(context)) {
+                is DiagnosticsCache.State.Ready -> {
+                    terminal.results.toAgentDiagnosticsReport()
+                }
+
+                else -> {
+                    val state =
+                        when (terminal) {
+                            is DiagnosticsCache.State.Blocked -> terminal.gate.agentStateToken()
+                            else -> "failed"
+                        }
+                    AgentDiagnosticsReport(
+                        state = state,
+                        score = AgentCheckScore(0, 0),
+                        nativeChecks = emptyList(),
+                        javaChecks = emptyList(),
+                    )
+                }
             }
         }
 
@@ -635,6 +639,10 @@ private fun ProtectionCheck.toAgentProtectionSummary(): AgentProtectionSummary =
     when (this) {
         is ProtectionCheck.Blocked -> {
             AgentProtectionSummary(state = gate.agentStateToken())
+        }
+
+        ProtectionCheck.Failed -> {
+            AgentProtectionSummary(state = "failed")
         }
 
         is ProtectionCheck.Checked -> {

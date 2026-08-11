@@ -87,6 +87,15 @@ class DashboardUiStateTest {
                 warningCount = 0,
             ),
         )
+        // A failed run couldn't measure — attention, never "VPN off" (the VPN may be up).
+        assertEquals(
+            HeroStatus.Attention,
+            computeHeroStatus(
+                state = dashboardState(protection = ProtectionCheck.Failed),
+                errorCount = 0,
+                warningCount = 0,
+            ),
+        )
         assertEquals(
             HeroStatus.Attention,
             computeHeroStatus(

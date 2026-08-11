@@ -183,13 +183,14 @@ fun DashboardScreen(
             DashboardCache.refresh(scope, context, selfNeedsRestart)
             DiagnosticsCache.retry(scope, context)
         }
-        when ((loadedState.protection as? ProtectionCheck.Blocked)?.gate) {
-            DiagnosticGate.VPN_OFF -> {
+        val protection = loadedState.protection
+        when {
+            (protection as? ProtectionCheck.Blocked)?.gate == DiagnosticGate.VPN_OFF -> {
                 Spacer(Modifier.height(12.dp))
                 VpnOffPrompt(onRetry = onRetry)
             }
 
-            DiagnosticGate.NEEDS_RESTART -> {
+            (protection as? ProtectionCheck.Blocked)?.gate == DiagnosticGate.NEEDS_RESTART -> {
                 Spacer(Modifier.height(12.dp))
                 StatusBanner(
                     text = stringResource(R.string.dashboard_needs_restart),
@@ -198,12 +199,17 @@ fun DashboardScreen(
                 )
             }
 
-            DiagnosticGate.SELF_NOT_ROUTED -> {
+            (protection as? ProtectionCheck.Blocked)?.gate == DiagnosticGate.SELF_NOT_ROUTED -> {
                 Spacer(Modifier.height(12.dp))
                 SelfNotRoutedPrompt(onRetry = onRetry)
             }
 
-            else -> {} // Checked (null gate) or the unreachable ROUTED: no hero banner
+            protection is ProtectionCheck.Failed -> {
+                Spacer(Modifier.height(12.dp))
+                DiagnosticsFailedPrompt(onRetry = onRetry)
+            }
+
+            else -> {} // Checked: the per-layer tiles carry the status; no hero banner
         }
         Spacer(Modifier.height(20.dp))
 
@@ -686,7 +692,7 @@ private fun nativeSummaryText(protection: ProtectionCheck): String =
     when (protection) {
         // VPN off / app not in the tunnel / needs restart: the layer wasn't measured, so the
         // tile just reads "not checked" — the hero and banner carry the actual reason.
-        is ProtectionCheck.Blocked -> {
+        is ProtectionCheck.Blocked, ProtectionCheck.Failed -> {
             stringResource(R.string.dashboard_protection_unknown)
         }
 
@@ -698,14 +704,14 @@ private fun nativeSummaryText(protection: ProtectionCheck): String =
 @Composable
 private fun nativeSummaryAccent(protection: ProtectionCheck): Color =
     when (protection) {
-        is ProtectionCheck.Blocked -> MaterialTheme.colorScheme.onSurfaceVariant
+        is ProtectionCheck.Blocked, ProtectionCheck.Failed -> MaterialTheme.colorScheme.onSurfaceVariant
         is ProtectionCheck.Checked -> layerSummaryAccent(protection.native)
     }
 
 @Composable
 private fun javaSummaryText(protection: ProtectionCheck): String =
     when (protection) {
-        is ProtectionCheck.Blocked -> {
+        is ProtectionCheck.Blocked, ProtectionCheck.Failed -> {
             stringResource(R.string.dashboard_protection_unknown)
         }
 
@@ -717,7 +723,7 @@ private fun javaSummaryText(protection: ProtectionCheck): String =
 @Composable
 private fun javaSummaryAccent(protection: ProtectionCheck): Color =
     when (protection) {
-        is ProtectionCheck.Blocked -> MaterialTheme.colorScheme.onSurfaceVariant
+        is ProtectionCheck.Blocked, ProtectionCheck.Failed -> MaterialTheme.colorScheme.onSurfaceVariant
         is ProtectionCheck.Checked -> layerSummaryAccent(protection.java)
     }
 
