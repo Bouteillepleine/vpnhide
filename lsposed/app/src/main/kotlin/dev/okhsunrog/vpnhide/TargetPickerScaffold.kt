@@ -192,11 +192,20 @@ internal fun <T : TargetEntry> TargetPickerScreen(
     // Surface either cache's failure: a failed app-list scan used to leave
     // the picker stuck on an endless spinner (it had no error state at all).
     if ((targetsError != null && targets == null) || (appListError != null && cachedApps == null)) {
+        val packageScanFailed = appListError != null && cachedApps == null
         TargetsLoadErrorCard(
             onRetry = {
                 AppListCache.refresh(scope, context)
                 TargetsCache.refresh(scope, context)
             },
+            title =
+                stringResource(
+                    if (packageScanFailed) R.string.profile_scan_failed_title else R.string.targets_load_failed_title,
+                ),
+            message =
+                stringResource(
+                    if (packageScanFailed) R.string.profile_scan_failed_message else R.string.targets_load_failed_message,
+                ),
             modifier = modifier,
         )
         return
@@ -252,6 +261,14 @@ internal fun <T : TargetEntry> TargetPickerScreen(
     }
 
     Column(modifier = modifier.fillMaxSize()) {
+        if (appListError != null && cachedApps != null) {
+            StatusBanner(
+                text = stringResource(R.string.profile_scan_stale_message),
+                containerColor = StatusColors.warningContainer(),
+                contentColor = StatusColors.warningHeader(),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        }
         if (loading) {
             Box(
                 modifier = Modifier.fillMaxSize(),

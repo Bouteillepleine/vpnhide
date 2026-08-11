@@ -241,8 +241,11 @@ zygisk/                     # cdylib — the injected .so. deps: protocol (+ sha
 - **When it runs:** at boot from that module's `service.sh` as
   `activator --boot-wait`, and on Save from the app (`su <path>/activator`).
   Boot mode waits indefinitely for PackageManager readiness; Save mode keeps a
-  bounded wait so the UI cannot hang forever. Then it reads the canonical,
-  resolves, and writes its channel.
+  bounded wait so the UI cannot hang forever. It lists Android users first and
+  resolves every user separately instead of relying on the OEM-dependent
+  `--user all` aggregation. If any user scan fails, activation stops before
+  replacing runtime state with a partial target set. Then it reads the
+  canonical and writes its channel.
 - **KPM load preflight:** the KPM activator parses only the leading numeric
   `major.minor` from `uname -r`; patchlevels and Android/vendor suffixes do not
   affect the offset-table family. It refuses an unknown or unsupported family

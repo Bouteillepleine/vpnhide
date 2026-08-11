@@ -37,9 +37,9 @@ internal data class TargetsSnapshot(
     val canonicalConfig: CanonicalConfig?,
     val apatchSuperkeySaved: Boolean = false,
     val activeNativeBackendId: NativeBackendId? = null,
-    /** Exact package → UID projection from the same `pm --user all` snapshot
-     * the activator consumes. The picker uses it to enforce native capacity
-     * before Save, including profiles and shared UIDs. */
+    /** Exact package → UID projection from the shared per-user package
+     * inventory. The picker uses it to enforce native capacity before Save,
+     * including profiles and shared UIDs. */
     val packageUids: Map<String, List<Int>> = emptyMap(),
 ) {
     /** True if any native backend is installed (kmod / KPM / Zygisk). The
@@ -114,9 +114,11 @@ internal object TargetsCache : StateCache<TargetsSnapshot>(
         RootSnapshotCache.invalidate()
     }
 
-    override suspend fun load(force: Boolean): TargetsSnapshot {
-        val rootSnapshot =
-            if (force) RootSnapshotCache.refresh() else RootSnapshotCache.getOrLoad()
+    override suspend fun load(
+        @Suppress("UNUSED_PARAMETER") force: Boolean,
+    ): TargetsSnapshot {
+        val rootSnapshot = RootSnapshotCache.getOrLoad()
+        requireCompletePackageInventory(rootSnapshot.sections)
         return parseTargetsSnapshot(rootSnapshot)
     }
 }
@@ -129,10 +131,9 @@ internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
     val portsInstalled = sections["ports_prop"]?.isNotBlank() == true
     val canonical = runCatching { parseCanonicalConfig(sections["canonical_config"].orEmpty()) }.getOrNull()
 
-    // With `--user all`, multi-profile packages report comma-separated
-    // UIDs: `package:com.android.chrome uid:10187,1010187`. Each UID
-    // becomes its own entry in the reverse map so observer lookups
-    // from any profile resolve back to the same package name.
+    // The inventory contains one block per Android user. Each resolved UID
+    // becomes its own reverse-map entry so observer lookups from any profile
+    // resolve back to the same package name.
     val uidToPkg = mutableMapOf<Int, String>()
     val pkgToUids = parsePackageUidMap(sections["pm_packages"].orEmpty())
     pkgToUids.forEach { (pkg, uids) ->

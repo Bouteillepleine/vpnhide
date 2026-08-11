@@ -53,6 +53,28 @@ fn parses_pm_package_uids_for_all_profiles() {
 }
 
 #[test]
+fn parses_android_user_ids_without_treating_names_as_syntax() {
+    let users = parse_pm_user_ids(
+        "Users:\n\
+         \tUserInfo{0:Owner:c13} running\n\
+         \tUserInfo{10:Work:1030} running\n\
+         \tUserInfo{11:Second:Space:10} running\n",
+    );
+
+    assert_eq!(users, vec![0, 10, 11]);
+}
+
+#[test]
+fn merges_repeated_per_user_rows_and_accepts_apk_paths() {
+    let map = parse_pm_packages(
+        "package:/data/app/example/base.apk=com.example uid:10123\n\
+         package:/data/app/example/base.apk=com.example uid:1010123\n",
+    );
+
+    assert_eq!(map.uids_for("com.example"), &[10123, 1010123]);
+}
+
+#[test]
 fn projects_native_roles_to_wire() {
     let cfg = parse_canonical(
         r#"{

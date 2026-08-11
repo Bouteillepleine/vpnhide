@@ -218,8 +218,19 @@ impl PackageUidMap {
 
     fn from_pm_with_wait(wait: PmReadyWait) -> Result<Self> {
         wait_for_pm_ready(wait)?;
-        let stdout = pm_list_packages(&["list", "packages", "-U", "--user", "all"])?;
-        Ok(parse_pm_packages(&stdout))
+        let users_output = pm_list_users()?;
+        let user_ids = parse_pm_user_ids(&users_output);
+        if user_ids.is_empty() {
+            return Err("PackageManager returned no Android users".into());
+        }
+
+        let mut packages = BTreeMap::<String, Vec<u32>>::new();
+        for user_id in user_ids {
+            let user = user_id.to_string();
+            let stdout = pm_list_packages(&["list", "packages", "-U", "--user", user.as_str()])?;
+            merge_pm_packages(&mut packages, parse_pm_packages(&stdout));
+        }
+        Ok(Self { packages })
     }
 
     pub(crate) fn uids_for(&self, package: &str) -> &[u32] {
@@ -239,18 +250,46 @@ pub fn parse_pm_packages(output: &str) -> PackageUidMap {
                 uid_csv = Some(rest);
             }
         }
-        let (Some(pkg), Some(uid_csv)) = (pkg, uid_csv) else {
+        let (Some(pkg_token), Some(uid_csv)) = (pkg, uid_csv) else {
             continue;
         };
+        let pkg = pkg_token
+            .rsplit_once('=')
+            .map_or(pkg_token, |(_, package)| package);
         let uids = uid_csv
             .split(',')
             .filter_map(|s| s.parse::<u32>().ok())
             .collect::<Vec<_>>();
         if !uids.is_empty() {
-            packages.insert(pkg.to_owned(), uids);
+            let existing = packages.entry(pkg.to_owned()).or_default();
+            existing.extend(uids);
+            existing.sort_unstable();
+            existing.dedup();
         }
     }
     PackageUidMap { packages }
+}
+
+pub fn parse_pm_user_ids(output: &str) -> Vec<u32> {
+    let mut users = output
+        .lines()
+        .filter_map(|line| {
+            let after_prefix = line.split_once("UserInfo{")?.1;
+            after_prefix.split_once(':')?.0.trim().parse::<u32>().ok()
+        })
+        .collect::<Vec<_>>();
+    users.sort_unstable();
+    users.dedup();
+    users
+}
+
+fn merge_pm_packages(destination: &mut BTreeMap<String, Vec<u32>>, source: PackageUidMap) {
+    for (package, uids) in source.packages {
+        let existing = destination.entry(package).or_default();
+        existing.extend(uids);
+        existing.sort_unstable();
+        existing.dedup();
+    }
 }
 
 pub fn parse_canonical(json: &str) -> Result<CanonicalConfig> {

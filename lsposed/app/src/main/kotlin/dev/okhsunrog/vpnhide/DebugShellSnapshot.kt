@@ -8,7 +8,7 @@ internal data class DebugShellSnapshot(
 private const val DEBUG_SNAPSHOT_BEGIN_PREFIX = "__VPNHIDE_DEBUG_SECTION_BEGIN__:"
 private const val DEBUG_SNAPSHOT_END_PREFIX = "__VPNHIDE_DEBUG_SECTION_END__:"
 
-// The batch runs many heavy root commands (pm list --user all, dumpsys
+// The batch runs many heavy root commands (per-user package scans, dumpsys
 // connectivity, ip route show table all, fib_trie, several sha256sum). On a busy
 // device 20s was easy to overrun, which truncated the output mid-section and
 // silently dropped that section and every later one. Give it real headroom.
@@ -325,7 +325,13 @@ internal fun buildDebugShellSnapshotCommand(): String =
     emit_file canonical_config $CANONICAL_CONFIG_FILE
     emit_file hidden_pkgs $SS_HIDDEN_PKGS_FILE
     emit_file observer_uids $SS_OBSERVER_UIDS_FILE
-    emit_cmd pm_packages pm list packages -U --user all
+    ${
+        buildPerUserPackageInventoryShell(
+            sectionBeginPrefix = DEBUG_SNAPSHOT_BEGIN_PREFIX,
+            sectionEndPrefix = DEBUG_SNAPSHOT_END_PREFIX,
+            stderrRedirect = "2>&1",
+        )
+    }
 
     emit_cmd network_addr ip -d addr
     emit_eval network_operstate 'for IFACE in /sys/class/net/*; do echo "${'$'}(basename "${'$'}IFACE"): ${'$'}(cat "${'$'}IFACE/operstate" 2>/dev/null)"; done'

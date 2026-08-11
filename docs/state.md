@@ -70,8 +70,9 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 - `service.sh`: starts `activator --boot-wait` in the background.
 - `uninstall.sh`: removes kmod-specific persistent diagnostics and legacy
   targets under `/data/adb/vpnhide_kmod/`.
-- `activator`: Rust bin that reads canonical JSON, resolves packages via
-  `pm list packages -U --user all`, formats text wire, waits for
+- `activator`: Rust bin that reads canonical JSON, lists Android users and
+  resolves packages with `pm list packages -U --user <id>` for each user,
+  formats text wire, waits for
   `/proc/vpnhide_ctl` in boot mode, and writes `/proc/vpnhide_ctl`.
 - `vpnhide_kmod.ko`: kernel module binary.
 

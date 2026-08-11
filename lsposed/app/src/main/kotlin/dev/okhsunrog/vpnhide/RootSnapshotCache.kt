@@ -12,6 +12,11 @@ internal data class RootSnapshot(
     val sections: Map<String, String>,
 )
 
+internal data class PackageInventorySeed(
+    val packages: String,
+    val users: String,
+)
+
 internal class RootSnapshotException(
     message: String,
 ) : RuntimeException(message)
@@ -19,7 +24,7 @@ internal class RootSnapshotException(
 private const val ROOT_SNAPSHOT_BEGIN_PREFIX = "__VPNHIDE_ROOT_SECTION_BEGIN__:"
 private const val ROOT_SNAPSHOT_END_PREFIX = "__VPNHIDE_ROOT_SECTION_END__:"
 private const val ROOT_TIMING_PREFIX = "__VPNHIDE_ROOT_TIMING__:"
-private const val ROOT_SNAPSHOT_TIMEOUT_SEC: Long = 5
+private const val ROOT_SNAPSHOT_TIMEOUT_SEC: Long = 10
 
 internal val REQUIRED_ROOT_SNAPSHOT_SECTIONS =
     setOf(
@@ -53,6 +58,7 @@ internal val REQUIRED_ROOT_SNAPSHOT_SECTIONS =
         "getenforce",
         "kpatch_runtime",
         "pm_packages",
+        "pm_users",
         "proc_exists",
         "ports_chain",
         "lsposed_framework",
@@ -73,7 +79,7 @@ internal object RootSnapshotCache {
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
     private val mutex = Mutex()
-    private var preloadedPmPackages: String? = null
+    private var preloadedPackageInventory: PackageInventorySeed? = null
     private var runtimeProbeSource: String? = null
 
     fun setRuntimeProbeSource(path: String?) {
@@ -91,27 +97,27 @@ internal object RootSnapshotCache {
     suspend fun refresh(): RootSnapshot =
         withContext(Dispatchers.IO) {
             mutex.withLock {
-                preloadedPmPackages = null
+                preloadedPackageInventory = null
                 loadLocked()
             }
         }
 
     fun invalidate() {
         _snapshot.value = null
-        preloadedPmPackages = null
+        preloadedPackageInventory = null
     }
 
-    fun seedPmPackages(pmPackages: String?) {
-        preloadedPmPackages = pmPackages?.trimEnd()?.takeIf { it.isNotBlank() }
+    fun seedPackageInventory(seed: PackageInventorySeed?) {
+        preloadedPackageInventory = seed
     }
 
     private fun loadLocked(): RootSnapshot {
         _loading.value = true
         return try {
             StartupTrace.mark("root_snapshot_start")
-            val pmPackages = preloadedPmPackages
-            preloadedPmPackages = null
-            val sections = loadRootShellSnapshot(pmPackagesOverride = pmPackages, runtimeProbeSource = runtimeProbeSource)
+            val inventory = preloadedPackageInventory
+            preloadedPackageInventory = null
+            val sections = loadRootShellSnapshot(inventoryOverride = inventory, runtimeProbeSource = runtimeProbeSource)
             val snapshot = RootSnapshot(sections)
             _snapshot.value = snapshot
             StartupTrace.mark("root_snapshot_done")
@@ -126,13 +132,13 @@ internal object RootSnapshotCache {
 }
 
 private fun loadRootShellSnapshot(
-    pmPackagesOverride: String?,
+    inventoryOverride: PackageInventorySeed?,
     runtimeProbeSource: String?,
 ): Map<String, String> {
     val (exitCode, raw) =
         suExec(
             buildRootShellSnapshotCommand(
-                includePmPackages = pmPackagesOverride == null,
+                includePmPackages = inventoryOverride == null,
                 runtimeProbeSource = runtimeProbeSource,
             ),
             timeoutSec = ROOT_SNAPSHOT_TIMEOUT_SEC,
@@ -141,8 +147,9 @@ private fun loadRootShellSnapshot(
         throw RootSnapshotException("root snapshot command failed with exit=$exitCode")
     }
     val sections = parseRootShellSnapshot(raw).toMutableMap()
-    if (pmPackagesOverride != null) {
-        sections["pm_packages"] = pmPackagesOverride
+    if (inventoryOverride != null) {
+        sections["pm_packages"] = inventoryOverride.packages
+        sections["pm_users"] = inventoryOverride.users
     }
     validateRootSnapshotSections(sections)
     return sections
@@ -330,13 +337,7 @@ internal fun buildRootShellSnapshotCommand(
         .replace(
             "__VPNHIDE_PM_PACKAGES_FUNCTION__",
             if (includePmPackages) {
-                """
-                phase_pm_packages() {
-                  phase_start pm_packages
-                  emit_cmd pm_packages pm list packages -U --user all
-                  phase_end
-                }
-                """.trimIndent()
+                buildRootPackageInventoryPhase()
             } else {
                 ""
             },
@@ -344,6 +345,21 @@ internal fun buildRootShellSnapshotCommand(
             "__VPNHIDE_PM_PACKAGES_PHASE__",
             if (includePmPackages) "phase_pm_packages" else ":",
         )
+
+private fun buildRootPackageInventoryPhase(): String =
+    """
+    phase_pm_packages() {
+      phase_start pm_packages
+      ${
+        buildPerUserPackageInventoryShell(
+            sectionBeginPrefix = ROOT_SNAPSHOT_BEGIN_PREFIX,
+            sectionEndPrefix = ROOT_SNAPSHOT_END_PREFIX,
+            stderrRedirect = "2>/dev/null",
+        ).prependIndent("  ")
+    }
+      phase_end
+    }
+    """.trimIndent()
 
 internal fun parseRootShellSnapshot(
     raw: String,

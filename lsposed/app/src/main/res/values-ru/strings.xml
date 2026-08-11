@@ -26,6 +26,9 @@
     <string name="profile_kind_private">Приватное пространство</string>
     <string name="profile_kind_secondary">Пользователь %d</string>
     <string name="profile_kind_unknown">Профиль %d</string>
+    <string name="profile_scan_failed_title">Не удалос прочитать все профили Android</string>
+    <string name="profile_scan_failed_message">VPN Hide не получил полный список приложений из одного или нескольких профилей. Неполный список не загружен. При необходимости разблокируйте или запустите профиль, затем нажмите «Повторить».</string>
+    <string name="profile_scan_stale_message">Не удалось обновить все профили Android. Показан прежний полный список; настройки не удалялись.</string>
 
     <string name="apps_help_title">Как это работает</string>
     <string name="java_hooks_title">Java-хуки</string>

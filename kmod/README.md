@@ -62,7 +62,7 @@ ordinary `rmmod` is not supported.
 
 On boot:
 - `post-fs-data.sh` runs `insmod` to load the kernel module
-- `service.sh` runs the Rust activator, which reads `/data/system/vpnhide_config.json`, resolves package names via `pm list packages -U --user all`, and emits a `vpnhide 2 config` snapshot (docs/protocol.md) to `/proc/vpnhide_ctl`
+- `service.sh` runs the Rust activator, which reads `/data/system/vpnhide_config.json`, enumerates Android users, resolves package names for each user separately, and emits a `vpnhide 2 config` snapshot (docs/protocol.md) to `/proc/vpnhide_ctl`
 
 ### Target management
 

@@ -435,6 +435,14 @@ fn pm_list_packages(args: &[&str]) -> Result<String> {
     Ok(String::from_utf8(out.stdout)?)
 }
 
+fn pm_list_users() -> Result<String> {
+    let out = Command::new("pm").args(["list", "users"]).output()?;
+    if !out.status.success() {
+        return Err(format!("pm list users failed with status {}", out.status).into());
+    }
+    Ok(String::from_utf8(out.stdout)?)
+}
+
 fn pm_output_has_package(output: &str, package: &str) -> bool {
     let expected = format!("package:{package}");
     output
