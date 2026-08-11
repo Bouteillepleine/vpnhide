@@ -78,7 +78,7 @@ internal fun summarizeJavaLayer(
 ): LayerStatus {
     if (!lsposedActive) return LayerStatus.Inactive
     // Same shape as the native tile: hidden/leaks read off the who-hid-it outcome
-    // (attached by withJavaOutcomes), so Partial vs Broken is a measurement.
+    // (set at construction via javaCheck), so Partial vs Broken is a measurement.
     return LayerStatus.Active(
         hidden = javaChecks.count { it.outcome is CheckOutcome.HiddenByBackend },
         leaks = javaChecks.count { it.outcome is CheckOutcome.Leak },

@@ -231,10 +231,10 @@ private fun nativeCheckResult(
 
 /** Shared preamble for the capability-based checks: resolve the active
  * network's [NetworkCapabilities]. A missing active network / capabilities is
- * reported as `passed == null` (not measured) rather than a green pass: the
- * self-in-tunnel gate guarantees an active network is present, so an absent one
- * means the probe couldn't observe — not that a backend hid the VPN. Classifying
- * it PASS would paint a false "hidden by backend" ([classifyJavaOutcome]). */
+ * reported as not-measured (`javaCheck(name, clean = null, …)`) rather than a green
+ * pass: the self-in-tunnel gate guarantees an active network is present, so an
+ * absent one means the probe couldn't observe — not that a backend hid the VPN.
+ * Classifying it clean would paint a false "hidden by backend" ([classifyJavaOutcome]). */
 private inline fun withActiveCaps(
     cm: ConnectivityManager,
     name: String,
@@ -246,7 +246,7 @@ private inline fun withActiveCaps(
 }
 
 /** Shared preamble for the LinkProperties-based checks. A missing active network
- * / link properties is `passed == null` (not measured) for the same reason as
+ * / link properties is not-measured (`clean = null`) for the same reason as
  * [withActiveCaps] — the gate makes it an unobservable edge, not a clean pass. */
 private inline fun withActiveLinkProperties(
     cm: ConnectivityManager,
