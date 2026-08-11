@@ -37,8 +37,8 @@ pub const TELEMETRY_VERSION: u32 = 1;
 /// activator and the capacity guard test below tied to this constant.
 pub const KPM_ARGS_LEN: usize = 1024;
 
-/// Highest version this implementation reads for `kind`'s protocol.
-fn max_version(kind: Kind) -> u32 {
+/// Exact version this implementation reads for `kind`'s protocol.
+fn current_version(kind: Kind) -> u32 {
     match kind {
         Kind::Config => CONTROL_VERSION,
         Kind::Stats | Kind::Status => TELEMETRY_VERSION,
@@ -60,7 +60,7 @@ pub enum Kind {
     Status,
 }
 
-/// One `target <uid> <hookmask>` record (§4.3).
+/// One parsed UID-to-hookmask entry from a grouped `targets` record (§4.3).
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Target {
     pub uid: u32,
@@ -234,7 +234,7 @@ fn parse_hex_bare(tok: &[u8], bits: u32) -> Option<u64> {
 
 /// Parse the mandatory header line, returning `(kind, rest_after_header)`.
 /// `None` (reject whole) when the header is missing/malformed or its version is
-/// newer than this reader knows **for that kind** (§3 version fuse).
+/// not the current version **for that kind** (§3 version fuse).
 fn parse_header(buf: &[u8]) -> Option<(Kind, &[u8])> {
     let len = buf.len();
     let mut i = 0usize;
@@ -273,7 +273,7 @@ fn parse_header(buf: &[u8]) -> Option<(Kind, &[u8])> {
         };
         // The fuse is per kind: the version is only meaningful once we know
         // which payload it labels.
-        if ver > max_version(kind) {
+        if ver != current_version(kind) {
             return None;
         }
         return Some((kind, &buf[i..]));
@@ -304,7 +304,7 @@ pub fn peek_kind(buf: &[u8]) -> Option<Kind> {
 
 /// Parse a `config` payload. `None` if rejected whole.
 ///
-/// Rejected whole: bad/missing header, version too new, a non-config kind, a
+/// Rejected whole: bad/missing header, wrong version, a non-config kind, a
 /// missing or mismatched `end` record, or more uids than [`MAX_TARGET_UIDS`].
 /// Unknown keywords are still skipped (§4.5) so the grammar stays extensible.
 ///

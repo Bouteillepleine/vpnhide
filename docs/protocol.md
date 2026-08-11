@@ -182,7 +182,8 @@ These are *why* the format is what it is. Do not "simplify" against them.
   rejected *whole* — a stray `echo 'debug 0' > node` does not silently wipe
   state, it errors. "Valid full state, or a loud refusal, never silent-partial."
 - **Version gates compatibility.** A reader knows only its own version. A payload
-  whose version is greater than known is rejected whole (not parsed). This turns
+  whose version is not exactly the current version for its kind is rejected
+  whole (not parsed). This turns
   any drift that slips past tests into a loud refusal instead of a silent
   misparse — exactly what is wanted across the 7-KMI matrix where
   userspace↔kernel skew is inevitable.
@@ -242,7 +243,8 @@ vpnhide <version> <kind>
 - `<kind>` — `config` (app → backend), `stats` (backend → app), or `status`
   (backend → app: module health + errors, §4.3).
 
-A payload without this header, or with `version` > the reader's known version,
+A payload without this header, or with a version other than the reader's exact
+current version for that kind,
 is rejected whole (§3).
 
 "Significant" is decided by **non-blank, non-comment alone** — a non-ASCII line
@@ -735,15 +737,17 @@ Recorded so they are not re-litigated.
 
 ---
 
-## 10. Open decisions (resolve before freezing version 1)
+## 10. Historical wire decisions
 
-- **OPEN-1 — `0x` prefix. RESOLVED: mandatory on data fields.** It is a
-  visual/parse anchor at ~zero cost, and "mandatory" (not "optional") removes the
-  two-spellings-of-one-number drift seam.
+- **OPEN-1 — `0x` prefix. RESOLVED per protocol.** Telemetry v1 keeps it
+  mandatory as a visual/parse anchor; control v2 forbids it to reclaim two
+  bytes per number under the KPM transport ceiling. Neither protocol makes the
+  prefix optional, so each value still has one spelling.
 - **OPEN-2 — agent self-description level. RESOLVED: positional-after-keyword.**
-  `target <uid> <hookmask>` — the keyword names the record, fields are positional.
-  `key=value` buys marginal readability for extra bytes and a second split; the
-  keyword already self-describes for an agent reading raw.
+  Control v2 uses `targets <hookmask> <uid>...`: the keyword names the grouped
+  record and fields remain positional. `key=value` buys marginal readability
+  for extra bytes and a second split; the keyword already self-describes for an
+  agent reading raw.
 - **OPEN-3 — stats counter type. RESOLVED: `u64` cumulative-since-load.** Reads
   are non-destructive (no reset-on-read race between two readers), it never
   wraps in practice, and deltas are the app's job — which suits the pull model

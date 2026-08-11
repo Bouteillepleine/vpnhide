@@ -38,7 +38,7 @@ echo "REGISTERED=$REGISTERED"
 # the old `echo <uid> > /proc/vpnhide_targets` + `echo 1 > /proc/vpnhide_debug`
 # — both folded into the one /proc/vpnhide_ctl node.
 set_target() {
-	printf 'vpnhide 1 config\ndebug 1\ntarget 0x%x 0x20003ff\n' "$1" \
+	printf 'vpnhide 2 config\ndebug 1\ntargets 20003ff %x\nend 1\n' "$1" \
 		> /proc/vpnhide_ctl 2>/dev/null
 }
 

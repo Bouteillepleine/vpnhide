@@ -1571,8 +1571,8 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 		unsigned long available, full, n;
 
 		if (kind == VPNHIDE_KIND_STATS) {
-			int count = snapshot_stats(
-				stats_snapshot, VPNHIDE_STATS_SNAPSHOT_MAX);
+			int count = snapshot_stats(stats_snapshot,
+						   VPNHIDE_STATS_SNAPSHOT_MAX);
 
 			full = vpnhide_format_stats(buf, sizeof(buf),
 						    stats_snapshot, count);

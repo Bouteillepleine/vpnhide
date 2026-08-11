@@ -325,7 +325,7 @@ enum vpnhide_kind {
 	VPNHIDE_KIND_STATUS = 2,
 };
 
-/* one `target <uid> <hookmask>` config record (§4.3) */
+/* one parsed uid-to-hookmask entry from a grouped `targets` record (§4.3) */
 struct vpnhide_target {
 	unsigned int uid;
 	unsigned int hookmask;
@@ -563,7 +563,7 @@ static inline int vpnhide_tok_hex(const char *b, unsigned long ts,
  * Parse the mandatory header line. Returns the kind, and (if `next` is given)
  * sets *next to the offset of the first record line. Rejects the whole payload
  * (VPNHIDE_KIND_INVALID) when the header is missing/malformed or its version
- * is newer than this reader knows (§3 version fuse).
+ * is not the current version for that kind (§3 version fuse).
  */
 static inline enum vpnhide_kind
 vpnhide_parse_header(const char *b, unsigned long len, unsigned long *next)
@@ -594,15 +594,15 @@ vpnhide_parse_header(const char *b, unsigned long len, unsigned long *next)
 		/* The fuse is per kind: a version only means something once we
 		 * know which payload it labels. */
 		if (vpnhide_tok_eq(b, ts, te, "config"))
-			return ver > VPNHIDE_CONTROL_VERSION ?
+			return ver != VPNHIDE_CONTROL_VERSION ?
 				       VPNHIDE_KIND_INVALID :
 				       VPNHIDE_KIND_CONFIG;
 		if (vpnhide_tok_eq(b, ts, te, "stats"))
-			return ver > VPNHIDE_TELEMETRY_VERSION ?
+			return ver != VPNHIDE_TELEMETRY_VERSION ?
 				       VPNHIDE_KIND_INVALID :
 				       VPNHIDE_KIND_STATS;
 		if (vpnhide_tok_eq(b, ts, te, "status"))
-			return ver > VPNHIDE_TELEMETRY_VERSION ?
+			return ver != VPNHIDE_TELEMETRY_VERSION ?
 				       VPNHIDE_KIND_INVALID :
 				       VPNHIDE_KIND_STATUS;
 		return VPNHIDE_KIND_INVALID;

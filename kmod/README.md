@@ -62,7 +62,7 @@ ordinary `rmmod` is not supported.
 
 On boot:
 - `post-fs-data.sh` runs `insmod` to load the kernel module
-- `service.sh` runs the Rust activator, which reads `/data/system/vpnhide_config.json`, resolves package names via `pm list packages -U --user all`, and emits a `vpnhide 1 config` snapshot (docs/protocol.md) to `/proc/vpnhide_ctl`
+- `service.sh` runs the Rust activator, which reads `/data/system/vpnhide_config.json`, resolves package names via `pm list packages -U --user all`, and emits a `vpnhide 2 config` snapshot (docs/protocol.md) to `/proc/vpnhide_ctl`
 
 ### Target management
 
@@ -74,9 +74,9 @@ On boot:
 adb shell su -c '/data/adb/modules/vpnhide_kmod/activator'
 
 # Or push a control-config snapshot straight to the kernel (docs/protocol.md):
-# header + folded debug flag + one target line per UID
-# (0x20003ff = all current kernel hooks).
-adb shell su -c 'printf "vpnhide 1 config\ndebug 0\ntarget 0x28b7 0x20003ff\n" > /proc/vpnhide_ctl'
+# header + folded debug flag + grouped target UIDs + mandatory end count
+# (20003ff = all current kernel hooks; control v2 uses bare hex).
+adb shell su -c 'printf "vpnhide 2 config\ndebug 0\ntargets 20003ff 28b7\nend 1\n" > /proc/vpnhide_ctl'
 ```
 
 The app writes to **two layers** simultaneously:

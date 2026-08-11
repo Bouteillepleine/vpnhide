@@ -135,8 +135,8 @@ internal object Protocol {
                 }
             // The fuse is per protocol: a version only means something once we
             // know which payload it labels.
-            val max = if (kind == Kind.CONFIG) CONTROL_VERSION else TELEMETRY_VERSION
-            if (ver > max) return null
+            val current = if (kind == Kind.CONFIG) CONTROL_VERSION else TELEMETRY_VERSION
+            if (ver != current) return null
             return Header(kind, ls.subList(i + 1, ls.size))
         }
         return null

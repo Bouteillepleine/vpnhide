@@ -23,7 +23,7 @@
  *     SO_BINDTOIFINDEX for hidden VPN interfaces before socket state changes
  *
  * Control plane: a single folded node /proc/vpnhide_ctl carries the shared
- * control/stats protocol (docs/protocol.md). A write is a `vpnhide 1 config`
+ * control/stats protocol (docs/protocol.md). A write is a `vpnhide 2 config`
  * snapshot (per-UID hook mask + debug flag); a read returns the backend
  * `status` + `stats`. This replaces the old /proc/vpnhide_targets (decimal UID
  * list) and /proc/vpnhide_debug nodes — the same wire format every backend now
@@ -310,7 +310,7 @@ static ssize_t ctl_write(struct file *file, const char __user *ubuf,
 				 &default_mask);
 	kfree(buf);
 
-	/* A payload with no valid header / a too-new version / a broken `end`
+	/* A payload with no valid header / the wrong version / a broken `end`
 	 * fuse is rejected whole (§3) — a loud -EINVAL, never a silent partial
 	 * wipe. */
 	if (n < 0)
