@@ -27,10 +27,10 @@ can't raise the app count because stats won't fit" conflates the two.
 
 | constraint | where | value | binds at |
 |---|---|---|---|
-| `MAX_TARGET_UIDS` | `crates/protocol/src/lib.rs`, mirrored in both backends | 64 | **64 targets — currently binding** |
+| `MAX_TARGET_UIDS` | `crates/protocol/src/lib.rs`, mirrored in both backends | 160 | **160 targets — currently binding** |
 | `KPM_ARGS_LEN` | `kmod/third_party/KernelPatch/kernel/include/kpmodule.h` | 1024 B | ~190 targets sharing one mask; fewer with many distinct masks |
 | `ctl_write` payload cap | `kmod/vpnhide_kmod.c` (`count > PAGE_SIZE`) | 4096 B | ~800 targets |
-| parse scratch on the kernel stack | `ctl_write`, `vpnhide_kpm_ctl0` | 8 B/target | thousands (16 KiB arm64 stack, shared with a 4 KiB reply buffer in the KPM) |
+| config parse snapshot | `.ko` heap; KPM serialized static scratch | 8 B/target | does not grow either kernel stack |
 
 Measured control payloads under the v2 grammar (one shared full kernel
 hookmask, five-digit UIDs):
@@ -56,7 +56,7 @@ whole-payload rejection. See [protocol.md §4.3](protocol.md).
 
 **The cap counts UIDs, not apps.** `resolver.uids_for()` returns every UID a
 package has across profiles, so an app present in a work profile spends two
-slots. A user with a work profile reaches 64 UIDs at around 32 apps.
+slots. A user with a work profile reaches 160 UIDs at around 80 apps.
 
 ## Telemetry — how many apps report counters
 
@@ -82,8 +82,9 @@ The two backends are not in the same position:
 KPM keeps no serialisation snapshot. Its live table stores only the 11
 kernel-owned hook counters rather than the 27-id global registry, and a zero UID
 is the hash-table empty sentinel, so no separate `stats_used` array is needed.
-At the current 64-target cap the resulting `.bss` is **6480 B**, down from
-23120 B before compact storage and cursor output.
+At the current 160-target cap, including the static config parse scratch, the
+resulting `.bss` is **18004 B**. That is still below the **23120 B** used by the
+old 64-target layout before compact storage and cursor output.
 
 ## Raising a ceiling — options and cost
 
@@ -91,13 +92,13 @@ Ordered by cost. None of these are scheduled; this is the menu.
 
 ### Control
 
-1. **Do not raise `MAX_TARGET_UIDS` to ~160 by itself.** A typical one-mask,
-   five-digit-UID wire fits the KPM transport (848 B), and the kmod payload cap
-   has room, but KPM `.bss` rises from 23120 B to 45392 B because the live stats
-   table still follows the target cap. That returns it to the static-size range
-   already known to break KernelPatch boot on 6.12. First decouple or redesign
-   live stats storage, move the parse scratch off the kernel stack (8 B/target),
-   then re-run the 6.12 KPM boot harness. The hard cap therefore remains 64.
+1. **The shipped cap is 160.** Compact 11-hook stats storage and cursor output
+   keep KPM `.bss` at 18004 B, and config parsing uses serialized static scratch
+   rather than growing the KPM stack. A typical one-mask, five-digit-UID wire is
+   848 B and fits the KPM transport; maximum-width UIDs or many distinct masks
+   may hit the independent byte limit sooner. The activator validates the exact
+   formatted size and rejects the whole KPM update rather than sending a
+   truncated target set.
 2. **Past ~190 targets on the KPM**, the 1024-byte transport is the wall. The
    only way through is chunking — `config-begin` / `config-chunk` /
    `config-commit` across several ctl0 calls — which is a control-protocol
@@ -138,12 +139,12 @@ projection.
 
 ## Re-measuring
 
-Nothing here should be trusted because it is written down. The control-side
-figure is guarded by a test — `crates/protocol` asserts that all
-`MAX_TARGET_UIDS` targets, using maximum-width UIDs and one shared full mask,
-fit in `KPM_ARGS_LEN` with room for its trailing NUL. Arbitrary per-app masks
-can cost more group headers, so the activator also checks the formatted wire's
-actual byte length before KPM delivery.
+Nothing here should be trusted because it is written down. The representative
+control-side figure is guarded by a test — `crates/protocol` asserts that all
+`MAX_TARGET_UIDS` ordinary Android app UIDs, using one shared full mask, fit in
+`KPM_ARGS_LEN` with room for its trailing NUL. Maximum-width UIDs and arbitrary
+per-app masks can cost more bytes, so the activator also checks the formatted
+wire's actual length before KPM delivery.
 
 The telemetry table is not guarded, because its input is a usage profile rather
 than a constant. To redo it, format `n` uids × `k` hooks with

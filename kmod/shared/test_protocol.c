@@ -17,7 +17,7 @@
 /* Config capacity must equal vpnhide_protocol::MAX_TARGET_UIDS: the shared
  * vectors pin over-ceiling payloads as REJECT, so C and Rust have to be
  * rejecting at the same count. */
-#define CFG_MAX_TARGETS 64
+#define CFG_MAX_TARGETS 160
 #define MAX_FIELDS 8
 
 static int failures;

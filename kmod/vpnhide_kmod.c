@@ -78,7 +78,7 @@
 /* Mirror of vpnhide_protocol::MAX_TARGET_UIDS (crates/protocol/src/lib.rs); the
  * activator truncates the projected config to this many targets, so keep both in
  * sync. */
-#define MAX_TARGET_UIDS 64
+#define MAX_TARGET_UIDS 160
 
 /*
  * Pre-allocated kretprobe instance pool size, applied to every probe.
@@ -129,7 +129,7 @@ static bool debug_enabled;
 
 /* Parallel arrays, not an array of structs: the lookup below touches only the
  * uids, so keeping them contiguous halves the cache lines a search walks
- * (a full 64-uid set is one 256-byte run). The parser hands them over sorted
+ * (a full 160-uid set is one 640-byte run). The parser hands them over sorted
  * ascending (protocol §4.3), which is what lets the search be a bisection. */
 static u32 target_uids[MAX_TARGET_UIDS];
 static u32 target_masks[MAX_TARGET_UIDS];
@@ -265,7 +265,7 @@ static ssize_t ctl_write(struct file *file, const char __user *ubuf,
 			 size_t count, loff_t *ppos)
 {
 	char *buf;
-	struct vpnhide_target newt[MAX_TARGET_UIDS];
+	struct vpnhide_target *newt;
 	unsigned int default_mask = 0;
 	int n, dbg;
 
@@ -275,8 +275,14 @@ static ssize_t ctl_write(struct file *file, const char __user *ubuf,
 	buf = kmalloc(count + 1, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
+	newt = kcalloc(MAX_TARGET_UIDS, sizeof(*newt), GFP_KERNEL);
+	if (!newt) {
+		kfree(buf);
+		return -ENOMEM;
+	}
 
 	if (copy_from_user(buf, ubuf, count)) {
+		kfree(newt);
 		kfree(buf);
 		return -EFAULT;
 	}
@@ -292,8 +298,10 @@ static ssize_t ctl_write(struct file *file, const char __user *ubuf,
 	/* A payload with no valid header / the wrong version / a broken `end`
 	 * fuse is rejected whole (§3) — a loud -EINVAL, never a silent partial
 	 * wipe. */
-	if (n < 0)
+	if (n < 0) {
+		kfree(newt);
 		return -EINVAL;
+	}
 
 	spin_lock(&targets_lock);
 	{
@@ -313,6 +321,7 @@ static ssize_t ctl_write(struct file *file, const char __user *ubuf,
 		WRITE_ONCE(active_hook_mask, mask);
 	}
 	spin_unlock(&targets_lock);
+	kfree(newt);
 	WRITE_ONCE(debug_enabled, dbg ? true : false);
 
 	pr_info(MODNAME ": config applied — %d targets, debug=%d\n", n, dbg);

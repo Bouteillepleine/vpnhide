@@ -56,7 +56,7 @@ KPM_DESCRIPTION("Hide VPN interfaces from selected UIDs (KPM backend, beta)");
 /* Mirror of vpnhide_protocol::MAX_TARGET_UIDS (crates/protocol/src/lib.rs); the
  * activator truncates the projected config to this many targets, so keep both in
  * sync. */
-#define MAX_TARGET_UIDS 64
+#define MAX_TARGET_UIDS 160
 
 /* ------------------------------------------------------------------ */
 /*  Resolved state                                                    */
@@ -81,10 +81,16 @@ static const struct vpnhide_offsets *off; /* selected per running kver */
  * context; the userspace activator retries the rare collision. */
 /* Parallel arrays, not an array of structs: the hot-path lookup touches only
  * the uids, so keeping them contiguous halves the cache lines a search walks
- * (a full 64-uid set is one 256-byte run). The parser hands them over sorted
+ * (a full 160-uid set is one 640-byte run). The parser hands them over sorted
  * ascending (protocol §4.3), which is what lets the search be a bisection. */
 static uint32_t target_uids[MAX_TARGET_UIDS];
 static uint32_t target_masks[MAX_TARGET_UIDS];
+/* KPM has no allocator API suitable for ctl0 parsing. Keep the enlarged
+ * snapshot in static storage, serialized independently from the live-config
+ * seqlock so hook readers never spin while userspace text is being parsed. */
+static struct vpnhide_target config_staging[MAX_TARGET_UIDS];
+static unsigned int load_uid_staging[MAX_TARGET_UIDS];
+static volatile uint32_t config_staging_writer;
 static int nr_targets;
 /* Hookmask for any uid NOT in target_uids (protocol §4.3 `default`). Zero — the
  * shipped blacklist — makes the array the set to act on; non-zero inverts that
@@ -178,6 +184,24 @@ static void cfg_write_end(void)
 {
 	__atomic_fetch_add(&cfg_seq, 1, __ATOMIC_RELEASE);
 	__atomic_store_n(&cfg_writer, 0, __ATOMIC_RELEASE);
+}
+
+/* The parser needs a full target snapshot, but putting 160 entries on the KPM
+ * stack would consume 1280 bytes before ctl0's other locals. Serialize use of
+ * the static scratch without making cfg_seq odd: readers keep running while
+ * parsing, and only the short copy into live arrays takes the seqlock. */
+static int config_staging_try_claim(void)
+{
+	uint32_t expected = 0;
+
+	return __atomic_compare_exchange_n(&config_staging_writer, &expected, 1,
+					   false, __ATOMIC_ACQUIRE,
+					   __ATOMIC_RELAXED);
+}
+
+static void config_staging_release(void)
+{
+	__atomic_store_n(&config_staging_writer, 0, __ATOMIC_RELEASE);
 }
 
 /* True if `hook_id` is enabled for the calling uid (per-hook gate, §4.3).
@@ -1389,8 +1413,6 @@ static int resolve_symbols(void)
  */
 static void apply_targets(const char *s)
 {
-	unsigned int uids[MAX_TARGET_UIDS];
-	struct vpnhide_target sorted[MAX_TARGET_UIDS];
 	unsigned long n = 0;
 	int cnt, i, nsorted = 0;
 
@@ -1398,19 +1420,21 @@ static void apply_targets(const char *s)
 		return;
 	while (s[n])
 		n++;
-	cnt = vpnhide_parse_target_uids(s, n, uids, MAX_TARGET_UIDS);
+	cnt = vpnhide_parse_target_uids(s, n, load_uid_staging,
+					MAX_TARGET_UIDS);
 	/* The load-args list arrives in whatever order the caller wrote it, but
 	 * the hot-path lookup bisects, so it has to be ordered here. Reuse the
 	 * protocol's sorted insert rather than a second ordering rule (it dedups
 	 * too). This runs once at init, off the hot path. */
 	for (i = 0; i < cnt; i++)
-		vpnhide_target_set(sorted, &nsorted, MAX_TARGET_UIDS, uids[i],
+		vpnhide_target_set(config_staging, &nsorted, MAX_TARGET_UIDS,
+				   load_uid_staging[i],
 				   VPNHIDE_KERNEL_HOOK_MASK);
 	if (!cfg_try_write_begin())
 		return; /* init path has no concurrent writer; defensive only */
 	for (i = 0; i < nsorted; i++) {
-		target_uids[i] = sorted[i].uid;
-		target_masks[i] = sorted[i].hookmask;
+		target_uids[i] = config_staging[i].uid;
+		target_masks[i] = config_staging[i].hookmask;
 	}
 	nr_targets = nsorted;
 	default_hookmask = 0;
@@ -1579,23 +1603,28 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 	kind = vpnhide_peek_kind(args, n_args);
 
 	if (kind == VPNHIDE_KIND_CONFIG) {
-		/* Parse into a private stack snapshot before claiming the very short
-		 * writer gate. A bad header/version never touches live state; a
+		/* Parse into serialized static scratch before claiming the very short
+		 * live writer gate. A bad header/version never touches live state; a
 		 * concurrent ctl0 writer gets -2 (busy) and userspace retries. */
-		struct vpnhide_target new_targets[MAX_TARGET_UIDS];
 		unsigned int default_mask = 0;
 		int dbg = -1; /* absent debug record preserves live value */
 		int i, n;
 
-		n = vpnhide_parse_config(args, n_args, new_targets,
+		if (!config_staging_try_claim())
+			return -2;
+		n = vpnhide_parse_config(args, n_args, config_staging,
 					 MAX_TARGET_UIDS, &dbg, &default_mask);
-		if (n < 0)
+		if (n < 0) {
+			config_staging_release();
 			return -1; /* rejected whole (bad header / end fuse) */
-		if (!cfg_try_write_begin())
+		}
+		if (!cfg_try_write_begin()) {
+			config_staging_release();
 			return -2; /* concurrent config writer; retry from userspace */
+		}
 		for (i = 0; i < n; i++) {
-			target_uids[i] = new_targets[i].uid;
-			target_masks[i] = new_targets[i].hookmask &
+			target_uids[i] = config_staging[i].uid;
+			target_masks[i] = config_staging[i].hookmask &
 					  VPNHIDE_KERNEL_HOOK_MASK;
 		}
 		nr_targets = n;
@@ -1604,6 +1633,7 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 		if (dbg >= 0)
 			debug_enabled = dbg ? true : false;
 		cfg_write_end();
+		config_staging_release();
 		vpnhide_dbg("ctl0 config: %d targets, debug=%d\n", n,
 			    debug_enabled ? 1 : 0);
 		return 0;

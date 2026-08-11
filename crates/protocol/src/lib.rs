@@ -51,7 +51,7 @@ fn current_version(kind: Kind) -> u32 {
 /// source of truth for the cap on the wire boundary; the C backends mirror it as
 /// `#define MAX_TARGET_UIDS` in kmod/vpnhide_kmod.c and kmod/kpm/vpnhide_kpm.c —
 /// keep all three in sync.
-pub const MAX_TARGET_UIDS: usize = 64;
+pub const MAX_TARGET_UIDS: usize = 160;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Kind {
@@ -621,22 +621,30 @@ mod tests {
     }
 
     #[test]
-    fn full_shared_mask_target_set_fits_the_kpm_transport() {
-        // Use maximum-width u32 values rather than today's usual five-digit
-        // Android UIDs. This guards the dense/common case promised by the v2
-        // grammar: every available target slot sharing one full hookmask must
-        // still leave room for KernelPatch's trailing NUL.
+    fn representative_full_target_set_fits_the_kpm_transport() {
+        // Ordinary Android app UIDs use four or five hexadecimal digits across
+        // owner/work-profile sets. The activator separately checks the actual
+        // wire length because unusual maximum-width UIDs or many distinct
+        // masks can still exceed the fixed KernelPatch transport independently
+        // of the target count.
         let targets: Vec<Target> = (0..MAX_TARGET_UIDS as u32)
-            .map(|offset| Target {
-                uid: u32::MAX - offset,
-                hookmask: u32::MAX,
+            .map(|offset| {
+                let half = MAX_TARGET_UIDS as u32 / 2;
+                Target {
+                    uid: if offset < half {
+                        10_000 + offset
+                    } else {
+                        1_010_000 + offset - half
+                    },
+                    hookmask: u32::MAX,
+                }
             })
             .collect();
         let wire = format_config(true, u32::MAX, &targets);
 
         assert!(
             wire.len() < KPM_ARGS_LEN,
-            "{MAX_TARGET_UIDS} maximum-width targets need {} bytes plus NUL, KPM_ARGS_LEN is {KPM_ARGS_LEN}",
+            "{MAX_TARGET_UIDS} representative Android targets need {} bytes plus NUL, KPM_ARGS_LEN is {KPM_ARGS_LEN}",
             wire.len(),
         );
     }

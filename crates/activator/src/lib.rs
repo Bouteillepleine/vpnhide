@@ -63,7 +63,7 @@ const KPM_SUPPORTED_KERNEL_PAIRS: &[(u32, u32)] = &[
 ];
 // The native-target cap is owned by the shared protocol crate (and mirrored by
 // the C backends' `#define MAX_TARGET_UIDS`); alias it here so all three stay in
-// lock-step instead of restating the literal 64.
+// lock-step instead of restating the literal capacity.
 const MAX_NATIVE_TARGETS: usize = MAX_TARGET_UIDS;
 // The control protocol carries a default hookmask for every uid NOT listed as a
 // target, which is the mechanism a whitelist mode would ride on: non-zero flips

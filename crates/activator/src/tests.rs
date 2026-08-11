@@ -543,7 +543,8 @@ fn apatch_kernel_version_hint_parses_dmesg() {
 
 #[test]
 fn projection_is_bounded_to_backend_target_capacity() {
-    let apps = (0..70)
+    let projected = MAX_NATIVE_TARGETS + 10;
+    let apps = (0..projected)
         .map(|i| {
             (
                 format!("com.example.{i:02}"),
@@ -560,15 +561,15 @@ fn projection_is_bounded_to_backend_target_capacity() {
         apps,
         settings: Settings::default(),
     };
-    let pm = (0..70)
+    let pm = (0..projected)
         .map(|i| format!("package:com.example.{i:02} uid:{}", 10_000 + i))
         .collect::<Vec<_>>()
         .join("\n");
     let wire = project_native_with_resolver(&cfg, &parse_pm_packages(&pm));
 
-    // All 70 share one mask, so the whole set rides one `targets` record and the
-    // count lives in the `end` fuse — which the backend checks, so the producer
-    // has to cap itself here rather than let the backend reject the payload.
+    // Every app shares one mask, so the whole set rides one `targets` record
+    // and the count lives in the `end` fuse — which the backend checks, so the
+    // producer has to cap itself here rather than let the backend reject it.
     assert_eq!(
         wire.lines().filter(|l| l.starts_with("targets ")).count(),
         1
@@ -587,8 +588,8 @@ fn projection_is_bounded_to_backend_target_capacity() {
     // payload carrying more uids than a backend can hold.
     assert!(vpnhide_protocol::parse_config(wire.as_bytes()).is_some());
     assert_eq!(
-        native_target_capacity_warning(70),
-        "vpnhide-warning native_target_cap total=70 cap=64 dropped=6",
+        native_target_capacity_warning(projected),
+        "vpnhide-warning native_target_cap total=170 cap=160 dropped=10",
     );
 }
 

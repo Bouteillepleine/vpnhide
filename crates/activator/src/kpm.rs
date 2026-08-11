@@ -194,9 +194,9 @@ impl KpmClient {
                 Err(_) if attempt + 1 < ATTEMPTS => {
                     // A concurrent boot/app ctl0 config gets the KPM's short
                     // busy return instead of spinning inside the kernel. The
-                    // critical section is only a 64-entry copy, so a brief
-                    // retry also covers runtimes that flatten negative return
-                    // codes to a generic CLI failure.
+                    // critical section is only a bounded target-array copy,
+                    // so a brief retry also covers runtimes that flatten
+                    // negative return codes to a generic CLI failure.
                     thread::sleep(Duration::from_millis(20));
                 }
                 Err(error) => return Err(error),
