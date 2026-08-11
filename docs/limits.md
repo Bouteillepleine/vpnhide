@@ -141,11 +141,13 @@ that is telemetry-only and already degrades visibly.
   `# vpnhide truncated` marker, which exists on the KPM path. After the clamp
   fix a truncated kmod read ends on a whole record, so the numbers shown are
   correct — there are just silently fewer of them.
-- The activator caps the target set at `MAX_NATIVE_TARGETS` and warns on stderr,
-  but `ConfigChannels.nativeActivatorCommand()` runs it without `2>&1` and
-  `suExec` discards stderr, so a user who selects more apps than fit is told
-  nothing. The backend now rejects an over-capacity payload outright, so this is
-  no longer silent *corruption* — but it is still a silent *cap*.
+
+Target-set overflow is surfaced after Save: the activator emits a stable
+`vpnhide-warning native_target_cap` marker with the resolved UID totals, the app
+captures activator stderr, and the picker shows a localized long-duration
+warning instead of the normal success message. The canonical package selection
+is still saved in full; the warning describes the capped native runtime
+projection.
 
 ## Re-measuring
 

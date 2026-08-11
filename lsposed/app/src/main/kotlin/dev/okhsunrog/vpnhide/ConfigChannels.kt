@@ -10,9 +10,9 @@ import android.content.Context
 internal object ConfigChannels {
     /** Shell part running exactly one native activator by backend priority. */
     fun nativeActivatorCommand(): String =
-        "if [ -x $KMOD_ACTIVATOR ] && [ ! -f $KMOD_MODULE_DIR/disable ]; then $KMOD_ACTIVATOR; " +
-            "elif [ -x $KPM_ACTIVATOR ] && [ ! -f $KPM_MODULE_DIR/disable ]; then $KPM_ACTIVATOR; " +
-            "elif [ -x $ZYGISK_ACTIVATOR ] && [ ! -f $ZYGISK_MODULE_DIR/disable ]; then $ZYGISK_ACTIVATOR; " +
+        "if [ -x $KMOD_ACTIVATOR ] && [ ! -f $KMOD_MODULE_DIR/disable ]; then $KMOD_ACTIVATOR 2>&1; " +
+            "elif [ -x $KPM_ACTIVATOR ] && [ ! -f $KPM_MODULE_DIR/disable ]; then $KPM_ACTIVATOR 2>&1; " +
+            "elif [ -x $ZYGISK_ACTIVATOR ] && [ ! -f $ZYGISK_MODULE_DIR/disable ]; then $ZYGISK_ACTIVATOR 2>&1; " +
             "else true; fi"
 
     /** Shell part running the optional ports activator when its module is enabled. */

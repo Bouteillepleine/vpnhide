@@ -341,13 +341,7 @@ pub(crate) fn project_native_with_resolver_for_family(
     // no diagnostic. Warn so a user with more native targets than the backend can
     // hold learns their protection is partial, instead of failing closed silently.
     if by_uid.len() > MAX_NATIVE_TARGETS {
-        eprintln!(
-            "vpnhide: WARNING: {} native targets exceed the backend cap of {}; \
-             dropping the {} highest-UID app(s) from native protection",
-            by_uid.len(),
-            MAX_NATIVE_TARGETS,
-            by_uid.len() - MAX_NATIVE_TARGETS,
-        );
+        eprintln!("{}", native_target_capacity_warning(by_uid.len()));
     }
     let targets = by_uid
         .into_iter()
@@ -355,6 +349,13 @@ pub(crate) fn project_native_with_resolver_for_family(
         .map(|(uid, hookmask)| Target { uid, hookmask })
         .collect::<Vec<_>>();
     format_config(cfg.debug, NO_DEFAULT_MASK, &targets)
+}
+
+pub(crate) fn native_target_capacity_warning(total: usize) -> String {
+    format!(
+        "vpnhide-warning native_target_cap total={total} cap={MAX_NATIVE_TARGETS} dropped={}",
+        total.saturating_sub(MAX_NATIVE_TARGETS),
+    )
 }
 
 pub fn project_native_with_resolver(cfg: &CanonicalConfig, resolver: &PackageUidMap) -> String {

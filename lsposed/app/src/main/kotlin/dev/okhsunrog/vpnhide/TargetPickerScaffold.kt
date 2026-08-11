@@ -341,11 +341,23 @@ internal fun <T : TargetEntry> TargetPickerScreen(
                     targets?.canonicalConfig?.debugSwitch ?: (targets?.canonicalConfig?.debug ?: false),
                 )
             try {
-                val exitCode = persist(entries, ctx).exitCode
-                when (exitCode) {
+                val result = persist(entries, ctx)
+                when (result.exitCode) {
                     0 -> {
-                        snackDuration = SnackbarDuration.Short
-                        snackMessage = successMessage(entries, resources)
+                        val capacityWarning = parseNativeTargetCapacityWarning(result.output)
+                        if (capacityWarning != null) {
+                            snackDuration = SnackbarDuration.Long
+                            snackMessage =
+                                resources.getString(
+                                    R.string.save_native_target_capacity,
+                                    capacityWarning.capacity,
+                                    capacityWarning.total,
+                                    capacityWarning.dropped,
+                                )
+                        } else {
+                            snackDuration = SnackbarDuration.Short
+                            snackMessage = successMessage(entries, resources)
+                        }
                         TargetsCache.refreshAfterSave(scope, context)
                     }
 
@@ -357,7 +369,7 @@ internal fun <T : TargetEntry> TargetPickerScreen(
 
                     else -> {
                         snackDuration = SnackbarDuration.Long
-                        snackMessage = resources.getString(R.string.save_failed_exit, exitCode)
+                        snackMessage = resources.getString(R.string.save_failed_exit, result.exitCode)
                         dirty = true
                     }
                 }

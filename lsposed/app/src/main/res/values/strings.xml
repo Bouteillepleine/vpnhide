@@ -71,6 +71,7 @@
 
     <!-- Save feedback -->
     <string name="save_success">Saved %d target(s)</string>
+    <string name="save_native_target_capacity">Saved, but the Native backend can protect only %1$d of %2$d resolved app UIDs. The %3$d highest UIDs were left without Native protection.</string>
     <string name="save_failed_exit">Save failed (exit code %d)</string>
     <string name="save_failed_error">Save failed: %s</string>
     <string name="save_failed_root">Save failed: root access denied</string>

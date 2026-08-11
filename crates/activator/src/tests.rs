@@ -586,6 +586,10 @@ fn projection_is_bounded_to_backend_target_capacity() {
     // And what it produces must survive its own reader: the parser rejects a
     // payload carrying more uids than a backend can hold.
     assert!(vpnhide_protocol::parse_config(wire.as_bytes()).is_some());
+    assert_eq!(
+        native_target_capacity_warning(70),
+        "vpnhide-warning native_target_cap total=70 cap=64 dropped=6",
+    );
 }
 
 #[test]

@@ -6,6 +6,27 @@ import org.junit.Test
 
 class TargetPickerDataTest {
     @Test
+    fun `native target capacity warning parses from activator output`() {
+        assertEquals(
+            NativeTargetCapacityWarning(total = 70, capacity = 64, dropped = 6),
+            parseNativeTargetCapacityWarning(
+                "unrelated output\nvpnhide-warning native_target_cap total=70 cap=64 dropped=6\n",
+            ),
+        )
+    }
+
+    @Test
+    fun `malformed native target capacity warning is ignored`() {
+        assertEquals(
+            null,
+            parseNativeTargetCapacityWarning(
+                "vpnhide-warning native_target_cap total=70 cap=64 dropped=5",
+            ),
+        )
+        assertEquals(null, parseNativeTargetCapacityWarning("ordinary activator output"))
+    }
+
+    @Test
     fun `configured first keeps alphabetical order inside both groups`() {
         val visible =
             visibleTargetEntries(
