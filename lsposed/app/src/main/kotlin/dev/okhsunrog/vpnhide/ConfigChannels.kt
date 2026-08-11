@@ -1,29 +1,13 @@
 package dev.okhsunrog.vpnhide
 
 import android.content.Context
-import dev.okhsunrog.vpnhide.generated.HookIds
 
 /**
- * Compatibility holder for the Kotlin wire formatter tests and for launching
- * native activators. The app no longer fans out wire snapshots itself: it writes
- * canonical JSON, then runs the installed native module's activator.
+ * Launches the native activators. The app does not fan out wire snapshots
+ * itself: it writes canonical JSON, then runs the installed native module's
+ * activator, which derives that backend's wire from the JSON.
  */
 internal object ConfigChannels {
-    // The hookmask written for legacy native config snapshots. The canonical
-    // JSON stores per-app native hook lists; installed native activators fold
-    // those into this protocol mask.
-    private val FULL_MASK = HookIds.KERNEL_HOOK_MASK.toLong()
-
-    /** A `vpnhide 1 config` snapshot for [uids] with [debug] folded in (§4.3). */
-    fun config(
-        debug: Boolean,
-        uids: Collection<Int>,
-    ): String =
-        Protocol.formatConfig(
-            debug,
-            uids.toSortedSet().map { Protocol.Target(it.toLong(), FULL_MASK) },
-        )
-
     /** Shell part running exactly one native activator by backend priority. */
     fun nativeActivatorCommand(): String =
         "if [ -x $KMOD_ACTIVATOR ] && [ ! -f $KMOD_MODULE_DIR/disable ]; then $KMOD_ACTIVATOR; " +

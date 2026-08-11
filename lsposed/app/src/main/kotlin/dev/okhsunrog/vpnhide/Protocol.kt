@@ -4,11 +4,14 @@ package dev.okhsunrog.vpnhide
  * Kotlin side of the vpnhide control/stats wire format (docs/protocol.md §4).
  *
  * Mirrors the freestanding C (`kmod/shared/vpnhide_logic.h`) and the Rust
- * (`zygisk/src/protocol.rs`) byte for byte; parity is held by the shared golden
- * vectors (`kmod/shared/protocol_vectors.tsv`), run by ProtocolTest. This is the
- * "thick" end (protocol §1.4): the app **serialises** config snapshots into
- * every channel and **parses** stats/status back; the `system_server` LSPosed
- * hook **parses** config from its file. So both directions live here.
+ * (`crates/protocol`) byte for byte; parity is held by the shared golden
+ * vectors (`kmod/shared/protocol_vectors.tsv`), run by ProtocolTest.
+ *
+ * **Stats and status only.** The app does not speak the `config` payload: it
+ * writes canonical JSON and the module's own activator derives the wire from
+ * it, so the C and Rust ends are the only config parsers (their parity is what
+ * the `cfg|` vectors hold). What lives here is the app reading a backend's
+ * stats/status back, plus `LsposedState` emitting the LSPosed layer's own.
  *
  * Numbers are carried as [Long]: `uid`/`hookmask`/`hook_id` are u32 (always
  * non-negative here); `count` is u64 carried as raw bits (use the unsigned
@@ -18,18 +21,6 @@ internal object Protocol {
     const val VERSION = 1
 
     enum class Kind { CONFIG, STATS, STATUS }
-
-    data class Target(
-        val uid: Long,
-        val hookmask: Long,
-    )
-
-    /** A parsed config. [debug] is null when no `debug` line was present
-     * ("unchanged from default", §4.3), else the flag. */
-    data class Config(
-        val debug: Boolean?,
-        val targets: List<Target>,
-    )
 
     data class StatEntry(
         val uid: Long,
@@ -144,67 +135,6 @@ internal object Protocol {
             body(tokens(contentAfterWs(line)))
         }
     }
-
-    // ── config (§4.3) ─────────────────────────────────────────────────────
-
-    /** Parse a `config` payload, or null if rejected whole (bad/missing header,
-     * version too new, wrong kind). Duplicate uid ⇒ last wins; unknown keywords
-     * and malformed lines are skipped. */
-    fun parseConfig(text: String): Config? {
-        val h = parseHeader(text) ?: return null
-        if (h.kind != Kind.CONFIG) return null
-        var debug: Boolean? = null
-        val targets = mutableListOf<Target>()
-        forEachRecord(h.records) { toks ->
-            when (toks.getOrNull(0)) {
-                "debug" -> {
-                    when (toks.getOrNull(1)) {
-                        "0" -> {
-                            debug = false
-                        }
-
-                        "1" -> {
-                            debug = true
-                        }
-
-                        else -> {} // malformed flag ⇒ skip
-                    }
-                }
-
-                "target" -> {
-                    val uid = toks.getOrNull(1)?.let { parseHex(it, 32) }
-                    val hm = toks.getOrNull(2)?.let { parseHex(it, 32) }
-                    if (uid != null && hm != null) setTarget(targets, uid, hm)
-                }
-            }
-        }
-        return Config(debug, targets)
-    }
-
-    private fun setTarget(
-        targets: MutableList<Target>,
-        uid: Long,
-        hookmask: Long,
-    ) {
-        val idx = targets.indexOfFirst { it.uid == uid }
-        if (idx >= 0) targets[idx] = Target(uid, hookmask) else targets += Target(uid, hookmask)
-    }
-
-    fun formatConfig(
-        debug: Boolean?,
-        targets: List<Target>,
-    ): String =
-        buildString {
-            append("vpnhide ").append(VERSION).append(" config\n")
-            if (debug != null) append("debug ").append(if (debug) "1" else "0").append('\n')
-            for (t in targets) {
-                append("target ")
-                    .append(hex(t.uid))
-                    .append(' ')
-                    .append(hex(t.hookmask))
-                    .append('\n')
-            }
-        }
 
     // ── stats (§4.3) ──────────────────────────────────────────────────────
 
