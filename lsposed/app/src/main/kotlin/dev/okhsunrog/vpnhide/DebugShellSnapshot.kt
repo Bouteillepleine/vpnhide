@@ -42,41 +42,26 @@ internal fun collectHookCounterSnapshot(): DebugShellSnapshot {
 }
 
 internal fun parseDebugShellSnapshot(raw: String): Map<String, String> {
-    val sections = linkedMapOf<String, String>()
-    var currentName: String? = null
-    val currentBody = StringBuilder()
-
-    fun finishSection(name: String) {
-        sections[name] = currentBody.toString().trimEnd()
-        currentBody.clear()
-        currentName = null
-    }
-
-    raw.lineSequence().forEach { line ->
-        when {
-            line.startsWith(DEBUG_SNAPSHOT_BEGIN_PREFIX) -> {
-                currentName = line.removePrefix(DEBUG_SNAPSHOT_BEGIN_PREFIX)
-                currentBody.clear()
-            }
-
-            line.startsWith(DEBUG_SNAPSHOT_END_PREFIX) -> {
-                val endName = line.removePrefix(DEBUG_SNAPSHOT_END_PREFIX)
-                if (currentName == endName) finishSection(endName)
-            }
-
-            currentName != null -> {
-                currentBody.appendLine(line)
-            }
-        }
-    }
+    val parsed =
+        parseFramedSections(
+            raw = raw,
+            beginPrefix = DEBUG_SNAPSHOT_BEGIN_PREFIX,
+            endPrefix = DEBUG_SNAPSHOT_END_PREFIX,
+            policy =
+                FramedSectionParsePolicy(
+                    preserveIncomplete = true,
+                    discardOnMismatchedEnd = false,
+                    trimSectionEnd = true,
+                ),
+        )
+    val sections = parsed.complete.toMutableMap()
     // A command that overran the su timeout leaves the last section open (no END
     // marker) and every later section absent. Keep the partial body but flag it,
     // so a bug report shows "cut off here" instead of a silently-missing section.
-    currentName?.let { name ->
-        sections[name] =
-            (currentBody.toString().trimEnd() + "\n(TRUNCATED: snapshot cut off before this section completed)")
-                .trim()
-        sections["debug_snapshot_truncated"] = name
+    parsed.incomplete?.let { incomplete ->
+        sections[incomplete.name] =
+            (incomplete.body + "\n(TRUNCATED: snapshot cut off before this section completed)").trim()
+        sections["debug_snapshot_truncated"] = incomplete.name
     }
     return sections
 }

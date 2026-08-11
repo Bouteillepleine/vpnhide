@@ -47,6 +47,20 @@ class DebugShellSnapshotTest {
     }
 
     @Test
+    fun `parser ignores a mismatched end marker while collecting diagnostics`() {
+        val raw =
+            """
+            __VPNHIDE_DEBUG_SECTION_BEGIN__:expected
+            first
+            __VPNHIDE_DEBUG_SECTION_END__:other
+            second
+            __VPNHIDE_DEBUG_SECTION_END__:expected
+            """.trimIndent()
+
+        assertEquals("first\nsecond", parseDebugShellSnapshot(raw)["expected"])
+    }
+
+    @Test
     fun `debug command captures all backend state paths`() {
         val command = buildDebugShellSnapshotCommand()
 

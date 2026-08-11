@@ -49,6 +49,19 @@ class RootSnapshotCacheTest {
     }
 
     @Test
+    fun `parser discards a section after a mismatched end marker`() {
+        val raw =
+            """
+            __VPNHIDE_ROOT_SECTION_BEGIN__:expected
+            unsafe partial body
+            __VPNHIDE_ROOT_SECTION_END__:other
+            __VPNHIDE_ROOT_SECTION_END__:expected
+            """.trimIndent()
+
+        assertFalse(parseRootShellSnapshot(raw, recordMetric = { _, _ -> }).containsKey("expected"))
+    }
+
+    @Test
     fun `snapshot validation rejects missing sections`() {
         val sections = REQUIRED_ROOT_SNAPSHOT_SECTIONS.associateWith { "" } - "vpn_ifaces"
         var thrown: RootSnapshotException? = null
