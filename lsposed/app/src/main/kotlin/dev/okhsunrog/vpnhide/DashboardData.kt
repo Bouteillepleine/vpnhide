@@ -76,14 +76,18 @@ sealed interface LsposedState {
     ) : LsposedState
 }
 
-sealed interface ProtectionCheck {
-    data object NoVpn : ProtectionCheck
-
-    data object NeedsRestart : ProtectionCheck
-
-    // A VPN is up, but this app is not routed through it (split-tunnelled out) —
-    // hiding is moot for us, so we ask the user to add VPN Hide to the tunnel.
-    data object SelfNotRouted : ProtectionCheck
+internal sealed interface ProtectionCheck {
+    // The gate stopped the run before anything could be measured — VPN off, this app
+    // split-tunnelled out (hiding is moot for us → "add to tunnel"), or a pending
+    // self-restart. Carries the shared [DiagnosticGate] so the hero/agent explain
+    // which without a second enum. Never [DiagnosticGate.ROUTED] — that is [Checked].
+    data class Blocked(
+        val gate: DiagnosticGate,
+    ) : ProtectionCheck {
+        init {
+            require(gate != DiagnosticGate.ROUTED) { "Blocked gate must not be ROUTED" }
+        }
+    }
 
     data class Checked(
         val native: LayerStatus,
@@ -305,11 +309,12 @@ internal fun computeHeroStatus(
     warningCount: Int,
 ): HeroStatus {
     val p = state.protection
-    if (p is ProtectionCheck.NoVpn) return HeroStatus.VpnOff
+    if (p is ProtectionCheck.Blocked && p.gate == DiagnosticGate.VPN_OFF) return HeroStatus.VpnOff
     // 0 = protected, 1 = attention, 2 = unprotected — keep the worst signal.
     var rank = 0
     when (p) {
-        ProtectionCheck.NeedsRestart, ProtectionCheck.SelfNotRouted -> {
+        // A non-VPN-off block (self-not-routed / needs-restart) is attention, not off.
+        is ProtectionCheck.Blocked -> {
             rank = maxOf(rank, 1)
         }
 
@@ -1625,11 +1630,11 @@ internal suspend fun loadDashboardState(
     val protection: ProtectionCheck =
         when {
             !vpnActive -> {
-                ProtectionCheck.NoVpn
+                ProtectionCheck.Blocked(DiagnosticGate.VPN_OFF)
             }
 
             selfNeedsRestart -> {
-                ProtectionCheck.NeedsRestart
+                ProtectionCheck.Blocked(DiagnosticGate.NEEDS_RESTART)
             }
 
             else -> {
@@ -1638,15 +1643,13 @@ internal suspend fun loadDashboardState(
                 // result so its "OK" state means every protection probe passed.
                 val checks = DiagnosticsCache.awaitFullResults(context)
                 if (checks == null) {
-                    // No results to summarize. Distinguish the self-not-routed gate
-                    // (VPN up but this app split-tunnelled out) from a genuine
-                    // no-VPN / failed run, so the hero can guide "add to tunnel"
-                    // instead of the wrong "turn on VPN".
-                    if ((DiagnosticsCache.state.value as? DiagnosticsCache.State.Blocked)?.gate == DiagnosticGate.SELF_NOT_ROUTED) {
-                        ProtectionCheck.SelfNotRouted
-                    } else {
-                        ProtectionCheck.NoVpn
-                    }
+                    // No results to summarize. Carry the self-not-routed gate (VPN up
+                    // but this app split-tunnelled out) through so the hero can guide
+                    // "add to tunnel" instead of the wrong "turn on VPN". A Failed run
+                    // still folds to VPN_OFF here — the next commit gives it its own state.
+                    val gate = (DiagnosticsCache.state.value as? DiagnosticsCache.State.Blocked)?.gate
+                    val shown = if (gate == DiagnosticGate.SELF_NOT_ROUTED) DiagnosticGate.SELF_NOT_ROUTED else DiagnosticGate.VPN_OFF
+                    ProtectionCheck.Blocked(shown)
                 } else {
                     // Derive tiles from the one canonical report (the same object the
                     // debug bundle renders), so the on-screen verdict and the exported

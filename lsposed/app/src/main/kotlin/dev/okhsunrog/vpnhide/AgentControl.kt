@@ -622,18 +622,19 @@ private fun ModuleState.toAgentModuleState(
         }
     }
 
+/** Agent-bridge wire token for a blocked gate (protocol-facing — keep stable). */
+private fun DiagnosticGate.agentStateToken(): String =
+    when (this) {
+        DiagnosticGate.VPN_OFF -> "vpn_off"
+        DiagnosticGate.NEEDS_RESTART -> "needs_restart"
+        DiagnosticGate.SELF_NOT_ROUTED -> "self_not_routed"
+        DiagnosticGate.ROUTED -> "routed" // unreachable: a Blocked gate is never ROUTED
+    }
+
 private fun ProtectionCheck.toAgentProtectionSummary(): AgentProtectionSummary =
     when (this) {
-        ProtectionCheck.NoVpn -> {
-            AgentProtectionSummary(state = "vpn_off")
-        }
-
-        ProtectionCheck.NeedsRestart -> {
-            AgentProtectionSummary(state = "needs_restart")
-        }
-
-        ProtectionCheck.SelfNotRouted -> {
-            AgentProtectionSummary(state = "self_not_routed")
+        is ProtectionCheck.Blocked -> {
+            AgentProtectionSummary(state = gate.agentStateToken())
         }
 
         is ProtectionCheck.Checked -> {

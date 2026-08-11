@@ -46,9 +46,9 @@ class DashboardUiStateTest {
     @Test
     fun `protectionFullyPassed is true only when native and java layers are ok`() {
         assertTrue(protectionFullyPassed(ProtectionCheck.Checked(ok, ok)))
-        assertFalse(protectionFullyPassed(ProtectionCheck.NoVpn))
-        assertFalse(protectionFullyPassed(ProtectionCheck.NeedsRestart))
-        assertFalse(protectionFullyPassed(ProtectionCheck.SelfNotRouted))
+        assertFalse(protectionFullyPassed(ProtectionCheck.Blocked(DiagnosticGate.VPN_OFF)))
+        assertFalse(protectionFullyPassed(ProtectionCheck.Blocked(DiagnosticGate.NEEDS_RESTART)))
+        assertFalse(protectionFullyPassed(ProtectionCheck.Blocked(DiagnosticGate.SELF_NOT_ROUTED)))
         assertFalse(protectionFullyPassed(ProtectionCheck.Checked(LayerStatus.Absent, ok)))
         assertFalse(protectionFullyPassed(ProtectionCheck.Checked(partial, ok)))
         assertFalse(protectionFullyPassed(ProtectionCheck.Checked(ok, partial)))
@@ -60,7 +60,7 @@ class DashboardUiStateTest {
         assertEquals(
             HeroStatus.VpnOff,
             computeHeroStatus(
-                state = dashboardState(protection = ProtectionCheck.NoVpn),
+                state = dashboardState(protection = ProtectionCheck.Blocked(DiagnosticGate.VPN_OFF)),
                 errorCount = 1,
                 warningCount = 1,
             ),
@@ -72,7 +72,7 @@ class DashboardUiStateTest {
         assertEquals(
             HeroStatus.Attention,
             computeHeroStatus(
-                state = dashboardState(protection = ProtectionCheck.NeedsRestart),
+                state = dashboardState(protection = ProtectionCheck.Blocked(DiagnosticGate.NEEDS_RESTART)),
                 errorCount = 0,
                 warningCount = 0,
             ),
@@ -82,7 +82,7 @@ class DashboardUiStateTest {
         assertEquals(
             HeroStatus.Attention,
             computeHeroStatus(
-                state = dashboardState(protection = ProtectionCheck.SelfNotRouted),
+                state = dashboardState(protection = ProtectionCheck.Blocked(DiagnosticGate.SELF_NOT_ROUTED)),
                 errorCount = 0,
                 warningCount = 0,
             ),
