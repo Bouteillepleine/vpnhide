@@ -78,6 +78,7 @@ fun DiagnosticsScreen(
     }
 
     val results = (diagState as? DiagnosticsCache.State.Ready)?.results
+    val blockedGate = (diagState as? DiagnosticsCache.State.Blocked)?.gate
     // Native probes that couldn't run (ECONNREFUSED from socket()) classify as
     // NotMeasured(NoNetworkPermission). Java-level checks never produce that state,
     // so this isolates the "app has no network permission" banner from everything else.
@@ -108,7 +109,7 @@ fun DiagnosticsScreen(
                 )
             }
 
-            diagState is DiagnosticsCache.State.VpnOff -> {
+            blockedGate == DiagnosticGate.VPN_OFF -> {
                 VpnOffPrompt(
                     onRetry = {
                         DiagnosticsCache.retry(scope, context)
@@ -117,7 +118,7 @@ fun DiagnosticsScreen(
                 )
             }
 
-            diagState is DiagnosticsCache.State.SelfNotRouted -> {
+            blockedGate == DiagnosticGate.SELF_NOT_ROUTED -> {
                 SelfNotRoutedPrompt(
                     onRetry = {
                         DiagnosticsCache.retry(scope, context)

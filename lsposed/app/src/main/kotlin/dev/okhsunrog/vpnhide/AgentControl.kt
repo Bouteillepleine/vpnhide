@@ -39,7 +39,7 @@ internal object AgentControl {
             val results = DiagnosticsCache.awaitFullResults(context)
             if (results == null) {
                 val gatedState =
-                    if (DiagnosticsCache.state.value is DiagnosticsCache.State.SelfNotRouted) {
+                    if ((DiagnosticsCache.state.value as? DiagnosticsCache.State.Blocked)?.gate == DiagnosticGate.SELF_NOT_ROUTED) {
                         "self_not_routed"
                     } else {
                         "vpn_off"

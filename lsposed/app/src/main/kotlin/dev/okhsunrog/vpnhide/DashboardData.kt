@@ -1642,7 +1642,7 @@ internal suspend fun loadDashboardState(
                     // (VPN up but this app split-tunnelled out) from a genuine
                     // no-VPN / failed run, so the hero can guide "add to tunnel"
                     // instead of the wrong "turn on VPN".
-                    if (DiagnosticsCache.state.value is DiagnosticsCache.State.SelfNotRouted) {
+                    if ((DiagnosticsCache.state.value as? DiagnosticsCache.State.Blocked)?.gate == DiagnosticGate.SELF_NOT_ROUTED) {
                         ProtectionCheck.SelfNotRouted
                     } else {
                         ProtectionCheck.NoVpn
