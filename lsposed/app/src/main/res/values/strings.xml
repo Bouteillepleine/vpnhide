@@ -76,7 +76,7 @@
     <string name="save_failed_root">Save failed: root access denied</string>
 
     <!-- Diagnostics -->
-    <string name="summary_format">%1$d/%2$d passed</string>
+    <string name="diag_summary_tally">%1$d hidden · %2$d leaking</string>
     <string name="btn_export_debug">Collect debug log</string>
     <string name="btn_export_debug_running">Collecting debug info&#8230;</string>
     <string name="btn_save_debug">Save</string>
