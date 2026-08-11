@@ -230,7 +230,7 @@ static bool hook_active(enum vpnhide_hook_id hook_id)
 
 struct stats_row {
 	uid_t uid;
-	u64 counts[VPNHIDE_KERNEL_HOOK_COUNT];
+	u64 counts[VPNHIDE_KMOD_STATS_HOOK_COUNT];
 };
 
 static struct stats_row stats_rows[MAX_TARGET_UIDS];
@@ -286,7 +286,7 @@ static void record_hook_hit(enum vpnhide_hook_id hook_id)
 	unsigned long flags;
 	int hook_slot;
 
-	hook_slot = vpnhide_kernel_hook_slot(hook_id);
+	hook_slot = vpnhide_kmod_stats_hook_slot(hook_id);
 	if (hook_slot < 0)
 		return;
 
@@ -427,11 +427,11 @@ static int ctl_seq_show(struct seq_file *m, void *v)
 		spin_unlock_irqrestore(&stats_lock, flags);
 
 		seq_printf(m, "0x%x", row.uid);
-		for (hook = 0; hook < VPNHIDE_KERNEL_HOOK_COUNT; hook++) {
+		for (hook = 0; hook < VPNHIDE_KMOD_STATS_HOOK_COUNT; hook++) {
 			if (!row.counts[hook])
 				continue;
 			seq_printf(m, " 0x%x:0x%llx",
-				   vpnhide_kernel_hook_id(hook),
+				   vpnhide_kmod_stats_hook_id(hook),
 				   row.counts[hook]);
 		}
 		seq_putc(m, '\n');

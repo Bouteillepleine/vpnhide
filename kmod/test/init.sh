@@ -341,6 +341,20 @@ check_hide sysfs_readdir   "ls /sys/class/net"             "vpn0"
 check_hide sysfs_open      "cat /sys/class/net/vpn0/mtu && echo vpn0" "vpn0"
 check_hide proc_sys_stat   "test -e /proc/sys/net/ipv4/conf/vpn0 && echo vpn0" "vpn0"
 check_hide proc_sys_readdir "ls /proc/sys/net/ipv4/conf"   "vpn0"
+
+_filesystem_hits=$(sed -n '/^0x2710 /s/.* 0x1b:0x\([0-9a-f][0-9a-f]*\).*/\1/p' \
+	/proc/vpnhide_ctl | head -1)
+case "$_filesystem_hits" in
+"" | 0)
+	echo "RESULT filesystem_stats=FAIL (hook 0x1b missing or zero)"
+	FAIL=$((FAIL + 1))
+	;;
+*)
+	echo "RESULT filesystem_stats=PASS (hook 0x1b count=0x$_filesystem_hits)"
+	PASS=$((PASS + 1))
+	;;
+esac
+
 check_gai
 check_ifconf                                                       # sock_ioctl size/tail
 check_socket_bind                                                  # interface socket binding
