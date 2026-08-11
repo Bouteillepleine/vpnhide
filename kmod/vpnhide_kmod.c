@@ -206,11 +206,13 @@ static u32 target_mask(void)
 /* True if `hook_id` is enabled for the calling UID (per-hook gate, §4.3).
  * The .ko owns the full kernel hook mask, so it never masks foreign bits.
  * Fast path: if no target enables this hook, skip the per-uid lock+search. */
-static bool hook_active(u32 hook_id)
+static bool hook_active(enum vpnhide_hook_id hook_id)
 {
-	if (!(READ_ONCE(active_hook_mask) & (1u << hook_id)))
+	u32 bit = vpnhide_hook_bit(hook_id);
+
+	if (!(READ_ONCE(active_hook_mask) & bit))
 		return false;
-	return (target_mask() & (1u << hook_id)) != 0;
+	return (target_mask() & bit) != 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -226,7 +228,7 @@ static struct stats_row stats_rows[MAX_TARGET_UIDS];
 static int nr_stats_rows;
 static DEFINE_SPINLOCK(stats_lock);
 
-static void record_hook_hit(u32 hook_id)
+static void record_hook_hit(enum vpnhide_hook_id hook_id)
 {
 	uid_t uid;
 	unsigned long flags;
@@ -1558,7 +1560,7 @@ static void init_route_skb_data(struct route_skb_data *data)
 }
 
 static int route_skb_ret(struct route_skb_data *data, struct pt_regs *regs,
-			 const char *hook_name, u32 hook_id)
+			 const char *hook_name, enum vpnhide_hook_id hook_id)
 {
 	if (!data->should_filter || !data->skb)
 		return 0;
@@ -1790,7 +1792,7 @@ static struct kretprobe fib_rule_fill_krp = {
 struct kretprobe_reg {
 	struct kretprobe *krp;
 	const char *name;
-	u32 hook_id; /* registry id (generated/hook_ids.h) — for the status mask */
+	enum vpnhide_hook_id hook_id;
 	bool registered;
 };
 
@@ -1821,9 +1823,9 @@ static u32 installed_hook_mask(void)
 
 	for (i = 0; i < ARRAY_SIZE(probes); i++)
 		if (probes[i].registered)
-			mask |= (1u << probes[i].hook_id);
+			mask |= vpnhide_hook_bit(probes[i].hook_id);
 	if (socket_bind_hooks_registered)
-		mask |= (1u << VPNHIDE_HOOK_SOCKET_BIND_INTERFACE);
+		mask |= vpnhide_hook_bit(VPNHIDE_HOOK_SOCKET_BIND_INTERFACE);
 	return mask;
 }
 

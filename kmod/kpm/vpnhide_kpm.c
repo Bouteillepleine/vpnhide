@@ -209,10 +209,11 @@ static void config_staging_release(void)
  * changed across the read, so the mask gate and the per-uid scan always come
  * from one consistent snapshot. Config writes are rare, so this normally makes
  * a single pass. */
-static int hook_active(uint32_t hook_id)
+static int hook_active(enum vpnhide_hook_id hook_id)
 {
 	uid_t uid = current_uid();
 	uint32_t s1, s2;
+	uint32_t bit = vpnhide_hook_bit(hook_id);
 	int result;
 
 	/* Below the app range a uid is not an app, it is a platform identity
@@ -236,7 +237,7 @@ static int hook_active(uint32_t hook_id)
 		if (s1 & 1u)
 			continue; /* a writer is mid-update */
 		result = 0;
-		if (active_hook_mask & (1u << hook_id)) {
+		if (active_hook_mask & bit) {
 			int lo = 0, hi = nr_targets - 1;
 			uint32_t mask = default_hookmask;
 
@@ -255,7 +256,7 @@ static int hook_active(uint32_t hook_id)
 				else
 					hi = mid - 1;
 			}
-			result = (mask & (1u << hook_id)) != 0;
+			result = (mask & bit) != 0;
 		}
 		s2 = __atomic_load_n(&cfg_seq, __ATOMIC_ACQUIRE);
 	} while (s1 != s2); /* s1 was even; retry if a write started/finished */
@@ -291,7 +292,7 @@ static int stats_slot_for_uid(uint32_t uid)
 	return -1;
 }
 
-static void record_hook_hit(uint32_t hook_id)
+static void record_hook_hit(enum vpnhide_hook_id hook_id)
 {
 	int hook_slot, uid_slot;
 
@@ -952,7 +953,8 @@ static void *deref2(void *base, unsigned int off1, unsigned int off2)
 /* Shared by both addr-fill hooks: stash skb + len if ifa's dev is VPN. The
  * caller passes its own hook id so the per-hook gate (§4.3) is per-hook even
  * though the body is shared. */
-static void addr_fill_before(hook_fargs4_t *fargs, void *dev, uint32_t hook_id)
+static void addr_fill_before(hook_fargs4_t *fargs, void *dev,
+			     enum vpnhide_hook_id hook_id)
 {
 	void *skb = (void *)fargs->arg0;
 
@@ -967,7 +969,8 @@ static void addr_fill_before(hook_fargs4_t *fargs, void *dev, uint32_t hook_id)
 		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
 }
 
-static void addr_fill_after_hook(hook_fargs4_t *fargs, uint32_t hook_id)
+static void addr_fill_after_hook(hook_fargs4_t *fargs,
+				 enum vpnhide_hook_id hook_id)
 {
 	if (!fargs->local.data0)
 		return;
@@ -1442,14 +1445,14 @@ static int apply_config(const char *wire, unsigned long wire_len)
 /* Resolve `name`, wrap it, and record the install in `installed_hooks` so the
  * status channel (§4.3 `hooks`) reflects what actually took. */
 static int install_hook(const char *name, int argno, void *before, void *after,
-			uint32_t hook_id)
+			enum vpnhide_hook_id hook_id)
 {
 	unsigned long fn = lookup_fn(name);
 
 	if (!fn)
 		return 0;
 	if (hook_wrap((void *)fn, argno, before, after, 0) == HOOK_NO_ERR) {
-		installed_hooks |= (1u << hook_id);
+		installed_hooks |= vpnhide_hook_bit(hook_id);
 		return 1;
 	}
 	return 0;
@@ -1574,8 +1577,8 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 					bind_ok;
 		}
 		if (!bind_ok)
-			installed_hooks &=
-				~(1u << VPNHIDE_HOOK_SOCKET_BIND_INTERFACE);
+			installed_hooks &= ~vpnhide_hook_bit(
+				VPNHIDE_HOOK_SOCKET_BIND_INTERFACE);
 	}
 
 	/* Healthy iff every kernel-owned hook installed; otherwise honestly
