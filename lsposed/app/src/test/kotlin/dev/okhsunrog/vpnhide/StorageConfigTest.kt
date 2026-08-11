@@ -1,6 +1,7 @@
 package dev.okhsunrog.vpnhide
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -203,6 +204,41 @@ class StorageConfigTest {
             ),
             cfg.apps.getValue("com.bank").portPolicy,
         )
+    }
+
+    @Test
+    fun `canonical config disables ports instead of broadening malformed policy`() {
+        val malformedPolicies =
+            listOf(
+                """{ "mode": "custom", "rules": [{ "start": 0 }] }""",
+                """{ "mode": "custom", "rules": ["not-an-object"] }""",
+            )
+
+        malformedPolicies.forEach { policy ->
+            val cfg =
+                requireNotNull(
+                    parseCanonicalConfig(
+                        """
+                        {
+                          "version": 1,
+                          "apps": {
+                            "com.bank": {
+                              "native": true,
+                              "ports": true,
+                              "portPolicy": $policy
+                            }
+                          }
+                        }
+                        """.trimIndent(),
+                    ),
+                )
+            val app = cfg.apps.getValue("com.bank")
+
+            assertFalse(app.ports)
+            assertEquals(null, app.portPolicy)
+            assertTrue(app.native.enabled)
+            assertFalse(canonicalConfigJson(cfg).contains("\"ports\": true"))
+        }
     }
 
     @Test

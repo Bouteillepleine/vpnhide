@@ -151,14 +151,26 @@ internal fun parseCanonicalConfig(raw: String): CanonicalConfig? {
 private fun parseCanonicalApp(obj: JSONObject?): CanonicalApp {
     if (obj == null) return CanonicalApp()
     val java = parseHookRole(obj.opt("java"))
-    val ports = obj.optBoolean("ports", false)
+    val portsRequested = obj.optBoolean("ports", false)
+    val portPolicyPresent = obj.has("portPolicy") && !obj.isNull("portPolicy")
+    val portPolicy =
+        if (portsRequested && portPolicyPresent) {
+            obj.optJSONObject("portPolicy")?.let(::parsePortPolicy)
+        } else {
+            null
+        }
+    // A missing policy intentionally retains the legacy "all ports" meaning.
+    // A present but malformed policy must instead disable the ports role: if it
+    // were serialized as `ports=true` without a policy, the activator would
+    // broaden the requested ranges into an all-ports block.
+    val ports = portsRequested && (!portPolicyPresent || portPolicy != null)
     return CanonicalApp(
         java = java.enabled,
         javaHooks = java.hooks,
         native = parseNativeRole(obj.opt("native")),
         appHiding = obj.optBoolean("appHiding", false),
         ports = ports,
-        portPolicy = if (ports) parsePortPolicy(obj.optJSONObject("portPolicy")) else null,
+        portPolicy = portPolicy,
         hidden = obj.optBoolean("hidden", false),
     )
 }
@@ -172,9 +184,9 @@ private fun parsePortPolicy(obj: JSONObject?): PortPolicy? {
     return runCatching {
         val rulesJson = obj.optJSONArray("rules") ?: return@runCatching null
         val rules =
-            (0 until rulesJson.length()).mapNotNull { idx ->
-                val ruleObj = rulesJson.optJSONObject(idx) ?: return@mapNotNull null
-                runCatching { parsePortRule(ruleObj) }.getOrNull()
+            (0 until rulesJson.length()).map { idx ->
+                val ruleObj = requireNotNull(rulesJson.optJSONObject(idx)) { "Port rule must be an object" }
+                parsePortRule(ruleObj)
             }
         normalizePortPolicy(
             PortPolicy(
