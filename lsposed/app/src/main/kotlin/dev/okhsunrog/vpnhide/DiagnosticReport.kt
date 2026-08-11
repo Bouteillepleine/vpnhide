@@ -113,7 +113,7 @@ internal fun buildDiagnosticReport(
         if (results == null) {
             0
         } else {
-            unownedNativeLeaks(backend, nativeOutcomes) + results.nativeExtra.count { it.passed == false }
+            unownedNativeLeaks(backend, nativeOutcomes) + results.nativeExtra.count { it.outcome is CheckOutcome.Leak }
         }
     return DiagnosticReport(
         gate = gate,
@@ -152,7 +152,7 @@ private fun nativeDiagnosticChecks(
                 id = spec.id,
                 label = cr.name,
                 layer = CheckLayer.NATIVE,
-                outcome = cr.outcome ?: CheckOutcome.NotMeasured(NotMeasuredReason.NoGroundTruth),
+                outcome = cr.outcome,
                 appDetail = cr.detail,
                 groundTruthDetail = cr.groundTruthDetail,
                 expectedHooks = spec.expectedHooks.toList(),
@@ -167,7 +167,7 @@ private fun nativeDiagnosticChecks(
                 id = "",
                 label = cr.name,
                 layer = CheckLayer.NATIVE,
-                outcome = cr.outcome ?: classifyJavaOutcome(cr.passed),
+                outcome = cr.outcome,
                 appDetail = cr.detail,
                 groundTruthDetail = null,
                 expectedHooks = emptyList(),
@@ -185,7 +185,7 @@ private fun javaDiagnosticChecks(results: CheckResults?): List<DiagnosticCheck> 
                 id = "",
                 label = cr.name,
                 layer = CheckLayer.JAVA,
-                outcome = cr.outcome ?: classifyJavaOutcome(cr.passed),
+                outcome = cr.outcome,
                 appDetail = cr.detail,
                 groundTruthDetail = cr.groundTruthDetail,
                 expectedHooks = emptyList(),

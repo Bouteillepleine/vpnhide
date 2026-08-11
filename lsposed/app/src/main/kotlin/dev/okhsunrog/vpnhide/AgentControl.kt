@@ -661,13 +661,13 @@ private fun CheckResults.toAgentDiagnosticsReport(): AgentDiagnosticsReport {
     // back to NATIVE_CHECKS by index. nativeExtra (Java-implemented native-level
     // probes) has no root differential and reports on the tri-state only.
     val nativeWithOutcomes =
-        native.map { it.toAgentCheckResult(it.outcome?.token()) } +
-            nativeExtra.map { it.toAgentCheckResult(null) }
+        native.map { it.toAgentCheckResult(it.outcome.token()) } +
+            nativeExtra.map { it.toAgentCheckResult(it.outcome.token()) }
     return AgentDiagnosticsReport(
         state = "ready",
         score = AgentCheckScore(score.passed, score.total),
         nativeChecks = nativeWithOutcomes,
-        javaChecks = java.map { it.toAgentCheckResult(it.outcome?.token()) },
+        javaChecks = java.map { it.toAgentCheckResult(it.outcome.token()) },
     )
 }
 

@@ -568,15 +568,6 @@ private fun diagStatus(r: CheckResult): DiagStatus {
         is CheckOutcome.NotMeasured -> {
             notMeasured
         }
-
-        // Java-implemented native-level probes carry no outcome — fall back to passed.
-        null -> {
-            when (r.passed) {
-                true -> ok
-                false -> leak
-                null -> notMeasured
-            }
-        }
     }
 }
 

@@ -31,7 +31,14 @@ class DiagnosticReportTest {
      * by-id outcome map from this list — there is no separate map to pass. */
     private fun nativeResults(vararg outcomes: Pair<String, CheckOutcome>): List<CheckResult> {
         val byId = outcomes.toMap()
-        return NATIVE_CHECKS.map { spec -> CheckResult(spec.id, passed = null, detail = "", outcome = byId[spec.id]) }
+        return NATIVE_CHECKS.map { spec ->
+            CheckResult(
+                spec.id,
+                passed = null,
+                detail = "",
+                outcome = byId[spec.id] ?: CheckOutcome.NotMeasured(NotMeasuredReason.NoGroundTruth),
+            )
+        }
     }
 
     // ── native verdict folds off the owned outcomes ────────────────────────
@@ -70,7 +77,7 @@ class DiagnosticReportTest {
         val results =
             CheckResults(
                 native = emptyList(),
-                nativeExtra = listOf(CheckResult("NetworkInterface enum", passed = false, detail = "tun0 in list")),
+                nativeExtra = listOf(javaCheck("NetworkInterface enum", clean = false, detail = "tun0 in list")),
             )
         assertEquals(1, report(results = results).native.unownedLeaks)
     }
@@ -90,7 +97,7 @@ class DiagnosticReportTest {
                     groundTruthDetail = "root: tun0 up",
                 )
             } else {
-                CheckResult(spec.id, passed = null, detail = "", outcome = null)
+                CheckResult(spec.id, passed = null, detail = "", outcome = CheckOutcome.NotMeasured(NotMeasuredReason.NoGroundTruth))
             }
         }
 
