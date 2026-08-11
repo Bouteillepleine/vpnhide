@@ -176,21 +176,21 @@ fun DashboardScreen(
         // pending. The all-good "Checked" state renders nothing here — the hero's
         // per-level tiles already carry that status, so the old duplicate per-level
         // cards (Native / Java «OK», which just restated those tiles) are gone.
-        when (loadedState.protection) {
-            is ProtectionCheck.NoVpn -> {
+        // Per-layer verdict (Checked) renders in the cards below; only a blocked gate
+        // shows a hero banner. Retry re-reads dashboard state (re-runs its own VPN +
+        // protection probes) and re-runs the diag cache so both screens recover together.
+        val onRetry = {
+            DashboardCache.refresh(scope, context, selfNeedsRestart)
+            DiagnosticsCache.retry(scope, context, selfNeedsRestart)
+        }
+        val protection = loadedState.protection
+        when {
+            (protection as? ProtectionCheck.Blocked)?.gate == DiagnosticGate.VPN_OFF -> {
                 Spacer(Modifier.height(12.dp))
-                VpnOffPrompt(
-                    onRetry = {
-                        // Re-read dashboard state (re-runs its own VPN + protection
-                        // probes) and re-run the diag cache so both screens move to
-                        // "Ready" when VPN is back.
-                        DashboardCache.refresh(scope, context, selfNeedsRestart)
-                        DiagnosticsCache.retry(scope, context)
-                    },
-                )
+                VpnOffPrompt(onRetry = onRetry)
             }
 
-            is ProtectionCheck.NeedsRestart -> {
+            (protection as? ProtectionCheck.Blocked)?.gate == DiagnosticGate.NEEDS_RESTART -> {
                 Spacer(Modifier.height(12.dp))
                 StatusBanner(
                     text = stringResource(R.string.dashboard_needs_restart),
@@ -199,18 +199,17 @@ fun DashboardScreen(
                 )
             }
 
-            is ProtectionCheck.SelfNotRouted -> {
+            (protection as? ProtectionCheck.Blocked)?.gate == DiagnosticGate.SELF_NOT_ROUTED -> {
                 Spacer(Modifier.height(12.dp))
-                SelfNotRoutedPrompt(
-                    onRetry = {
-                        DashboardCache.refresh(scope, context, selfNeedsRestart)
-                        DiagnosticsCache.retry(scope, context)
-                    },
-                )
+                SelfNotRoutedPrompt(onRetry = onRetry)
             }
 
-            // Per-layer verdict renders in the cards below; no hero banner here.
-            is ProtectionCheck.Checked -> {}
+            protection is ProtectionCheck.Failed -> {
+                Spacer(Modifier.height(12.dp))
+                DiagnosticsFailedPrompt(onRetry = onRetry)
+            }
+
+            else -> {} // Checked: the per-layer tiles carry the status; no hero banner
         }
         Spacer(Modifier.height(20.dp))
 
@@ -693,7 +692,7 @@ private fun nativeSummaryText(protection: ProtectionCheck): String =
     when (protection) {
         // VPN off / app not in the tunnel / needs restart: the layer wasn't measured, so the
         // tile just reads "not checked" — the hero and banner carry the actual reason.
-        ProtectionCheck.NoVpn, ProtectionCheck.NeedsRestart, ProtectionCheck.SelfNotRouted -> {
+        is ProtectionCheck.Blocked, ProtectionCheck.Failed -> {
             stringResource(R.string.dashboard_protection_unknown)
         }
 
@@ -705,14 +704,14 @@ private fun nativeSummaryText(protection: ProtectionCheck): String =
 @Composable
 private fun nativeSummaryAccent(protection: ProtectionCheck): Color =
     when (protection) {
-        ProtectionCheck.NoVpn, ProtectionCheck.NeedsRestart, ProtectionCheck.SelfNotRouted -> MaterialTheme.colorScheme.onSurfaceVariant
+        is ProtectionCheck.Blocked, ProtectionCheck.Failed -> MaterialTheme.colorScheme.onSurfaceVariant
         is ProtectionCheck.Checked -> layerSummaryAccent(protection.native)
     }
 
 @Composable
 private fun javaSummaryText(protection: ProtectionCheck): String =
     when (protection) {
-        ProtectionCheck.NoVpn, ProtectionCheck.NeedsRestart, ProtectionCheck.SelfNotRouted -> {
+        is ProtectionCheck.Blocked, ProtectionCheck.Failed -> {
             stringResource(R.string.dashboard_protection_unknown)
         }
 
@@ -724,7 +723,7 @@ private fun javaSummaryText(protection: ProtectionCheck): String =
 @Composable
 private fun javaSummaryAccent(protection: ProtectionCheck): Color =
     when (protection) {
-        ProtectionCheck.NoVpn, ProtectionCheck.NeedsRestart, ProtectionCheck.SelfNotRouted -> MaterialTheme.colorScheme.onSurfaceVariant
+        is ProtectionCheck.Blocked, ProtectionCheck.Failed -> MaterialTheme.colorScheme.onSurfaceVariant
         is ProtectionCheck.Checked -> layerSummaryAccent(protection.java)
     }
 

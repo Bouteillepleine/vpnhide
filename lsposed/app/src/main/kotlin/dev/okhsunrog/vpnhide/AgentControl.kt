@@ -36,22 +36,28 @@ internal object AgentControl {
      */
     suspend fun runFullDiagnostics(context: Context): AgentDiagnosticsReport =
         withAppContext(context) { context ->
-            val results = DiagnosticsCache.awaitFullResults(context)
-            if (results == null) {
-                val gatedState =
-                    if (DiagnosticsCache.state.value is DiagnosticsCache.State.SelfNotRouted) {
-                        "self_not_routed"
-                    } else {
-                        "vpn_off"
-                    }
-                AgentDiagnosticsReport(
-                    state = gatedState,
-                    score = AgentCheckScore(0, 0),
-                    nativeChecks = emptyList(),
-                    javaChecks = emptyList(),
-                )
-            } else {
-                results.toAgentDiagnosticsReport()
+            // awaitTerminal carries the reason (blocked gate / failed) instead of
+            // re-reading state.value after a null (a race) — same fix as the dashboard.
+            // The agent doesn't know selfNeedsRestart; false is safe because the cache's
+            // sticky flag keeps a UI-set NEEDS_RESTART from being cleared here.
+            when (val terminal = DiagnosticsCache.awaitTerminal(context, selfNeedsRestart = false)) {
+                is DiagnosticsCache.State.Ready -> {
+                    terminal.results.toAgentDiagnosticsReport()
+                }
+
+                else -> {
+                    val state =
+                        when (terminal) {
+                            is DiagnosticsCache.State.Blocked -> terminal.gate.agentStateToken()
+                            else -> "failed"
+                        }
+                    AgentDiagnosticsReport(
+                        state = state,
+                        score = AgentCheckScore(0, 0),
+                        nativeChecks = emptyList(),
+                        javaChecks = emptyList(),
+                    )
+                }
             }
         }
 
@@ -622,18 +628,23 @@ private fun ModuleState.toAgentModuleState(
         }
     }
 
+/** Agent-bridge wire token for a blocked gate (protocol-facing — keep stable). */
+private fun DiagnosticGate.agentStateToken(): String =
+    when (this) {
+        DiagnosticGate.VPN_OFF -> "vpn_off"
+        DiagnosticGate.NEEDS_RESTART -> "needs_restart"
+        DiagnosticGate.SELF_NOT_ROUTED -> "self_not_routed"
+        DiagnosticGate.ROUTED -> "routed" // unreachable: a Blocked gate is never ROUTED
+    }
+
 private fun ProtectionCheck.toAgentProtectionSummary(): AgentProtectionSummary =
     when (this) {
-        ProtectionCheck.NoVpn -> {
-            AgentProtectionSummary(state = "vpn_off")
+        is ProtectionCheck.Blocked -> {
+            AgentProtectionSummary(state = gate.agentStateToken())
         }
 
-        ProtectionCheck.NeedsRestart -> {
-            AgentProtectionSummary(state = "needs_restart")
-        }
-
-        ProtectionCheck.SelfNotRouted -> {
-            AgentProtectionSummary(state = "self_not_routed")
+        ProtectionCheck.Failed -> {
+            AgentProtectionSummary(state = "failed")
         }
 
         is ProtectionCheck.Checked -> {

@@ -29,11 +29,11 @@ import kotlin.coroutines.coroutineContext
  * State machine:
  * - [State.NotRun] — fresh, nothing attempted yet.
  * - [State.Running] — a run is in flight.
- * - [State.VpnOff] — last run aborted because no active VPN was
- *   detected. User gets a "turn on VPN, then retry" banner.
+ * - [State.Blocked] — the gate stopped the run (VPN off, or this app split-tunnelled
+ *   out); carries the [DiagnosticGate] so the banner explains which.
  * - [State.Failed] — last run threw (root dropped, shell exec failure). VPN may
  *   well be on; the user gets a "diagnostics failed, retry" banner — distinct
- *   from [State.VpnOff] so an active-VPN user isn't told their VPN is off.
+ *   from a [State.Blocked] VPN-off gate so an active-VPN user isn't told their VPN is off.
  * - [State.Ready] — at least the fast phase is captured; [State.Ready.complete]
  *   flips to true when the slow Java probes have filled in too. Dashboard waits
  *   for the complete result, while Diagnostics can show the fast result first.
@@ -48,13 +48,17 @@ internal object DiagnosticsCache {
 
         data object Running : State
 
-        data object VpnOff : State
-
-        // A VPN is up on the device, but this app's own uid is not routed through
-        // it (excluded by split tunnelling). The checks would be meaningless —
-        // nothing to hide from us — so we ask the user to add VPN Hide to the
-        // tunnel instead of showing misleadingly-clean results.
-        data object SelfNotRouted : State
+        // The gate blocked the run: no active VPN, or a VPN is up but this app is
+        // split-tunnelled out of it (nothing to hide from us). Carries the shared
+        // [DiagnosticGate] so every consumer speaks one vocabulary and no one
+        // re-folds the reason. Never [DiagnosticGate.ROUTED] — that becomes [Ready].
+        data class Blocked(
+            val gate: DiagnosticGate,
+        ) : State {
+            init {
+                require(gate != DiagnosticGate.ROUTED) { "Blocked gate must not be ROUTED" }
+            }
+        }
 
         data object Failed : State
 
@@ -76,15 +80,35 @@ internal object DiagnosticsCache {
     // summary), so they survive even if no screen scope is active.
     private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    // Whether this app's own hooks need a reboot to apply (it was just added as a
+    // target). Process-constant, so it is sticky-OR: the first run() call sets it and
+    // no later caller can clear it. When set, a run measures nothing (the hooks aren't
+    // in this process), so the cache parks at Blocked(NEEDS_RESTART) and never probes.
+    @Volatile private var restartPending = false
+
     /** Start a run if one isn't already in flight and we don't have a
      * completed result yet. Idempotent — safe to call from both
      * Dashboard and Diagnostics screens on every composition.
+     *
+     * [selfNeedsRestart] is the shared gate signal: once any caller reports true the
+     * cache stays at Blocked(NEEDS_RESTART) (a run would be meaningless), so a caller
+     * that doesn't know it — the agent bridge — can safely pass false.
      */
     @Synchronized
     fun run(
         scope: CoroutineScope,
         context: Context,
+        selfNeedsRestart: Boolean,
     ) {
+        restartPending = restartPending || selfNeedsRestart
+        if (restartPending) {
+            // Publish the gate synchronously and never launch doRun — this keeps the
+            // Job/cancellation machinery reserved for the real run. selfNeedsRestart is
+            // process-constant, so this is decided on the first run() and never flips
+            // out from under an in-flight run.
+            _state.value = State.Blocked(DiagnosticGate.NEEDS_RESTART)
+            return
+        }
         val current = _state.value
         when (current) {
             is State.Ready -> {
@@ -99,7 +123,7 @@ internal object DiagnosticsCache {
                 if (inflight?.isActive == true) return
             }
 
-            State.NotRun, State.VpnOff, State.SelfNotRouted, State.Failed -> { /* proceed */ }
+            State.NotRun, is State.Blocked, State.Failed -> { /* proceed */ }
         }
         if (inflight?.isActive == true) return
         inflight = scope.launch { doRun(context.applicationContext) }
@@ -107,12 +131,13 @@ internal object DiagnosticsCache {
 
     /** Used by the retry button in the "VPN off" / "failed" banners — a readable
      * alias for [run] at the call site (the [run] guard already permits a re-run
-     * from NotRun, VpnOff, and Failed).
+     * from NotRun, Blocked, and Failed).
      */
     fun retry(
         scope: CoroutineScope,
         context: Context,
-    ) = run(scope, context)
+        selfNeedsRestart: Boolean,
+    ) = run(scope, context, selfNeedsRestart)
 
     /**
      * Suspend until the full Diagnostics result is available. Dashboard uses
@@ -120,34 +145,46 @@ internal object DiagnosticsCache {
      * probe shown in Settings → Detailed diagnostics, including the slow push-callback
      * and route/NetworkInfo Java checks.
      */
-    suspend fun awaitFullResults(context: Context): CheckResults? {
-        run(cacheScope, context)
-        val terminal =
-            state.first {
-                it is State.VpnOff || it is State.SelfNotRouted || it is State.Failed ||
-                    (it is State.Ready && it.complete)
-            }
-        return (terminal as? State.Ready)?.results
+    suspend fun awaitTerminal(
+        context: Context,
+        selfNeedsRestart: Boolean,
+    ): State {
+        run(cacheScope, context, selfNeedsRestart)
+        return state.first {
+            it is State.Blocked || it is State.Failed || (it is State.Ready && it.complete)
+        }
     }
+
+    /** The complete check results, or null when the terminal state carried no
+     * measurement (blocked or failed). Callers that need to distinguish *why*
+     * there are no results should use [awaitTerminal] — reading [state] again
+     * after a null here would race a subsequent run. */
+    suspend fun awaitFullResults(
+        context: Context,
+        selfNeedsRestart: Boolean,
+    ): CheckResults? = (awaitTerminal(context, selfNeedsRestart) as? State.Ready)?.results
 
     private suspend fun doRun(appContext: Context) {
         _state.value = State.Running
         try {
             StartupTrace.mark("diagnostics_cache_start")
+            // Probe lazily and fold each decision through the one shared classifier
+            // ([resolveDiagnosticGate]) so the live path, the debug export, and the
+            // dashboard all order the gate identically. selfNeedsRestart is false
+            // here — callers pre-gate on it, so this path is only reached when it is.
             val vpnActive = withContext(Dispatchers.IO) { isVpnActive() }
             if (!vpnActive) {
-                _state.value = State.VpnOff
+                _state.value = State.Blocked(resolveDiagnosticGate(vpnActive = false, selfRouted = null, selfNeedsRestart = false))
                 StartupTrace.mark("diagnostics_cache_vpn_off")
                 return
             }
-            // Self-in-tunnel gate: a VPN is up, but is *this* app routed through
-            // it? If it is provably not (excluded by split tunnelling), the checks
-            // have nothing to hide from us — block with a "add to tunnel" prompt.
+            // Self-in-tunnel gate: a VPN is up, but is *this* app routed through it?
             // A null answer (no root to tell) does not block — a no-root device is
             // already handled as VPN-off above.
             val selfRouted = withContext(Dispatchers.IO) { GroundTruthProbe.selfRoutedThroughVpn(appContext) }
-            if (selfRouted == false) {
-                _state.value = State.SelfNotRouted
+            val gate = resolveDiagnosticGate(vpnActive = true, selfRouted = selfRouted, selfNeedsRestart = false)
+            if (gate != DiagnosticGate.ROUTED) {
+                _state.value = State.Blocked(gate)
                 StartupTrace.mark("diagnostics_cache_self_not_routed")
                 return
             }
@@ -166,13 +203,13 @@ internal object DiagnosticsCache {
         } catch (e: CancellationException) {
             // A cancelled job (e.g. the screen left) must propagate so
             // structured concurrency unwinds — never get reinterpreted as a
-            // VpnOff result. If we were cancelled before publishing a result,
-            // reset Running back to NotRun so a later run() can relaunch.
+            // Blocked/Failed result. If we were cancelled before publishing a
+            // result, reset Running back to NotRun so a later run() can relaunch.
             resetRunningIfStillOurs(coroutineContext.job)
             throw e
         } catch (e: Exception) {
-            // A real failure (root dropped, shell exec failure) — distinct from
-            // VpnOff so an active-VPN user isn't wrongly told their VPN is off.
+            // A real failure (root dropped, shell exec failure) — distinct from a
+            // VPN-off gate so an active-VPN user isn't wrongly told their VPN is off.
             // Both states offer a retry; these causes are usually transient.
             _state.value = State.Failed
             StartupTrace.mark("diagnostics_cache_failed")

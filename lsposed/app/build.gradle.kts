@@ -65,7 +65,7 @@ detekt {
 // default ceiling. Remove an entry once a file drops below the default.
 val kotlinSourceLineBudgets =
     mapOf(
-        "DashboardData.kt" to 1716,
+        "DashboardData.kt" to 1730,
         "DashboardScreen.kt" to 1335,
         "HookEntry.kt" to 1276,
         "SettingsScreen.kt" to 1201,

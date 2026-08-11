@@ -76,14 +76,23 @@ sealed interface LsposedState {
     ) : LsposedState
 }
 
-sealed interface ProtectionCheck {
-    data object NoVpn : ProtectionCheck
+internal sealed interface ProtectionCheck {
+    // The gate stopped the run before anything could be measured — VPN off, this app
+    // split-tunnelled out (hiding is moot for us → "add to tunnel"), or a pending
+    // self-restart. Carries the shared [DiagnosticGate] so the hero/agent explain
+    // which without a second enum. Never [DiagnosticGate.ROUTED] — that is [Checked].
+    data class Blocked(
+        val gate: DiagnosticGate,
+    ) : ProtectionCheck {
+        init {
+            require(gate != DiagnosticGate.ROUTED) { "Blocked gate must not be ROUTED" }
+        }
+    }
 
-    data object NeedsRestart : ProtectionCheck
-
-    // A VPN is up, but this app is not routed through it (split-tunnelled out) —
-    // hiding is moot for us, so we ask the user to add VPN Hide to the tunnel.
-    data object SelfNotRouted : ProtectionCheck
+    // The run threw (root dropped, shell exec failure) — the VPN may well be up, we
+    // just couldn't measure. Distinct from a VPN-off gate so the hero doesn't tell an
+    // active-VPN user to turn their VPN on.
+    data object Failed : ProtectionCheck
 
     data class Checked(
         val native: LayerStatus,
@@ -305,11 +314,17 @@ internal fun computeHeroStatus(
     warningCount: Int,
 ): HeroStatus {
     val p = state.protection
-    if (p is ProtectionCheck.NoVpn) return HeroStatus.VpnOff
+    if (p is ProtectionCheck.Blocked && p.gate == DiagnosticGate.VPN_OFF) return HeroStatus.VpnOff
     // 0 = protected, 1 = attention, 2 = unprotected — keep the worst signal.
     var rank = 0
     when (p) {
-        ProtectionCheck.NeedsRestart, ProtectionCheck.SelfNotRouted -> {
+        // A non-VPN-off block (self-not-routed / needs-restart) is attention, not off.
+        is ProtectionCheck.Blocked -> {
+            rank = maxOf(rank, 1)
+        }
+
+        // Couldn't measure — attention, not "off" (we don't know protection is broken).
+        ProtectionCheck.Failed -> {
             rank = maxOf(rank, 1)
         }
 
@@ -1622,47 +1637,37 @@ internal suspend fun loadDashboardState(
     // differential and so aren't in nativeOutcomes. Set during the protection
     // computation, surfaced via the hero warning so a leak there is never invisible.
     var unownedNativeLeakCount = 0
+    // Single source of truth: the cache does all the gating (VPN off / needs-restart /
+    // self-not-routed) through the one fold. awaitTerminal returns the terminal state
+    // itself, so the reason for "no results" (blocked gate vs a failed run) is carried
+    // through instead of re-derived from a second VPN sensor or a raced state.value read.
     val protection: ProtectionCheck =
-        when {
-            !vpnActive -> {
-                ProtectionCheck.NoVpn
+        when (val terminal = DiagnosticsCache.awaitTerminal(context, selfNeedsRestart)) {
+            is DiagnosticsCache.State.Blocked -> {
+                ProtectionCheck.Blocked(terminal.gate)
             }
 
-            selfNeedsRestart -> {
-                ProtectionCheck.NeedsRestart
+            is DiagnosticsCache.State.Ready -> {
+                // Derive tiles from the one canonical report (the same object the
+                // debug bundle renders), so the on-screen verdict and the exported
+                // one can never diverge. Tiles judge each backend on the vectors it
+                // owns; unowned leaks are surfaced via the hero warning below.
+                val report =
+                    buildDiagnosticReport(
+                        gate = DiagnosticGate.ROUTED,
+                        results = terminal.results,
+                        backend = nativeBackend,
+                        lsposedActive = lsposed is LsposedState.Active,
+                        complete = true,
+                    )
+                unownedNativeLeakCount = report.native.unownedLeaks
+                ProtectionCheck.Checked(report.native.status, report.java.status)
             }
 
+            // State.Failed, and defensively the never-terminal NotRun/Running:
+            // the run couldn't measure — distinct from a VPN-off gate.
             else -> {
-                // Single source of truth: reuse the cached check run instead of
-                // probing again here. Dashboard waits for the full Diagnostics
-                // result so its "OK" state means every protection probe passed.
-                val checks = DiagnosticsCache.awaitFullResults(context)
-                if (checks == null) {
-                    // No results to summarize. Distinguish the self-not-routed gate
-                    // (VPN up but this app split-tunnelled out) from a genuine
-                    // no-VPN / failed run, so the hero can guide "add to tunnel"
-                    // instead of the wrong "turn on VPN".
-                    if (DiagnosticsCache.state.value is DiagnosticsCache.State.SelfNotRouted) {
-                        ProtectionCheck.SelfNotRouted
-                    } else {
-                        ProtectionCheck.NoVpn
-                    }
-                } else {
-                    // Derive tiles from the one canonical report (the same object the
-                    // debug bundle renders), so the on-screen verdict and the exported
-                    // one can never diverge. Tiles judge each backend on the vectors it
-                    // owns; unowned leaks are surfaced via the hero warning below.
-                    val report =
-                        buildDiagnosticReport(
-                            gate = DiagnosticGate.ROUTED,
-                            results = checks,
-                            backend = nativeBackend,
-                            lsposedActive = lsposed is LsposedState.Active,
-                            complete = true,
-                        )
-                    unownedNativeLeakCount = report.native.unownedLeaks
-                    ProtectionCheck.Checked(report.native.status, report.java.status)
-                }
+                ProtectionCheck.Failed
             }
         }
 

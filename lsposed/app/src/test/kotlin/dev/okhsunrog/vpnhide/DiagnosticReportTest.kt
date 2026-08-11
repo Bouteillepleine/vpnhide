@@ -136,6 +136,9 @@ class DiagnosticReportTest {
     fun `gate folds the three signals worst-first`() {
         assertEquals(DiagnosticGate.VPN_OFF, resolveDiagnosticGate(vpnActive = false, selfRouted = true, selfNeedsRestart = false))
         assertEquals(DiagnosticGate.NEEDS_RESTART, resolveDiagnosticGate(vpnActive = true, selfRouted = true, selfNeedsRestart = true))
+        // needs-restart outranks vpn-off: the app's own hooks aren't applied yet, so a
+        // run measures nothing regardless of the VPN — reboot is the actionable step.
+        assertEquals(DiagnosticGate.NEEDS_RESTART, resolveDiagnosticGate(vpnActive = false, selfRouted = null, selfNeedsRestart = true))
         assertEquals(
             DiagnosticGate.SELF_NOT_ROUTED,
             resolveDiagnosticGate(vpnActive = true, selfRouted = false, selfNeedsRestart = false),
