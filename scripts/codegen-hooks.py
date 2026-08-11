@@ -209,6 +209,22 @@ def emit_rust(hooks: list[Hook], errs: list[Err], backends: list[Backend]) -> st
         L.append(f"    {pascal(h.name)} = {h.id},")
     L.append("}")
     L.append("")
+    L.append("impl Hook {")
+    L.append("    /// This hook's bit in the control/stats wire mask.")
+    L.append("    pub const fn bit(self) -> u32 {")
+    L.append("        1u32 << self as u32")
+    L.append("    }")
+    L.append("")
+    L.append("    /// Resolve a canonical config hook name.")
+    L.append("    pub fn from_name(name: &str) -> Option<Self> {")
+    L.append("        match name {")
+    for h in hooks:
+        L.append(f'            "{h.name}" => Some(Self::{pascal(h.name)}),')
+    L.append("            _ => None,")
+    L.append("        }")
+    L.append("    }")
+    L.append("}")
+    L.append("")
     L.append(f"pub const HOOK_COUNT: u32 = {len(hooks)};")
     L.append("")
     L.append("/// Hooks owned by each backend: apply `mask & own`.")
@@ -234,13 +250,6 @@ def emit_rust(hooks: list[Hook], errs: list[Err], backends: list[Backend]) -> st
             L.append(f"    /// {b.note}")
         L.append(f"    {pascal(b.name)} = {b.id},")
     L.append("}")
-    L.append("")
-    # One name per line so the output is rustfmt-clean (CI runs `cargo fmt
-    # --check`); rustfmt wraps an over-width array into exactly this shape.
-    L.append(f"pub const HOOK_NAMES: [&str; {len(hooks)}] = [")
-    for h in hooks:
-        L.append(f'    "{h.name}",')
-    L.append("];")
     L.append("")
     return "\n".join(L)
 

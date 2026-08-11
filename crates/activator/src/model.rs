@@ -130,30 +130,66 @@ pub(crate) enum NativeHookFamily {
 }
 
 impl NativeHookFamily {
-    fn full_mask(self) -> u32 {
+    fn full_set(self) -> HookSet {
         match self {
-            NativeHookFamily::Kernel => KERNEL_HOOK_MASK,
-            NativeHookFamily::Zygisk => ZYGISK_HOOK_MASK,
+            NativeHookFamily::Kernel => HookSet::from_bits(KERNEL_HOOK_MASK),
+            NativeHookFamily::Zygisk => HookSet::from_bits(ZYGISK_HOOK_MASK),
         }
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct HookSet(u32);
+
+impl HookSet {
+    const fn from_bits(bits: u32) -> Self {
+        Self(bits)
+    }
+
+    fn from_names(names: &[String]) -> Self {
+        names
+            .iter()
+            .filter_map(|name| Hook::from_name(name))
+            .fold(Self::default(), |hooks, hook| hooks.with(hook))
+    }
+
+    const fn with(self, hook: Hook) -> Self {
+        Self(self.0 | hook.bit())
+    }
+
+    const fn restricted_to(self, owner: Self) -> Self {
+        Self(self.0 & owner.0)
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.0 |= other.0;
+    }
+
+    const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    const fn bits(self) -> u32 {
+        self.0
+    }
+}
+
 impl NativeSelection {
-    pub(crate) fn hookmask(&self, family: NativeHookFamily) -> Option<u32> {
+    pub(crate) fn hooks(&self, family: NativeHookFamily) -> Option<HookSet> {
         match self {
             NativeSelection::Enabled(false) => None,
-            NativeSelection::Enabled(true) => Some(family.full_mask()),
+            NativeSelection::Enabled(true) => Some(family.full_set()),
             NativeSelection::Hooks(names) => {
                 if names.is_empty() {
                     return None;
                 }
-                let mask = match family {
+                let hooks = match family {
                     NativeHookFamily::Kernel => {
-                        names.iter().fold(0u32, |acc, name| acc | hook_bit(name)) & KERNEL_HOOK_MASK
+                        HookSet::from_names(names).restricted_to(family.full_set())
                     }
-                    NativeHookFamily::Zygisk => ZYGISK_HOOK_MASK,
+                    NativeHookFamily::Zygisk => family.full_set(),
                 };
-                (mask != 0).then_some(mask)
+                (!hooks.is_empty()).then_some(hooks)
             }
             NativeSelection::Detailed(detail) => {
                 if !detail.enabled {
@@ -164,11 +200,10 @@ impl NativeSelection {
                     NativeHookFamily::Zygisk => &detail.zygisk,
                 };
                 let Some(names) = selected else {
-                    return Some(family.full_mask());
+                    return Some(family.full_set());
                 };
-                let mask =
-                    names.iter().fold(0u32, |acc, name| acc | hook_bit(name)) & family.full_mask();
-                (mask != 0).then_some(mask)
+                let hooks = HookSet::from_names(names).restricted_to(family.full_set());
+                (!hooks.is_empty()).then_some(hooks)
             }
         }
     }
@@ -196,14 +231,6 @@ where
         BoolOrHookList::Bool(enabled) => enabled,
         BoolOrHookList::Hooks(hooks) => !hooks.is_empty(),
     })
-}
-
-fn hook_bit(name: &str) -> u32 {
-    HOOK_NAMES
-        .iter()
-        .position(|known| *known == name)
-        .map(|id| 1u32 << id)
-        .unwrap_or(0)
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -350,9 +377,9 @@ pub(crate) fn project_native_with_resolver_for_family(
     resolver: &PackageUidMap,
     family: NativeHookFamily,
 ) -> String {
-    let mut by_uid = BTreeMap::<u32, u32>::new();
+    let mut by_uid = BTreeMap::<u32, HookSet>::new();
     for (pkg, app) in &cfg.apps {
-        let Some(mask) = app.native.hookmask(family) else {
+        let Some(hooks) = app.native.hooks(family) else {
             continue;
         };
         // The APK is intentionally single-owner: only its main-profile copy
@@ -368,8 +395,8 @@ pub(crate) fn project_native_with_resolver_for_family(
             {
                 by_uid
                     .entry(uid)
-                    .and_modify(|existing| *existing |= mask)
-                    .or_insert(mask);
+                    .and_modify(|existing| existing.merge(hooks))
+                    .or_insert(hooks);
             }
             continue;
         }
@@ -389,8 +416,8 @@ pub(crate) fn project_native_with_resolver_for_family(
             }
             by_uid
                 .entry(*uid)
-                .and_modify(|existing| *existing |= mask)
-                .or_insert(mask);
+                .and_modify(|existing| existing.merge(hooks))
+                .or_insert(hooks);
         }
     }
     // `by_uid` is a BTreeMap, so iteration is ascending by UID; truncating would
@@ -403,7 +430,10 @@ pub(crate) fn project_native_with_resolver_for_family(
     let targets = by_uid
         .into_iter()
         .take(MAX_NATIVE_TARGETS)
-        .map(|(uid, hookmask)| Target { uid, hookmask })
+        .map(|(uid, hooks)| Target {
+            uid,
+            hookmask: hooks.bits(),
+        })
         .collect::<Vec<_>>();
     format_config(cfg.debug, NO_DEFAULT_MASK, &targets)
 }

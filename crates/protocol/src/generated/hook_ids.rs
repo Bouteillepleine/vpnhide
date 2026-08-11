@@ -62,6 +62,47 @@ pub enum Hook {
     ZygiskSetsockopt = 26,
 }
 
+impl Hook {
+    /// This hook's bit in the control/stats wire mask.
+    pub const fn bit(self) -> u32 {
+        1u32 << self as u32
+    }
+
+    /// Resolve a canonical config hook name.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "fib_route_seq_show" => Some(Self::FibRouteSeqShow),
+            "ipv6_route_seq_show" => Some(Self::Ipv6RouteSeqShow),
+            "rtnl_fill_ifinfo" => Some(Self::RtnlFillIfinfo),
+            "inet_fill_ifaddr" => Some(Self::InetFillIfaddr),
+            "inet6_fill_ifaddr" => Some(Self::Inet6FillIfaddr),
+            "dev_ioctl" => Some(Self::DevIoctl),
+            "sock_ioctl" => Some(Self::SockIoctl),
+            "fib_dump_info" => Some(Self::FibDumpInfo),
+            "rt6_fill_node" => Some(Self::Rt6FillNode),
+            "fib_nl_fill_rule" => Some(Self::FibNlFillRule),
+            "lsposed_link_properties" => Some(Self::LsposedLinkProperties),
+            "lsposed_network_capabilities" => Some(Self::LsposedNetworkCapabilities),
+            "lsposed_network_info" => Some(Self::LsposedNetworkInfo),
+            "lsposed_network" => Some(Self::LsposedNetwork),
+            "lsposed_connectivity_result" => Some(Self::LsposedConnectivityResult),
+            "lsposed_connectivity_callback" => Some(Self::LsposedConnectivityCallback),
+            "lsposed_connectivity_network" => Some(Self::LsposedConnectivityNetwork),
+            "lsposed_package_visibility" => Some(Self::LsposedPackageVisibility),
+            "zygisk_ioctl" => Some(Self::ZygiskIoctl),
+            "zygisk_getifaddrs" => Some(Self::ZygiskGetifaddrs),
+            "zygisk_openat" => Some(Self::ZygiskOpenat),
+            "zygisk_recvmsg" => Some(Self::ZygiskRecvmsg),
+            "zygisk_recv" => Some(Self::ZygiskRecv),
+            "zygisk_recvfrom" => Some(Self::ZygiskRecvfrom),
+            "zygisk_recvfrom_chk" => Some(Self::ZygiskRecvfromChk),
+            "socket_bind_interface" => Some(Self::SocketBindInterface),
+            "zygisk_setsockopt" => Some(Self::ZygiskSetsockopt),
+            _ => None,
+        }
+    }
+}
+
 pub const HOOK_COUNT: u32 = 27;
 
 /// Hooks owned by each backend: apply `mask & own`.
@@ -98,33 +139,3 @@ pub enum Backend {
     /// LSPosed Java-hook backend (system_server)
     Lsposed = 3,
 }
-
-pub const HOOK_NAMES: [&str; 27] = [
-    "fib_route_seq_show",
-    "ipv6_route_seq_show",
-    "rtnl_fill_ifinfo",
-    "inet_fill_ifaddr",
-    "inet6_fill_ifaddr",
-    "dev_ioctl",
-    "sock_ioctl",
-    "fib_dump_info",
-    "rt6_fill_node",
-    "fib_nl_fill_rule",
-    "lsposed_link_properties",
-    "lsposed_network_capabilities",
-    "lsposed_network_info",
-    "lsposed_network",
-    "lsposed_connectivity_result",
-    "lsposed_connectivity_callback",
-    "lsposed_connectivity_network",
-    "lsposed_package_visibility",
-    "zygisk_ioctl",
-    "zygisk_getifaddrs",
-    "zygisk_openat",
-    "zygisk_recvmsg",
-    "zygisk_recv",
-    "zygisk_recvfrom",
-    "zygisk_recvfrom_chk",
-    "socket_bind_interface",
-    "zygisk_setsockopt",
-];

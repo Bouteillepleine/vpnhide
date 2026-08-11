@@ -26,7 +26,7 @@ use vpnhide_apatch_abi::{
     parse_kernel_version_hint as parse_apatch_kernel_version_hint,
 };
 use vpnhide_protocol::Target;
-use vpnhide_protocol::hook_ids::{HOOK_NAMES, KERNEL_HOOK_MASK, ZYGISK_HOOK_MASK};
+use vpnhide_protocol::hook_ids::{Hook, KERNEL_HOOK_MASK, ZYGISK_HOOK_MASK};
 use vpnhide_protocol::{
     KPM_ARGS_LEN, Kind, MAX_TARGET_UIDS, format_config, parse_config, peek_kind,
 };
@@ -392,7 +392,7 @@ pub fn boot_wait_requested_from_env() -> Result<bool> {
 fn has_native_targets(cfg: &CanonicalConfig, family: NativeHookFamily) -> bool {
     cfg.apps
         .values()
-        .any(|app| app.native.hookmask(family).is_some())
+        .any(|app| app.native.hooks(family).is_some())
 }
 
 fn has_ports_targets(cfg: &CanonicalConfig) -> bool {
