@@ -556,7 +556,10 @@ fn projection_is_bounded_to_backend_target_capacity() {
     // All 70 share one mask, so the whole set rides one `targets` record and the
     // count lives in the `end` fuse — which the backend checks, so the producer
     // has to cap itself here rather than let the backend reject the payload.
-    assert_eq!(wire.lines().filter(|l| l.starts_with("targets ")).count(), 1);
+    assert_eq!(
+        wire.lines().filter(|l| l.starts_with("targets ")).count(),
+        1
+    );
     assert!(wire.ends_with(&format!("end {MAX_NATIVE_TARGETS:x}\n")));
     let uids = wire
         .lines()

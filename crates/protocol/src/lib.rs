@@ -29,6 +29,14 @@ pub const CONTROL_VERSION: u32 = 2;
 /// and diagnostics. Do not move it without shipping the APK in step.
 pub const TELEMETRY_VERSION: u32 = 1;
 
+/// Size of KernelPatch's fixed KPM control-argument buffer, mirrored from
+/// `kmod/third_party/KernelPatch/kernel/include/kpmodule.h`.
+///
+/// A payload must be strictly shorter than this value because the transport
+/// stores a trailing NUL in the same buffer. Keep the runtime check in the
+/// activator and the capacity guard test below tied to this constant.
+pub const KPM_ARGS_LEN: usize = 1024;
+
 /// Highest version this implementation reads for `kind`'s protocol.
 fn max_version(kind: Kind) -> u32 {
     match kind {
@@ -612,6 +620,27 @@ mod tests {
             "vpnhide 2 config\ndebug 0\ntargets 3ff 2710 2711 2712 2713 2714 2715 2716 2717\nend 8\n",
         );
         assert_eq!(parse_config(wire.as_bytes()).unwrap().targets, targets);
+    }
+
+    #[test]
+    fn full_shared_mask_target_set_fits_the_kpm_transport() {
+        // Use maximum-width u32 values rather than today's usual five-digit
+        // Android UIDs. This guards the dense/common case promised by the v2
+        // grammar: every available target slot sharing one full hookmask must
+        // still leave room for KernelPatch's trailing NUL.
+        let targets: Vec<Target> = (0..MAX_TARGET_UIDS as u32)
+            .map(|offset| Target {
+                uid: u32::MAX - offset,
+                hookmask: u32::MAX,
+            })
+            .collect();
+        let wire = format_config(true, u32::MAX, &targets);
+
+        assert!(
+            wire.len() < KPM_ARGS_LEN,
+            "{MAX_TARGET_UIDS} maximum-width targets need {} bytes plus NUL, KPM_ARGS_LEN is {KPM_ARGS_LEN}",
+            wire.len(),
+        );
     }
 
     #[test]
