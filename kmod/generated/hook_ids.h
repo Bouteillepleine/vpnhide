@@ -37,6 +37,45 @@
 #define VPNHIDE_ZYGISK_HOOK_MASK 0x5fc0000u
 #define VPNHIDE_LSPOSED_HOOK_MASK 0x3fc00u
 
+/* Dense storage slots for kernel-owned stats counters. The wire keeps
+   global hook ids; native backends use these helpers only in memory. */
+#define VPNHIDE_KERNEL_HOOK_COUNT 11
+static inline int vpnhide_kernel_hook_slot(unsigned int id)
+{
+	switch (id) {
+	case 0: return 0;
+	case 1: return 1;
+	case 2: return 2;
+	case 3: return 3;
+	case 4: return 4;
+	case 5: return 5;
+	case 6: return 6;
+	case 7: return 7;
+	case 8: return 8;
+	case 9: return 9;
+	case 25: return 10;
+	default: return -1;
+	}
+}
+
+static inline unsigned int vpnhide_kernel_hook_id(unsigned int slot)
+{
+	switch (slot) {
+	case 0: return 0;
+	case 1: return 1;
+	case 2: return 2;
+	case 3: return 3;
+	case 4: return 4;
+	case 5: return 5;
+	case 6: return 6;
+	case 7: return 7;
+	case 8: return 8;
+	case 9: return 9;
+	case 10: return 25;
+	default: return VPNHIDE_HOOK_COUNT;
+	}
+}
+
 /* status error codes (protocol §5.1). */
 #define VPNHIDE_ERR_OK                       0
 #define VPNHIDE_ERR_UNSUPPORTED_KVER         1

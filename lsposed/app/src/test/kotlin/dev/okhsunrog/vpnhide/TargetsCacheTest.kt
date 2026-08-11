@@ -39,6 +39,7 @@ class TargetsCacheTest {
         assertEquals(setOf("com.hidden.one", "com.hidden.two"), targets.hiddenPkgs)
         assertEquals(setOf(10123, 1010123), targets.observerUids)
         assertEquals(setOf("com.observer"), targets.observerNames)
+        assertEquals(listOf(10123, 1010123), targets.packageUids["com.observer"])
         assertEquals(setOf("com.browser"), targets.portsObservers)
         assertTrue(targets.apatchSuperkeySaved)
     }

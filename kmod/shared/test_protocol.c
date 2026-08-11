@@ -17,7 +17,7 @@
 /* Config capacity must equal vpnhide_protocol::MAX_TARGET_UIDS: the shared
  * vectors pin over-ceiling payloads as REJECT, so C and Rust have to be
  * rejecting at the same count. */
-#define CFG_MAX_TARGETS 64
+#define CFG_MAX_TARGETS 160
 #define MAX_FIELDS 8
 
 static int failures;
@@ -246,6 +246,42 @@ static void run_fixed_buffer_overflow_clamp(void)
 		     "aaa\\nbbb");
 }
 
+static void run_stats_after_parse(void)
+{
+	static const struct {
+		const char *wire;
+		int valid;
+		unsigned int after;
+	} cases[] = {
+		{ "vpnhide 1 stats", 1, 0 },
+		{ "vpnhide 1 stats\nafter 0x27ff\n", 1, 0x27ff },
+		{ "vpnhide 1 stats\nfuture value\nafter 0XFFFFFFFF", 1,
+		  0xffffffffu },
+		{ "vpnhide 1 status\nafter 0x1", 0, 0 },
+		{ "vpnhide 1 stats\nafter 27ff", 0, 0 },
+		{ "vpnhide 1 stats\nafter 0x1 extra", 0, 0 },
+		{ "vpnhide 1 stats\nafter 0x1\nafter 0x2", 0, 0 },
+	};
+	unsigned int i;
+
+	for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		unsigned int after = 123;
+		int valid = vpnhide_parse_stats_after(
+			cases[i].wire, strlen(cases[i].wire), &after);
+
+		checks++;
+		if (valid != cases[i].valid ||
+		    (valid && after != cases[i].after)) {
+			char got[64], want[64];
+
+			snprintf(got, sizeof(got), "%d,0x%x", valid, after);
+			snprintf(want, sizeof(want), "%d,0x%x", cases[i].valid,
+				 cases[i].after);
+			fail("stats after parse", got, want);
+		}
+	}
+}
+
 int main(int argc, char **argv)
 {
 	const char *path = argc > 1 ? argv[1] : "protocol_vectors.tsv";
@@ -290,6 +326,7 @@ int main(int argc, char **argv)
 	free(line);
 	fclose(f);
 	run_fixed_buffer_overflow_clamp();
+	run_stats_after_parse();
 
 	if (failures) {
 		fprintf(stderr, "%d/%d protocol vector(s) failed\n", failures,

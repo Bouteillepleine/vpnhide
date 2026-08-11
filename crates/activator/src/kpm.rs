@@ -194,9 +194,9 @@ impl KpmClient {
                 Err(_) if attempt + 1 < ATTEMPTS => {
                     // A concurrent boot/app ctl0 config gets the KPM's short
                     // busy return instead of spinning inside the kernel. The
-                    // critical section is only a 64-entry copy, so a brief
-                    // retry also covers runtimes that flatten negative return
-                    // codes to a generic CLI failure.
+                    // critical section is only a bounded target-array copy,
+                    // so a brief retry also covers runtimes that flatten
+                    // negative return codes to a generic CLI failure.
                     thread::sleep(Duration::from_millis(20));
                 }
                 Err(error) => return Err(error),
@@ -207,9 +207,18 @@ impl KpmClient {
 
     pub(crate) fn ctl0_read(&self, wire: &str) -> Result<String> {
         let _lock = KpmCtlLock::acquire()?;
+        normalize_kpm_reply(wire, self.ctl0_read_raw(wire)?)
+    }
+
+    pub(crate) fn ctl0_stats(&self) -> Result<String> {
+        let _lock = KpmCtlLock::acquire()?;
+        collect_kpm_stats_pages(|wire| self.ctl0_read_raw(wire))
+    }
+
+    fn ctl0_read_raw(&self, wire: &str) -> Result<String> {
         match self {
-            Self::KpatchCli { path } => run_kpatch_kpm_ctl0_read(path, wire),
-            Self::ApatchSupercall { key, style } => apatch_kpm_ctl0_read(key, *style, wire),
+            Self::KpatchCli { path } => run_kpatch_kpm_ctl0_read_raw(path, wire),
+            Self::ApatchSupercall { key, style } => apatch_kpm_ctl0_read_raw(key, *style, wire),
         }
     }
 }
@@ -267,7 +276,7 @@ fn run_kpatch_kpm_ctl0_config(kpatch: &Path, wire: &str) -> Result<()> {
     }
 }
 
-fn run_kpatch_kpm_ctl0_read(kpatch: &Path, wire: &str) -> Result<String> {
+fn run_kpatch_kpm_ctl0_read_raw(kpatch: &Path, wire: &str) -> Result<String> {
     let mut cmd = Command::new(kpatch);
     cmd.args(["kpm", "ctl0", KPM_NAME, wire]);
     let out = cmd.output()?;
@@ -279,7 +288,12 @@ fn run_kpatch_kpm_ctl0_read(kpatch: &Path, wire: &str) -> Result<String> {
     // error the supercall returns a negative rc and never fills the buffer, so
     // stdout is empty. Trust stdout: the reply text is authoritative, the exit
     // code is not (it can't even round-trip a reply longer than 255 bytes).
-    normalize_kpm_reply(wire, String::from_utf8_lossy(&out.stdout).into_owned())
+    let reply = String::from_utf8_lossy(&out.stdout).into_owned();
+    if reply.is_empty() {
+        Err("KPM ctl0 returned an empty reply".into())
+    } else {
+        Ok(reply)
+    }
 }
 
 /// Validate a KPM readback and preserve the protocol's missing-newline
@@ -302,6 +316,156 @@ pub(crate) fn normalize_kpm_reply(wire: &str, mut reply: String) -> Result<Strin
         reply.push('\n');
     }
     Ok(reply)
+}
+
+const MAX_KPM_STATS_PAGES: usize = 512;
+
+#[derive(Debug, PartialEq, Eq)]
+enum StatsPageNext {
+    Cursor(u32),
+    Done,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct StatsPage {
+    rows: Vec<String>,
+    next: StatsPageNext,
+}
+
+fn parse_prefixed_hex_u64(token: &str) -> Option<u64> {
+    let digits = token
+        .strip_prefix("0x")
+        .or_else(|| token.strip_prefix("0X"))?;
+    (!digits.is_empty())
+        .then(|| u64::from_str_radix(digits, 16).ok())
+        .flatten()
+}
+
+fn parse_prefixed_hex_u32(token: &str) -> Option<u32> {
+    parse_prefixed_hex_u64(token).and_then(|value| u32::try_from(value).ok())
+}
+
+/// Parse and validate the additive KPM `page` trailer. `None` is a complete
+/// legacy reply from an older backend; a present trailer is strict so a broken
+/// cursor cannot silently duplicate or omit cumulative counters.
+fn parse_kpm_stats_page(reply: &str, requested: u32) -> Result<Option<StatsPage>> {
+    if peek_kind(reply.as_bytes()) != Some(Kind::Stats) {
+        return Err("invalid KPM stats reply header".into());
+    }
+    let lines = reply.lines().map(str::trim).collect::<Vec<_>>();
+    let page_positions = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.split_whitespace().next() == Some("page"))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    if page_positions.is_empty() {
+        return Ok(None);
+    }
+    if page_positions.len() != 1 || page_positions[0] + 1 != lines.len() {
+        return Err("KPM stats reply has a misplaced or repeated page trailer".into());
+    }
+
+    let trailer = lines[page_positions[0]]
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    if trailer.len() != 4 {
+        return Err("malformed KPM stats page trailer".into());
+    }
+    let echoed = parse_prefixed_hex_u32(trailer[1]).ok_or("invalid echoed stats cursor")?;
+    if echoed != requested {
+        return Err(
+            format!("KPM stats page echoed cursor 0x{echoed:x}, expected 0x{requested:x}").into(),
+        );
+    }
+    let declared_rows =
+        parse_prefixed_hex_u32(trailer[3]).ok_or("invalid stats page row count")? as usize;
+
+    let mut rows = Vec::new();
+    let mut previous_uid = requested;
+    for line in &lines[1..page_positions[0]] {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        let uid = fields
+            .first()
+            .and_then(|token| parse_prefixed_hex_u32(token))
+            .ok_or("invalid UID in KPM stats page")?;
+        if uid <= previous_uid || fields.len() < 2 {
+            return Err("KPM stats page UIDs are not strictly increasing".into());
+        }
+        for field in &fields[1..] {
+            let (hook, count) = field
+                .split_once(':')
+                .ok_or("invalid hook counter in KPM stats page")?;
+            parse_prefixed_hex_u32(hook).ok_or("invalid hook id in KPM stats page")?;
+            let count = parse_prefixed_hex_u64(count).ok_or("invalid count in KPM stats page")?;
+            if count == 0 {
+                return Err("zero count in sparse KPM stats page".into());
+            }
+        }
+        previous_uid = uid;
+        rows.push((*line).to_owned());
+    }
+    if rows.len() != declared_rows {
+        return Err(format!(
+            "KPM stats page declared {declared_rows} rows but carried {}",
+            rows.len()
+        )
+        .into());
+    }
+
+    let next = if trailer[2] == "done" {
+        if !reply.ends_with('\n') {
+            return Err("final KPM stats page is missing its newline".into());
+        }
+        StatsPageNext::Done
+    } else {
+        let next = parse_prefixed_hex_u32(trailer[2]).ok_or("invalid next stats cursor")?;
+        if next <= requested || next < previous_uid {
+            return Err("KPM stats page cursor did not advance".into());
+        }
+        if reply.ends_with('\n') {
+            return Err("non-final KPM stats page unexpectedly ends with a newline".into());
+        }
+        StatsPageNext::Cursor(next)
+    };
+    Ok(Some(StatsPage { rows, next }))
+}
+
+pub(crate) fn collect_kpm_stats_pages(
+    mut read: impl FnMut(&str) -> Result<String>,
+) -> Result<String> {
+    let mut cursor = 0u32;
+    let mut aggregate = format!("vpnhide {} stats\n", vpnhide_protocol::TELEMETRY_VERSION);
+
+    for page_index in 0..MAX_KPM_STATS_PAGES {
+        let request = if page_index == 0 {
+            aggregate.trim_end().to_owned()
+        } else {
+            format!(
+                "vpnhide {} stats\nafter 0x{cursor:x}\n",
+                vpnhide_protocol::TELEMETRY_VERSION
+            )
+        };
+        let reply = read(&request)?;
+        let Some(page) = parse_kpm_stats_page(&reply, cursor)? else {
+            if page_index != 0 {
+                return Err("KPM stopped paginating stats mid-read".into());
+            }
+            return normalize_kpm_reply(&request, reply);
+        };
+        for row in page.rows {
+            aggregate.push_str(&row);
+            aggregate.push('\n');
+        }
+        match page.next {
+            StatsPageNext::Done => return Ok(aggregate),
+            StatsPageNext::Cursor(next) => cursor = next,
+        }
+    }
+    Err(format!("KPM stats exceeded {MAX_KPM_STATS_PAGES} pages").into())
 }
 
 pub(crate) fn kpatch_ctl0_config_status_ok(status: std::process::ExitStatus, wire: &str) -> bool {
@@ -367,11 +531,15 @@ fn apatch_kpm_ctl0_config(key: &str, style: ApatchCommandStyle, wire: &str) -> R
     supercall_ok(rc, "kpm ctl0")
 }
 
-fn apatch_kpm_ctl0_read(key: &str, style: ApatchCommandStyle, wire: &str) -> Result<String> {
+fn apatch_kpm_ctl0_read_raw(key: &str, style: ApatchCommandStyle, wire: &str) -> Result<String> {
     let (rc, out) = apatch_kpm_ctl0_raw(key, style, wire)?;
     supercall_ok(rc, "kpm ctl0")?;
     let len = apatch_output_len(rc, &out);
-    normalize_kpm_reply(wire, String::from_utf8_lossy(&out[..len]).into_owned())
+    if len == 0 {
+        Err("KPM ctl0 returned an empty reply".into())
+    } else {
+        Ok(String::from_utf8_lossy(&out[..len]).into_owned())
+    }
 }
 
 fn apatch_kpm_ctl0_raw(

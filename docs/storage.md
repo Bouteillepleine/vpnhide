@@ -46,6 +46,11 @@ The number-keying difference is deliberate and bridged by the activator:
 | Canonical JSON | **package name** | survives reinstall (UID rotates, package doesn't) |
 | Runtime protocol | **UID** | the kernel has no PackageManager |
 
+VPN Hide itself is the one package with a deliberately narrower projection:
+the activator emits only its main-profile (user 0) UID. The APK blocks its UI in
+secondary/work/clone profiles, so accidental extra copies neither write the
+shared canonical file nor consume extra native target slots.
+
 ---
 
 ## 2. The canonical config (the only file you manage)

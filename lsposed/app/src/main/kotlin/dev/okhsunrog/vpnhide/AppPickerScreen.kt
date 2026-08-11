@@ -72,6 +72,7 @@ internal data class AppEntry(
     override val icon: Drawable?,
     override val isSystem: Boolean,
     override val userIds: List<Int> = emptyList(),
+    val uids: List<Int> = emptyList(),
     val java: Boolean = false,
     val javaHooks: List<String>? = null,
     val native: Boolean = false,
@@ -134,6 +135,7 @@ internal fun AppPickerScreen(
                             icon = app.icon,
                             isSystem = app.isSystem,
                             userIds = app.userIds,
+                            uids = t.packageUids[app.packageName].orEmpty(),
                             java = canonicalApp?.java ?: (app.packageName in t.lsposedTargets),
                             javaHooks = canonicalApp?.takeIf { it.java }?.javaHooks?.takeIf { it.isNotEmpty() },
                             native = app.packageName in nativeTargets,
@@ -163,6 +165,8 @@ internal fun AppPickerScreen(
         successMessage = { entries, res ->
             res.getString(R.string.save_success, entries.count { it.anySelected })
         },
+        selectionChangeError = ::nativeSelectionChangeError,
+        selectionSaveError = ::nativeSelectionSaveError,
     ) { app, userNames, targets, onChange ->
         val nativeHookFamily = targets.nativeHookFamily
         AppRow(
@@ -384,18 +388,6 @@ private fun persistUnifiedSelection(
         activation = CanonicalActivation(native = true, ports = true),
     )
 }
-
-private fun AppEntry.toRoleSelection(): AppRoleSelection =
-    AppRoleSelection(
-        packageName = packageName,
-        java = java,
-        javaHooks = javaHooks,
-        native = native,
-        nativeOverrides = nativeOverrides,
-        appHiding = appHiding,
-        ports = ports,
-        portPolicy = portPolicy,
-    )
 
 private fun AppEntry.toAutoHideSignal(): AppAutoHideSignal =
     AppAutoHideSignal(

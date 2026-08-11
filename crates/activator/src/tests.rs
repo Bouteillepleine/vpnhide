@@ -82,6 +82,32 @@ fn projects_native_roles_to_wire() {
 }
 
 #[test]
+fn native_projection_targets_only_the_main_profile_copy_of_vpnhide() {
+    let cfg = parse_canonical(
+        r#"{
+          "version": 1,
+          "apps": {
+            "dev.okhsunrog.vpnhide": { "native": true },
+            "com.example.profiled": { "native": true }
+          }
+        }"#,
+    )
+    .unwrap();
+    let resolver = parse_pm_packages(
+        "package:dev.okhsunrog.vpnhide uid:10123,1010123\n\
+         package:com.example.profiled uid:10234,1010234\n",
+    );
+
+    assert_eq!(
+        project_native_with_resolver(&cfg, &resolver),
+        "vpnhide 2 config\n\
+         debug 0\n\
+         targets 20003ff 278b 27fa f6a3a\n\
+         end 3\n",
+    );
+}
+
+#[test]
 fn native_projection_drops_platform_aids_but_keeps_preinstalled_apps() {
     // A package sharing "android.uid.system" resolves to 1000 — the same uid as
     // system_server — so listing it would mean "hide from everything running as
@@ -543,7 +569,8 @@ fn apatch_kernel_version_hint_parses_dmesg() {
 
 #[test]
 fn projection_is_bounded_to_backend_target_capacity() {
-    let apps = (0..70)
+    let projected = MAX_NATIVE_TARGETS + 10;
+    let apps = (0..projected)
         .map(|i| {
             (
                 format!("com.example.{i:02}"),
@@ -560,15 +587,15 @@ fn projection_is_bounded_to_backend_target_capacity() {
         apps,
         settings: Settings::default(),
     };
-    let pm = (0..70)
+    let pm = (0..projected)
         .map(|i| format!("package:com.example.{i:02} uid:{}", 10_000 + i))
         .collect::<Vec<_>>()
         .join("\n");
     let wire = project_native_with_resolver(&cfg, &parse_pm_packages(&pm));
 
-    // All 70 share one mask, so the whole set rides one `targets` record and the
-    // count lives in the `end` fuse — which the backend checks, so the producer
-    // has to cap itself here rather than let the backend reject the payload.
+    // Every app shares one mask, so the whole set rides one `targets` record
+    // and the count lives in the `end` fuse — which the backend checks, so the
+    // producer has to cap itself here rather than let the backend reject it.
     assert_eq!(
         wire.lines().filter(|l| l.starts_with("targets ")).count(),
         1
@@ -587,8 +614,8 @@ fn projection_is_bounded_to_backend_target_capacity() {
     // payload carrying more uids than a backend can hold.
     assert!(vpnhide_protocol::parse_config(wire.as_bytes()).is_some());
     assert_eq!(
-        native_target_capacity_warning(70),
-        "vpnhide-warning native_target_cap total=70 cap=64 dropped=6",
+        native_target_capacity_warning(projected),
+        "vpnhide-warning native_target_cap total=170 cap=160 dropped=10",
     );
 }
 
@@ -673,4 +700,57 @@ fn kpm_readback_rejects_empty_or_wrong_kind_replies() {
         )
         .is_err(),
     );
+}
+
+#[test]
+fn kpm_stats_pages_are_validated_and_folded_into_legacy_telemetry() {
+    let replies = [
+        "vpnhide 1 stats\n0x2800 0x0:0x12 0x19:0x5\npage 0x0 0x2800 0x1",
+        "vpnhide 1 stats\n0x2801 0x2:0x7\npage 0x2800 done 0x1\n",
+    ];
+    let mut replies = replies.into_iter();
+    let mut requests = Vec::new();
+    let stats = collect_kpm_stats_pages(|request| {
+        requests.push(request.to_owned());
+        Ok(replies.next().unwrap().to_owned())
+    })
+    .unwrap();
+
+    assert_eq!(
+        requests,
+        ["vpnhide 1 stats", "vpnhide 1 stats\nafter 0x2800\n",]
+    );
+    assert_eq!(
+        stats,
+        "vpnhide 1 stats\n0x2800 0x0:0x12 0x19:0x5\n0x2801 0x2:0x7\n"
+    );
+}
+
+#[test]
+fn kpm_stats_reader_accepts_a_complete_legacy_reply() {
+    let legacy = "vpnhide 1 stats\n0x2800 0x0:0x12\n";
+    assert_eq!(
+        collect_kpm_stats_pages(|_| Ok(legacy.to_owned())).unwrap(),
+        legacy
+    );
+}
+
+#[test]
+fn kpm_stats_pages_reject_broken_integrity_signals() {
+    let cases = [
+        // Echoed cursor mismatch.
+        "vpnhide 1 stats\n0x2800 0x0:0x1\npage 0x1 0x2800 0x1",
+        // Declared row count mismatch.
+        "vpnhide 1 stats\n0x2800 0x0:0x1\npage 0x0 0x2800 0x2",
+        // A non-final page must retain the old-reader truncation signal.
+        "vpnhide 1 stats\n0x2800 0x0:0x1\npage 0x0 0x2800 0x1\n",
+        // A final page must be conventionally newline-terminated.
+        "vpnhide 1 stats\n0x2800 0x0:0x1\npage 0x0 done 0x1",
+    ];
+    for reply in cases {
+        assert!(
+            collect_kpm_stats_pages(|_| Ok(reply.to_owned())).is_err(),
+            "{reply:?}"
+        );
+    }
 }
