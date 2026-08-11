@@ -202,26 +202,30 @@ private fun totalDeltaForHook(
     counters: Map<CounterKey, Long>,
     baselineCounters: Map<CounterKey, Long>,
     hasBaseline: Boolean,
-): String {
-    if (!hasBaseline) return "n/a"
-    val current = counters.unsignedSumForHook(hook)
-    val baseline = baselineCounters.unsignedSumForHook(hook)
-    return if (current < baseline) "reset" else "+${formatStatCount(current - baseline)}"
-}
+): String =
+    if (!hasBaseline) {
+        "n/a"
+    } else {
+        unsignedDeltaText(counters.unsignedSumForHook(hook), baselineCounters.unsignedSumForHook(hook))
+    }
 
 internal fun counterDeltaText(
     current: Long,
     baseline: Long?,
     hasBaseline: Boolean,
-): String {
-    if (!hasBaseline) return "n/a"
-    if (baseline == null) return "+${formatStatCount(current)}"
-    return if (current.toULong() < baseline.toULong()) {
-        "reset"
-    } else {
-        "+${formatStatCount(current.toULong() - baseline.toULong())}"
+): String = if (!hasBaseline) "n/a" else unsignedDeltaText(current.toULong(), baseline?.toULong())
+
+/** "reset" when the counter ran backwards (device/backend reset), else "+delta"
+ * unsigned. A null [baseline] means the row is new since the baseline → "+current". */
+private fun unsignedDeltaText(
+    current: ULong,
+    baseline: ULong?,
+): String =
+    when {
+        baseline == null -> "+${formatStatCount(current)}"
+        current < baseline -> "reset"
+        else -> "+${formatStatCount(current - baseline)}"
     }
-}
 
 private fun Map<CounterKey, Long>.unsignedSumForHook(hook: HookIds.Hook): ULong =
     filterKeys { key -> key.hookId == hook.id.toLong() }

@@ -15,6 +15,11 @@ import java.util.zip.ZipOutputStream
 
 private const val TAG = LogTags.TEST
 
+// Schema version of the debug bundle's summary/manifest — distinct from
+// DIAGNOSTIC_REPORT_SCHEMA (the diagnostics.json/txt payload the bundle carries).
+// Bump when the bundle's file set or summary shape changes.
+private const val DEBUG_BUNDLE_SCHEMA = 4
+
 internal data class DiagnosticFileEntry(
     val name: String,
     val file: File,
@@ -143,7 +148,7 @@ internal fun buildDiagnosticSummaryText(
     captureKind: String,
 ): String =
     buildString {
-        appendLine("Diagnostic bundle schema: 4")
+        appendLine("Diagnostic bundle schema: $DEBUG_BUNDLE_SCHEMA")
         appendLine("Capture type: $captureKind")
         appendLine("Generated: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.US).format(Date())}")
         appendLine("App package: ${context.packageName}")
