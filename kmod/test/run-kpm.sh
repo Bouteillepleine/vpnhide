@@ -7,12 +7,12 @@
 #   2. download KernelPatch's kptools-linux + kpimg-linux (cached)
 #   3. patch the cached GKI Image TWICE, embedding the .kpm:
 #        - phase "notarget": no target UID      -> app uid 10000 must SEE vpn0
-#        - phase "target"  : target = uid 10000 -> app uid 10000 must NOT see it
+#        - phase "target"  : control-v2 config targets uid 10000 -> hidden
 #   4. boot each (init-kpm.sh) and diff the per-vector vpn0 counts
 #
 # Hide vectors PASS iff notarget>0 and target==0. Stable keep vectors must be
 # exactly unchanged; aggregate keep vectors must remain positive.
-# This needs no /proc (targets come via the embedded extra-args), so it
+# This needs no /proc (the config snapshot comes via embedded extra-args), so it
 # validates the inline hooks + per-kver offsets independently of the procfs
 # control plane.
 #
@@ -191,10 +191,11 @@ boot_phase() {
 }
 
 NT_LOG="$(boot_phase "" notarget)"
-# Both shell vectors and the state-aware bind probe use app uid 10000. The
-# legacy load-args grammar is one decimal UID per line (the runtime protocol is
-# a separate channel).
-TG_LOG="$(boot_phase "10000" target)"
+# Both shell vectors and the state-aware bind probe use app uid 10000 (0x2710).
+# The harness passes the same control-v2 snapshot as runtime ctl0; load args are
+# only the transport needed before the in-VM userspace client is available.
+TARGET_CONFIG=$'vpnhide 2 config\ndebug 0\ntargets 20003ff 2710\nend 1\n'
+TG_LOG="$(boot_phase "$TARGET_CONFIG" target)"
 
 vec_count() { grep -oE "VEC $1=[0-9]+" "$2" | head -1 | grep -oE '[0-9]+$' || echo "-1"; }
 ifc_count() { grep -oE "$1=[0-9]+" "$2" | head -1 | grep -oE '[0-9]+$' || echo "-1"; }

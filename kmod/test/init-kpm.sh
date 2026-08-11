@@ -3,8 +3,8 @@
 #
 # Unlike the .ko harness (init.sh), the KPM is already loaded at boot
 # (embedded in the patched kernel image by KernelPatch), so there is no
-# insmod. Target UIDs are set at load time via the embedded extra-args
-# (`kptools -A "<uids>"`), so this driver is phase-agnostic: it fabricates a
+# insmod. The control-v2 config is set at load time via embedded extra-args
+# (`kptools -A "<snapshot>"`), so this driver is phase-agnostic: it fabricates a
 # VPN-like `vpn0` interface and reports, for each detection vector, the count
 # of `vpn0` hits as seen by a regular app UID. run-kpm.sh boots it twice — once
 # with no target (the app must SEE vpn0) and once with uid 10000 targeted (the

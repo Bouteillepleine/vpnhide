@@ -13,7 +13,8 @@
  * offset table and checks all enumeration vectors; socket-bind denial adds a
  * state-level check that verifies the socket stayed unbound, not just errno.
  * Runtime config/status/stats use KernelPatch's ctl0 supercall; the QEMU A/B
- * harness also retains decimal load-args for headless bring-up. Every per-kver
+ * harness passes the same control-v2 snapshot as load args for headless
+ * bring-up. Every per-kver
  * offset must pass the harness before that version ships — a wrong offset can
  * become a contained QEMU panic / A/B failure here or a bootloop on a device.
  *
@@ -70,7 +71,7 @@ static const struct vpnhide_offsets *off; /* selected per running kver */
  *
  * Guarded by a seqlock so a hook reader (every hooked syscall, on any CPU) never
  * sees a half-applied target set. A writer (rare, root-initiated: ctl0 config or
- * the init load-args path) bumps cfg_seq odd, mutates targets[] in place, then
+ * an initial control-v2 snapshot) bumps cfg_seq odd, mutates targets[] in place, then
  * bumps it even; readers snapshot under matching even-seq reads and retry on a
  * concurrent write. KP has no kernel spinlock/RCU, and a double-buffer (two
  * copies of targets[]) grew the .kpm enough to break KP boot on the 6.12 image —
@@ -89,7 +90,6 @@ static uint32_t target_masks[MAX_TARGET_UIDS];
  * snapshot in static storage, serialized independently from the live-config
  * seqlock so hook readers never spin while userspace text is being parsed. */
 static struct vpnhide_target config_staging[MAX_TARGET_UIDS];
-static unsigned int load_uid_staging[MAX_TARGET_UIDS];
 static volatile uint32_t config_staging_writer;
 static int nr_targets;
 /* Hookmask for any uid NOT in target_uids (protocol §4.3 `default`). Zero — the
@@ -1403,44 +1403,40 @@ static int resolve_symbols(void)
 	return 0;
 }
 
-/*
- * Load-time / test target path: a bare newline/space-separated decimal UID list
- * (KernelPatch load extra-args, e.g. sc_kpm_load(key, path, "10010 10020"), as
- * the QEMU A/B harness uses). Each listed uid gets the FULL kernel hook mask —
- * i.e. "enable everything for these uids". Per-hook control is the job of the
- * runtime ctl0 `config` channel (vpnhide_parse_config); this path predates it
- * and stays for headless bring-up where no superkey/ctl0 round-trip is wired.
- */
-static void apply_targets(const char *s)
+/* Parse and atomically apply the one supported config representation. Both the
+ * runtime ctl0 path and the QEMU harness's optional load args use the frozen
+ * control-v2 wire, so they cannot drift into separate parsers or semantics. */
+static int apply_config(const char *wire, unsigned long wire_len)
 {
-	unsigned long n = 0;
-	int cnt, i, nsorted = 0;
+	unsigned int default_mask = 0;
+	int dbg = -1; /* absent debug record preserves live value */
+	int i, n;
 
-	if (!s)
-		return;
-	while (s[n])
-		n++;
-	cnt = vpnhide_parse_target_uids(s, n, load_uid_staging,
-					MAX_TARGET_UIDS);
-	/* The load-args list arrives in whatever order the caller wrote it, but
-	 * the hot-path lookup bisects, so it has to be ordered here. Reuse the
-	 * protocol's sorted insert rather than a second ordering rule (it dedups
-	 * too). This runs once at init, off the hot path. */
-	for (i = 0; i < cnt; i++)
-		vpnhide_target_set(config_staging, &nsorted, MAX_TARGET_UIDS,
-				   load_uid_staging[i],
-				   VPNHIDE_KERNEL_HOOK_MASK);
-	if (!cfg_try_write_begin())
-		return; /* init path has no concurrent writer; defensive only */
-	for (i = 0; i < nsorted; i++) {
-		target_uids[i] = config_staging[i].uid;
-		target_masks[i] = config_staging[i].hookmask;
+	if (!config_staging_try_claim())
+		return -2;
+	n = vpnhide_parse_config(wire, wire_len, config_staging,
+				 MAX_TARGET_UIDS, &dbg, &default_mask);
+	if (n < 0) {
+		config_staging_release();
+		return -1;
 	}
-	nr_targets = nsorted;
-	default_hookmask = 0;
-	active_hook_mask = compute_active_hook_mask(nsorted);
+	if (!cfg_try_write_begin()) {
+		config_staging_release();
+		return -2;
+	}
+	for (i = 0; i < n; i++) {
+		target_uids[i] = config_staging[i].uid;
+		target_masks[i] = config_staging[i].hookmask &
+				  VPNHIDE_KERNEL_HOOK_MASK;
+	}
+	nr_targets = n;
+	default_hookmask = default_mask & VPNHIDE_KERNEL_HOOK_MASK;
+	active_hook_mask = compute_active_hook_mask(n);
+	if (dbg >= 0)
+		debug_enabled = dbg ? true : false;
 	cfg_write_end();
-	vpnhide_dbg("loaded %d target UIDs\n", nsorted);
+	config_staging_release();
+	return 0;
 }
 
 /* Resolve `name`, wrap it, and record the install in `installed_hooks` so the
@@ -1462,6 +1458,8 @@ static int install_hook(const char *name, int argno, void *before, void *after,
 static long vpnhide_kpm_init(const char *args, const char *event,
 			     void *__user reserved)
 {
+	unsigned long args_len = 0;
+
 	logki(MODNAME ": KPM init (event=%s) kver=0x%x\n", event ? event : "",
 	      (unsigned int)kver);
 
@@ -1469,9 +1467,11 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 	last_error = VPNHIDE_ERR_OK;
 	cfg_seq = 0;
 	cfg_writer = 0;
-	nr_targets =
-		0; /* empty config until load-args / ctl0 (pre-hook, no readers) */
+	config_staging_writer = 0;
+	nr_targets = 0; /* empty config until control v2 is applied */
+	default_hookmask = 0;
 	active_hook_mask = 0;
+	debug_enabled = false;
 
 	/* `kver` is KernelPatch's running-kernel version (common.h), encoded
 	 * the same way as VPNHIDE_KVER. NULL table = unsupported → bail. */
@@ -1486,10 +1486,17 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 		return -1;
 	}
 
-	/* Targets can come at load time: sc_kpm_load(key, path, "10010 10020")
-	 * (decimal list, all hooks). The runtime ctl0 `config` channel feeds the
-	 * same set with per-hook masks. */
-	apply_targets(args);
+	/* The headless QEMU harness may supply an initial snapshot through load
+	 * args. It is the same control-v2 payload as ctl0, not a second legacy UID
+	 * grammar. Production activation normally applies it through ctl0. */
+	if (args && args[0]) {
+		while (args[args_len])
+			args_len++;
+		if (apply_config(args, args_len) != 0) {
+			logki(MODNAME ": invalid initial config snapshot\n");
+			return -1;
+		}
+	}
 
 	/*
 	 * Install hooks. Fields used as availability gates are nonzero only where
@@ -1603,40 +1610,14 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 	kind = vpnhide_peek_kind(args, n_args);
 
 	if (kind == VPNHIDE_KIND_CONFIG) {
-		/* Parse into serialized static scratch before claiming the very short
-		 * live writer gate. A bad header/version never touches live state; a
-		 * concurrent ctl0 writer gets -2 (busy) and userspace retries. */
-		unsigned int default_mask = 0;
-		int dbg = -1; /* absent debug record preserves live value */
-		int i, n;
+		/* A bad header/version never touches live state; a concurrent ctl0
+		 * writer gets -2 (busy) and userspace retries. */
+		long result = apply_config(args, n_args);
 
-		if (!config_staging_try_claim())
-			return -2;
-		n = vpnhide_parse_config(args, n_args, config_staging,
-					 MAX_TARGET_UIDS, &dbg, &default_mask);
-		if (n < 0) {
-			config_staging_release();
-			return -1; /* rejected whole (bad header / end fuse) */
-		}
-		if (!cfg_try_write_begin()) {
-			config_staging_release();
-			return -2; /* concurrent config writer; retry from userspace */
-		}
-		for (i = 0; i < n; i++) {
-			target_uids[i] = config_staging[i].uid;
-			target_masks[i] = config_staging[i].hookmask &
-					  VPNHIDE_KERNEL_HOOK_MASK;
-		}
-		nr_targets = n;
-		default_hookmask = default_mask & VPNHIDE_KERNEL_HOOK_MASK;
-		active_hook_mask = compute_active_hook_mask(n);
-		if (dbg >= 0)
-			debug_enabled = dbg ? true : false;
-		cfg_write_end();
-		config_staging_release();
-		vpnhide_dbg("ctl0 config: %d targets, debug=%d\n", n,
-			    debug_enabled ? 1 : 0);
-		return 0;
+		if (result == 0)
+			vpnhide_dbg("ctl0 config applied, debug=%d\n",
+				    debug_enabled ? 1 : 0);
+		return result;
 	}
 
 	if (kind == VPNHIDE_KIND_STATS || kind == VPNHIDE_KIND_STATUS) {
