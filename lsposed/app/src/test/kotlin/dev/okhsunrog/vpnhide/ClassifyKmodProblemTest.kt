@@ -43,7 +43,7 @@ class ClassifyKmodProblemTest {
         androidVersion = "Android 13",
         kernelVersion = "5.10",
         kernelBranch = "Android 13",
-        recommended = if (preferKmod) RecommendedBackend.Kmod else RecommendedBackend.Zygisk,
+        recommended = if (preferKmod) NativeBackendId.Kmod else NativeBackendId.Zygisk,
         recommendedArtifact = artifact,
         recommendedGkiVariant = kmi,
         variantAmbiguous = ambiguous,

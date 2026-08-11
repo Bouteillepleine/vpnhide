@@ -348,17 +348,11 @@ internal fun activeModuleCount(state: DashboardState): Int =
 
 internal fun moduleActive(state: ModuleState): Boolean = (state as? ModuleState.Installed)?.active == true
 
-// Which native backend to recommend installing for this device (protocol §1.5).
-// kmod is the battle-tested default on GKI kernels; KPM (beta) is a single
-// universal binary that covers non-GKI / old kernels (4.14–5.4) where no kmod
-// build exists; zygisk is the detectable last resort.
-internal enum class RecommendedBackend { Kmod, Kpm, Zygisk }
-
 internal data class NativeInstallRecommendation(
     val androidVersion: String,
     val kernelVersion: String,
     val kernelBranch: String?,
-    val recommended: RecommendedBackend,
+    val recommended: NativeBackendId,
     val recommendedArtifact: String,
     val recommendedGkiVariant: String?,
     // For a KPM recommendation: whether a KPatch runtime (APatch or the
@@ -379,7 +373,7 @@ internal data class NativeInstallRecommendation(
     // True when the recommended backend is the .ko. The kmod-problem classifier
     // reuses this to decide whether a wrong-variant / unsupported-kernel
     // diagnosis applies to an installed-but-inactive kmod.
-    val preferKmod: Boolean get() = recommended == RecommendedBackend.Kmod
+    val preferKmod: Boolean get() = recommended == NativeBackendId.Kmod
 }
 
 // Boot-time diagnostics written by kmod/module/post-fs-data.sh into
@@ -484,7 +478,7 @@ internal fun buildNativeInstallRecommendation(
             androidVersion = deviceAndroidLabel,
             kernelVersion = kernelVersion,
             kernelBranch = kernelBranch,
-            recommended = RecommendedBackend.Kmod,
+            recommended = NativeBackendId.Kmod,
             recommendedArtifact = exact.zip,
             recommendedGkiVariant = exact.kmi,
         )
@@ -524,7 +518,7 @@ internal fun buildNativeInstallRecommendation(
             androidVersion = deviceAndroidLabel,
             kernelVersion = kernelVersion,
             kernelBranch = kernelBranch,
-            recommended = RecommendedBackend.Kmod,
+            recommended = NativeBackendId.Kmod,
             recommendedArtifact = primary.zip,
             recommendedGkiVariant = primary.kmi,
             variantAmbiguous = alternative != null,
@@ -541,7 +535,7 @@ internal fun buildNativeInstallRecommendation(
             androidVersion = deviceAndroidLabel,
             kernelVersion = kernelVersion,
             kernelBranch = kernelBranch,
-            recommended = RecommendedBackend.Kpm,
+            recommended = NativeBackendId.Kpm,
             recommendedArtifact = "vpnhide-kpm.zip",
             recommendedGkiVariant = null,
             kpatchRuntimeAvailable = kpatchRuntimeAvailable,
@@ -552,7 +546,7 @@ internal fun buildNativeInstallRecommendation(
         androidVersion = deviceAndroidLabel,
         kernelVersion = kernelVersion,
         kernelBranch = kernelBranch,
-        recommended = RecommendedBackend.Zygisk,
+        recommended = NativeBackendId.Zygisk,
         recommendedArtifact = "vpnhide-zygisk.zip",
         recommendedGkiVariant = null,
     )
@@ -1479,7 +1473,7 @@ internal suspend fun loadDashboardState(
         kpm is ModuleState.NotInstalled
     ) {
         when (kernelRecommendation?.recommended) {
-            RecommendedBackend.Kmod -> {
+            NativeBackendId.Kmod -> {
                 info(
                     res.getString(
                         R.string.dashboard_issue_kmod_capable_but_zygisk,
@@ -1488,7 +1482,7 @@ internal suspend fun loadDashboardState(
                 )
             }
 
-            RecommendedBackend.Kpm -> {
+            NativeBackendId.Kpm -> {
                 if (kernelRecommendation.kpatchRuntimeAvailable) {
                     info(
                         res.getString(
@@ -1509,7 +1503,7 @@ internal suspend fun loadDashboardState(
     // battle-tested alternative for their kernel (kmod on GKI, else Zygisk).
     if (moduleActive(kpm)) {
         val experimentalText =
-            if (kernelRecommendation?.recommended == RecommendedBackend.Kmod) {
+            if (kernelRecommendation?.recommended == NativeBackendId.Kmod) {
                 res.getString(R.string.dashboard_issue_kpm_experimental_kmod)
             } else {
                 res.getString(R.string.dashboard_issue_kpm_experimental_zygisk)

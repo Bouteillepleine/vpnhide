@@ -1046,7 +1046,7 @@ private fun ModuleDownloadButton(artifact: String) {
 @Composable
 private fun NativeInstallRecommendationCard(recommendation: NativeInstallRecommendation) {
     val containerColor =
-        if (recommendation.recommended == RecommendedBackend.Zygisk) {
+        if (recommendation.recommended == NativeBackendId.Zygisk) {
             StatusColors.zygiskRecommendContainer()
         } else {
             StatusColors.infoContainer()
@@ -1097,14 +1097,14 @@ private fun NativeInstallRecommendationCard(recommendation: NativeInstallRecomme
             Text(
                 text =
                     when (recommendation.recommended) {
-                        RecommendedBackend.Zygisk -> {
+                        NativeBackendId.Zygisk -> {
                             stringResource(
                                 R.string.dashboard_install_recommendation_zygisk,
                                 recommendation.recommendedArtifact,
                             )
                         }
 
-                        RecommendedBackend.Kpm -> {
+                        NativeBackendId.Kpm -> {
                             if (recommendation.kpatchRuntimeAvailable) {
                                 stringResource(
                                     R.string.dashboard_install_recommendation_kpm,
@@ -1118,7 +1118,7 @@ private fun NativeInstallRecommendationCard(recommendation: NativeInstallRecomme
                             }
                         }
 
-                        RecommendedBackend.Kmod -> {
+                        NativeBackendId.Kmod -> {
                             if (recommendation.variantAmbiguous && alternative != null) {
                                 stringResource(
                                     R.string.dashboard_install_recommendation_kmod_ambiguous,
@@ -1141,9 +1141,9 @@ private fun NativeInstallRecommendationCard(recommendation: NativeInstallRecomme
             // beta disclaimer.
             val note =
                 when (recommendation.recommended) {
-                    RecommendedBackend.Zygisk -> R.string.dashboard_install_recommendation_zygisk_warning
-                    RecommendedBackend.Kmod -> R.string.dashboard_install_recommendation_kmod_kpm_alt
-                    RecommendedBackend.Kpm -> R.string.dashboard_install_recommendation_kpm_beta_note
+                    NativeBackendId.Zygisk -> R.string.dashboard_install_recommendation_zygisk_warning
+                    NativeBackendId.Kmod -> R.string.dashboard_install_recommendation_kmod_kpm_alt
+                    NativeBackendId.Kpm -> R.string.dashboard_install_recommendation_kpm_beta_note
                 }
             Spacer(Modifier.height(8.dp))
             Text(
