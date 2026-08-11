@@ -6,9 +6,9 @@
 # insmod. Target UIDs are set at load time via the embedded extra-args
 # (`kptools -A "<uids>"`), so this driver is phase-agnostic: it fabricates a
 # VPN-like `vpn0` interface and reports, for each detection vector, the count
-# of `vpn0` hits as seen by *this* (root, uid 0) process. run-kpm.sh boots it
-# twice — once with no target (root must SEE vpn0) and once with target=0
-# (root must NOT see vpn0) — and diffs the counts.
+# of `vpn0` hits as seen by a regular app UID. run-kpm.sh boots it twice — once
+# with no target (the app must SEE vpn0) and once with uid 10000 targeted (the
+# app must NOT see vpn0) — and diffs the counts.
 set +e
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -32,6 +32,22 @@ echo "nameserver 10.0.2.3" > /etc/resolv.conf
 echo "https://dl-cdn.alpinelinux.org/alpine/v3.21/main" > /etc/apk/repositories
 if apk add --no-cache iproute2 >/dev/null 2>&1; then echo "IPROUTE2=ok"; else echo "IPROUTE2=FAIL"; fi
 
+# Hooks deliberately ignore Android system AIDs (< 10000). Run every shell
+# vector as a regular app UID so this harness exercises the target path. The
+# legacy Android kernels also require apps that open AF_INET sockets to carry
+# the INTERNET permission's supplemental inet group (AID_INET = 3003).
+TARGET_UID=10000
+if addgroup -g 3003 android-inet >/dev/null 2>&1 &&
+	adduser -D -u "$TARGET_UID" vpnhide-target >/dev/null 2>&1 &&
+	addgroup vpnhide-target android-inet >/dev/null 2>&1; then
+	echo "TARGET_USER=ok"
+else
+	echo "TARGET_USER=FAIL"
+fi
+run_as_target() {
+	su -s /bin/sh vpnhide-target -c "$1"
+}
+
 # fabricate a VPN-like interface + routes through it (v4 + v6)
 ip link add vpn0 type dummy 2>/dev/null
 ip link set vpn0 up 2>/dev/null
@@ -39,9 +55,9 @@ ip addr add 10.9.0.1/24 dev vpn0 2>/dev/null
 ip route add 10.9.9.0/24 dev vpn0 2>/dev/null
 ip -6 addr add fd00:9::1/64 dev vpn0 2>/dev/null
 ip -6 route add fd00:99::/64 dev vpn0 2>/dev/null
-ip rule add uidrange 0-0 table 199 2>/dev/null
+ip rule add uidrange "$TARGET_UID-$TARGET_UID" table 199 2>/dev/null
 
-# The bind probe's actor runs as uid 5555 and issues a raw setsockopt syscall;
+# The bind probe's actor runs as uid 10000 and issues a raw setsockopt syscall;
 # a separate non-target observer inspects the same socket afterwards.  The host
 # harness compares these raw fields across the notarget and target boots.
 VPN0_IFINDEX=$(cat /sys/class/net/vpn0/ifindex 2>/dev/null)
@@ -60,32 +76,32 @@ fi
 ip route add 1.2.3.4/32 dev eth0 2>/dev/null
 ip -6 route add 2001:4860:4860::8888/128 dev eth0 2>/dev/null
 
-# Vectors covered by the wired hooks. Count vpn0 hits as seen by root, then
+# Vectors covered by the wired hooks. Count vpn0 hits as seen by the app, then
 # count stable non-VPN entries so an over-trimmed empty dump fails loudly.
-echo "VEC proc_route_v4=$(grep -c vpn0 /proc/net/route 2>/dev/null)"        # fib_route_seq_show
-echo "VEC keep_proc_route_v4=$(grep -c '^eth0' /proc/net/route 2>/dev/null)"
-echo "VEC getifaddrs=$(ip addr show 2>/dev/null | grep -c 'vpn0')"                # rtnl_fill_ifinfo
-echo "VEC keep_getifaddrs=$(ip addr show 2>/dev/null | grep -c ': eth0:')"
-echo "VEC proc_route_v6=$(grep -c vpn0 /proc/net/ipv6_route 2>/dev/null)"   # ipv6_route_seq_show
-echo "VEC siocgifconf=$(ifconfig -a 2>/dev/null | grep -c vpn0)"                  # sock_ioctl
-echo "VEC keep_siocgifconf=$(ifconfig -a 2>/dev/null | grep -c '^eth0')"
-echo "VEC dev_ioctl=$(ifconfig vpn0 2>/dev/null | grep -c vpn0)"                  # dev_ioctl
-echo "VEC keep_dev_ioctl=$(ifconfig eth0 2>/dev/null | grep -c '^eth0')"
-echo "VEC netlink_route4=$(ip route show table all 2>/dev/null | grep -c vpn0)"     # fib_dump_info (#86)
-echo "VEC keep_netlink_route4=$(ip route show table all 2>/dev/null | grep -c 'dev eth0')"
-echo "VEC hostroute4=$(ip route show table all 2>/dev/null | grep -c '1\.2\.3\.4')" # fib_dump_info public host-route
-echo "VEC hostroute6=$(ip -6 route show table all 2>/dev/null | grep -c '2001:4860')" # rt6_fill_node public host-route
-echo "VEC netlink_route6=$(ip -6 route show table all 2>/dev/null | grep -c vpn0)"  # rt6_fill_node
-echo "VEC policy_rule=$(ip rule show 2>/dev/null | grep -c 199)"                    # fib_nl_fill_rule
-echo "VEC keep_policy_rule=$(ip rule show 2>/dev/null | grep -c 'lookup main')"
+echo "VEC proc_route_v4=$(run_as_target 'grep -c vpn0 /proc/net/route 2>/dev/null')"        # fib_route_seq_show
+echo "VEC keep_proc_route_v4=$(run_as_target "grep -c '^eth0' /proc/net/route 2>/dev/null")"
+echo "VEC getifaddrs=$(run_as_target "ip addr show 2>/dev/null | grep -c 'vpn0'")"                # rtnl_fill_ifinfo
+echo "VEC keep_getifaddrs=$(run_as_target "ip addr show 2>/dev/null | grep -c ': eth0:'")"
+echo "VEC proc_route_v6=$(run_as_target 'grep -c vpn0 /proc/net/ipv6_route 2>/dev/null')"   # ipv6_route_seq_show
+echo "VEC siocgifconf=$(run_as_target 'ifconfig -a 2>/dev/null | grep -c vpn0')"                  # sock_ioctl
+echo "VEC keep_siocgifconf=$(run_as_target "ifconfig -a 2>/dev/null | grep -c '^eth0'")"
+echo "VEC dev_ioctl=$(run_as_target 'ifconfig vpn0 2>/dev/null | grep -c vpn0')"                  # dev_ioctl
+echo "VEC keep_dev_ioctl=$(run_as_target "ifconfig eth0 2>/dev/null | grep -c '^eth0'")"
+echo "VEC netlink_route4=$(run_as_target 'ip route show table all 2>/dev/null | grep -c vpn0')"     # fib_dump_info (#86)
+echo "VEC keep_netlink_route4=$(run_as_target "ip route show table all 2>/dev/null | grep -c 'dev eth0'")"
+echo "VEC hostroute4=$(run_as_target "ip route show table all 2>/dev/null | grep -c '1\\.2\\.3\\.4'")" # fib_dump_info public host-route
+echo "VEC hostroute6=$(run_as_target "ip -6 route show table all 2>/dev/null | grep -c '2001:4860'")" # rt6_fill_node public host-route
+echo "VEC netlink_route6=$(run_as_target 'ip -6 route show table all 2>/dev/null | grep -c vpn0')"  # rt6_fill_node
+echo "VEC policy_rule=$(run_as_target 'ip rule show 2>/dev/null | grep -c 199')"                    # fib_nl_fill_rule
+echo "VEC keep_policy_rule=$(run_as_target "ip rule show 2>/dev/null | grep -c 'lookup main'")"
 # Native getifaddrs() (RTM_GETLINK+RTM_GETADDR) — isolates inet*_fill_ifaddr.
 if [ -x /gai ]; then
-	GAI_OUT=$(/gai 2>/dev/null)
+	GAI_OUT=$(run_as_target /gai 2>/dev/null)
 	echo "VEC gai_getifaddrs=$(printf '%s\n' "$GAI_OUT" | sed -n 's/^GAI_VPN0=//p' | head -1)"
 	echo "VEC keep_gai_getifaddrs=$(printf '%s\n' "$GAI_OUT" | sed -n 's/^GAI_OTHER=//p' | head -1)"
 fi
 if [ -x /ifconf ]; then
-	/ifconf 2>/dev/null
+	run_as_target /ifconf 2>/dev/null
 fi
 
 PANIC_RE='Unable to handle|Internal error:|Oops|BUG:|Kernel panic'

@@ -52,7 +52,7 @@
 //! `static` is reset to its initial state on every app launch**. Concretely:
 //!
 //!   * `static CACHED_CONFIG: OnceLock<…>` re-initialises in every
-//!     forked child. `targets.txt` (a `vpnhide 1 config` snapshot) is read on
+//!     forked child. `targets.txt` (a `vpnhide 2 config` snapshot) is read on
 //!     every app launch — so a force-stop + restart of a target app picks up
 //!     edits to the file immediately. There is no zygote-side cache to
 //!     invalidate; live-reload is automatic by virtue of the lifecycle.
@@ -100,7 +100,7 @@ const LOG_TAG: &str = "vpnhide-zygisk";
 const APP_PACKAGE: &str = "dev.okhsunrog.vpnhide";
 const APP_STATUS_FILE: &str = "/data/user/0/dev.okhsunrog.vpnhide/files/vpnhide_zygisk_active";
 /// Config-snapshot filename within the module directory. Carries a
-/// `vpnhide 1 config` payload (docs/protocol.md): the target UIDs this module
+/// `vpnhide 2 config` payload (docs/protocol.md): the target UIDs this module
 /// hides for, plus the folded `debug` flag — the same wire format every
 /// backend speaks. Package→UID resolution is the producer's job (the app on
 /// Save, the boot script at boot). Read once per app launch via the module
@@ -176,7 +176,7 @@ struct ZygiskConfig {
 
 static CACHED_CONFIG: std::sync::OnceLock<ZygiskConfig> = std::sync::OnceLock::new();
 
-/// Read + parse the `vpnhide 1 config` snapshot from targets.txt via the module
+/// Read + parse the `vpnhide 2 config` snapshot from targets.txt via the module
 /// directory fd Zygisk provides. This fd is opened by Zygisk with root
 /// privileges, bypassing the SELinux restrictions that block direct file
 /// access on Magisk. A missing/unreadable/invalid file fails closed: no
@@ -219,8 +219,8 @@ fn load_config_from_dir_fd(dir_fd: std::os::fd::RawFd) -> ZygiskConfig {
             debug: cfg.debug.unwrap_or(false),
         },
         None => {
-            // Rejected whole — bad/missing header, or a version newer than
-            // this build knows (§3 version fuse). Fail closed.
+            // Rejected whole — bad/missing header, or not the exact control
+            // version this build implements (§3 version fuse). Fail closed.
             log::warn!("{TARGETS_FILENAME}: not a valid config snapshot; ignoring");
             empty
         }

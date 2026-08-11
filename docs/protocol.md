@@ -6,7 +6,10 @@ This document is the **arbiter**: when two implementations disagree, this file
 decides who is wrong. Every implementation (C / Rust / Kotlin) and every test
 vector references it.
 
-Status: `version 1` **frozen** — all seven OPEN items (§10) are resolved.
+Status: **two protocols** over one lexical core and one hook-id registry —
+`control` **v2** (the `config` payload) and `telemetry` **v1** (`stats` +
+`status`). Both frozen; all seven OPEN items (§10) are resolved. See §3 for why
+the split exists and what it costs to move either number.
 Key shape: one always-on Java (LSPosed) layer + exactly one active native
 backend, priority `kmod > KPM >
 Zygisk` (§1.5); three `kind`s — `config` (in), `stats` + `status` (out, §4.3);
@@ -179,10 +182,30 @@ These are *why* the format is what it is. Do not "simplify" against them.
   rejected *whole* — a stray `echo 'debug 0' > node` does not silently wipe
   state, it errors. "Valid full state, or a loud refusal, never silent-partial."
 - **Version gates compatibility.** A reader knows only its own version. A payload
-  whose version is greater than known is rejected whole (not parsed). This turns
+  whose version is not exactly the current version for its kind is rejected
+  whole (not parsed). This turns
   any drift that slips past tests into a loud refusal instead of a silent
   misparse — exactly what is wanted across the 7-KMI matrix where
   userspace↔kernel skew is inevitable.
+- **Two protocols, versioned apart, because their readers ship apart.** The
+  version boundary follows the *delivery* boundary, not the shape of the data:
+
+  | protocol | kinds | version | writer → reader | cost of a bump |
+  |---|---|---|---|---|
+  | **control** | `config` | **2** | activator → backend | none — both are files in one flashable zip and update atomically |
+  | **telemetry** | `stats`, `status` | **1** | backend → app | breaks an older APK's dashboard and diagnostics; the app updates on its own schedule |
+
+  `stats` and `status` are one protocol, not two: a single `/proc/vpnhide_ctl`
+  read returns both back to back, so they have one reader and one delivery, and
+  versioning them apart could not express anything.
+
+  What the two share is a *lexical core* (§4.1), the header shape (§4.2), and
+  the hook-id registry (§5) — the same id space indexes a `config` hookmask bit
+  and a `stats` `hook_id`. Shared vocabulary, separate wires.
+
+  **Do not move `telemetry` without shipping the app in step.** `control` may be
+  bumped freely; there is no compatibility window to preserve, and none is kept
+  — a v1 `config` parser no longer exists.
 
 ---
 
@@ -213,11 +236,15 @@ vpnhide <version> <kind>
 
 - `vpnhide` — literal magic.
 - `<version>` — decimal integer (this line is parsed specially; the hex rule in
-  §4.4 does not apply to it). Current: `1`.
+  §4.4 does not apply to it). Current: `2` for `config`, `1` for `stats` and
+  `status` (§3). The fuse is applied **per protocol**, so the same number can
+  pass on one kind and fail on another: `vpnhide 2 config` is valid and
+  `vpnhide 2 stats` is not.
 - `<kind>` — `config` (app → backend), `stats` (backend → app), or `status`
   (backend → app: module health + errors, §4.3).
 
-A payload without this header, or with `version` > the reader's known version,
+A payload without this header, or with a version other than the reader's exact
+current version for that kind,
 is rejected whole (§3).
 
 "Significant" is decided by **non-blank, non-comment alone** — a non-ASCII line
@@ -229,23 +256,49 @@ over a non-ASCII first significant line to find a header on a later line.
 
 ### 4.3 Records
 
-**config** (`kind = config`):
+**config** (`kind = config`, control v2):
 
 ```
 debug <flag>
-target <uid> <hookmask>
+default <hookmask>
+targets <hookmask> <uid> [<uid> ...]
+end <count>
 ```
 
 - `debug <flag>` — `flag` is the literal `0` or `1`. At most one `debug` line;
   absent ⇒ unchanged-from-default (define default as `0`).
-- `target <uid> <hookmask>` — one per target app. `uid` is the app UID;
-  `hookmask` is a hex bitset of enabled hooks (bit N ⇔ `hook_id` N, §5/registry).
-  Duplicate `uid` ⇒ last-wins (producer guarantees uniqueness; consumer defends).
+- `default <hookmask>` — the hookmask applied to every uid **not** listed in a
+  `targets` record. Absent ⇒ `0`, which makes the listed set the apps to act on:
+  the blacklist the project ships. A non-zero default inverts the reading —
+  everyone is acted on and the listed set becomes the exception list, which is
+  the mechanism a whitelist mode rides on. The wire carries the mechanism
+  whether or not a producer uses it; emitting a non-zero default is a producer
+  decision, and a backend that cannot honour one MUST reject the payload rather
+  than read a whitelist config as a blacklist.
+- `targets <hookmask> <uid> ...` — one record per distinct hookmask, carrying
+  every uid that shares it. `hookmask` is a hex bitset of enabled hooks (bit N ⇔
+  `hook_id` N, §5/registry). Repeatable. Grouping is where the density is: the
+  keyword and the mask amortise across the whole run, and in practice nearly
+  every app carries the same mask. That matters because the KPM's transport caps
+  a whole config at 1024 bytes (§7).
+  Duplicate `uid` ⇒ last-wins. A **malformed uid inside a record rejects the
+  payload whole** — unlike an unknown keyword, it would desync `end`.
   **UID is the key for *every* backend**, including Zygisk: the kernel backends
   have no PackageManager so they cannot key on package names, and Zygisk (which
   runs in the target's own process and could match either way) keys on `getuid()`
   for one grammar across all channels. The package→UID resolution is the
   producer's job (app / boot script), the same for all backends.
+- `end <count>` — **mandatory**. `count` is the total number of uid tokens the
+  producer wrote. Missing, or not equal to what the reader counted ⇒ reject the
+  payload whole. This is the truncation fuse: the KPM copies a config through a
+  fixed 1024-byte buffer and truncates it *silently*, so without `end` a
+  too-large config would quietly apply as a partial target set. More uids than
+  the backend can store is likewise a reject, never a silent drop.
+
+A parsed target set is **sorted ascending by uid**. That is a contract, not an
+implementation detail: it is what lets a backend binary-search the set on every
+hooked call instead of walking it, and it makes the parsed form independent of
+the order a producer grouped uids in.
 
 **stats** (`kind = stats`):
 
@@ -257,6 +310,11 @@ target <uid> <hookmask>
   `hook_id:count` pairs are emitted. `hook_id` and `count` are hex; `count` is a
   `u64` **cumulative since the backend loaded** (OPEN-3) — reads never reset it,
   so two readers don't race and the app computes deltas itself.
+
+Numeric asymmetry is deliberate too: control v2 writes **bare** hex, telemetry
+v1 keeps the `0x` prefix (§4.4). The prefix costs two bytes on every number, and
+only control has a payload ceiling tight enough for that to decide how many apps
+fit.
 
 Asymmetry is deliberate: config uses a dense mask (a *set* over a small fixed
 universe, applied in the kernel in O(1)); stats uses sparse `id:count` (most
@@ -290,15 +348,22 @@ surfaces as "disable the other backend".
 
 ### 4.4 Numeric primitive
 
-One primitive for every data field (`uid`, `hookmask`, `hook_id`, `count`):
+Hex for every data field (`uid`, `hookmask`, `hook_id`, `count`) — with the
+prefix decided **per protocol**:
 
 ```
-0x  followed by one or more hex digits, any case on read
+control v2 (config):            one or more hex digits, NO prefix
+telemetry v1 (stats, status):   0x  followed by one or more hex digits
 ```
 
-- `0x` prefix is **mandatory** on data fields. (If it is ever dropped it must be
-  *forbidden*, never *optional* — an optional prefix = two valid spellings of one
-  number = a drift seam. See OPEN-1.)
+- Within a protocol the spelling is **exactly one** of the two. The prefix is
+  mandatory in telemetry and forbidden in control; it is never *optional*,
+  because an optional prefix is two valid spellings of one number and therefore
+  a drift seam (OPEN-1). A `0x`-prefixed uid inside a control `targets` record
+  is malformed, and since a malformed uid desyncs `end`, it rejects the payload.
+- Control drops the prefix because it is the only protocol with a payload
+  ceiling tight enough to care: two bytes per number, against the KPM's
+  1024-byte config transport, is a direct tax on how many apps fit (§7).
 - Read accepts any case (`0xFF` == `0xff` == `0xFf`); **write always emits
   lowercase**. Liberal-in / strict-out: producers are deterministic, the consumer
   never trips on case. (Pin this with a vector — it is a classic silent-drift
@@ -324,10 +389,11 @@ and both are special-cased to their keyword/line.
 config (app → kernel):
 
 ```
-vpnhide 1 config
+vpnhide 2 config
 debug 0
-target 0x27fa 0x3ff
-target 0x2947 0x004
+targets 3ff 27fa
+targets 4 2947
+end 2
 ```
 
 stats (kernel → app):
@@ -410,18 +476,18 @@ per-app hooks and stats come to **all** backends, every channel carries the full
 grammar; there is no "bare" profile.
 
 The parser is **profile-agnostic**: the §4.5 "unknown keyword → skip" rule means
-one parser reads any channel and acts only on records it understands. The app is
-the only writer of all profiles; each backend reads its own.
+one parser reads any channel and acts only on records it understands. Each
+backend reads its own profile.
 
 | Channel | config records it acts on | emits stats? | emits status? |
 |---|---|---|---|
-| `.ko` / KPM | `debug`, `target` (kernel-owned mask bits) | yes | yes (§4.3) |
-| Zygisk | `debug`, `target` (zygisk-owned mask bits) | no, not yet (§7) | yes, via the app heartbeat |
-| LSPosed | `debug`, `target` (lsposed-owned mask bits, incl. package visibility) | yes | yes |
+| `.ko` / KPM | `debug`, `default`, `targets`, `end` (kernel-owned mask bits) | yes | yes (§4.3) |
+| Zygisk | `debug`, `targets`, `end`; its activator rejects a non-zero `default` because it cannot inject into every unlisted process | no, not yet (§7) | yes, via the app heartbeat |
+| LSPosed | — does **not** consume this wire; it reads the canonical JSON directly (see [storage.md](storage.md)) | yes | yes |
 
-A backend ignores `target` mask bits it does not own (`mask & own_hooks`), so the
-same `target 0x27fa 0x3ff` line is valid on every channel and each backend takes
-its slice.
+A backend ignores mask bits it does not own (`mask & own_hooks`), so the same
+`targets 3ff 27fa` record is valid on every channel and each backend takes its
+slice.
 
 **Active vs idle (§1.5).** The grammar is the same on every channel, but the app
 only writes a *real* config to the LSPosed channel and the **one active** native
@@ -463,7 +529,7 @@ for payload.
 ```c
 static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 {
-    if (kind_is_config(args)) {          /* "vpnhide 1 config\n..." */
+    if (kind_is_config(args)) {          /* "vpnhide 2 config\n..." */
         apply_snapshot(args);            /* same shared parser as .ko */
         return nr_target_uids;           /* short code only (NOT surfaced as text) */
     }
@@ -495,8 +561,10 @@ paginates. Therefore:
    bigger buffer or accepts the partial. (This is exactly the §4.1 rule that a
    trailing `\n` is optional on read but meaningful here.)
 
-On write, the whole snapshot must fit in `args`; bound it by `MAX_TARGET_UIDS`
-and have the parser truncate honestly at that ceiling (already the case for
+On write, the whole snapshot must fit in `args`, including its trailing NUL.
+Bound it by `MAX_TARGET_UIDS`, check the formatted byte length before the
+supercall (distinct per-app masks cost extra group headers), and have the parser
+reject honestly at its target ceiling (already the case for
 `vpnhide_parse_config(..., MAX_TARGET_UIDS)`).
 
 ### 7.3 Delivery
@@ -511,10 +579,11 @@ kpatch kpm ctl0 vpnhide "<payload>"
 Write (multi-line payload as one argv argument):
 
 ```
-kpatch kpm ctl0 vpnhide "vpnhide 1 config
+kpatch kpm ctl0 vpnhide "vpnhide 2 config
 debug 0
-target 0x27fa 0x3ff
-target 0x2947 0x004"
+targets 3ff 27fa
+targets 4 2947
+end 2"
 ```
 
 Read (response on stdout — `out_msg`, §7.1):
@@ -668,15 +737,17 @@ Recorded so they are not re-litigated.
 
 ---
 
-## 10. Open decisions (resolve before freezing version 1)
+## 10. Historical wire decisions
 
-- **OPEN-1 — `0x` prefix. RESOLVED: mandatory on data fields.** It is a
-  visual/parse anchor at ~zero cost, and "mandatory" (not "optional") removes the
-  two-spellings-of-one-number drift seam.
+- **OPEN-1 — `0x` prefix. RESOLVED per protocol.** Telemetry v1 keeps it
+  mandatory as a visual/parse anchor; control v2 forbids it to reclaim two
+  bytes per number under the KPM transport ceiling. Neither protocol makes the
+  prefix optional, so each value still has one spelling.
 - **OPEN-2 — agent self-description level. RESOLVED: positional-after-keyword.**
-  `target <uid> <hookmask>` — the keyword names the record, fields are positional.
-  `key=value` buys marginal readability for extra bytes and a second split; the
-  keyword already self-describes for an agent reading raw.
+  Control v2 uses `targets <hookmask> <uid>...`: the keyword names the grouped
+  record and fields remain positional. `key=value` buys marginal readability
+  for extra bytes and a second split; the keyword already self-describes for an
+  agent reading raw.
 - **OPEN-3 — stats counter type. RESOLVED: `u64` cumulative-since-load.** Reads
   are non-destructive (no reset-on-read race between two readers), it never
   wraps in practice, and deltas are the app's job — which suits the pull model

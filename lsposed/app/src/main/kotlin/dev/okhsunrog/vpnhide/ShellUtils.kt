@@ -19,8 +19,9 @@ internal const val ZYGISK_TARGETS = "/data/adb/vpnhide_zygisk/targets.txt"
 internal const val LSPOSED_TARGETS = "/data/adb/vpnhide_lsposed/targets.txt"
 
 // The kmod's folded control+stats node (docs/protocol.md §OPEN-4): a write is a
-// `vpnhide 1 config` snapshot, a read returns status+stats. Replaces the old
-// /proc/vpnhide_targets (decimal UID list) + /proc/vpnhide_debug nodes.
+// `vpnhide 2 config` snapshot, a read returns telemetry-v1 status+stats.
+// Replaces the old /proc/vpnhide_targets (decimal UID list) +
+// /proc/vpnhide_debug nodes.
 internal const val PROC_CTL = "/proc/vpnhide_ctl"
 internal const val SS_HIDDEN_PKGS_FILE = "/data/system/vpnhide_hidden_pkgs.txt"
 internal const val SS_OBSERVER_UIDS_FILE = "/data/system/vpnhide_observer_uids.txt"

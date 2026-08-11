@@ -27,7 +27,9 @@ use vpnhide_apatch_abi::{
 };
 use vpnhide_protocol::Target;
 use vpnhide_protocol::hook_ids::{HOOK_NAMES, KERNEL_HOOK_MASK, ZYGISK_HOOK_MASK};
-use vpnhide_protocol::{Kind, MAX_TARGET_UIDS, format_config, parse_config, peek_kind};
+use vpnhide_protocol::{
+    KPM_ARGS_LEN, Kind, MAX_TARGET_UIDS, format_config, parse_config, peek_kind,
+};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -63,6 +65,28 @@ const KPM_SUPPORTED_KERNEL_PAIRS: &[(u32, u32)] = &[
 // the C backends' `#define MAX_TARGET_UIDS`); alias it here so all three stay in
 // lock-step instead of restating the literal 64.
 const MAX_NATIVE_TARGETS: usize = MAX_TARGET_UIDS;
+// The control protocol carries a default hookmask for every uid NOT listed as a
+// target, which is the mechanism a whitelist mode would ride on: non-zero flips
+// `targets` from "the apps to act on" into "the apps to leave alone". Nothing
+// emits a non-zero default yet — the shipped model is the blacklist — so the
+// activator names the constant rather than spelling a bare 0 at each call site,
+// and turning the mode on later is a change here, not in any parser.
+const NO_DEFAULT_MASK: u32 = 0;
+/// First uid Android hands to an ordinary app; everything below is a system AID
+/// (`system_server` 1000, radio 1001, `network_stack` 1073, shell 2000, the OEM
+/// 5000s). Mirrored by both kernel backends, which enforce the same floor.
+const FIRST_APP_UID: u32 = 10_000;
+const PER_USER_RANGE: u32 = 100_000;
+
+/// Whether `uid` identifies an ordinary app rather than a platform AID.
+///
+/// Compared on the app-id, so a uid from a secondary profile — 1010234 in
+/// profile 10 — classifies the same as 10234 in the owner profile. Note this is
+/// **not** `FLAG_SYSTEM`: a vendor-preinstalled app keeps an ordinary 10xxx uid
+/// and stays targetable; only packages sharing a platform AID fall below.
+fn is_app_uid(uid: u32) -> bool {
+    uid % PER_USER_RANGE >= FIRST_APP_UID
+}
 const PM_READY_ATTEMPTS: u32 = 60;
 const APATCH_TRUSTED_SU_KEY: &str = "su";
 const SUPERCALL_HELLO: c_long = 0x1000;
@@ -127,7 +151,24 @@ pub fn activate_zygisk_boot() -> Result<()> {
 
 fn activate_zygisk_with_pm_wait(wait: PmReadyWait) -> Result<()> {
     let wire = project_native_with_pm_wait(&read_canonical()?, NativeHookFamily::Zygisk, wait)?;
+    validate_zygisk_config_wire(&wire)?;
     write_atomic(Path::new(ZYGISK_RUNTIME_CONFIG), wire.as_bytes(), 0o644)
+}
+
+/// Zygisk installs hooks only in processes whose UID is explicitly listed.
+/// A non-zero default means the opposite — act on every UID not listed — which
+/// would require injecting the module into every app process. Refuse that wire
+/// at the delivery boundary so a future whitelist producer cannot silently turn
+/// the exception list back into a blacklist.
+fn validate_zygisk_config_wire(wire: &str) -> Result<()> {
+    let config = parse_config(wire.as_bytes()).ok_or("invalid Zygisk control payload")?;
+    if config.default_mask != 0 {
+        return Err(
+            "Zygisk cannot apply a non-zero default hookmask; whitelist mode requires kmod or KPM"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 /// Outcome of a KPM boot activation. A kmod conflict is a legitimate,

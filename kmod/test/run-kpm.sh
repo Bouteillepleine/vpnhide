@@ -6,8 +6,8 @@
 #   1. build vpnhide.kpm (`make kpm`)
 #   2. download KernelPatch's kptools-linux + kpimg-linux (cached)
 #   3. patch the cached GKI Image TWICE, embedding the .kpm:
-#        - phase "notarget": no target UID  -> root must SEE vpn0
-#        - phase "target"  : target = uid 0 -> root must NOT see vpn0
+#        - phase "notarget": no target UID      -> app uid 10000 must SEE vpn0
+#        - phase "target"  : target = uid 10000 -> app uid 10000 must NOT see it
 #   4. boot each (init-kpm.sh) and diff the per-vector vpn0 counts
 #
 # Hide vectors PASS iff notarget>0 and target==0. Stable keep vectors must be
@@ -191,10 +191,10 @@ boot_phase() {
 }
 
 NT_LOG="$(boot_phase "" notarget)"
-# Keep uid 0 targeted for the existing shell vectors and add uid 5555 for the
-# state-aware bind probe's raw-syscall actor. The legacy load-args grammar is
-# one decimal UID per line (the runtime protocol is a separate channel).
-TG_LOG="$(boot_phase $'0\n5555' target)"
+# Both shell vectors and the state-aware bind probe use app uid 10000. The
+# legacy load-args grammar is one decimal UID per line (the runtime protocol is
+# a separate channel).
+TG_LOG="$(boot_phase "10000" target)"
 
 vec_count() { grep -oE "VEC $1=[0-9]+" "$2" | head -1 | grep -oE '[0-9]+$' || echo "-1"; }
 ifc_count() { grep -oE "$1=[0-9]+" "$2" | head -1 | grep -oE '[0-9]+$' || echo "-1"; }
@@ -213,12 +213,14 @@ keep_mode() {
 
 echo "------------------------- KPM test output -------------------------"
 for log in "$NT_LOG" "$TG_LOG"; do
-	grep -E 'KREL|KPMLOAD|KVER|KPMLOG|IPROUTE2|VEC |BIND_|PANIC' "$log" 2>/dev/null | sed "s|^|[$(basename "$log")] |" || true
+	grep -E 'KREL|KPMLOAD|KVER|KPMLOG|IPROUTE2|TARGET_USER|VEC |BIND_|PANIC' "$log" 2>/dev/null | sed "s|^|[$(basename "$log")] |" || true
 done
 echo "-------------------------------------------------------------------"
 
 [ "$(kpmload "$NT_LOG")" = ok ] || { echo "ERROR: KPM did not load (notarget boot)"; tail -20 "$NT_LOG"; exit 1; }
 [ "$(kpmload "$TG_LOG")" = ok ] || { echo "ERROR: KPM did not load (target boot)"; tail -20 "$TG_LOG"; exit 1; }
+grep -q 'TARGET_USER=ok' "$NT_LOG" || { echo "ERROR: app test user unavailable (notarget boot)"; exit 1; }
+grep -q 'TARGET_USER=ok' "$TG_LOG" || { echo "ERROR: app test user unavailable (target boot)"; exit 1; }
 
 PASS=0; NATIVE=0; NA=0; SKIP=0; FAIL=0
 

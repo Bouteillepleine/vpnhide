@@ -14,6 +14,10 @@
 #include "shared/vpnhide_logic.h"
 
 #define MAX_TARGETS 256
+/* Config capacity must equal vpnhide_protocol::MAX_TARGET_UIDS: the shared
+ * vectors pin over-ceiling payloads as REJECT, so C and Rust have to be
+ * rejecting at the same count. */
+#define CFG_MAX_TARGETS 64
 #define MAX_FIELDS 8
 
 static int failures;
@@ -87,9 +91,11 @@ static void run_cfg(const char *raw_in, const char *expect)
 {
 	char in[2048];
 	unsigned long len = decode(raw_in, in, sizeof(in));
-	struct vpnhide_target out[MAX_TARGETS];
+	struct vpnhide_target out[CFG_MAX_TARGETS];
 	int debug = -1;
-	int n = vpnhide_parse_config(in, len, out, MAX_TARGETS, &debug);
+	unsigned int default_mask = 0;
+	int n = vpnhide_parse_config(in, len, out, CFG_MAX_TARGETS, &debug,
+				     &default_mask);
 
 	checks++;
 	if (strcmp(expect, "REJECT") == 0) {
@@ -104,7 +110,8 @@ static void run_cfg(const char *raw_in, const char *expect)
 
 	/* Build "debug=<d>;uid:hm;..." from the parse result and compare. */
 	char got[2048];
-	int pos = snprintf(got, sizeof(got), "debug=%d", debug);
+	int pos = snprintf(got, sizeof(got), "debug=%d;def=0x%x", debug,
+			   default_mask);
 	for (int i = 0; i < n; i++)
 		pos += snprintf(got + pos, sizeof(got) - (size_t)pos,
 				";0x%x:0x%x", out[i].uid, out[i].hookmask);

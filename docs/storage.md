@@ -21,7 +21,8 @@ Two formats, by function — not one format stretched over everything:
   survives reinstalls), rich (roles, per-hook selection, debug, app settings),
   trivially import/export-able. Read by the app (Kotlin), the LSPosed hook
   (Kotlin), and the Rust activators.
-- **Runtime IPC = the text protocol** ([protocol.md](protocol.md), v1 frozen).
+- **Runtime IPC = the text protocol** ([protocol.md](protocol.md)): control v2
+  for config, telemetry v1 for stats/status, both frozen.
   uid-keyed, hand-parsed, kernel-safe. The runtime *config* wire for the
   **native** backends (kmod / KPM / Zygisk): config in, stats/status out. Its
   text format is also reused for LSPosed's read-only state file (§3).
@@ -196,7 +197,7 @@ backend.
 ### 4.1 The activator — a Rust workspace, thin bins
 
 The projection is shared for all three native backends (take the `native`-role
-packages → resolve to UIDs → emit a `vpnhide 1 config` snapshot), but the
+packages → resolve to UIDs → emit a `vpnhide 2 config` snapshot), but the
 resolved hookmask uses the active backend family: `.ko`/KPM consume `kernel`
 overrides, while Zygisk consumes `zygisk` overrides. Only the **delivery sink**
 differs after that. Ports use the same canonical parser and package→UID
@@ -267,7 +268,7 @@ injected `.so` free of a JSON parser, and carries the per-hook `hookmask` + `deb
 
 A common confusion (they are *not* the same):
 
-- **`config`: `target <uid> <hookmask>`** — per-UID, what you *want*: which hooks are
+- **`config`: `targets <hookmask> <uid>...`** — grouped per-UID intent: which hooks are
   enabled for that app. This is the flexible per-target control.
 - **`status`: `hooks <mask>`** — per-backend, what is *actually installed*: did all
   the backend's hooks register this boot? It is capability/health, not per-target.
@@ -283,7 +284,7 @@ emits status+stats (from separate counters). Example on the kmod node:
 
 ```sh
 # write config (kind=config) — kernel parses into targets[]+debug, nothing echoed
-# printf 'vpnhide 1 config\ndebug 0\ntarget 0x27fa 0x20003ff\n' > /proc/vpnhide_ctl
+# printf 'vpnhide 2 config\ndebug 0\ntargets 20003ff 27fa\nend 1\n' > /proc/vpnhide_ctl
 
 # read status+stats (kind=status, kind=stats) — never returns the config you wrote
 # cat /proc/vpnhide_ctl
@@ -440,9 +441,9 @@ migration shim, then remove them.
 
 ## 10. Relationship to [protocol.md](protocol.md)
 
-protocol.md remains the frozen **v1 wire** specification, and is still the runtime
-IPC for the native backends. This document supersedes its statements about the
-*storage/activation layer*, specifically:
+protocol.md remains the frozen **control-v2 / telemetry-v1 wire** specification
+and is still the runtime IPC for the native backends. This document supersedes
+its statements about the *storage/activation layer*, specifically:
 
 - **LSPosed does not consume the wire** — it reads the canonical JSON directly
   (§3). protocol.md's "LSPosed parses its config profile from its file" / the

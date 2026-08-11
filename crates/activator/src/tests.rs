@@ -73,11 +73,41 @@ fn projects_native_roles_to_wire() {
     );
     assert_eq!(
         project_native_with_resolver(&cfg, &resolver),
-        "vpnhide 1 config\n\
+        "vpnhide 2 config\n\
          debug 1\n\
-         target 0x278b 0x20003ff\n\
-         target 0x27fa 0x40\n\
-         target 0xf69cb 0x20003ff\n",
+         targets 40 27fa\n\
+         targets 20003ff 278b f69cb\n\
+         end 3\n",
+    );
+}
+
+#[test]
+fn native_projection_drops_platform_aids_but_keeps_preinstalled_apps() {
+    // A package sharing "android.uid.system" resolves to 1000 — the same uid as
+    // system_server — so listing it would mean "hide from everything running as
+    // 1000", not "hide from that app". Vendor-preinstalled apps are a different
+    // set: FLAG_SYSTEM but an ordinary 10xxx uid, and they stay targetable.
+    let cfg = parse_canonical(
+        r#"{
+          "version": 1,
+          "apps": {
+            "com.oem.sharesSystemUid": { "native": true },
+            "com.oem.preinstalled": { "native": true }
+          }
+        }"#,
+    )
+    .unwrap();
+    let resolver = parse_pm_packages(
+        "package:com.oem.sharesSystemUid uid:1000\n\
+         package:com.oem.preinstalled uid:10234,1010234\n",
+    );
+
+    assert_eq!(
+        project_native_with_resolver(&cfg, &resolver),
+        "vpnhide 2 config\n\
+         debug 0\n\
+         targets 20003ff 27fa f6a3a\n\
+         end 2\n",
     );
 }
 
@@ -97,7 +127,7 @@ fn native_projection_ignores_non_kernel_hook_names() {
 
     assert_eq!(
         project_native_with_resolver(&cfg, &resolver),
-        "vpnhide 1 config\ndebug 0\n",
+        "vpnhide 2 config\ndebug 0\nend 0\n",
     );
 }
 
@@ -122,15 +152,17 @@ fn projects_backend_specific_native_hook_overrides() {
 
     assert_eq!(
         project_native_with_resolver(&cfg, &resolver),
-        "vpnhide 1 config\n\
+        "vpnhide 2 config\n\
          debug 0\n\
-         target 0x27fa 0x40\n",
+         targets 40 27fa\n\
+         end 1\n",
     );
     assert_eq!(
         project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Zygisk),
-        "vpnhide 1 config\n\
+        "vpnhide 2 config\n\
          debug 0\n\
-         target 0x27fa 0x5040000\n",
+         targets 5040000 27fa\n\
+         end 1\n",
     );
 }
 
@@ -149,15 +181,17 @@ fn legacy_native_hook_list_is_kernel_only_and_zygisk_defaults_to_all() {
 
     assert_eq!(
         project_native_with_resolver(&cfg, &resolver),
-        "vpnhide 1 config\n\
+        "vpnhide 2 config\n\
          debug 0\n\
-         target 0x27fa 0x40\n",
+         targets 40 27fa\n\
+         end 1\n",
     );
     assert_eq!(
         project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Zygisk),
-        "vpnhide 1 config\n\
+        "vpnhide 2 config\n\
          debug 0\n\
-         target 0x27fa 0x5fc0000\n",
+         targets 5fc0000 27fa\n\
+         end 1\n",
     );
 }
 
@@ -176,12 +210,25 @@ fn empty_legacy_native_hook_list_is_disabled_for_every_backend() {
 
     assert_eq!(
         project_native_with_resolver(&cfg, &resolver),
-        "vpnhide 1 config\ndebug 0\n",
+        "vpnhide 2 config\ndebug 0\nend 0\n",
     );
     assert_eq!(
         project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Zygisk),
-        "vpnhide 1 config\ndebug 0\n",
+        "vpnhide 2 config\ndebug 0\nend 0\n",
     );
+}
+
+#[test]
+fn zygisk_rejects_a_nonzero_default_mask() {
+    let blacklist = format_config(false, NO_DEFAULT_MASK, &[]);
+    assert!(validate_zygisk_config_wire(&blacklist).is_ok());
+
+    let whitelist = format_config(false, ZYGISK_HOOK_MASK, &[]);
+    let error = validate_zygisk_config_wire(&whitelist)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("non-zero default hookmask"));
+    assert!(error.contains("requires kmod or KPM"));
 }
 
 #[test]
@@ -236,10 +283,10 @@ fn parses_per_hook_java_selection_without_breaking_native() {
     // Native projection is unaffected: both apps still get the kernel mask.
     assert_eq!(
         project_native_with_resolver(&cfg, &resolver),
-        "vpnhide 1 config\n\
+        "vpnhide 2 config\n\
          debug 0\n\
-         target 0x278b 0x20003ff\n\
-         target 0x278c 0x20003ff\n",
+         targets 20003ff 278b 278c\n\
+         end 2\n",
     );
 }
 
@@ -419,7 +466,7 @@ fn projects_shared_fixture_ports_role() {
 fn absent_canonical_projects_to_empty_config_without_pm() {
     assert_eq!(
         project_native(empty_canonical_json()).unwrap(),
-        "vpnhide 1 config\ndebug 0\n",
+        "vpnhide 2 config\ndebug 0\nend 0\n",
     );
 }
 
@@ -519,20 +566,65 @@ fn projection_is_bounded_to_backend_target_capacity() {
         .join("\n");
     let wire = project_native_with_resolver(&cfg, &parse_pm_packages(&pm));
 
+    // All 70 share one mask, so the whole set rides one `targets` record and the
+    // count lives in the `end` fuse — which the backend checks, so the producer
+    // has to cap itself here rather than let the backend reject the payload.
     assert_eq!(
-        wire.lines()
-            .filter(|line| line.starts_with("target "))
-            .count(),
-        64
+        wire.lines().filter(|l| l.starts_with("targets ")).count(),
+        1
+    );
+    assert!(wire.ends_with(&format!("end {MAX_NATIVE_TARGETS:x}\n")));
+    let uids = wire
+        .lines()
+        .find(|l| l.starts_with("targets "))
+        .unwrap()
+        .split_whitespace()
+        .count()
+        - 2; // keyword + mask
+    assert_eq!(uids, MAX_NATIVE_TARGETS);
+
+    // And what it produces must survive its own reader: the parser rejects a
+    // payload carrying more uids than a backend can hold.
+    assert!(vpnhide_protocol::parse_config(wire.as_bytes()).is_some());
+    assert_eq!(
+        native_target_capacity_warning(70),
+        "vpnhide-warning native_target_cap total=70 cap=64 dropped=6",
     );
 }
 
 #[test]
+fn kpm_rejects_a_valid_config_that_exceeds_its_argument_buffer() {
+    // MAX_TARGET_UIDS alone is not enough to prove transport fit: distinct
+    // per-app masks each need their own group header. Keep this valid at the
+    // protocol layer and make the KPM transport boundary reject it clearly.
+    let targets = (0..MAX_NATIVE_TARGETS as u32)
+        .map(|offset| Target {
+            uid: u32::MAX - offset,
+            hookmask: offset + 1,
+        })
+        .collect::<Vec<_>>();
+    let wire = format_config(false, NO_DEFAULT_MASK, &targets);
+
+    assert!(parse_config(wire.as_bytes()).is_some());
+    assert!(wire.len() >= KPM_ARGS_LEN);
+    let error = validate_kpm_config_wire(&wire).unwrap_err().to_string();
+    assert!(error.contains(&wire.len().to_string()));
+    assert!(error.contains(&(KPM_ARGS_LEN - 1).to_string()));
+    assert!(error.contains("distinct per-app hook selections"));
+}
+
+#[test]
+fn kpm_accepts_the_largest_argument_that_leaves_room_for_nul() {
+    assert!(validate_kpm_config_wire(&"x".repeat(KPM_ARGS_LEN - 1)).is_ok());
+    assert!(validate_kpm_config_wire(&"x".repeat(KPM_ARGS_LEN)).is_err());
+}
+
+#[test]
 fn kpatch_ctl0_accepts_config_target_count_exit_codes() {
-    let one_target = "vpnhide 1 config\ndebug 0\ntarget 0x123 0x1\n";
+    let one_target = "vpnhide 2 config\ndebug 0\ntargets 1 123\nend 1\n";
     assert!(kpatch_ctl0_config_status_ok(
         std::process::ExitStatus::from_raw(0),
-        "vpnhide 1 config\ndebug 0\n"
+        "vpnhide 2 config\ndebug 0\nend 0\n"
     ));
     assert!(kpatch_ctl0_config_status_ok(
         std::process::ExitStatus::from_raw(1 << 8),

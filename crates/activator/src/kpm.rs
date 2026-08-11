@@ -181,6 +181,7 @@ impl KpmClient {
     }
 
     pub(crate) fn ctl0_config(&self, wire: &str) -> Result<()> {
+        validate_kpm_config_wire(wire)?;
         let _lock = KpmCtlLock::acquire()?;
         const ATTEMPTS: usize = 4;
         for attempt in 0..ATTEMPTS {
@@ -211,6 +212,22 @@ impl KpmClient {
             Self::ApatchSupercall { key, style } => apatch_kpm_ctl0_read(key, *style, wire),
         }
     }
+}
+
+/// Reject a config before KernelPatch copies it through `char args[1024]`.
+/// `compat_strncpy_from_user` silently truncates an overlong argument and uses
+/// one byte for the trailing NUL, so sending 1024 bytes would otherwise reach
+/// the module as a malformed prefix and hide the useful capacity error.
+pub(crate) fn validate_kpm_config_wire(wire: &str) -> Result<()> {
+    if wire.len() >= KPM_ARGS_LEN {
+        return Err(format!(
+            "KPM config is {} bytes; the transport accepts at most {} bytes plus a trailing NUL; reduce the native target count or the number of distinct per-app hook selections",
+            wire.len(),
+            KPM_ARGS_LEN - 1,
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn kpatch_kpm_list_contains(kpatch: &Path) -> Result<bool> {

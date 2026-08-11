@@ -8,7 +8,7 @@ mod tests {
     use proptest::prelude::*;
     use vpnhide_protocol::{Config, Target, parse_config};
 
-    const C_TARGET_CAPACITY: usize = 128;
+    const C_TARGET_CAPACITY: usize = vpnhide_protocol::MAX_TARGET_UIDS;
 
     #[derive(Clone, Copy, Default)]
     #[repr(C)]
@@ -24,12 +24,14 @@ mod tests {
             targets: *mut CTarget,
             capacity: i32,
             debug: *mut i32,
+            default_mask: *mut u32,
         ) -> i32;
     }
 
     fn parse_with_c(input: &[u8]) -> Option<Config> {
         let mut targets = [CTarget::default(); C_TARGET_CAPACITY];
         let mut debug = -1;
+        let mut default_mask = 0u32;
         let count = unsafe {
             vpnhide_diff_parse_config(
                 input.as_ptr(),
@@ -37,6 +39,7 @@ mod tests {
                 targets.as_mut_ptr(),
                 C_TARGET_CAPACITY as i32,
                 &mut debug,
+                &mut default_mask,
             )
         };
         if count < 0 {
@@ -48,6 +51,7 @@ mod tests {
                 1 => Some(true),
                 _ => None,
             },
+            default_mask,
             targets: targets[..count as usize]
                 .iter()
                 .map(|target| Target {

@@ -2,9 +2,9 @@
 /*
  * State-aware SO_BINDTODEVICE / SO_BINDTOIFINDEX probe for the QEMU harness.
  *
- * The actor runs as uid 5555 and issues setsockopt through an inline arm64
+ * The actor runs as Android app uid 10000 and issues setsockopt through an inline arm64
  * `svc`, bypassing libc.  The socket itself is created by the root parent before
- * fork, so after the actor exits a separate non-target observer (uid 5556) can
+ * fork, so after the actor exits a separate non-target observer (uid 10001) can
  * inspect the very same open file description.  This catches the dangerous
  * failure mode where a hook returns ENODEV after the kernel has already changed
  * sk_bound_dev_if; checking errno alone cannot distinguish that from a real
@@ -21,6 +21,7 @@
  */
 
 #include <errno.h>
+#include <grp.h>
 #include <linux/if.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -48,13 +49,24 @@
 #define __NR_getsockopt 209
 #endif
 
-#define ACTOR_UID 5555
-#define OBSERVER_UID 5556
+#define ACTOR_UID 10000
+#define OBSERVER_UID 10001
+#define AID_INET 3003
 
 struct call_result {
 	int ret;
 	int err;
 };
+
+static int become_app(uid_t uid, int needs_internet)
+{
+	gid_t groups[] = { AID_INET };
+
+	if (setgroups(needs_internet ? 1 : 0, groups) != 0 ||
+	    setgid(uid) != 0 || setuid(uid) != 0)
+		return -1;
+	return 0;
+}
 
 static long raw_syscall5(long nr, long a0, long a1, long a2, long a3, long a4)
 {
@@ -146,7 +158,7 @@ static struct call_result actor_setsockopt(int fd, int optname,
 		long rc;
 
 		close(pipefd[0]);
-		if (setuid(ACTOR_UID) != 0) {
+		if (become_app(ACTOR_UID, 1) != 0) {
 			result.ret = -1;
 			result.err = errno;
 		} else {
@@ -197,7 +209,7 @@ static int observer_name_state(int fd, const char *expected)
 		long rc;
 
 		close(pipefd[0]);
-		if (setuid(OBSERVER_UID) != 0) {
+		if (become_app(OBSERVER_UID, 0) != 0) {
 			state = -errno;
 		} else {
 			rc = raw_getsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE,
@@ -246,7 +258,7 @@ static int observer_index_state(int fd, int expected)
 		long rc;
 
 		close(pipefd[0]);
-		if (setuid(OBSERVER_UID) != 0) {
+		if (become_app(OBSERVER_UID, 0) != 0) {
 			state = -errno;
 		} else {
 			rc = raw_getsockopt(fd, SOL_SOCKET, SO_BINDTOIFINDEX,

@@ -35,4 +35,13 @@ class CanonicalConfigRepositoryTest {
 
         assertFalse(command.contains("activator"))
     }
+
+    @Test
+    fun `native activator stderr is folded into save output`() {
+        val command = ConfigChannels.nativeActivatorCommand()
+
+        assertTrue(command.contains("$KMOD_ACTIVATOR 2>&1"))
+        assertTrue(command.contains("$KPM_ACTIVATOR 2>&1"))
+        assertTrue(command.contains("$ZYGISK_ACTIVATOR 2>&1"))
+    }
 }

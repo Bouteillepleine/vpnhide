@@ -298,7 +298,7 @@ pub(crate) fn project_native_with_pm_wait(
 ) -> Result<String> {
     let cfg = parse_canonical(json)?;
     if !has_native_targets(&cfg, family) {
-        return Ok(format_config(cfg.debug, &[]));
+        return Ok(format_config(cfg.debug, NO_DEFAULT_MASK, &[]));
     }
     let resolver = PackageUidMap::from_pm_with_wait(wait)?;
     Ok(project_native_with_resolver_for_family(
@@ -317,6 +317,19 @@ pub(crate) fn project_native_with_resolver_for_family(
             continue;
         };
         for uid in resolver.uids_for(pkg) {
+            // Below the app range a uid is not an app but a platform identity
+            // shared by many components — a package declaring sharedUserId
+            // "android.uid.system" resolves to 1000, the same uid as
+            // system_server. Since UID is the targeting key, listing one would
+            // mean "hide from everything running as 1000", which is how a
+            // device ends up believing it has no route. This is NOT the same
+            // set as FLAG_SYSTEM: vendor-preinstalled apps keep ordinary 10xxx
+            // uids and stay targetable. `project_ports_with_resolver` has
+            // filtered the same way from the start; the native path had not.
+            // Both kernel backends enforce it too, so this is the polite half.
+            if !is_app_uid(*uid) {
+                continue;
+            }
             by_uid
                 .entry(*uid)
                 .and_modify(|existing| *existing |= mask)
@@ -328,20 +341,21 @@ pub(crate) fn project_native_with_resolver_for_family(
     // no diagnostic. Warn so a user with more native targets than the backend can
     // hold learns their protection is partial, instead of failing closed silently.
     if by_uid.len() > MAX_NATIVE_TARGETS {
-        eprintln!(
-            "vpnhide: WARNING: {} native targets exceed the backend cap of {}; \
-             dropping the {} highest-UID app(s) from native protection",
-            by_uid.len(),
-            MAX_NATIVE_TARGETS,
-            by_uid.len() - MAX_NATIVE_TARGETS,
-        );
+        eprintln!("{}", native_target_capacity_warning(by_uid.len()));
     }
     let targets = by_uid
         .into_iter()
         .take(MAX_NATIVE_TARGETS)
         .map(|(uid, hookmask)| Target { uid, hookmask })
         .collect::<Vec<_>>();
-    format_config(cfg.debug, &targets)
+    format_config(cfg.debug, NO_DEFAULT_MASK, &targets)
+}
+
+pub(crate) fn native_target_capacity_warning(total: usize) -> String {
+    format!(
+        "vpnhide-warning native_target_cap total={total} cap={MAX_NATIVE_TARGETS} dropped={}",
+        total.saturating_sub(MAX_NATIVE_TARGETS),
+    )
 }
 
 pub fn project_native_with_resolver(cfg: &CanonicalConfig, resolver: &PackageUidMap) -> String {
@@ -399,7 +413,7 @@ pub fn project_ports_with_resolver(
             continue;
         }
         for uid in resolver.uids_for(pkg) {
-            if *uid >= 10_000 {
+            if is_app_uid(*uid) {
                 targets.entry(*uid).or_default().merge_app(app);
             }
         }
