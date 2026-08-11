@@ -127,10 +127,12 @@ static unsigned long long stats_counts[MAX_TARGET_UIDS][VPNHIDE_HOOK_COUNT];
  * " 0x0:0x0" (8 bytes) once formatted, and the reply is capped at
  * VPNHIDE_OUT_MAX by this module and by both KPatch and APatch clients, so no
  * reply can ever deliver more than VPNHIDE_OUT_MAX/8 of them. The product would
- * be 1728 entries — three quarters of which are unreachable — and, worse, it
- * would grow with the target ceiling. Static growth is what broke KP boot on
- * the 6.12 image (see the seqlock note above), so keeping this bound tied to
- * the transport instead of the ceiling is what lets the ceiling move later.
+ * be 1728 entries — three quarters of which are unreachable — and would add
+ * still more growth when the target ceiling moves. Static growth is what broke
+ * KP boot on the 6.12 image (see the seqlock note above). The live stats tables
+ * above still scale with MAX_TARGET_UIDS, so they must be redesigned before the
+ * target ceiling can safely rise; this keeps serialisation scratch from making
+ * that coupling worse.
  */
 #define VPNHIDE_STATS_SNAPSHOT_MAX (VPNHIDE_OUT_MAX / 8)
 

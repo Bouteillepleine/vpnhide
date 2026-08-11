@@ -32,7 +32,8 @@ can't raise the app count because stats won't fit" conflates the two.
 | `ctl_write` payload cap | `kmod/vpnhide_kmod.c` (`count > PAGE_SIZE`) | 4096 B | ~800 targets |
 | parse scratch on the kernel stack | `ctl_write`, `vpnhide_kpm_ctl0` | 8 B/target | thousands (16 KiB arm64 stack, shared with a 4 KiB reply buffer in the KPM) |
 
-Measured control payloads under the v2 grammar (full kernel hookmask):
+Measured control payloads under the v2 grammar (one shared full kernel
+hookmask, five-digit UIDs):
 
 | targets | bytes | KPM (1024) | kmod (4096) |
 |---|---|---|---|
@@ -85,10 +86,12 @@ The two backends are not in the same position:
 The KPM's serialisation scratch is deliberately sized by the transport
 (`VPNHIDE_STATS_SNAPSHOT_MAX = VPNHIDE_OUT_MAX / 8`), not by
 `MAX_TARGET_UIDS * VPNHIDE_HOOK_COUNT`. The product would reserve 1728 entries
-when no reply can carry more than ~510, and — the point — it would grow with the
-target ceiling. Static growth is what broke KernelPatch boot on the 6.12 image,
-so keeping this bound tied to the transport is what lets the ceiling move
-independently. `.bss` is 23120 B at the time of writing, down from 42576 B.
+when no reply can carry more than ~510. This removed one source of target-cap
+growth, but not all of it: the live `stats_used`, `stats_uids`, and
+`stats_counts[MAX_TARGET_UIDS][VPNHIDE_HOOK_COUNT]` arrays still scale with the
+cap. Static growth is what broke KernelPatch boot on the 6.12 image. At 64
+targets `.bss` is 23120 B (down from 42576 B); a source-only build with the cap
+changed to 160 measured **45392 B**, before any boot test.
 
 ## Raising a ceiling — options and cost
 
@@ -96,11 +99,13 @@ Ordered by cost. None of these are scheduled; this is the menu.
 
 ### Control
 
-1. **Raise `MAX_TARGET_UIDS` to ~160.** The v2 grammar already fits it in the
-   KPM transport, the KPM's `.bss` no longer tracks the ceiling, and the kmod
-   payload cap has room. Costs: move the parse scratch off the kernel stack
-   (8 B/target, currently 512 B), and re-verify KernelPatch boot on 6.12. This
-   is the cheap one and the only ceiling currently binding.
+1. **Do not raise `MAX_TARGET_UIDS` to ~160 by itself.** A typical one-mask,
+   five-digit-UID wire fits the KPM transport (848 B), and the kmod payload cap
+   has room, but KPM `.bss` rises from 23120 B to 45392 B because the live stats
+   table still follows the target cap. That returns it to the static-size range
+   already known to break KernelPatch boot on 6.12. First decouple or redesign
+   live stats storage, move the parse scratch off the kernel stack (8 B/target),
+   then re-run the 6.12 KPM boot harness. The hard cap therefore remains 64.
 2. **Past ~190 targets on the KPM**, the 1024-byte transport is the wall. The
    only way through is chunking — `config-begin` / `config-chunk` /
    `config-commit` across several ctl0 calls — which is a control-protocol
@@ -134,13 +139,7 @@ list. It makes the user maintain a second selection whose mistakes are
 invisible — no numbers looks identical to nothing happened — to solve a problem
 that is telemetry-only and already degrades visibly.
 
-## Known gaps
-
-- The app does not act on the truncation signal for the **kmod** stats channel.
-  It reads `/proc/vpnhide_ctl` directly and only looks for the activator's
-  `# vpnhide truncated` marker, which exists on the KPM path. After the clamp
-  fix a truncated kmod read ends on a whole record, so the numbers shown are
-  correct — there are just silently fewer of them.
+## User-visible overflow reporting
 
 Target-set overflow is surfaced after Save: the activator emits a stable
 `vpnhide-warning native_target_cap` marker with the resolved UID totals, the app
@@ -148,6 +147,14 @@ captures activator stderr, and the picker shows a localized long-duration
 warning instead of the normal success message. The canonical package selection
 is still saved in full; the warning describes the capped native runtime
 projection.
+
+## Known gaps
+
+- The app does not act on the truncation signal for the **kmod** stats channel.
+  It reads `/proc/vpnhide_ctl` directly and only looks for the activator's
+  `# vpnhide truncated` marker, which exists on the KPM path. After the clamp
+  fix a truncated kmod read ends on a whole record, so the numbers shown are
+  correct — there are just silently fewer of them.
 
 ## Re-measuring
 
