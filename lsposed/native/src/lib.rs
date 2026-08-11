@@ -1,7 +1,12 @@
 mod generated;
 
 use std::ffi::CStr;
-use std::io::ErrorKind;
+use std::fs;
+use std::io::{self, ErrorKind};
+use std::mem;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::ptr;
+use std::slice;
 
 use crate::generated::iface_lists::matches_vpn;
 
@@ -68,13 +73,9 @@ fn is_vpn_iface(name: &str) -> bool {
     matches_vpn(name.as_bytes())
 }
 
-/// 8-byte-aligned byte buffer. Several probes reinterpret the raw bytes the
-/// kernel writes back (`ifreq` from SIOCGIFCONF, `nlmsghdr`/`rtattr` from a
-/// netlink dump) as typed structs. A plain `[u8; N]` is only 1-aligned, so
-/// forming a reference/slice of those types over it is undefined behaviour even
-/// when it happens to work. Over-aligning the backing storage to 8 — at least
-/// the alignment of every struct read out of these buffers — makes every such
-/// reference well-formed.
+/// 8-byte-aligned byte buffer. The `SIOCGIFCONF` probe reinterprets the raw
+/// bytes the kernel writes back as `ifreq` values. A plain `[u8; N]` is only
+/// 1-aligned, so the backing storage must provide the alignment of `ifreq`.
 #[repr(align(8))]
 struct AlignedBytes<const N: usize>([u8; N]);
 
@@ -84,7 +85,7 @@ impl<const N: usize> AlignedBytes<N> {
     }
 }
 
-fn is_selinux_denial(e: &std::io::Error) -> bool {
+fn is_selinux_denial(e: &io::Error) -> bool {
     e.kind() == ErrorKind::PermissionDenied
 }
 
@@ -99,12 +100,20 @@ fn cstr_to_str(ptr: *const libc::c_char) -> String {
         .into_owned()
 }
 
+fn nul_terminated_bytes_to_string(bytes: &[u8]) -> String {
+    let end = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
+}
+
 fn last_os_error() -> String {
-    std::io::Error::last_os_error().to_string()
+    io::Error::last_os_error().to_string()
 }
 
 fn last_os_errno() -> i32 {
-    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+    io::Error::last_os_error().raw_os_error().unwrap_or(0)
 }
 
 fn join_list(v: &[String]) -> String {
@@ -148,12 +157,6 @@ struct Rtmsg {
     rtm_flags: u32,
 }
 
-#[repr(C)]
-struct Rtattr {
-    rta_len: u16,
-    rta_type: u16,
-}
-
 const IFLA_IFNAME: u16 = 3;
 const RTA_OIF: u16 = 4;
 
@@ -163,7 +166,7 @@ const RTA_OIF: u16 = 4;
 /// Returns `CheckOutput::network_blocked(...)` if `socket()` returns
 /// ECONNREFUSED (no NETWORK permission), `CheckOutput::fail(...)` for
 /// any other socket() failure, otherwise the result of `f(fd)`.
-unsafe fn with_inet_dgram_socket(f: impl FnOnce(libc::c_int) -> CheckOutput) -> CheckOutput {
+fn with_inet_dgram_socket(f: impl FnOnce(libc::c_int) -> CheckOutput) -> CheckOutput {
     let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
     if fd < 0 {
         let err = last_os_errno();
@@ -174,15 +177,15 @@ unsafe fn with_inet_dgram_socket(f: impl FnOnce(libc::c_int) -> CheckOutput) -> 
         }
         return CheckOutput::fail(format!("cannot create socket: {}", last_os_error()));
     }
-    let out = f(fd);
-    unsafe { libc::close(fd) };
-    out
+    // SAFETY: `socket` returned a new owned descriptor above.
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    f(fd.as_raw_fd())
 }
 
 fn check_ioctl_siocgifflags() -> CheckOutput {
     unsafe {
         with_inet_dgram_socket(|fd| {
-            let mut ifr: libc::ifreq = std::mem::zeroed();
+            let mut ifr: libc::ifreq = mem::zeroed();
             let name = b"tun0\0";
             ifr.ifr_name[..name.len()].copy_from_slice(&name.map(|b| b as libc::c_char));
 
@@ -216,7 +219,7 @@ fn check_ioctl_siocgifflags() -> CheckOutput {
 fn check_ioctl_siocgifmtu() -> CheckOutput {
     unsafe {
         with_inet_dgram_socket(|fd| {
-            let mut ifr: libc::ifreq = std::mem::zeroed();
+            let mut ifr: libc::ifreq = mem::zeroed();
             let name = b"tun0\0";
             ifr.ifr_name[..name.len()].copy_from_slice(&name.map(|b| b as libc::c_char));
 
@@ -243,7 +246,7 @@ fn check_ioctl_siocgifconf() -> CheckOutput {
     unsafe {
         with_inet_dgram_socket(|fd| {
             let mut buf = AlignedBytes::<4096>::zeroed();
-            let mut ifc: libc::ifconf = std::mem::zeroed();
+            let mut ifc: libc::ifconf = mem::zeroed();
             ifc.ifc_len = buf.0.len() as libc::c_int;
             ifc.ifc_ifcu.ifcu_buf = buf.0.as_mut_ptr().cast();
 
@@ -252,8 +255,8 @@ fn check_ioctl_siocgifconf() -> CheckOutput {
                 return CheckOutput::fail(format!("ioctl error: {e}"));
             }
 
-            let count = ifc.ifc_len as usize / std::mem::size_of::<libc::ifreq>();
-            let reqs = std::slice::from_raw_parts(buf.0.as_ptr() as *const libc::ifreq, count);
+            let count = ifc.ifc_len as usize / mem::size_of::<libc::ifreq>();
+            let reqs = slice::from_raw_parts(buf.0.as_ptr().cast::<libc::ifreq>(), count);
 
             let mut all = Vec::new();
             let mut vpn = Vec::new();
@@ -272,7 +275,7 @@ fn check_ioctl_siocgifconf() -> CheckOutput {
 
 fn check_getifaddrs() -> CheckOutput {
     unsafe {
-        let mut addrs: *mut libc::ifaddrs = std::ptr::null_mut();
+        let mut addrs: *mut libc::ifaddrs = ptr::null_mut();
         if libc::getifaddrs(&mut addrs) != 0 {
             return CheckOutput::fail(format!("getifaddrs error: {}", last_os_error()));
         }
@@ -300,7 +303,7 @@ fn check_getifaddrs() -> CheckOutput {
 }
 
 fn check_proc_file(path: &str) -> CheckOutput {
-    match std::fs::read_to_string(path) {
+    match fs::read_to_string(path) {
         Err(e) => {
             if is_selinux_denial(&e) {
                 return CheckOutput::selinux_blocked(format!(
@@ -346,7 +349,7 @@ unsafe fn netlink_recv(fd: i32, buf: &mut [u8]) -> isize {
             iov_base: buf.as_mut_ptr().cast(),
             iov_len: buf.len(),
         };
-        let mut msg: libc::msghdr = std::mem::zeroed();
+        let mut msg: libc::msghdr = mem::zeroed();
         msg.msg_iov = &mut iov;
         msg.msg_iovlen = 1;
         libc::recvmsg(fd, &mut msg, 0)
@@ -359,24 +362,25 @@ unsafe fn netlink_recv(fd: i32, buf: &mut [u8]) -> isize {
 /// outcome verbatim. The wrapped `CheckOutput` may carry any status —
 /// SELinux denials map to `Pass` (the kernel hid the interface, exactly
 /// what we want), real failures map to `Fail`.
-fn open_netlink() -> Result<i32, CheckOutput> {
+fn open_netlink() -> Result<OwnedFd, CheckOutput> {
     unsafe {
-        let fd = libc::socket(libc::AF_NETLINK, libc::SOCK_RAW, libc::NETLINK_ROUTE);
-        if fd < 0 {
-            let e = std::io::Error::last_os_error();
+        let raw_fd = libc::socket(libc::AF_NETLINK, libc::SOCK_RAW, libc::NETLINK_ROUTE);
+        if raw_fd < 0 {
+            let e = io::Error::last_os_error();
             return Err(if is_selinux_denial(&e) {
                 CheckOutput::selinux_blocked(format!("netlink socket denied by SELinux ({e})"))
             } else {
                 CheckOutput::fail(format!("cannot create netlink socket: {e}"))
             });
         }
+        // SAFETY: `socket` returned a new owned descriptor above.
+        let fd = OwnedFd::from_raw_fd(raw_fd);
 
-        let mut sa: libc::sockaddr_nl = std::mem::zeroed();
+        let mut sa: libc::sockaddr_nl = mem::zeroed();
         sa.nl_family = libc::AF_NETLINK as u16;
-        let sa_len = std::mem::size_of_val(&sa) as libc::socklen_t;
-        if libc::bind(fd, std::ptr::from_ref(&sa).cast(), sa_len) < 0 {
-            let e = std::io::Error::last_os_error();
-            libc::close(fd);
+        let sa_len = mem::size_of_val(&sa) as libc::socklen_t;
+        if libc::bind(fd.as_raw_fd(), ptr::from_ref(&sa).cast(), sa_len) < 0 {
+            let e = io::Error::last_os_error();
             return Err(if is_selinux_denial(&e) {
                 CheckOutput::selinux_blocked(format!(
                     "netlink bind denied by SELinux ({e}) — app cannot enumerate interfaces"
@@ -397,39 +401,53 @@ fn open_netlink() -> Result<i32, CheckOutput> {
             tv_usec: 0,
         };
         libc::setsockopt(
-            fd,
+            fd.as_raw_fd(),
             libc::SOL_SOCKET,
             libc::SO_RCVTIMEO,
-            std::ptr::from_ref(&tv).cast(),
-            std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+            ptr::from_ref(&tv).cast(),
+            mem::size_of::<libc::timeval>() as libc::socklen_t,
         );
         Ok(fd)
     }
 }
 
-/// Parse netlink messages from a buffer, calling `on_msg` for each message.
-/// Returns false if NLMSG_DONE or NLMSG_ERROR was seen.
-///
-/// # Safety
-/// `buf` must contain valid netlink messages up to `len` bytes.
-unsafe fn parse_netlink_msgs(
+fn read_u16_ne(buf: &[u8], offset: usize) -> Option<u16> {
+    Some(u16::from_ne_bytes(
+        buf.get(offset..offset + 2)?.try_into().ok()?,
+    ))
+}
+
+fn read_u32_ne(buf: &[u8], offset: usize) -> Option<u32> {
+    Some(u32::from_ne_bytes(
+        buf.get(offset..offset + 4)?.try_into().ok()?,
+    ))
+}
+
+/// Parse bounds-checked netlink messages from a byte buffer, calling `on_msg`
+/// for each matching message. Returns false on `NLMSG_DONE`/`NLMSG_ERROR`.
+fn parse_netlink_msgs(
     buf: &[u8],
     len: usize,
     msg_type: u16,
     mut on_msg: impl FnMut(&[u8], usize, usize),
 ) -> bool {
+    let len = len.min(buf.len());
     let mut offset = 0usize;
-    let hdr_size = std::mem::size_of::<libc::nlmsghdr>();
+    let hdr_size = mem::size_of::<libc::nlmsghdr>();
     while offset + hdr_size <= len {
-        let nh = unsafe { &*(buf.as_ptr().add(offset) as *const libc::nlmsghdr) };
-        let msg_len = nh.nlmsg_len as usize;
+        let Some(msg_len) = read_u32_ne(buf, offset).map(|len| len as usize) else {
+            break;
+        };
         if msg_len < hdr_size || msg_len > len - offset {
             break;
         }
-        if nh.nlmsg_type == libc::NLMSG_DONE as u16 || nh.nlmsg_type == libc::NLMSG_ERROR as u16 {
+        let Some(current_type) = read_u16_ne(buf, offset + 4) else {
+            break;
+        };
+        if current_type == libc::NLMSG_DONE as u16 || current_type == libc::NLMSG_ERROR as u16 {
             return false;
         }
-        if nh.nlmsg_type == msg_type {
+        if current_type == msg_type {
             on_msg(buf, offset, msg_len);
         }
         offset += (msg_len + 3) & !3;
@@ -437,31 +455,92 @@ unsafe fn parse_netlink_msgs(
     true // continue receiving
 }
 
-/// Iterate rtattr entries within a netlink message payload.
-///
-/// # Safety
-/// `buf[start..end]` must contain valid rtattr entries.
-unsafe fn for_each_rtattr(
-    buf: &[u8],
-    start: usize,
-    end: usize,
-    mut on_attr: impl FnMut(&Rtattr, &[u8]),
-) {
+/// Iterate bounds-checked `rtattr` entries within a netlink payload.
+fn for_each_rtattr(buf: &[u8], start: usize, end: usize, mut on_attr: impl FnMut(u16, &[u8])) {
     // Walk rtattrs in `buf[start..end]`. For each, hand the callback
     // the header AND a slice covering its payload — already bounds-
     // checked against `end`, so callbacks can never read past the
     // message. A truncated tail (rta_len < 4, or rta_len reaching
     // past `end`) ends the walk; netlink dumps end on padding, so
     // this is the normal exit too.
+    let end = end.min(buf.len());
     let mut off = start;
     while off + 4 <= end {
-        let rta = unsafe { &*(buf.as_ptr().add(off) as *const Rtattr) };
-        let rta_len = rta.rta_len as usize;
+        let Some(rta_len) = read_u16_ne(buf, off).map(usize::from) else {
+            break;
+        };
+        let Some(rta_type) = read_u16_ne(buf, off + 2) else {
+            break;
+        };
         if rta_len < 4 || off + rta_len > end {
             break;
         }
-        on_attr(rta, &buf[off + 4..off + rta_len]);
+        on_attr(rta_type, &buf[off + 4..off + rta_len]);
         off += (rta_len + 3) & !3;
+    }
+}
+
+/// Read the one-byte table id from the fixed `rtmsg`/`fib_rule_hdr` header.
+fn rtmsg_table(buf: &[u8], msg_offset: usize) -> Option<u32> {
+    let table_offset = msg_offset
+        .checked_add(mem::size_of::<libc::nlmsghdr>())?
+        .checked_add(4)?;
+    buf.get(table_offset).copied().map(u32::from)
+}
+
+#[cfg(test)]
+mod netlink_parser_tests {
+    use super::{for_each_rtattr, parse_netlink_msgs, rtmsg_table};
+
+    fn message(message_type: u16, payload: &[u8]) -> Vec<u8> {
+        let len = 16 + payload.len();
+        let mut message = Vec::with_capacity(len);
+        message.extend_from_slice(&(len as u32).to_ne_bytes());
+        message.extend_from_slice(&message_type.to_ne_bytes());
+        message.extend_from_slice(&0_u16.to_ne_bytes());
+        message.extend_from_slice(&1_u32.to_ne_bytes());
+        message.extend_from_slice(&0_u32.to_ne_bytes());
+        message.extend_from_slice(payload);
+        message
+    }
+
+    #[test]
+    fn parses_messages_from_an_unaligned_slice() {
+        let mut storage = vec![0xff];
+        storage.extend_from_slice(&message(42, &[1, 2, 3, 4]));
+        let data = &storage[1..];
+        let mut payload = Vec::new();
+
+        assert!(parse_netlink_msgs(
+            data,
+            data.len(),
+            42,
+            |buf, offset, len| {
+                payload.extend_from_slice(&buf[offset + 16..offset + len]);
+            }
+        ));
+        assert_eq!(payload, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn rejects_truncated_attributes_without_calling_back() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&12_u16.to_ne_bytes());
+        data.extend_from_slice(&3_u16.to_ne_bytes());
+        data.extend_from_slice(&[1, 2, 3, 4]);
+        let mut called = false;
+
+        for_each_rtattr(&data, 0, usize::MAX, |_, _| called = true);
+
+        assert!(!called);
+    }
+
+    #[test]
+    fn reads_rule_table_without_a_typed_pointer_cast() {
+        let mut storage = vec![0xff];
+        storage.extend_from_slice(&message(32, &[0, 0, 0, 0, 123, 0, 0, 0]));
+
+        assert_eq!(rtmsg_table(&storage[1..], 0), Some(123));
     }
 }
 
@@ -477,32 +556,30 @@ fn check_netlink_getlink() -> CheckOutput {
             nlh: libc::nlmsghdr,
             ifm: Ifinfomsg,
         }
-        let mut req: Req = std::mem::zeroed();
-        req.nlh.nlmsg_len = std::mem::size_of::<Req>() as u32;
+        let mut req: Req = mem::zeroed();
+        req.nlh.nlmsg_len = mem::size_of::<Req>() as u32;
         req.nlh.nlmsg_type = libc::RTM_GETLINK;
         req.nlh.nlmsg_flags = (libc::NLM_F_REQUEST | libc::NLM_F_DUMP) as u16;
         req.nlh.nlmsg_seq = 1;
 
         if libc::send(
-            fd,
-            std::ptr::from_ref(&req).cast(),
+            fd.as_raw_fd(),
+            ptr::from_ref(&req).cast(),
             req.nlh.nlmsg_len as usize,
             0,
         ) < 0
         {
             let e = last_os_error();
-            libc::close(fd);
             return CheckOutput::fail(format!("send error: {e}"));
         }
 
         let mut buf = AlignedBytes::<32768>::zeroed();
         let mut all = Vec::new();
         let mut vpn = Vec::new();
-        let hdr_plus_ifinfo =
-            std::mem::size_of::<libc::nlmsghdr>() + std::mem::size_of::<Ifinfomsg>();
+        let hdr_plus_ifinfo = mem::size_of::<libc::nlmsghdr>() + mem::size_of::<Ifinfomsg>();
 
         for _ in 0..MAX_NETLINK_RECV_ITERS {
-            let len = netlink_recv(fd, &mut buf.0);
+            let len = netlink_recv(fd.as_raw_fd(), &mut buf.0);
             if len <= 0 {
                 break;
             }
@@ -513,11 +590,11 @@ fn check_netlink_getlink() -> CheckOutput {
                 |b, offset, msg_len| {
                     let data_start = offset + hdr_plus_ifinfo;
                     let msg_end = offset + msg_len;
-                    for_each_rtattr(b, data_start, msg_end, |rta, payload| {
-                        if rta.rta_type == IFLA_IFNAME && !payload.is_empty() {
+                    for_each_rtattr(b, data_start, msg_end, |rta_type, payload| {
+                        if rta_type == IFLA_IFNAME && !payload.is_empty() {
                             // IFLA_IFNAME is a NUL-terminated string;
                             // payload was bounds-checked by for_each_rtattr.
-                            let name = cstr_to_str(payload.as_ptr() as *const libc::c_char);
+                            let name = nul_terminated_bytes_to_string(payload);
                             if is_vpn_iface(&name) {
                                 vpn.push(name.clone());
                             }
@@ -530,8 +607,6 @@ fn check_netlink_getlink() -> CheckOutput {
                 break;
             }
         }
-        libc::close(fd);
-
         format_iface_result(
             &all,
             &vpn,
@@ -552,31 +627,30 @@ fn check_netlink_getroute() -> CheckOutput {
             nlh: libc::nlmsghdr,
             rtm: Rtmsg,
         }
-        let mut req: Req = std::mem::zeroed();
-        req.nlh.nlmsg_len = std::mem::size_of::<Req>() as u32;
+        let mut req: Req = mem::zeroed();
+        req.nlh.nlmsg_len = mem::size_of::<Req>() as u32;
         req.nlh.nlmsg_type = libc::RTM_GETROUTE;
         req.nlh.nlmsg_flags = (libc::NLM_F_REQUEST | libc::NLM_F_DUMP) as u16;
         req.nlh.nlmsg_seq = 1;
 
         if libc::send(
-            fd,
-            std::ptr::from_ref(&req).cast(),
+            fd.as_raw_fd(),
+            ptr::from_ref(&req).cast(),
             req.nlh.nlmsg_len as usize,
             0,
         ) < 0
         {
             let e = last_os_error();
-            libc::close(fd);
             return CheckOutput::fail(format!("send error: {e}"));
         }
 
         let mut buf = AlignedBytes::<32768>::zeroed();
         let mut vpn = Vec::new();
         let mut total = 0u32;
-        let hdr_plus_rtmsg = std::mem::size_of::<libc::nlmsghdr>() + std::mem::size_of::<Rtmsg>();
+        let hdr_plus_rtmsg = mem::size_of::<libc::nlmsghdr>() + mem::size_of::<Rtmsg>();
 
         for _ in 0..MAX_NETLINK_RECV_ITERS {
-            let len = netlink_recv(fd, &mut buf.0);
+            let len = netlink_recv(fd.as_raw_fd(), &mut buf.0);
             if len <= 0 {
                 break;
             }
@@ -588,14 +662,12 @@ fn check_netlink_getroute() -> CheckOutput {
                     total += 1;
                     let data_start = offset + hdr_plus_rtmsg;
                     let msg_end = offset + msg_len;
-                    for_each_rtattr(b, data_start, msg_end, |rta, payload| {
-                        if rta.rta_type == RTA_OIF && payload.len() >= 4 {
-                            let ifindex = i32::from_ne_bytes(payload[..4].try_into().unwrap());
+                    for_each_rtattr(b, data_start, msg_end, |rta_type, payload| {
+                        if rta_type == RTA_OIF
+                            && let Some(ifindex) = read_u32_ne(payload, 0)
+                        {
                             let mut ifname_buf = [0u8; libc::IF_NAMESIZE];
-                            let ptr = libc::if_indextoname(
-                                ifindex as u32,
-                                ifname_buf.as_mut_ptr().cast(),
-                            );
+                            let ptr = libc::if_indextoname(ifindex, ifname_buf.as_mut_ptr().cast());
                             if !ptr.is_null() {
                                 let name = cstr_to_str(ptr);
                                 if is_vpn_iface(&name) {
@@ -610,8 +682,6 @@ fn check_netlink_getroute() -> CheckOutput {
                 break;
             }
         }
-        libc::close(fd);
-
         if vpn.is_empty() {
             CheckOutput::pass(format!("{total} routes, no VPN"))
         } else {
@@ -643,8 +713,8 @@ unsafe fn dump_fib_rules(
             nlh: libc::nlmsghdr,
             frh: Rtmsg,
         }
-        let mut req: Req = std::mem::zeroed();
-        req.nlh.nlmsg_len = std::mem::size_of::<Req>() as u32;
+        let mut req: Req = mem::zeroed();
+        req.nlh.nlmsg_len = mem::size_of::<Req>() as u32;
         req.nlh.nlmsg_type = libc::RTM_GETRULE;
         req.nlh.nlmsg_flags = (libc::NLM_F_REQUEST | libc::NLM_F_DUMP) as u16;
         req.nlh.nlmsg_seq = seq;
@@ -652,7 +722,7 @@ unsafe fn dump_fib_rules(
 
         if libc::send(
             fd,
-            std::ptr::from_ref(&req).cast(),
+            ptr::from_ref(&req).cast(),
             req.nlh.nlmsg_len as usize,
             0,
         ) < 0
@@ -713,18 +783,14 @@ fn check_netlink_getrule_uid(myuid: u32) -> CheckOutput {
 
     unsafe {
         let mut buf = AlignedBytes::<32768>::zeroed();
-        let hdr_plus_rtmsg = std::mem::size_of::<libc::nlmsghdr>() + std::mem::size_of::<Rtmsg>();
+        let hdr_plus_rtmsg = mem::size_of::<libc::nlmsghdr>() + mem::size_of::<Rtmsg>();
 
         // fib_rule_hdr shares Rtmsg's 12-byte layout (family + 7 u8 + u32 flags).
         let mut on_rule = |b: &[u8], offset: usize, msg_len: usize| {
             total += 1;
-            let frh = &*(b
-                .as_ptr()
-                .add(offset + std::mem::size_of::<libc::nlmsghdr>())
-                as *const Rtmsg);
             // The low byte of the table id lives in the header; the full u32
             // arrives in FRA_TABLE (Android tun tables are > 255).
-            let mut table = frh.rtm_table as u32;
+            let mut table = rtmsg_table(b, offset).unwrap_or(0);
             let mut uid_lo = 0u32;
             let mut uid_hi = 0u32;
             let mut has_uidrange = false;
@@ -733,20 +799,24 @@ fn check_netlink_getrule_uid(myuid: u32) -> CheckOutput {
                 b,
                 offset + hdr_plus_rtmsg,
                 offset + msg_len,
-                |rta, payload| match rta.rta_type {
+                |rta_type, payload| match rta_type {
                     FRA_IIFNAME | FRA_OIFNAME if !payload.is_empty() => {
-                        let name = cstr_to_str(payload.as_ptr() as *const libc::c_char);
+                        let name = nul_terminated_bytes_to_string(payload);
                         if is_vpn_iface(&name) {
                             iface_hit = Some(name);
                         }
                     }
                     FRA_TABLE if payload.len() >= 4 => {
-                        table = u32::from_ne_bytes(payload[..4].try_into().unwrap());
+                        table = read_u32_ne(payload, 0).unwrap_or(table);
                     }
                     FRA_UID_RANGE if payload.len() >= 8 => {
-                        uid_lo = u32::from_ne_bytes(payload[..4].try_into().unwrap());
-                        uid_hi = u32::from_ne_bytes(payload[4..8].try_into().unwrap());
-                        has_uidrange = true;
+                        if let (Some(lo), Some(hi)) =
+                            (read_u32_ne(payload, 0), read_u32_ne(payload, 4))
+                        {
+                            uid_lo = lo;
+                            uid_hi = hi;
+                            has_uidrange = true;
+                        }
                     }
                     _ => {}
                 },
@@ -772,12 +842,16 @@ fn check_netlink_getrule_uid(myuid: u32) -> CheckOutput {
 
         // Dump v4 and v6 rules on the same socket (distinct seq) and merge.
         for (i, family) in RULE_FAMILIES.into_iter().enumerate() {
-            if let Err(e) = dump_fib_rules(fd, family, (i + 1) as u32, &mut buf.0, &mut on_rule) {
-                libc::close(fd);
+            if let Err(e) = dump_fib_rules(
+                fd.as_raw_fd(),
+                family,
+                (i + 1) as u32,
+                &mut buf.0,
+                &mut on_rule,
+            ) {
                 return CheckOutput::fail(format!("send error: {e}"));
             }
         }
-        libc::close(fd);
     }
 
     if leaks.is_empty() {
@@ -788,7 +862,7 @@ fn check_netlink_getrule_uid(myuid: u32) -> CheckOutput {
 }
 
 fn check_sys_class_net() -> CheckOutput {
-    match std::fs::read_dir("/sys/class/net") {
+    match fs::read_dir("/sys/class/net") {
         Err(e) => {
             if is_selinux_denial(&e) {
                 CheckOutput::selinux_blocked(format!("access denied by SELinux ({e})"))
@@ -934,15 +1008,11 @@ fn uid_routed_through_vpn(myuid: u32) -> (bool, String) {
 
     unsafe {
         let mut buf = AlignedBytes::<32768>::zeroed();
-        let hdr_plus_rtmsg = std::mem::size_of::<libc::nlmsghdr>() + std::mem::size_of::<Rtmsg>();
+        let hdr_plus_rtmsg = mem::size_of::<libc::nlmsghdr>() + mem::size_of::<Rtmsg>();
 
         let mut on_rule = |b: &[u8], offset: usize, msg_len: usize| {
-            let frh = &*(b
-                .as_ptr()
-                .add(offset + std::mem::size_of::<libc::nlmsghdr>())
-                as *const Rtmsg);
             let mut r = GateRule {
-                table: frh.rtm_table as u32,
+                table: rtmsg_table(b, offset).unwrap_or(0),
                 uid_lo: 0,
                 uid_hi: 0,
                 has_uidrange: false,
@@ -952,20 +1022,24 @@ fn uid_routed_through_vpn(myuid: u32) -> (bool, String) {
                 b,
                 offset + hdr_plus_rtmsg,
                 offset + msg_len,
-                |rta, payload| match rta.rta_type {
+                |rta_type, payload| match rta_type {
                     FRA_OIFNAME if !payload.is_empty() => {
-                        let name = cstr_to_str(payload.as_ptr() as *const libc::c_char);
+                        let name = nul_terminated_bytes_to_string(payload);
                         if is_vpn_iface(&name) {
                             r.oif_vpn = true;
                         }
                     }
                     FRA_TABLE if payload.len() >= 4 => {
-                        r.table = u32::from_ne_bytes(payload[..4].try_into().unwrap());
+                        r.table = read_u32_ne(payload, 0).unwrap_or(r.table);
                     }
                     FRA_UID_RANGE if payload.len() >= 8 => {
-                        r.uid_lo = u32::from_ne_bytes(payload[..4].try_into().unwrap());
-                        r.uid_hi = u32::from_ne_bytes(payload[4..8].try_into().unwrap());
-                        r.has_uidrange = true;
+                        if let (Some(lo), Some(hi)) =
+                            (read_u32_ne(payload, 0), read_u32_ne(payload, 4))
+                        {
+                            r.uid_lo = lo;
+                            r.uid_hi = hi;
+                            r.has_uidrange = true;
+                        }
                     }
                     _ => {}
                 },
@@ -976,12 +1050,16 @@ fn uid_routed_through_vpn(myuid: u32) -> (bool, String) {
         // v4 + v6: a VPN steers the uid into a tun table for both families; either
         // membership means routed, so merge both dumps before deciding.
         for (i, family) in RULE_FAMILIES.into_iter().enumerate() {
-            if let Err(e) = dump_fib_rules(fd, family, (i + 1) as u32, &mut buf.0, &mut on_rule) {
-                libc::close(fd);
+            if let Err(e) = dump_fib_rules(
+                fd.as_raw_fd(),
+                family,
+                (i + 1) as u32,
+                &mut buf.0,
+                &mut on_rule,
+            ) {
                 return (false, format!("send error: {e}"));
             }
         }
-        libc::close(fd);
     }
 
     // Pass 1: the VPN egress table id(s) — tables a rule routes out via `oif tun0`.
