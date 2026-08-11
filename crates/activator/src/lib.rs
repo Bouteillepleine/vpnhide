@@ -151,7 +151,24 @@ pub fn activate_zygisk_boot() -> Result<()> {
 
 fn activate_zygisk_with_pm_wait(wait: PmReadyWait) -> Result<()> {
     let wire = project_native_with_pm_wait(&read_canonical()?, NativeHookFamily::Zygisk, wait)?;
+    validate_zygisk_config_wire(&wire)?;
     write_atomic(Path::new(ZYGISK_RUNTIME_CONFIG), wire.as_bytes(), 0o644)
+}
+
+/// Zygisk installs hooks only in processes whose UID is explicitly listed.
+/// A non-zero default means the opposite — act on every UID not listed — which
+/// would require injecting the module into every app process. Refuse that wire
+/// at the delivery boundary so a future whitelist producer cannot silently turn
+/// the exception list back into a blacklist.
+fn validate_zygisk_config_wire(wire: &str) -> Result<()> {
+    let config = parse_config(wire.as_bytes()).ok_or("invalid Zygisk control payload")?;
+    if config.default_mask != 0 {
+        return Err(
+            "Zygisk cannot apply a non-zero default hookmask; whitelist mode requires kmod or KPM"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 /// Outcome of a KPM boot activation. A kmod conflict is a legitimate,

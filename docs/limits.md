@@ -106,10 +106,12 @@ Ordered by cost. None of these are scheduled; this is the menu.
    `config-commit` across several ctl0 calls — which is a control-protocol
    change. The `.ko` needs none of this; raising its `PAGE_SIZE` check is a
    one-liner.
-3. **Whitelist mode** makes the whole question moot: with a non-zero `default`
-   the enumerated set becomes the exception list, a handful of entries, and
-   every ceiling above stops binding. The wire already carries the mechanism
-   (`default <hookmask>`); nothing emits it yet. See issue #248 for the design
+3. **Whitelist mode** makes the whole question moot for the kernel backends:
+   with a non-zero `default` the enumerated set becomes the exception list, a
+   handful of entries, and every ceiling above stops binding. The wire already
+   carries the mechanism (`default <hookmask>`); nothing emits it yet. Zygisk
+   cannot honour the inverted meaning without injecting into every app process,
+   so its activator rejects a non-zero default. See issue #248 for the design
    discussion and the reasons it should be opt-in rather than default.
 
 ### Telemetry

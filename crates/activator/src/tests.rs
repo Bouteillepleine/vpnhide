@@ -219,6 +219,19 @@ fn empty_legacy_native_hook_list_is_disabled_for_every_backend() {
 }
 
 #[test]
+fn zygisk_rejects_a_nonzero_default_mask() {
+    let blacklist = format_config(false, NO_DEFAULT_MASK, &[]);
+    assert!(validate_zygisk_config_wire(&blacklist).is_ok());
+
+    let whitelist = format_config(false, ZYGISK_HOOK_MASK, &[]);
+    let error = validate_zygisk_config_wire(&whitelist)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("non-zero default hookmask"));
+    assert!(error.contains("requires kmod or KPM"));
+}
+
+#[test]
 fn parses_shared_storage_fixture() {
     let cfg = parse_canonical(include_str!("../../../testdata/storage_config_v1.json")).unwrap();
 

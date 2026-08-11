@@ -480,7 +480,7 @@ backend reads its own profile.
 | Channel | config records it acts on | emits stats? | emits status? |
 |---|---|---|---|
 | `.ko` / KPM | `debug`, `default`, `targets`, `end` (kernel-owned mask bits) | yes | yes (§4.3) |
-| Zygisk | `debug`, `default`, `targets`, `end` (zygisk-owned mask bits) | no, not yet (§7) | yes, via the app heartbeat |
+| Zygisk | `debug`, `targets`, `end`; its activator rejects a non-zero `default` because it cannot inject into every unlisted process | no, not yet (§7) | yes, via the app heartbeat |
 | LSPosed | — does **not** consume this wire; it reads the canonical JSON directly (see [storage.md](storage.md)) | yes | yes |
 
 A backend ignores mask bits it does not own (`mask & own_hooks`), so the same
