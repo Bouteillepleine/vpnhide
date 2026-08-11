@@ -30,27 +30,22 @@ internal sealed interface KpmProblemKind {
 /** Diagnose a complete KPM installation that failed in either boot path. */
 internal fun classifyKpmProblem(
     kpm: ModuleState,
-    loadStatusSection: String,
+    status: KpmLoadStatus,
     currentBootId: String,
 ): KpmProblemKind? {
     if (kpm !is ModuleState.Installed || kpm.active) return null
-    val load = parseKeyValueLines(loadStatusSection)
-    val bootId = load["boot_id"]?.trim()
-    val runtime = load["runtime"]?.trim()
-    if (runtime !in setOf("activator", "kpatch-next") ||
-        load["loaded"]?.trim() != "0" ||
-        bootId.isNullOrEmpty() ||
-        bootId != currentBootId.trim()
+    if (status.runtime !in setOf(KpmRuntime.Activator, KpmRuntime.KpatchNext) ||
+        status.loaded != false ||
+        !status.isFreshFor(currentBootId)
     ) {
         return null
     }
-    val reason = load["reason"]?.trim()
-    if (reason == "unsupported_kernel") {
-        return KpmProblemKind.UnsupportedKernel(load["uname_r"]?.trim().orEmpty().ifBlank { "?" })
+    if (status.reason == KpmFailureReason.UnsupportedKernel) {
+        return KpmProblemKind.UnsupportedKernel(status.unameR ?: "?")
     }
-    val detail = load["detail"]?.trim().orEmpty()
+    val detail = status.detail.orEmpty()
     val missingPrefix = "activator missing at "
-    return if (reason == "missing_activator" || detail.startsWith(missingPrefix)) {
+    return if (status.reason == KpmFailureReason.MissingActivator || detail.startsWith(missingPrefix)) {
         KpmProblemKind.ActivatorMissing(detail.removePrefix(missingPrefix))
     } else {
         KpmProblemKind.LoadFailed(detail)

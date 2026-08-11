@@ -134,15 +134,9 @@ internal fun classifyMultiNative(
  * redundant state worth warning about so the user removes one.
  */
 internal fun kpmDeferredForConflict(
-    loadStatusSection: String,
+    status: KpmLoadStatus,
     currentBootId: String,
-): Boolean {
-    val load = parseKeyValueLines(loadStatusSection)
-    val bootId = load["boot_id"]?.trim()
-    return load["runtime"]?.trim() == "conflict" &&
-        !bootId.isNullOrEmpty() &&
-        bootId == currentBootId.trim()
-}
+): Boolean = status.runtime == KpmRuntime.Conflict && status.isFreshFor(currentBootId)
 
 /**
  * True when the KPM boot script stood down this boot because it runs under
@@ -156,17 +150,13 @@ internal fun kpmDeferredForConflict(
  * would just show KPM as inactive with no explanation.
  */
 internal fun kpmAwaitingSuperkey(
-    loadStatusSection: String,
+    status: KpmLoadStatus,
     currentBootId: String,
-): Boolean {
-    val load = parseKeyValueLines(loadStatusSection)
-    val bootId = load["boot_id"]?.trim()
-    return load["runtime"]?.trim() == "apatch" &&
-        load["loaded"]?.trim() == "0" &&
-        load["detail"]?.trim() == "awaiting_superkey" &&
-        !bootId.isNullOrEmpty() &&
-        bootId == currentBootId.trim()
-}
+): Boolean =
+    status.runtime == KpmRuntime.Apatch &&
+        status.loaded == false &&
+        status.reason == KpmFailureReason.AwaitingSuperkey &&
+        status.isFreshFor(currentBootId)
 
 internal fun kpatchRuntimeAvailable(kpatchRuntimeSection: String): Boolean {
     val props = parseKeyValueLines(kpatchRuntimeSection)
@@ -918,6 +908,7 @@ internal fun detectZygiskModule(
 
 internal fun detectKpmModule(
     sections: Map<String, String>,
+    loadStatus: KpmLoadStatus,
     currentBootId: String,
 ): ModuleState {
     val prop = parseModuleProp(sections["kpm_prop"].orEmpty())
@@ -926,9 +917,7 @@ internal fun detectKpmModule(
     // supercall). The boot script writes load_status with loaded=1 and the
     // boot_id it loaded under, so "active" = loaded for the current boot —
     // the same freshness check the zygisk heartbeat uses.
-    val load = parseKeyValueLines(sections["kpm_load_status"].orEmpty())
-    val bootId = load["boot_id"]?.trim()
-    val active = load["loaded"]?.trim() == "1" && bootId != null && bootId == currentBootId.trim()
+    val active = loadStatus.loaded == true && loadStatus.isFreshFor(currentBootId)
     return ModuleState.Installed(
         version = prop.version,
         active = active,
@@ -1191,8 +1180,14 @@ internal suspend fun loadDashboardState(
     // brokenReason is layered on below, once the kernel recommendation and
     // load status are known (classifyKmodProblem).
     val currentBootId = shellSnapshot["current_boot_id"].orEmpty()
+    val kpmLoadStatus = parseKpmLoadStatus(shellSnapshot["kpm_load_status"].orEmpty())
     val nativeTargetCount = countPackages(targetsSnapshot.nativeTargets)
-    val rawNativeBackends = detectNativeBackendStates(shellSnapshot, currentBootId = currentBootId)
+    val rawNativeBackends =
+        detectNativeBackendStates(
+            shellSnapshot,
+            currentBootId = currentBootId,
+            kpmLoadStatus = kpmLoadStatus,
+        )
     val kmodRaw = rawNativeBackends.kmod
     val zygiskStatusRaw = shellSnapshot["zygisk_status"].orEmpty()
     val zygisk = rawNativeBackends.zygisk
@@ -1241,7 +1236,7 @@ internal suspend fun loadDashboardState(
     // runtime=activator failure cases classifyKpmProblem diagnoses (the
     // conflict / awaiting-superkey cases stay separate warnings below).
     val kpmProblem: ModuleProblem? =
-        classifyKpmProblem(kpmRaw, shellSnapshot["kpm_load_status"].orEmpty(), currentBootId)
+        classifyKpmProblem(kpmRaw, kpmLoadStatus, currentBootId)
             ?.let { renderKpmProblem(it, res) }
     val kpm: ModuleState =
         if (kpmRaw is ModuleState.Installed && kpmProblem?.reason != null) {
@@ -1545,7 +1540,7 @@ internal suspend fun loadDashboardState(
             // kernel hookers freeze the device). The KPM standing down for a
             // co-installed .ko is the real state to surface — warn so the user
             // removes one of the two kernel backends.
-            if (kpmDeferredForConflict(shellSnapshot["kpm_load_status"].orEmpty(), currentBootId)) {
+            if (kpmDeferredForConflict(kpmLoadStatus, currentBootId)) {
                 warn(res.getString(R.string.dashboard_issue_native_conflict_deferred))
             }
         }
@@ -1555,7 +1550,7 @@ internal suspend fun loadDashboardState(
     // trusted `su` token nor a saved SuperKey was usable. Without this the module
     // just reads as inactive with no reason.
     if (kpm is ModuleState.Installed &&
-        kpmAwaitingSuperkey(shellSnapshot["kpm_load_status"].orEmpty(), currentBootId)
+        kpmAwaitingSuperkey(kpmLoadStatus, currentBootId)
     ) {
         warn(res.getString(R.string.dashboard_issue_kpm_awaiting_superkey))
     }

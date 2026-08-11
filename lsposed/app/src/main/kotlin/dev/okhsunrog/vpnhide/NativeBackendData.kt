@@ -43,10 +43,11 @@ private val NATIVE_BACKEND_PRIORITY =
 internal fun detectNativeBackendStates(
     sections: Map<String, String>,
     currentBootId: String = sections["current_boot_id"].orEmpty(),
+    kpmLoadStatus: KpmLoadStatus = parseKpmLoadStatus(sections["kpm_load_status"].orEmpty()),
 ): NativeBackendStates =
     NativeBackendStates(
         kmod = detectKmodModule(sections),
-        kpm = detectKpmModule(sections, currentBootId),
+        kpm = detectKpmModule(sections, kpmLoadStatus, currentBootId),
         zygisk =
             detectZygiskModule(
                 sections = sections,

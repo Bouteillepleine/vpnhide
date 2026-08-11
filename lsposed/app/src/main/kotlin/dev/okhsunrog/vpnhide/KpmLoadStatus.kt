@@ -1,0 +1,69 @@
+package dev.okhsunrog.vpnhide
+
+internal enum class KpmRuntime {
+    Activator,
+    KpatchNext,
+    Apatch,
+    Conflict,
+    Unknown,
+}
+
+internal enum class KpmFailureReason {
+    Ok,
+    ConflictingBackend,
+    MissingKpm,
+    MissingActivator,
+    AwaitingSuperkey,
+    UnsupportedKernel,
+    ActivationFailed,
+    LoadFailed,
+    Unknown,
+}
+
+internal data class KpmLoadStatus(
+    val timestamp: Long?,
+    val bootId: String?,
+    val unameR: String?,
+    val runtime: KpmRuntime,
+    val loaded: Boolean?,
+    val reason: KpmFailureReason,
+    val detail: String?,
+) {
+    fun isFreshFor(currentBootId: String): Boolean = !bootId.isNullOrEmpty() && bootId == currentBootId.trim()
+}
+
+internal fun parseKpmLoadStatus(raw: String): KpmLoadStatus {
+    val values = parseKeyValueLines(raw)
+    return KpmLoadStatus(
+        timestamp = values["timestamp"]?.trim()?.toLongOrNull(),
+        bootId = values["boot_id"]?.trim()?.ifEmpty { null },
+        unameR = values["uname_r"]?.trim()?.ifEmpty { null },
+        runtime =
+            when (values["runtime"]?.trim()) {
+                "activator" -> KpmRuntime.Activator
+                "kpatch-next" -> KpmRuntime.KpatchNext
+                "apatch" -> KpmRuntime.Apatch
+                "conflict" -> KpmRuntime.Conflict
+                else -> KpmRuntime.Unknown
+            },
+        loaded =
+            when (values["loaded"]?.trim()) {
+                "1" -> true
+                "0" -> false
+                else -> null
+            },
+        reason =
+            when (values["reason"]?.trim()) {
+                "ok" -> KpmFailureReason.Ok
+                "conflicting_backend" -> KpmFailureReason.ConflictingBackend
+                "missing_kpm" -> KpmFailureReason.MissingKpm
+                "missing_activator" -> KpmFailureReason.MissingActivator
+                "awaiting_superkey" -> KpmFailureReason.AwaitingSuperkey
+                "unsupported_kernel" -> KpmFailureReason.UnsupportedKernel
+                "activation_failed" -> KpmFailureReason.ActivationFailed
+                "load_failed" -> KpmFailureReason.LoadFailed
+                else -> KpmFailureReason.Unknown
+            },
+        detail = values["detail"]?.trim()?.ifEmpty { null },
+    )
+}

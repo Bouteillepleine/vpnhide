@@ -9,6 +9,13 @@ import org.junit.Test
 class NativeBackendTest {
     private fun installed(active: Boolean) = ModuleState.Installed(version = "1.0", active = active)
 
+    private fun parseStatus(raw: String): KpmLoadStatus = parseKpmLoadStatus(raw)
+
+    private fun detectKpm(
+        sections: Map<String, String>,
+        currentBootId: String,
+    ): ModuleState = detectKpmModule(sections, parseStatus(sections["kpm_load_status"].orEmpty()), currentBootId)
+
     private fun states(
         kmod: ModuleState,
         kpm: ModuleState,
@@ -158,43 +165,43 @@ class NativeBackendTest {
     @Test
     fun `kpm deferred-conflict detected for current boot`() {
         val status = "runtime=conflict\nloaded=0\nboot_id=boot-1\ndetail=vpnhide_kmod present\n"
-        assertEquals(true, kpmDeferredForConflict(status, currentBootId = "boot-1"))
+        assertEquals(true, kpmDeferredForConflict(parseStatus(status), currentBootId = "boot-1"))
     }
 
     @Test
     fun `kpm deferred-conflict ignored for a stale boot`() {
         val status = "runtime=conflict\nloaded=0\nboot_id=boot-0\n"
-        assertEquals(false, kpmDeferredForConflict(status, currentBootId = "boot-1"))
+        assertEquals(false, kpmDeferredForConflict(parseStatus(status), currentBootId = "boot-1"))
     }
 
     @Test
     fun `kpm deferred-conflict false for non-conflict runtimes and empty status`() {
-        assertEquals(false, kpmDeferredForConflict("runtime=activator\nloaded=1\nboot_id=boot-1\n", "boot-1"))
-        assertEquals(false, kpmDeferredForConflict("runtime=conflict\nloaded=0\n", "boot-1"))
-        assertEquals(false, kpmDeferredForConflict("", "boot-1"))
+        assertEquals(false, kpmDeferredForConflict(parseStatus("runtime=activator\nloaded=1\nboot_id=boot-1\n"), "boot-1"))
+        assertEquals(false, kpmDeferredForConflict(parseStatus("runtime=conflict\nloaded=0\n"), "boot-1"))
+        assertEquals(false, kpmDeferredForConflict(parseStatus(""), "boot-1"))
     }
 
     // ── kpmAwaitingSuperkey ──────────────────────────────────────────────
 
     @Test
     fun `kpm awaiting-superkey detected for current boot`() {
-        val status = "runtime=apatch\nloaded=0\nboot_id=boot-1\ndetail=awaiting_superkey\n"
-        assertEquals(true, kpmAwaitingSuperkey(status, currentBootId = "boot-1"))
+        val status = "runtime=apatch\nloaded=0\nboot_id=boot-1\nreason=awaiting_superkey\ndetail=awaiting_superkey\n"
+        assertEquals(true, kpmAwaitingSuperkey(parseStatus(status), currentBootId = "boot-1"))
     }
 
     @Test
     fun `kpm awaiting-superkey ignored for a stale boot`() {
-        val status = "runtime=apatch\nloaded=0\nboot_id=boot-0\ndetail=awaiting_superkey\n"
-        assertEquals(false, kpmAwaitingSuperkey(status, currentBootId = "boot-1"))
+        val status = "runtime=apatch\nloaded=0\nboot_id=boot-0\nreason=awaiting_superkey\ndetail=awaiting_superkey\n"
+        assertEquals(false, kpmAwaitingSuperkey(parseStatus(status), currentBootId = "boot-1"))
     }
 
     @Test
     fun `kpm awaiting-superkey false once loaded or for other states`() {
         // Superkey saved and module loaded this boot.
-        assertEquals(false, kpmAwaitingSuperkey("runtime=kpatch-next\nloaded=1\nboot_id=boot-1\n", "boot-1"))
+        assertEquals(false, kpmAwaitingSuperkey(parseStatus("runtime=kpatch-next\nloaded=1\nboot_id=boot-1\n"), "boot-1"))
         // Conflict deferral is a different status, not awaiting-superkey.
-        assertEquals(false, kpmAwaitingSuperkey("runtime=conflict\nloaded=0\nboot_id=boot-1\n", "boot-1"))
-        assertEquals(false, kpmAwaitingSuperkey("", "boot-1"))
+        assertEquals(false, kpmAwaitingSuperkey(parseStatus("runtime=conflict\nloaded=0\nboot_id=boot-1\n"), "boot-1"))
+        assertEquals(false, kpmAwaitingSuperkey(parseStatus(""), "boot-1"))
     }
 
     // ── kpatchRuntimeAvailable ───────────────────────────────────────────
@@ -238,7 +245,7 @@ class NativeBackendTest {
 
     @Test
     fun `kpm not installed when no module prop`() {
-        val state = detectKpmModule(emptyMap(), currentBootId = "boot-1")
+        val state = detectKpm(emptyMap(), currentBootId = "boot-1")
         assertEquals(ModuleState.NotInstalled, state)
     }
 
@@ -249,7 +256,7 @@ class NativeBackendTest {
                 "kpm_prop" to "id=vpnhide_kpm\nversion=v1.0\n",
                 "kpm_load_status" to "loaded=1\nboot_id=boot-1\n",
             )
-        val state = detectKpmModule(sections, currentBootId = "boot-1") as ModuleState.Installed
+        val state = detectKpm(sections, currentBootId = "boot-1") as ModuleState.Installed
         assertEquals(true, state.active)
         assertEquals("1.0", state.version)
     }
@@ -261,7 +268,7 @@ class NativeBackendTest {
                 "kpm_prop" to "id=vpnhide_kpm\nversion=v1.0\n",
                 "kpm_load_status" to "loaded=1\nboot_id=old-boot\n",
             )
-        val state = detectKpmModule(sections, currentBootId = "boot-1") as ModuleState.Installed
+        val state = detectKpm(sections, currentBootId = "boot-1") as ModuleState.Installed
         assertEquals(false, state.active)
     }
 
@@ -272,7 +279,7 @@ class NativeBackendTest {
                 "kpm_prop" to "id=vpnhide_kpm\nversion=v1.0\n",
                 "kpm_load_status" to "loaded=1\ndetail=configured\n",
             )
-        val state = detectKpmModule(sections, currentBootId = "boot-1") as ModuleState.Installed
+        val state = detectKpm(sections, currentBootId = "boot-1") as ModuleState.Installed
         assertEquals(false, state.active)
     }
 
