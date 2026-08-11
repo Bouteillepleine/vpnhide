@@ -73,11 +73,11 @@ fn projects_native_roles_to_wire() {
     );
     assert_eq!(
         project_native_with_resolver(&cfg, &resolver),
-        "vpnhide 1 config\n\
+        "vpnhide 2 config\n\
          debug 1\n\
-         target 0x278b 0x20003ff\n\
-         target 0x27fa 0x40\n\
-         target 0xf69cb 0x20003ff\n",
+         targets 40 27fa\n\
+         targets 20003ff 278b f69cb\n\
+         end 3\n",
     );
 }
 
@@ -97,7 +97,7 @@ fn native_projection_ignores_non_kernel_hook_names() {
 
     assert_eq!(
         project_native_with_resolver(&cfg, &resolver),
-        "vpnhide 1 config\ndebug 0\n",
+        "vpnhide 2 config\ndebug 0\nend 0\n",
     );
 }
 
@@ -122,15 +122,17 @@ fn projects_backend_specific_native_hook_overrides() {
 
     assert_eq!(
         project_native_with_resolver(&cfg, &resolver),
-        "vpnhide 1 config\n\
+        "vpnhide 2 config\n\
          debug 0\n\
-         target 0x27fa 0x40\n",
+         targets 40 27fa\n\
+         end 1\n",
     );
     assert_eq!(
         project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Zygisk),
-        "vpnhide 1 config\n\
+        "vpnhide 2 config\n\
          debug 0\n\
-         target 0x27fa 0x5040000\n",
+         targets 5040000 27fa\n\
+         end 1\n",
     );
 }
 
@@ -149,15 +151,17 @@ fn legacy_native_hook_list_is_kernel_only_and_zygisk_defaults_to_all() {
 
     assert_eq!(
         project_native_with_resolver(&cfg, &resolver),
-        "vpnhide 1 config\n\
+        "vpnhide 2 config\n\
          debug 0\n\
-         target 0x27fa 0x40\n",
+         targets 40 27fa\n\
+         end 1\n",
     );
     assert_eq!(
         project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Zygisk),
-        "vpnhide 1 config\n\
+        "vpnhide 2 config\n\
          debug 0\n\
-         target 0x27fa 0x5fc0000\n",
+         targets 5fc0000 27fa\n\
+         end 1\n",
     );
 }
 
@@ -176,11 +180,11 @@ fn empty_legacy_native_hook_list_is_disabled_for_every_backend() {
 
     assert_eq!(
         project_native_with_resolver(&cfg, &resolver),
-        "vpnhide 1 config\ndebug 0\n",
+        "vpnhide 2 config\ndebug 0\nend 0\n",
     );
     assert_eq!(
         project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Zygisk),
-        "vpnhide 1 config\ndebug 0\n",
+        "vpnhide 2 config\ndebug 0\nend 0\n",
     );
 }
 
@@ -236,10 +240,10 @@ fn parses_per_hook_java_selection_without_breaking_native() {
     // Native projection is unaffected: both apps still get the kernel mask.
     assert_eq!(
         project_native_with_resolver(&cfg, &resolver),
-        "vpnhide 1 config\n\
+        "vpnhide 2 config\n\
          debug 0\n\
-         target 0x278b 0x20003ff\n\
-         target 0x278c 0x20003ff\n",
+         targets 20003ff 278b 278c\n\
+         end 2\n",
     );
 }
 
@@ -419,7 +423,7 @@ fn projects_shared_fixture_ports_role() {
 fn absent_canonical_projects_to_empty_config_without_pm() {
     assert_eq!(
         project_native(empty_canonical_json()).unwrap(),
-        "vpnhide 1 config\ndebug 0\n",
+        "vpnhide 2 config\ndebug 0\nend 0\n",
     );
 }
 
@@ -519,20 +523,31 @@ fn projection_is_bounded_to_backend_target_capacity() {
         .join("\n");
     let wire = project_native_with_resolver(&cfg, &parse_pm_packages(&pm));
 
-    assert_eq!(
-        wire.lines()
-            .filter(|line| line.starts_with("target "))
-            .count(),
-        64
-    );
+    // All 70 share one mask, so the whole set rides one `targets` record and the
+    // count lives in the `end` fuse — which the backend checks, so the producer
+    // has to cap itself here rather than let the backend reject the payload.
+    assert_eq!(wire.lines().filter(|l| l.starts_with("targets ")).count(), 1);
+    assert!(wire.ends_with(&format!("end {MAX_NATIVE_TARGETS:x}\n")));
+    let uids = wire
+        .lines()
+        .find(|l| l.starts_with("targets "))
+        .unwrap()
+        .split_whitespace()
+        .count()
+        - 2; // keyword + mask
+    assert_eq!(uids, MAX_NATIVE_TARGETS);
+
+    // And what it produces must survive its own reader: the parser rejects a
+    // payload carrying more uids than a backend can hold.
+    assert!(vpnhide_protocol::parse_config(wire.as_bytes()).is_some());
 }
 
 #[test]
 fn kpatch_ctl0_accepts_config_target_count_exit_codes() {
-    let one_target = "vpnhide 1 config\ndebug 0\ntarget 0x123 0x1\n";
+    let one_target = "vpnhide 2 config\ndebug 0\ntargets 1 123\nend 1\n";
     assert!(kpatch_ctl0_config_status_ok(
         std::process::ExitStatus::from_raw(0),
-        "vpnhide 1 config\ndebug 0\n"
+        "vpnhide 2 config\ndebug 0\nend 0\n"
     ));
     assert!(kpatch_ctl0_config_status_ok(
         std::process::ExitStatus::from_raw(1 << 8),

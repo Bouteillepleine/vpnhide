@@ -10,54 +10,89 @@
 #
 # Row types (col0):
 #   cfg   | <input> | <expected>           parse_config; expected = REJECT, or
-#                                           debug=<-1|0|1> then ;<uid>:<hookmask> per target
+#                                           debug=<-1|0|1>;def=<default_mask>
+#                                           then ;<uid>:<hookmask> per target, uid-sorted
 #   kind  | <input> | <CONFIG|STATS|STATUS|INVALID>   peek_kind
 #   stats | <uid,hid,cnt;...> | <output>   format_stats (input grouped by uid)
 #   status| <backend,kver,hooks,error> | <output>     format_status
 #   clamp | <full> | <outlen> | <expected> clamp_to_line
 
 # --- header gating (§3, §4.2) ----------------------------------------------
-cfg|vpnhide 1 config\ndebug 1\ntarget 0x27fa 0x3ff\ntarget 0x2947 0x4\n|debug=1;0x27fa:0x3ff;0x2947:0x4
+cfg|vpnhide 2 config\ndebug 1\ntargets 3ff 27fa\ntargets 4 2947\nend 2|debug=1;def=0x0;0x27fa:0x3ff;0x2947:0x4
 cfg|debug 0\n|REJECT
-cfg|vpnhide 2 config\ntarget 0x1 0x1\n|REJECT
+cfg|vpnhide 3 config\ntargets 1 1\nend 1|REJECT
 cfg|vpnhide 1 stats\n|REJECT
-cfg|vpnhide 1 config\n|debug=-1
-cfg|# leading comment\n\nvpnhide 1 config\ntarget 0x8 0x1\n|debug=-1;0x8:0x1
+cfg|vpnhide 2 config\nend 0|debug=-1;def=0x0
+cfg|# leading comment\n\nvpnhide 2 config\ntargets 1 8\nend 1|debug=-1;def=0x0;0x8:0x1
 
 # --- numeric primitive (§4.4) ----------------------------------------------
 # liberal-in hex case (struct holds the value; lowercase-out is a format test)
-cfg|vpnhide 1 config\ntarget 0xAbCd 0xFf\n|debug=-1;0xabcd:0xff
-# 0x mandatory: a bare-decimal field rejects that line
-cfg|vpnhide 1 config\ntarget 27fa 0x1\ntarget 0x6 0x3\n|debug=-1;0x6:0x3
-# u32 width overflow rejects that line (not wrap/saturate)
-cfg|vpnhide 1 config\ntarget 0x1ffffffff 0x1\ntarget 0x5 0x2\n|debug=-1;0x5:0x2
+cfg|vpnhide 2 config\ntargets Ff AbCd\nend 1|debug=-1;def=0x0;0xabcd:0xff
+# bare hex only in v2 control: a 0x-prefixed uid is malformed inside a group,
+# and a malformed uid desyncs the end count -> reject whole
+cfg|vpnhide 2 config\ntargets 1 0x27fa\nend 1|REJECT
+# u32 width overflow -> malformed uid -> reject whole (not wrap/saturate)
+cfg|vpnhide 2 config\ntargets 1 1ffffffff\nend 1|REJECT
 
 # --- records & forward-compat (§4.3, §4.5) ---------------------------------
-# duplicate uid -> last wins, keeps first position
-cfg|vpnhide 1 config\ntarget 0x10 0x1\ntarget 0x10 0xf\n|debug=-1;0x10:0xf
+# duplicate uid -> last wins; output is sorted by uid, so position is not a
+# degree of freedom any more
+cfg|vpnhide 2 config\ntargets 1 10\ntargets f 10\nend 2|debug=-1;def=0x0;0x10:0xf
 # unknown first token -> skip the line, payload still valid
-cfg|vpnhide 1 config\nbogus 0x1 0x2\ntarget 0x7 0x1\n|debug=-1;0x7:0x1
+cfg|vpnhide 2 config\nbogus 1 2\ntargets 1 7\nend 1|debug=-1;def=0x0;0x7:0x1
 # malformed debug flag -> skip (debug stays unchanged)
-cfg|vpnhide 1 config\ndebug 2\n|debug=-1
-cfg|vpnhide 1 config\ndebug 0\n|debug=0
+cfg|vpnhide 2 config\ndebug 2\nend 0|debug=-1;def=0x0
+cfg|vpnhide 2 config\ndebug 0\nend 0|debug=0;def=0x0
 # whitespace runs collapse; tab as separator
-cfg|vpnhide   1   config\ntarget\t0xb\t0x3\n|debug=-1;0xb:0x3
+cfg|vpnhide   2   config\ntargets\t3\tb\nend\t1|debug=-1;def=0x0;0xb:0x3
 # CRLF stripped on read
-cfg|vpnhide 1 config\r\ntarget 0x9 0x1\r\n|debug=-1;0x9:0x1
+cfg|vpnhide 2 config\r\ntargets 1 9\r\nend 1\r\n|debug=-1;def=0x0;0x9:0x1
 # trailing newline optional on the last record
-cfg|vpnhide 1 config\ntarget 0xa 0x2|debug=-1;0xa:0x2
-# non-ASCII byte -> reject just that line
-cfg|vpnhide 1 config\ntarget 0x1 0x1\n\x80bad 0x2\ntarget 0x2 0x2\n|debug=-1;0x1:0x1;0x2:0x2
+cfg|vpnhide 2 config\ntargets 2 a\nend 1|debug=-1;def=0x0;0xa:0x2
+# non-ASCII byte -> reject just that line (its uids never reach the end count)
+cfg|vpnhide 2 config\ntargets 1 1\n\x80bad 2\ntargets 2 2\nend 2|debug=-1;def=0x0;0x1:0x1;0x2:0x2
 # non-ASCII byte as the FIRST significant line -> reject whole. It is significant
 # (not blank/comment), so per §4.2 it must be the header; a non-ASCII line is not
 # a valid header, so the payload is rejected rather than skipped to the next line.
-cfg|\x80bad\nvpnhide 1 config\ntarget 0x1 0x1\n|REJECT
+cfg|\x80bad\nvpnhide 2 config\ntargets 1 1\nend 1|REJECT
+
+# --- end fuse: a truncated payload must fail closed (v2) --------------------
+# The KPM copies a config through a fixed 1024-byte buffer and truncates it
+# silently, so a missing or short `end` is how that surfaces. Reject whole:
+# applying a partial target set is the failure this record exists to stop.
+cfg|vpnhide 2 config\ntargets 1 5\n|REJECT
+cfg|vpnhide 2 config\ntargets 1 5 6\nend 3|REJECT
+cfg|vpnhide 2 config\ntargets 1 5 6\nend 1|REJECT
+# a malformed count leaves an earlier `end` standing (skip, like any other
+# malformed record)
+cfg|vpnhide 2 config\ntargets 1 5\nend 1\nend zz|debug=-1;def=0x0;0x5:0x1
+# duplicates count once against the ceiling but twice against `end`
+cfg|vpnhide 2 config\ntargets 1 5 5\nend 2|debug=-1;def=0x0;0x5:0x1
+
+# --- default mask: the whitelist mechanism (v2) -----------------------------
+# absent -> 0, which makes `targets` the set to act on (today's blacklist)
+cfg|vpnhide 2 config\ntargets 1 5\nend 1|debug=-1;def=0x0;0x5:0x1
+# non-zero -> every uid not listed carries this mask, `targets` is the exception
+# list. The wire carries the mechanism whether or not a producer emits it.
+cfg|vpnhide 2 config\ndefault 3ff\ntargets 0 5\nend 1|debug=-1;def=0x3ff;0x5:0x0
+# malformed default -> skip the record, stays 0
+cfg|vpnhide 2 config\ndefault 0x3ff\ntargets 1 5\nend 1|debug=-1;def=0x0;0x5:0x1
+
+# --- output is uid-sorted regardless of grouping order (v2) -----------------
+# Sorted-on-parse is a contract: it is what lets a backend binary-search the
+# array on every hooked call, so the parsed form cannot depend on group order.
+cfg|vpnhide 2 config\ntargets 2 30 10\ntargets 1 20\nend 3|debug=-1;def=0x0;0x10:0x2;0x20:0x1;0x30:0x2
 
 # --- peek_kind dispatch (§7.1) ---------------------------------------------
+# The version fuse is PER PROTOCOL, so the same number passes on one kind and
+# fails on the other: control is at 2, telemetry at 1.
+kind|vpnhide 2 config\n|CONFIG
 kind|vpnhide 1 config\n|CONFIG
 kind|vpnhide 1 stats|STATS
 kind|\n\nvpnhide 1 status\n|STATUS
-kind|vpnhide 2 config\n|INVALID
+kind|vpnhide 3 config\n|INVALID
+kind|vpnhide 2 stats\n|INVALID
+kind|vpnhide 2 status\n|INVALID
 kind|garbage\n|INVALID
 # non-ASCII first significant line rejects the whole payload — the parser must
 # NOT skip it and find the header on the following line (§4.2 parity).

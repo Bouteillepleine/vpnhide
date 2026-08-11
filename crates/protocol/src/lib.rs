@@ -15,8 +15,27 @@ pub mod generated;
 
 pub use generated::hook_ids;
 
-/// Wire version this implementation speaks (header line, §4.2).
-pub const PROTO_VERSION: u32 = 1;
+/// Version of the **control** protocol — the `config` payload, activator →
+/// backend. Its reader is the module that ships in the same flashable zip as
+/// the activator writing it, so the two never meet across a version boundary
+/// and a bump costs nothing.
+pub const CONTROL_VERSION: u32 = 2;
+
+/// Version of the **telemetry** protocol — the `stats` and `status` payloads,
+/// backend → app. One `/proc/vpnhide_ctl` read returns both back to back, so
+/// they have one reader, one delivery, and therefore one version: bumping them
+/// apart could not express anything. That reader is the **app**, which updates
+/// independently of the modules, so a bump here breaks an older APK's dashboard
+/// and diagnostics. Do not move it without shipping the APK in step.
+pub const TELEMETRY_VERSION: u32 = 1;
+
+/// Highest version this implementation reads for `kind`'s protocol.
+fn max_version(kind: Kind) -> u32 {
+    match kind {
+        Kind::Config => CONTROL_VERSION,
+        Kind::Stats | Kind::Status => TELEMETRY_VERSION,
+    }
+}
 
 /// Maximum number of `target` records a native backend will store. The backends
 /// keep a fixed `targets[MAX_TARGET_UIDS]` array, so a config carrying more than
@@ -42,9 +61,20 @@ pub struct Target {
 
 /// A parsed `config` snapshot. `debug` is `None` when no `debug` line was
 /// present ("unchanged from default", §4.3), else `Some(flag)`.
+///
+/// `default_mask` is the hookmask for any uid **not** in `targets`. Zero — the
+/// value when no `default` record is present — makes `targets` the set of apps
+/// to act on, which is the blacklist the project ships today. A non-zero default
+/// inverts that: everyone is acted on and `targets` becomes the exception list.
+/// The wire carries the mechanism; choosing to emit a non-zero default is a
+/// producer decision.
+///
+/// `targets` is **sorted ascending by uid**, which is what lets a backend
+/// binary-search it on every hooked call instead of walking it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Config {
     pub debug: Option<bool>,
+    pub default_mask: u32,
     pub targets: Vec<Target>,
 }
 
@@ -162,11 +192,41 @@ fn parse_hex(tok: &[u8], bits: u32) -> Option<u64> {
     Some(v)
 }
 
+/// Bare hex, no `0x`: the numeric primitive of the v2 `config` payload (§4.4).
+/// The prefix costs two bytes on every number, and the KPM's config transport
+/// caps the whole payload at 1024 bytes — that is a real ceiling on how many
+/// apps fit, so the prefix buys nothing worth its width here. `stats`/`status`
+/// stay on prefixed hex via [`parse_hex`]: they are still version 1.
+fn parse_hex_bare(tok: &[u8], bits: u32) -> Option<u64> {
+    if tok.is_empty() {
+        return None;
+    }
+    let max: u64 = if bits >= 64 {
+        u64::MAX
+    } else {
+        u32::MAX as u64
+    };
+    let mut v: u64 = 0;
+    for &c in tok {
+        let d = match c {
+            b'0'..=b'9' => (c - b'0') as u64,
+            b'a'..=b'f' => (c - b'a' + 10) as u64,
+            b'A'..=b'F' => (c - b'A' + 10) as u64,
+            _ => return None,
+        };
+        if v > (max - d) / 16 {
+            return None; // width overflow
+        }
+        v = v * 16 + d;
+    }
+    Some(v)
+}
+
 // --- header (§4.2) ---------------------------------------------------------
 
 /// Parse the mandatory header line, returning `(kind, rest_after_header)`.
 /// `None` (reject whole) when the header is missing/malformed or its version is
-/// newer than this reader knows (§3 version fuse).
+/// newer than this reader knows **for that kind** (§3 version fuse).
 fn parse_header(buf: &[u8]) -> Option<(Kind, &[u8])> {
     let len = buf.len();
     let mut i = 0usize;
@@ -197,15 +257,17 @@ fn parse_header(buf: &[u8]) -> Option<(Kind, &[u8])> {
             return None;
         }
         let ver = it.next().and_then(parse_decimal)?;
-        if ver > PROTO_VERSION {
-            return None;
-        }
         let kind = match it.next()? {
             b"config" => Kind::Config,
             b"stats" => Kind::Stats,
             b"status" => Kind::Status,
             _ => return None,
         };
+        // The fuse is per kind: the version is only meaningful once we know
+        // which payload it labels.
+        if ver > max_version(kind) {
+            return None;
+        }
         return Some((kind, &buf[i..]));
     }
     None
@@ -232,9 +294,16 @@ pub fn peek_kind(buf: &[u8]) -> Option<Kind> {
 
 // --- config parse (§4.3) ---------------------------------------------------
 
-/// Parse a `config` payload. `None` if rejected whole (bad/missing header,
-/// version too new, or a non-config kind). Unknown keywords and malformed
-/// numeric lines are skipped (§4.5); duplicate uid ⇒ last wins (§4.3).
+/// Parse a `config` payload. `None` if rejected whole.
+///
+/// Rejected whole: bad/missing header, version too new, a non-config kind, a
+/// missing or mismatched `end` record, or more uids than [`MAX_TARGET_UIDS`].
+/// Unknown keywords are still skipped (§4.5) so the grammar stays extensible.
+///
+/// The `end <count>` fuse is what makes a truncated payload fail closed. The
+/// KPM transport copies the config through a fixed 1024-byte buffer and
+/// truncates silently when it overflows, so "parse whatever prefix arrived"
+/// means quietly applying a partial target set — the exact failure this rejects.
 pub fn parse_config(buf: &[u8]) -> Option<Config> {
     let (kind, rest) = parse_header(buf)?;
     if kind != Kind::Config {
@@ -242,8 +311,11 @@ pub fn parse_config(buf: &[u8]) -> Option<Config> {
     }
     let mut cfg = Config {
         debug: None,
+        default_mask: 0,
         targets: Vec::new(),
     };
+    let mut uids_seen: u64 = 0;
+    let mut declared: Option<u64> = None;
     for line in lines(rest) {
         let Some(content) = significant(line) else {
             continue;
@@ -255,45 +327,110 @@ pub fn parse_config(buf: &[u8]) -> Option<Config> {
                 Some(b"1") => cfg.debug = Some(true),
                 _ => {} // malformed flag ⇒ skip
             },
-            Some(b"target") => {
-                let (Some(uid), Some(hm)) = (
-                    it.next().and_then(|t| parse_hex(t, 32)),
-                    it.next().and_then(|t| parse_hex(t, 32)),
-                ) else {
+            Some(b"default") => {
+                let Some(mask) = it.next().and_then(|t| parse_hex_bare(t, 32)) else {
                     continue; // malformed ⇒ skip line
                 };
-                set_target(&mut cfg.targets, uid as u32, hm as u32);
+                cfg.default_mask = mask as u32;
+            }
+            Some(b"targets") => {
+                let Some(mask) = it.next().and_then(|t| parse_hex_bare(t, 32)) else {
+                    continue; // malformed group head ⇒ skip line
+                };
+                for tok in it {
+                    // A malformed uid inside a group is NOT skipped: it would
+                    // desync the `end` count, so the payload is rejected.
+                    let Some(uid) = parse_hex_bare(tok, 32) else {
+                        return None;
+                    };
+                    uids_seen += 1;
+                    if !set_target(&mut cfg.targets, uid as u32, mask as u32) {
+                        return None; // over the backend ceiling
+                    }
+                }
+            }
+            Some(b"end") => {
+                // A malformed count leaves any earlier `end` standing, matching
+                // how every other malformed record is skipped.
+                if let Some(v) = it.next().and_then(|t| parse_hex_bare(t, 32)) {
+                    declared = Some(v);
+                }
             }
             _ => {} // unknown keyword ⇒ skip line (§4.5)
         }
     }
+    if declared? != uids_seen {
+        return None;
+    }
     Some(cfg)
 }
 
-fn set_target(targets: &mut Vec<Target>, uid: u32, hookmask: u32) {
-    if let Some(t) = targets.iter_mut().find(|t| t.uid == uid) {
-        t.hookmask = hookmask; // last wins, keeps position
-    } else {
-        targets.push(Target { uid, hookmask });
+/// Insert keeping `targets` sorted by uid; duplicate uid ⇒ last wins (§4.3).
+/// Returns false when the set is full and the uid is new — the caller rejects
+/// the payload rather than dropping the overflow, because a config the backend
+/// cannot hold in full means producer and backend disagree about the ceiling.
+///
+/// Sorted-on-parse is a contract, not an optimisation: it is what lets the
+/// kernel backends binary-search the array on every hooked call, and it makes
+/// the parsed form independent of the order the producer grouped uids in.
+fn set_target(targets: &mut Vec<Target>, uid: u32, hookmask: u32) -> bool {
+    match targets.binary_search_by_key(&uid, |t| t.uid) {
+        Ok(i) => {
+            targets[i].hookmask = hookmask;
+            true
+        }
+        Err(i) => {
+            if targets.len() >= MAX_TARGET_UIDS {
+                return false;
+            }
+            targets.insert(i, Target { uid, hookmask });
+            true
+        }
     }
 }
 
 // --- serialise (§4.3/§4.4) -------------------------------------------------
 
-/// Serialise a `config` snapshot (lowercase-out hex, §4.4).
-pub fn format_config(debug: bool, targets: &[Target]) -> String {
-    let mut out = String::from("vpnhide 1 config\n");
+/// Serialise a `config` snapshot (bare lowercase-out hex, §4.4).
+///
+/// Targets are grouped by hookmask, one `targets` record per distinct mask.
+/// That is where the density comes from: a per-uid record spends its keyword and
+/// its mask on every app, and in practice almost every app carries the same
+/// mask, so one group head amortises across the whole set. Masks ascending, and
+/// uids ascending within a group, so the output is a function of the input set
+/// alone.
+pub fn format_config(debug: bool, default_mask: u32, targets: &[Target]) -> String {
+    let mut out = format!("vpnhide {CONTROL_VERSION} config\n");
     out.push_str(if debug { "debug 1\n" } else { "debug 0\n" });
-    for t in targets {
-        out.push_str(&format!("target 0x{:x} 0x{:x}\n", t.uid, t.hookmask));
+    if default_mask != 0 {
+        out.push_str(&format!("default {default_mask:x}\n"));
     }
+    let mut masks: Vec<u32> = targets.iter().map(|t| t.hookmask).collect();
+    masks.sort_unstable();
+    masks.dedup();
+    let mut count = 0usize;
+    for mask in masks {
+        out.push_str(&format!("targets {mask:x}"));
+        let mut uids: Vec<u32> = targets
+            .iter()
+            .filter(|t| t.hookmask == mask)
+            .map(|t| t.uid)
+            .collect();
+        uids.sort_unstable();
+        for uid in uids {
+            out.push_str(&format!(" {uid:x}"));
+            count += 1;
+        }
+        out.push('\n');
+    }
+    out.push_str(&format!("end {count:x}\n"));
     out
 }
 
 /// Serialise a `stats` snapshot. Entries grouped by uid (consecutive same-uid
 /// entries share a line); lowercase-out hex (§4.4).
 pub fn format_stats(entries: &[StatEntry]) -> String {
-    let mut out = String::from("vpnhide 1 stats\n");
+    let mut out = format!("vpnhide {TELEMETRY_VERSION} stats\n");
     let mut i = 0;
     while i < entries.len() {
         let uid = entries[i].uid;
@@ -313,7 +450,7 @@ pub fn format_stats(entries: &[StatEntry]) -> String {
 /// Serialise a `status` snapshot (lowercase-out hex, §4.4).
 pub fn format_status(s: &Status) -> String {
     format!(
-        "vpnhide 1 status\nbackend 0x{:x}\nkver 0x{:x}\nhooks 0x{:x}\nerror 0x{:x}\n",
+        "vpnhide {TELEMETRY_VERSION} status\nbackend 0x{:x}\nkver 0x{:x}\nhooks 0x{:x}\nerror 0x{:x}\n",
         s.backend, s.kver, s.hooks, s.error
     )
 }
@@ -401,7 +538,7 @@ mod tests {
             Some(false) => 0,
             Some(true) => 1,
         };
-        let mut got = format!("debug={dbg}");
+        let mut got = format!("debug={dbg};def=0x{:x}", cfg.default_mask);
         for t in &cfg.targets {
             got.push_str(&format!(";0x{:x}:0x{:x}", t.uid, t.hookmask));
         }
@@ -438,6 +575,8 @@ mod tests {
         assert_eq!(format_stats(&e), decode_str(expect), "stats mismatch");
     }
 
+    /// The producer has no counterpart in C, so the vectors cannot hold it —
+    /// these pin the serialise direction and the density it buys.
     #[test]
     fn formats_config_snapshot() {
         let targets = [
@@ -451,9 +590,58 @@ mod tests {
             },
         ];
         assert_eq!(
-            format_config(false, &targets),
-            "vpnhide 1 config\ndebug 0\ntarget 0x27fa 0x3ff\ntarget 0x2947 0x4\n",
+            format_config(false, 0, &targets),
+            "vpnhide 2 config\ndebug 0\ntargets 4 2947\ntargets 3ff 27fa\nend 2\n",
         );
+    }
+
+    #[test]
+    fn groups_targets_sharing_a_mask_onto_one_record() {
+        // The whole point of the v2 shape: one group head amortises across every
+        // app carrying the same mask, which is the normal case. Per-uid records
+        // would spend a keyword and a mask on each.
+        let targets: Vec<Target> = (0..8)
+            .map(|i| Target {
+                uid: 0x2710 + i,
+                hookmask: 0x3ff,
+            })
+            .collect();
+        let wire = format_config(false, 0, &targets);
+        assert_eq!(
+            wire,
+            "vpnhide 2 config\ndebug 0\ntargets 3ff 2710 2711 2712 2713 2714 2715 2716 2717\nend 8\n",
+        );
+        assert_eq!(parse_config(wire.as_bytes()).unwrap().targets, targets);
+    }
+
+    #[test]
+    fn round_trips_a_default_mask() {
+        let targets = [Target {
+            uid: 0x2710,
+            hookmask: 0,
+        }];
+        let wire = format_config(true, 0x3ff, &targets);
+        assert_eq!(
+            wire,
+            "vpnhide 2 config\ndebug 1\ndefault 3ff\ntargets 0 2710\nend 1\n",
+        );
+        let cfg = parse_config(wire.as_bytes()).unwrap();
+        assert_eq!(cfg.default_mask, 0x3ff);
+        assert_eq!(cfg.debug, Some(true));
+    }
+
+    #[test]
+    fn rejects_a_target_set_over_the_backend_ceiling() {
+        let targets: Vec<Target> = (0..=MAX_TARGET_UIDS as u32)
+            .map(|i| Target {
+                uid: 0x2710 + i,
+                hookmask: 0x3ff,
+            })
+            .collect();
+        assert_eq!(targets.len(), MAX_TARGET_UIDS + 1);
+        // A producer that overshoots must not have its overflow silently
+        // dropped: that is how a target set goes quietly partial.
+        assert!(parse_config(format_config(false, 0, &targets).as_bytes()).is_none());
     }
 
     fn run_status(fields: &str, expect: &str) {

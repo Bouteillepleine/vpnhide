@@ -1473,13 +1473,21 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 		 * writer gate. A bad header/version never touches live state; a
 		 * concurrent ctl0 writer gets -2 (busy) and userspace retries. */
 		struct vpnhide_target new_targets[MAX_TARGET_UIDS];
+		unsigned int default_mask = 0;
 		int dbg = -1; /* absent debug record preserves live value */
 		int i, n;
 
 		n = vpnhide_parse_config(args, n_args, new_targets,
-					 MAX_TARGET_UIDS, &dbg);
+					 MAX_TARGET_UIDS, &dbg, &default_mask);
 		if (n < 0)
-			return -1; /* rejected whole (bad header / version) */
+			return -1; /* rejected whole (bad header / end fuse) */
+		/* `default` is the hookmask for uids NOT listed as targets —
+		 * the mechanism a whitelist mode rides on. This backend still
+		 * stores only the target set, so a non-zero default is a config
+		 * it cannot honour: reject it rather than silently read a
+		 * whitelist config as if it were a blacklist. */
+		if (default_mask)
+			return -1;
 		if (!cfg_try_write_begin())
 			return -2; /* concurrent config writer; retry from userspace */
 		for (i = 0; i < n; i++)

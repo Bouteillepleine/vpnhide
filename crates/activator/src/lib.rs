@@ -63,6 +63,13 @@ const KPM_SUPPORTED_KERNEL_PAIRS: &[(u32, u32)] = &[
 // the C backends' `#define MAX_TARGET_UIDS`); alias it here so all three stay in
 // lock-step instead of restating the literal 64.
 const MAX_NATIVE_TARGETS: usize = MAX_TARGET_UIDS;
+// The control protocol carries a default hookmask for every uid NOT listed as a
+// target, which is the mechanism a whitelist mode would ride on: non-zero flips
+// `targets` from "the apps to act on" into "the apps to leave alone". Nothing
+// emits a non-zero default yet — the shipped model is the blacklist — so the
+// activator names the constant rather than spelling a bare 0 at each call site,
+// and turning the mode on later is a change here, not in any parser.
+const NO_DEFAULT_MASK: u32 = 0;
 const PM_READY_ATTEMPTS: u32 = 60;
 const APATCH_TRUSTED_SU_KEY: &str = "su";
 const SUPERCALL_HELLO: c_long = 0x1000;

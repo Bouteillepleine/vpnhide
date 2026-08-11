@@ -240,6 +240,7 @@ static ssize_t ctl_write(struct file *file, const char __user *ubuf,
 {
 	char *buf;
 	struct vpnhide_target newt[MAX_TARGET_UIDS];
+	unsigned int default_mask = 0;
 	int n, dbg;
 
 	if (count > PAGE_SIZE)
@@ -258,12 +259,21 @@ static ssize_t ctl_write(struct file *file, const char __user *ubuf,
 	/* Seed `dbg` with the live value so an absent `debug` line means
 	 * "unchanged from current", per §4.3. */
 	dbg = READ_ONCE(debug_enabled) ? 1 : 0;
-	n = vpnhide_parse_config(buf, count, newt, MAX_TARGET_UIDS, &dbg);
+	n = vpnhide_parse_config(buf, count, newt, MAX_TARGET_UIDS, &dbg,
+				 &default_mask);
 	kfree(buf);
 
-	/* A payload with no valid header / a too-new version is rejected
-	 * whole (§3) — a loud -EINVAL, never a silent partial wipe. */
+	/* A payload with no valid header / a too-new version / a broken `end`
+	 * fuse is rejected whole (§3) — a loud -EINVAL, never a silent partial
+	 * wipe. */
 	if (n < 0)
+		return -EINVAL;
+	/* `default` is the hookmask for uids NOT listed as targets — the
+	 * mechanism a whitelist mode rides on. This backend still stores only
+	 * the target set, so a non-zero default is a config it cannot honour:
+	 * reject it rather than silently read a whitelist config as if it were
+	 * a blacklist. */
+	if (default_mask)
 		return -EINVAL;
 
 	spin_lock(&targets_lock);

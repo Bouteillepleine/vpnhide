@@ -298,7 +298,7 @@ pub(crate) fn project_native_with_pm_wait(
 ) -> Result<String> {
     let cfg = parse_canonical(json)?;
     if !has_native_targets(&cfg, family) {
-        return Ok(format_config(cfg.debug, &[]));
+        return Ok(format_config(cfg.debug, NO_DEFAULT_MASK, &[]));
     }
     let resolver = PackageUidMap::from_pm_with_wait(wait)?;
     Ok(project_native_with_resolver_for_family(
@@ -341,7 +341,7 @@ pub(crate) fn project_native_with_resolver_for_family(
         .take(MAX_NATIVE_TARGETS)
         .map(|(uid, hookmask)| Target { uid, hookmask })
         .collect::<Vec<_>>();
-    format_config(cfg.debug, &targets)
+    format_config(cfg.debug, NO_DEFAULT_MASK, &targets)
 }
 
 pub fn project_native_with_resolver(cfg: &CanonicalConfig, resolver: &PackageUidMap) -> String {

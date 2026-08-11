@@ -18,7 +18,23 @@ package dev.okhsunrog.vpnhide
  * formatter/parser), so a full-range counter round-trips exactly.
  */
 internal object Protocol {
-    const val VERSION = 1
+    /**
+     * Version of the **control** protocol (`config`), activator → backend. The
+     * app never parses or writes that payload — it is here because the header
+     * and its version fuse are the one lexical core all three ports share, and
+     * [peekKind] has to classify a control header the same way the C and Rust
+     * ends do (the shared `kind` vectors pin exactly that).
+     */
+    const val CONTROL_VERSION = 2
+
+    /**
+     * Version of the **telemetry** protocol (`stats` + `status`), backend →
+     * app. This is the one the app actually speaks, in both directions:
+     * `LsposedState` emits its own layer's snapshots and the dashboard parses a
+     * native backend's. Moving it means shipping the APK in step with every
+     * module, which is why it is versioned apart from control (§3).
+     */
+    const val TELEMETRY_VERSION = 1
 
     enum class Kind { CONFIG, STATS, STATUS }
 
@@ -110,7 +126,6 @@ internal object Protocol {
             val toks = tokens(contentAfterWs(line))
             if (toks.getOrNull(0) != "vpnhide") return null
             val ver = toks.getOrNull(1)?.toIntOrNull() ?: return null
-            if (ver > VERSION) return null
             val kind =
                 when (toks.getOrNull(2)) {
                     "config" -> Kind.CONFIG
@@ -118,6 +133,10 @@ internal object Protocol {
                     "status" -> Kind.STATUS
                     else -> return null
                 }
+            // The fuse is per protocol: a version only means something once we
+            // know which payload it labels.
+            val max = if (kind == Kind.CONFIG) CONTROL_VERSION else TELEMETRY_VERSION
+            if (ver > max) return null
             return Header(kind, ls.subList(i + 1, ls.size))
         }
         return null
@@ -160,7 +179,7 @@ internal object Protocol {
 
     fun formatStats(entries: List<StatEntry>): String =
         buildString {
-            append("vpnhide ").append(VERSION).append(" stats\n")
+            append("vpnhide ").append(TELEMETRY_VERSION).append(" stats\n")
             var i = 0
             while (i < entries.size) {
                 val uid = entries[i].uid
@@ -197,7 +216,7 @@ internal object Protocol {
     }
 
     fun formatStatus(s: Status): String =
-        "vpnhide $VERSION status\n" +
+        "vpnhide $TELEMETRY_VERSION status\n" +
             "backend ${hex(s.backend)}\nkver ${hex(s.kver)}\nhooks ${hex(s.hooks)}\nerror ${hex(s.error)}\n"
 
     /**

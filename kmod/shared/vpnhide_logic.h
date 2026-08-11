@@ -293,8 +293,22 @@ static inline int vpnhide_parse_target_uids(const char *buf, unsigned long len,
 /*  Kotlin. peek_kind + clamp_to_line serve the KPM ctl0 transport (§7).  */
 /* ====================================================================== */
 
-/* Wire version this implementation speaks (header line, §4.2). */
-#define VPNHIDE_PROTO_VERSION 1
+/*
+ * TWO protocols share this lexical core and the hook-id registry (§5); they are
+ * versioned apart because their readers ship apart (§4.2).
+ *
+ *   control    the `config` payload, activator -> backend. Its reader is the
+ *              module shipped in the SAME flashable zip as the activator that
+ *              writes it, so the two never meet across a version boundary and
+ *              a bump costs nothing.
+ *   telemetry  the `stats` + `status` payloads, backend -> app. One
+ *              /proc/vpnhide_ctl read returns both back to back: one reader,
+ *              one delivery, so one version. That reader is the APP, which
+ *              updates independently of the modules — a bump here breaks an
+ *              older APK's dashboard and diagnostics.
+ */
+#define VPNHIDE_CONTROL_VERSION 2
+#define VPNHIDE_TELEMETRY_VERSION 1
 
 /* Self-documenting banner a read endpoint prepends to its snapshot (§OPEN-7).
  * It is a `#` comment line, ignored by every parser (§4.1), so it costs
@@ -464,6 +478,44 @@ static inline int vpnhide_tok_decimal(const char *b, unsigned long ts,
 }
 
 /*
+ * Bare hex, no `0x`: the numeric primitive of the v2 `config` payload (§4.4).
+ * The prefix costs two bytes on every number, and the KPM copies a whole config
+ * through a fixed 1024-byte buffer — so the prefix is a direct tax on how many
+ * apps fit, buying nothing at that width. `stats`/`status` keep the prefixed
+ * form below: they are still version 1.
+ */
+static inline int vpnhide_tok_hex_bare(const char *b, unsigned long ts,
+				       unsigned long te, int bits,
+				       unsigned long long *out)
+{
+	unsigned long long v = 0;
+	unsigned long long max = (bits >= 64) ? 0xffffffffffffffffULL :
+						0xffffffffULL;
+	unsigned long p;
+
+	if (te <= ts) /* need at least one digit */
+		return 0;
+	for (p = ts; p < te; p++) {
+		unsigned int d;
+		char c = b[p];
+
+		if (c >= '0' && c <= '9')
+			d = (unsigned int)(c - '0');
+		else if (c >= 'a' && c <= 'f')
+			d = (unsigned int)(c - 'a' + 10);
+		else if (c >= 'A' && c <= 'F')
+			d = (unsigned int)(c - 'A' + 10);
+		else
+			return 0;
+		if (v > (max - d) / 16ULL) /* width overflow */
+			return 0;
+		v = v * 16ULL + d;
+	}
+	*out = v;
+	return 1;
+}
+
+/*
  * Parse the one numeric primitive (§4.4): `0x` (mandatory) + >=1 hex digit,
  * any case on read. `bits` is the field width (32 or 64); a value that
  * overflows it → reject (return 0), never wrap or saturate. 1 on success.
@@ -535,17 +587,24 @@ vpnhide_parse_header(const char *b, unsigned long len, unsigned long *next)
 		    !vpnhide_tok_eq(b, ts, te, "vpnhide"))
 			return VPNHIDE_KIND_INVALID;
 		if (!vpnhide_next_token(b, &p, le, &ts, &te) ||
-		    !vpnhide_tok_decimal(b, ts, te, &ver) ||
-		    ver > VPNHIDE_PROTO_VERSION)
+		    !vpnhide_tok_decimal(b, ts, te, &ver))
 			return VPNHIDE_KIND_INVALID;
 		if (!vpnhide_next_token(b, &p, le, &ts, &te))
 			return VPNHIDE_KIND_INVALID;
+		/* The fuse is per kind: a version only means something once we
+		 * know which payload it labels. */
 		if (vpnhide_tok_eq(b, ts, te, "config"))
-			return VPNHIDE_KIND_CONFIG;
+			return ver > VPNHIDE_CONTROL_VERSION ?
+				       VPNHIDE_KIND_INVALID :
+				       VPNHIDE_KIND_CONFIG;
 		if (vpnhide_tok_eq(b, ts, te, "stats"))
-			return VPNHIDE_KIND_STATS;
+			return ver > VPNHIDE_TELEMETRY_VERSION ?
+				       VPNHIDE_KIND_INVALID :
+				       VPNHIDE_KIND_STATS;
 		if (vpnhide_tok_eq(b, ts, te, "status"))
-			return VPNHIDE_KIND_STATUS;
+			return ver > VPNHIDE_TELEMETRY_VERSION ?
+				       VPNHIDE_KIND_INVALID :
+				       VPNHIDE_KIND_STATUS;
 		return VPNHIDE_KIND_INVALID;
 	}
 	if (next)
@@ -562,45 +621,82 @@ static inline enum vpnhide_kind vpnhide_peek_kind(const char *b,
 
 /* --- config parse (§4.3) --------------------------------------------- */
 
-/* Insert/overwrite a target; duplicate uid ⇒ last wins (§4.3). A full set
- * drops the overflow (honest truncation at the caller's ceiling, §7.2). */
-static inline void vpnhide_target_set(struct vpnhide_target *out, int *n,
-				      int max, unsigned int uid,
-				      unsigned int hookmask)
+/*
+ * Insert keeping out[0..n) sorted ascending by uid; duplicate uid ⇒ last wins
+ * (§4.3). Returns 0 when the set is already full and the uid is new — the
+ * caller rejects the payload rather than dropping the overflow, because a
+ * config the backend cannot hold in full means the producer and the backend
+ * disagree about the ceiling, and applying a partial target set silently is
+ * exactly the failure mode we are removing.
+ *
+ * Sorted-on-parse is a contract, not an optimisation: it is what lets the
+ * hot path binary-search this array on every hooked call, and it makes the
+ * parsed form independent of the order the producer grouped uids in. The
+ * insertion is O(n) memmove per new uid, run once per config write with n
+ * bounded by the caller's array — irrelevant next to the hot-path win.
+ */
+static inline int vpnhide_target_set(struct vpnhide_target *out, int *n,
+				     int max, unsigned int uid,
+				     unsigned int hookmask)
 {
-	int k;
+	int lo = 0, hi = *n - 1, pos, k;
 
-	for (k = 0; k < *n; k++) {
-		if (out[k].uid == uid) {
-			out[k].hookmask = hookmask;
-			return;
+	while (lo <= hi) {
+		int mid = lo + (hi - lo) / 2;
+
+		if (out[mid].uid == uid) {
+			out[mid].hookmask = hookmask;
+			return 1;
 		}
+		if (out[mid].uid < uid)
+			lo = mid + 1;
+		else
+			hi = mid - 1;
 	}
-	if (*n < max) {
-		out[*n].uid = uid;
-		out[*n].hookmask = hookmask;
-		(*n)++;
-	}
+	if (*n >= max)
+		return 0;
+	pos = lo;
+	for (k = *n; k > pos; k--)
+		out[k] = out[k - 1];
+	out[pos].uid = uid;
+	out[pos].hookmask = hookmask;
+	(*n)++;
+	return 1;
 }
 
 /*
- * Parse a `config` payload into out[] (capacity `max`). Returns the target
- * count, or -1 if the payload is rejected whole (bad/missing header, version
- * too new, or a non-config kind). *debug receives 0/1 if a `debug` line is
- * present, and is left UNCHANGED otherwise (the caller seeds it with the live
- * value so "absent ⇒ unchanged-from-default", §4.3). Unknown keywords and
- * malformed numeric lines are skipped, not fatal (§4.5).
+ * Parse a `config` payload into out[] (capacity `max`), sorted ascending by
+ * uid. Returns the target count, or -1 if the payload is rejected whole.
+ *
+ * Rejected whole: bad/missing header, version too new, a non-config kind, a
+ * missing or mismatched `end` record, a malformed uid inside a `targets`
+ * group, or more uids than `max`. Unknown keywords are still skipped (§4.5),
+ * so the grammar stays extensible.
+ *
+ * The `end <count>` fuse is what makes a truncated payload fail closed. The
+ * KPM transport copies a config through a fixed 1024-byte buffer and truncates
+ * silently on overflow, so "apply whatever prefix arrived" would mean quietly
+ * running with a partial target set — the exact failure this rejects.
+ *
+ * *debug receives 0/1 if a `debug` line is present and is left UNCHANGED
+ * otherwise (the caller seeds it with the live value so "absent ⇒ unchanged-
+ * from-default", §4.3). *default_mask receives the `default` record's mask, or
+ * 0 when absent: the hookmask for any uid NOT in out[]. Zero makes out[] the
+ * set to act on; non-zero inverts that and makes out[] the exception list.
  */
 static inline int vpnhide_parse_config(const char *b, unsigned long len,
 				       struct vpnhide_target *out, int max,
-				       int *debug)
+				       int *debug, unsigned int *default_mask)
 {
 	unsigned long i, ls, le, cs, p, ts, te;
-	int ascii, n = 0;
+	int ascii, n = 0, have_end = 0;
+	unsigned long long uids_seen = 0, declared = 0;
 	enum vpnhide_kind k = vpnhide_parse_header(b, len, &i);
 
 	if (k != VPNHIDE_KIND_CONFIG)
 		return -1;
+	if (default_mask)
+		*default_mask = 0;
 
 	while (vpnhide_next_line(b, len, &i, &ls, &le)) {
 		if (!vpnhide_line_significant(b, ls, le, &cs, &ascii) || !ascii)
@@ -619,20 +715,41 @@ static inline int vpnhide_parse_config(const char *b, unsigned long len,
 					*debug = 1;
 			}
 			/* any other flag value ⇒ malformed, skip */
-		} else if (vpnhide_tok_eq(b, ts, te, "target")) {
-			unsigned long long uid, hm;
+		} else if (vpnhide_tok_eq(b, ts, te, "default")) {
+			unsigned long long dm;
 
 			if (!vpnhide_next_token(b, &p, le, &ts, &te) ||
-			    !vpnhide_tok_hex(b, ts, te, 32, &uid))
+			    !vpnhide_tok_hex_bare(b, ts, te, 32, &dm))
 				continue;
+			if (default_mask)
+				*default_mask = (unsigned int)dm;
+		} else if (vpnhide_tok_eq(b, ts, te, "targets")) {
+			unsigned long long hm, uid;
+
 			if (!vpnhide_next_token(b, &p, le, &ts, &te) ||
-			    !vpnhide_tok_hex(b, ts, te, 32, &hm))
+			    !vpnhide_tok_hex_bare(b, ts, te, 32, &hm))
+				continue; /* malformed group head ⇒ skip line */
+			while (vpnhide_next_token(b, &p, le, &ts, &te)) {
+				/* A malformed uid inside a group is NOT skipped:
+				 * it would desync the `end` count, so reject. */
+				if (!vpnhide_tok_hex_bare(b, ts, te, 32, &uid))
+					return -1;
+				uids_seen++;
+				if (!vpnhide_target_set(out, &n, max,
+							(unsigned int)uid,
+							(unsigned int)hm))
+					return -1; /* over the backend ceiling */
+			}
+		} else if (vpnhide_tok_eq(b, ts, te, "end")) {
+			if (!vpnhide_next_token(b, &p, le, &ts, &te) ||
+			    !vpnhide_tok_hex_bare(b, ts, te, 32, &declared))
 				continue;
-			vpnhide_target_set(out, &n, max, (unsigned int)uid,
-					   (unsigned int)hm);
+			have_end = 1;
 		}
 		/* unknown first token ⇒ skip the line (§4.5) */
 	}
+	if (!have_end || declared != uids_seen)
+		return -1;
 	return n;
 }
 
@@ -699,10 +816,11 @@ static inline void vpnhide_put_hex(struct vpnhide_buf *b, unsigned long long v)
 		vpnhide_putc(b, tmp[--n]);
 }
 
-static inline void vpnhide_put_header(struct vpnhide_buf *b, const char *kind)
+static inline void vpnhide_put_header(struct vpnhide_buf *b, const char *kind,
+				      unsigned long version)
 {
 	vpnhide_puts(b, "vpnhide ");
-	vpnhide_put_dec(b, VPNHIDE_PROTO_VERSION);
+	vpnhide_put_dec(b, version);
 	vpnhide_putc(b, ' ');
 	vpnhide_puts(b, kind);
 	vpnhide_putc(b, '\n');
@@ -724,7 +842,7 @@ vpnhide_format_stats(char *buf, unsigned long cap,
 	b.p = buf;
 	b.cap = cap;
 	b.len = 0;
-	vpnhide_put_header(&b, "stats");
+	vpnhide_put_header(&b, "stats", VPNHIDE_TELEMETRY_VERSION);
 	while (idx < n) {
 		unsigned int uid = e[idx].uid;
 
@@ -751,7 +869,7 @@ vpnhide_format_status(char *buf, unsigned long cap,
 	b.p = buf;
 	b.cap = cap;
 	b.len = 0;
-	vpnhide_put_header(&b, "status");
+	vpnhide_put_header(&b, "status", VPNHIDE_TELEMETRY_VERSION);
 	vpnhide_puts(&b, "backend ");
 	vpnhide_put_hex(&b, s->backend);
 	vpnhide_putc(&b, '\n');
