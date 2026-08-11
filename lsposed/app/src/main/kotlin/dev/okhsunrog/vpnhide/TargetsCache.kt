@@ -37,6 +37,10 @@ internal data class TargetsSnapshot(
     val canonicalConfig: CanonicalConfig?,
     val apatchSuperkeySaved: Boolean = false,
     val activeNativeBackendId: NativeBackendId? = null,
+    /** Exact package → UID projection from the same `pm --user all` snapshot
+     * the activator consumes. The picker uses it to enforce native capacity
+     * before Save, including profiles and shared UIDs. */
+    val packageUids: Map<String, List<Int>> = emptyMap(),
 ) {
     /** True if any native backend is installed (kmod / KPM / Zygisk). The
      * picker's "N" toggle is meaningful only when at least one is present. */
@@ -160,6 +164,7 @@ internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
             canonicalConfig = canonical,
             apatchSuperkeySaved = sections["superkey_saved"]?.trim() == "1",
             activeNativeBackendId = activeNativeBackendId,
+            packageUids = pkgToUids,
         )
     }
 
@@ -181,5 +186,6 @@ internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
         canonicalConfig = null,
         apatchSuperkeySaved = sections["superkey_saved"]?.trim() == "1",
         activeNativeBackendId = activeNativeBackendId,
+        packageUids = pkgToUids,
     )
 }

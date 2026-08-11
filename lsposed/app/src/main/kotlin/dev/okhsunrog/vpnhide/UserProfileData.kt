@@ -2,6 +2,11 @@ package dev.okhsunrog.vpnhide
 
 import java.util.Locale
 
+private const val ANDROID_UIDS_PER_USER = 100_000
+
+/** VPN Hide has a single supported owner: Android's main user (user 0). */
+internal fun isMainAppProfile(uid: Int): Boolean = uid >= 0 && uid / ANDROID_UIDS_PER_USER == 0
+
 /**
  * What kind of Android user a secondary profile is. Derived from
  * `pm list users -v`, which is the only place the type is exposed to a

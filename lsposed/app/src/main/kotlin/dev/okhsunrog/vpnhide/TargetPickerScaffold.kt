@@ -145,6 +145,11 @@ internal fun <T : TargetEntry> TargetPickerScreen(
     countText: (entries: List<T>, resources: Resources) -> String,
     persist: suspend (entries: List<T>, ctx: SaveContext) -> CanonicalWriteResult,
     successMessage: (entries: List<T>, resources: Resources) -> String,
+    selectionChangeError:
+        (current: List<T>, candidate: List<T>, targets: TargetsSnapshot, selfPkg: String, resources: Resources) -> String? =
+        { _, _, _, _, _ -> null },
+    selectionSaveError: (entries: List<T>, targets: TargetsSnapshot, selfPkg: String, resources: Resources) -> String? =
+        { _, _, _, _ -> null },
     moduleMissing: (TargetsSnapshot) -> Boolean = { false },
     moduleMissingContent: @Composable (Modifier) -> Unit = {},
     row: @Composable (entry: T, userNames: Map<Int, String>, targets: TargetsSnapshot, onChange: (T) -> Unit) -> Unit,
@@ -232,8 +237,18 @@ internal fun <T : TargetEntry> TargetPickerScreen(
     val visibleSections = remember(visibleApps, sortMode) { targetListSections(visibleApps, sortMode) }
 
     val onChange: (T) -> Unit = { updated ->
-        allApps = allApps.map { if (it.packageName == updated.packageName) updated else it }
-        dirty = true
+        val candidate = allApps.map { if (it.packageName == updated.packageName) updated else it }
+        val error =
+            targets?.let { currentTargets ->
+                selectionChangeError(allApps, candidate, currentTargets, context.packageName, resources)
+            }
+        if (error != null) {
+            snackDuration = SnackbarDuration.Long
+            snackMessage = error
+        } else {
+            allApps = candidate
+            dirty = true
+        }
     }
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -319,8 +334,17 @@ internal fun <T : TargetEntry> TargetPickerScreen(
                     )
                     EnhancedButton(
                         onClick = {
-                            saving = true
-                            dirty = false
+                            val error =
+                                targets?.let { currentTargets ->
+                                    selectionSaveError(allApps, currentTargets, context.packageName, resources)
+                                }
+                            if (error != null) {
+                                snackDuration = SnackbarDuration.Long
+                                snackMessage = error
+                            } else {
+                                saving = true
+                                dirty = false
+                            }
                         },
                         enabled = dirty && !saving,
                     ) {

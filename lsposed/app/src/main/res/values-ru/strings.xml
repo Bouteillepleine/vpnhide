@@ -58,12 +58,15 @@
     <string name="apps_help_zygisk_warning_body">Zygisk-хуки работают внутри процесса выбранного приложения. Банковские и платёжные приложения могут это обнаружить, если для них включён Native; оставьте Native выключенным и по возможности используйте Java.</string>
 
     <!-- Root status -->
+    <string name="secondary_profile_error_title">Откройте VPN Hide в основном профиле</string>
+    <string name="secondary_profile_error_message">Удалите эту копию VPN Hide и используйте копию из основного профиля. Она может управлять приложениями из всех профилей.</string>
     <string name="root_error_title">Требуется root-доступ</string>
     <string name="root_error_message">VPN Hide нужен root-доступ, чтобы управлять скрытием VPN для выбранных приложений. Выдайте его в менеджере root (Magisk, KernelSU, APatch) и нажмите «Проверить снова».</string>
     <string name="root_error_recheck">Проверить снова</string>
 
     <!-- Save feedback -->
     <string name="save_success">Сохранено целей: %d</string>
+    <string name="native_target_capacity_reached">Достигнут лимит Native: можно выбрать не более %1$d UID приложений. Сначала отключите Native у другого приложения.</string>
     <string name="save_native_target_capacity">Настройки сохранены, но Native-бэкенд может защитить только %1$d из %2$d найденных UID приложений. %3$d UID с наибольшими номерами остались без Native-защиты.</string>
     <string name="save_failed_exit">Ошибка сохранения (код выхода %d)</string>
     <string name="save_failed_error">Ошибка сохранения: %s</string>

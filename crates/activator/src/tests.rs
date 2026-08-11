@@ -82,6 +82,32 @@ fn projects_native_roles_to_wire() {
 }
 
 #[test]
+fn native_projection_targets_only_the_main_profile_copy_of_vpnhide() {
+    let cfg = parse_canonical(
+        r#"{
+          "version": 1,
+          "apps": {
+            "dev.okhsunrog.vpnhide": { "native": true },
+            "com.example.profiled": { "native": true }
+          }
+        }"#,
+    )
+    .unwrap();
+    let resolver = parse_pm_packages(
+        "package:dev.okhsunrog.vpnhide uid:10123,1010123\n\
+         package:com.example.profiled uid:10234,1010234\n",
+    );
+
+    assert_eq!(
+        project_native_with_resolver(&cfg, &resolver),
+        "vpnhide 2 config\n\
+         debug 0\n\
+         targets 20003ff 278b 27fa f6a3a\n\
+         end 3\n",
+    );
+}
+
+#[test]
 fn native_projection_drops_platform_aids_but_keeps_preinstalled_apps() {
     // A package sharing "android.uid.system" resolves to 1000 — the same uid as
     // system_server — so listing it would mean "hide from everything running as

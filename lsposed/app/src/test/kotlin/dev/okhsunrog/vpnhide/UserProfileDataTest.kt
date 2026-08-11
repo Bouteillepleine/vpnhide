@@ -6,6 +6,14 @@ import org.junit.Test
 
 class UserProfileDataTest {
     @Test
+    fun `only android main user can run the app`() {
+        assertEquals(true, isMainAppProfile(10_123))
+        assertEquals(false, isMainAppProfile(1_010_123))
+        assertEquals(false, isMainAppProfile(1_110_123))
+        assertEquals(false, isMainAppProfile(-1))
+    }
+
+    @Test
     fun `parses verbose rows with profile types`() {
         val raw =
             """

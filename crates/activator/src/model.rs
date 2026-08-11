@@ -316,6 +316,24 @@ pub(crate) fn project_native_with_resolver_for_family(
         let Some(mask) = app.native.hookmask(family) else {
             continue;
         };
+        // The APK is intentionally single-owner: only its main-profile copy
+        // may manage the shared config. Keep its mandatory self target just as
+        // singular here. An accidentally installed work/clone-profile copy is
+        // blocked at startup and must not consume another backend slot.
+        if pkg == APP_PACKAGE {
+            if let Some(uid) = resolver
+                .uids_for(pkg)
+                .iter()
+                .copied()
+                .find(|uid| *uid < PER_USER_RANGE && is_app_uid(*uid))
+            {
+                by_uid
+                    .entry(uid)
+                    .and_modify(|existing| *existing |= mask)
+                    .or_insert(mask);
+            }
+            continue;
+        }
         for uid in resolver.uids_for(pkg) {
             // Below the app range a uid is not an app but a platform identity
             // shared by many components — a package declaring sharedUserId

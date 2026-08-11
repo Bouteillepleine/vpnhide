@@ -2,6 +2,7 @@ package dev.okhsunrog.vpnhide
 
 import android.Manifest
 import android.os.Bundle
+import android.os.Process
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -26,7 +27,6 @@ import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -68,11 +68,14 @@ class MainActivity : ComponentActivity() {
         StartupTrace.mark("activity_on_create")
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        RootSnapshotCache.setRuntimeProbeSource(GroundTruthProbe.prepare(this)?.absolutePath)
-        // Load canonical debug state before runtime work so first suExec and dashboard bootstrap agree.
-        VpnHideLog.init()
+        val mainProfile = isMainAppProfile(Process.myUid())
+        if (mainProfile) {
+            RootSnapshotCache.setRuntimeProbeSource(GroundTruthProbe.prepare(this)?.absolutePath)
+            // Load canonical debug state before runtime work so first suExec and dashboard bootstrap agree.
+            VpnHideLog.init()
+        }
         setContent {
-            VpnHideApp()
+            VpnHideApp(mainProfile)
         }
     }
 }
@@ -112,7 +115,14 @@ private fun BackgroundUpdatePromptDialog(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VpnHideApp() {
+fun VpnHideApp(mainProfile: Boolean = isMainAppProfile(Process.myUid())) {
+    if (!mainProfile) {
+        VpnHideTheme {
+            SecondaryProfileBlockedScreen()
+        }
+        return
+    }
+
     val context = LocalContext.current
     val settingsRepository = remember(context) { SettingsRepository(context.applicationContext) }
     val loadedSettings by settingsRepository.settings.collectAsState(initial = null)
@@ -211,6 +221,14 @@ fun VpnHideApp() {
             }
         }
     }
+}
+
+@Composable
+private fun SecondaryProfileBlockedScreen() {
+    StartupBlockingScreen(
+        title = stringResource(R.string.secondary_profile_error_title),
+        body = stringResource(R.string.secondary_profile_error_message),
+    )
 }
 
 private enum class Tab { Dashboard, Protection, Statistics }
@@ -781,37 +799,12 @@ private fun RootPreparationErrorScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RootDeniedScreen(onRecheck: () -> Unit) {
-    Scaffold(
-        containerColor = AppColors.screenBackground,
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.app_name)) },
-                colors =
-                    TopAppBarDefaults.topAppBarColors(
-                        containerColor = AppColors.topBarContainer,
-                        titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    ),
-            )
-        },
-    ) { innerPadding ->
-        Box(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-                    .padding(32.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            BlockingErrorCard(
-                icon = Icons.Default.Lock,
-                title = stringResource(R.string.root_error_title),
-                body = stringResource(R.string.root_error_message),
-                actionLabel = stringResource(R.string.root_error_recheck),
-                onAction = onRecheck,
-            )
-        }
-    }
+    StartupBlockingScreen(
+        title = stringResource(R.string.root_error_title),
+        body = stringResource(R.string.root_error_message),
+        actionLabel = stringResource(R.string.root_error_recheck),
+        onAction = onRecheck,
+    )
 }

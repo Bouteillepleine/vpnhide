@@ -56,7 +56,9 @@ whole-payload rejection. See [protocol.md §4.3](protocol.md).
 
 **The cap counts UIDs, not apps.** `resolver.uids_for()` returns every UID a
 package has across profiles, so an app present in a work profile spends two
-slots. A user with a work profile reaches 160 UIDs at around 80 apps.
+slots. The picker allows 159 selected-app UIDs and reserves the final slot for
+VPN Hide's main-profile UID. A user selecting apps present in both the main and
+work profiles therefore reaches the picker limit at around 79 apps.
 
 ## Telemetry — how many apps report counters
 
