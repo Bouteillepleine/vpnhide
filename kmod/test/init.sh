@@ -28,6 +28,19 @@ echo "nameserver 10.0.2.3" > /etc/resolv.conf
 echo "https://dl-cdn.alpinelinux.org/alpine/v3.21/main" > /etc/apk/repositories
 if apk add --no-cache iproute2 >/dev/null 2>&1; then echo "IPROUTE2=ok"; else echo "IPROUTE2=FAIL"; fi
 
+# Hooks deliberately ignore Android system AIDs (< 10000). Run every shell
+# vector as a regular app UID so this harness exercises the target path.
+TARGET_UID=10000
+NONMATCH_UID=10002
+if adduser -D -u "$TARGET_UID" vpnhide-target >/dev/null 2>&1; then
+	echo "TARGET_USER=ok"
+else
+	echo "TARGET_USER=FAIL"
+fi
+run_as_target() {
+	su -s /bin/sh vpnhide-target -c "$1"
+}
+
 # --- load the module --------------------------------------------------------
 if insmod /vpnhide_kmod.ko; then echo "INSMOD=ok"; else echo "INSMOD=FAIL"; fi
 REGISTERED=$(dmesg | grep -c 'vpnhide:.*registered')
@@ -49,7 +62,7 @@ ip addr add 10.9.0.1/24 dev vpn0 2>/dev/null
 ip route add 10.9.9.0/24 dev vpn0 2>/dev/null
 ip -6 addr add fd00:9::1/64 dev vpn0 2>/dev/null
 ip -6 route add fd00:99::/64 dev vpn0 2>/dev/null
-ip rule add uidrange 0-0 table 199 2>/dev/null
+ip rule add uidrange "$TARGET_UID-$TARGET_UID" table 199 2>/dev/null
 
 # Public /32 host-route pinned to the physical uplink (eth0) — the route a VPN
 # client installs so tunnel packets reach the server. eth0 is not a VPN iface,
@@ -63,15 +76,16 @@ PASS=0
 FAIL=0
 
 # check_hide <name> <shell-command> <grep-pattern>
-# Asserts: non-target (uid 5555) sees the pattern, target (uid 0) does not.
+# Asserts: app uid 10000 sees the pattern when another UID is targeted, then
+# stops seeing it when uid 10000 is targeted.
 check_hide() {
 	_name=$1
 	_cmd=$2
 	_pat=$3
-	set_target 5555
-	_nt=$(eval "$_cmd" 2>/dev/null | grep -c -- "$_pat")
-	set_target 0
-	_tg=$(eval "$_cmd" 2>/dev/null | grep -c -- "$_pat")
+	set_target "$NONMATCH_UID"
+	_nt=$(run_as_target "$_cmd" 2>/dev/null | grep -c -- "$_pat")
+	set_target "$TARGET_UID"
+	_tg=$(run_as_target "$_cmd" 2>/dev/null | grep -c -- "$_pat")
 	if [ "$_nt" -gt 0 ] && [ "$_tg" -eq 0 ]; then
 		echo "RESULT $_name=PASS (nontarget=$_nt target=$_tg)"
 		PASS=$((PASS + 1))
@@ -85,10 +99,10 @@ check_keep() {
 	_name=$1
 	_cmd=$2
 	_pat=$3
-	set_target 5555
-	_nt=$(eval "$_cmd" 2>/dev/null | grep -c -- "$_pat")
-	set_target 0
-	_tg=$(eval "$_cmd" 2>/dev/null | grep -c -- "$_pat")
+	set_target "$NONMATCH_UID"
+	_nt=$(run_as_target "$_cmd" 2>/dev/null | grep -c -- "$_pat")
+	set_target "$TARGET_UID"
+	_tg=$(run_as_target "$_cmd" 2>/dev/null | grep -c -- "$_pat")
 	if [ "$_nt" -gt 0 ] && [ "$_tg" -gt 0 ]; then
 		echo "RESULT $_name=PASS (nontarget=$_nt target=$_tg mode=nonvpn)"
 		PASS=$((PASS + 1))
@@ -102,10 +116,10 @@ check_keep_exact() {
 	_name=$1
 	_cmd=$2
 	_pat=$3
-	set_target 5555
-	_nt=$(eval "$_cmd" 2>/dev/null | grep -c -- "$_pat")
-	set_target 0
-	_tg=$(eval "$_cmd" 2>/dev/null | grep -c -- "$_pat")
+	set_target "$NONMATCH_UID"
+	_nt=$(run_as_target "$_cmd" 2>/dev/null | grep -c -- "$_pat")
+	set_target "$TARGET_UID"
+	_tg=$(run_as_target "$_cmd" 2>/dev/null | grep -c -- "$_pat")
 	if [ "$_nt" -gt 0 ] && [ "$_tg" -eq "$_nt" ]; then
 		echo "RESULT $_name=PASS (nontarget=$_nt target=$_tg mode=exact)"
 		PASS=$((PASS + 1))
@@ -116,7 +130,7 @@ check_keep_exact() {
 }
 
 gai_field() {
-	/gai 2>/dev/null | sed -n "s/^$1=//p" | head -1
+	run_as_target /gai 2>/dev/null | sed -n "s/^$1=//p" | head -1
 }
 
 check_gai() {
@@ -126,10 +140,10 @@ check_gai() {
 		return
 	fi
 
-	set_target 5555
+	set_target "$NONMATCH_UID"
 	_nt_vpn=$(gai_field GAI_VPN0)
 	_nt_other=$(gai_field GAI_OTHER)
-	set_target 0
+	set_target "$TARGET_UID"
 	_tg_vpn=$(gai_field GAI_VPN0)
 	_tg_other=$(gai_field GAI_OTHER)
 	[ -n "$_nt_vpn" ] || _nt_vpn=-1
@@ -155,7 +169,7 @@ check_gai() {
 }
 
 ifc_field() {
-	/ifconf 2>/dev/null | sed -n "s/^$1=//p" | head -1
+	run_as_target /ifconf 2>/dev/null | sed -n "s/^$1=//p" | head -1
 }
 
 # SIOCGIFCONF probe: the target's size query must agree with its filtered fill,
@@ -166,10 +180,10 @@ check_ifconf() {
 		return
 	fi
 
-	set_target 5555
+	set_target "$NONMATCH_UID"
 	_nt_size=$(ifc_field IFCONF_SIZE)
 	_nt_tail=$(ifc_field IFCONF_TAIL)
-	set_target 0
+	set_target "$TARGET_UID"
 	_tg_size=$(ifc_field IFCONF_SIZE)
 	_tg_fill=$(ifc_field IFCONF_FILL)
 	_tg_vpn=$(ifc_field IFCONF_FILL_VPN)
@@ -221,10 +235,10 @@ check_socket_bind() {
 		return
 	fi
 
-	# The probe actor is uid 5555.  First make it a non-target, then target it.
-	set_target 0
+	# The probe actor is uid 10000. First make it a non-target, then target it.
+	set_target "$NONMATCH_UID"
 	_nt=$(/bind-probe vpn0 "$_vpn_ifindex" 2>/dev/null)
-	set_target 5555
+	set_target "$TARGET_UID"
 	_tg=$(/bind-probe vpn0 "$_vpn_ifindex" 2>/dev/null)
 
 	for _case in \

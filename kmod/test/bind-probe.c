@@ -2,9 +2,9 @@
 /*
  * State-aware SO_BINDTODEVICE / SO_BINDTOIFINDEX probe for the QEMU harness.
  *
- * The actor runs as uid 5555 and issues setsockopt through an inline arm64
+ * The actor runs as Android app uid 10000 and issues setsockopt through an inline arm64
  * `svc`, bypassing libc.  The socket itself is created by the root parent before
- * fork, so after the actor exits a separate non-target observer (uid 5556) can
+ * fork, so after the actor exits a separate non-target observer (uid 10001) can
  * inspect the very same open file description.  This catches the dangerous
  * failure mode where a hook returns ENODEV after the kernel has already changed
  * sk_bound_dev_if; checking errno alone cannot distinguish that from a real
@@ -48,8 +48,8 @@
 #define __NR_getsockopt 209
 #endif
 
-#define ACTOR_UID 5555
-#define OBSERVER_UID 5556
+#define ACTOR_UID 10000
+#define OBSERVER_UID 10001
 
 struct call_result {
 	int ret;
