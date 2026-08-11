@@ -113,7 +113,7 @@ internal fun buildDiagnosticReport(
         if (results == null) {
             0
         } else {
-            unownedNativeLeaks(backend, nativeOutcomes) + results.nativeExtra.count { it.passed == false }
+            unownedNativeLeaks(backend, nativeOutcomes) + results.nativeExtra.count { it.outcome is CheckOutcome.Leak }
         }
     return DiagnosticReport(
         gate = gate,
@@ -142,7 +142,7 @@ private fun nativeDiagnosticChecks(
     backend: DisplayNativeBackend,
 ): List<DiagnosticCheck> {
     if (results == null) return emptyList()
-    val ownMask = nativeOwnMask(backend.id)
+    val ownedHooks = ownedNativeHooks(backend.id)
     // native and nativeExtra are built in NATIVE_CHECKS order, so a positional zip
     // is stable by construction — the spec carries the stable id + hook coverage,
     // the result carries the localized label, outcome, and root ground-truth detail.
@@ -152,11 +152,11 @@ private fun nativeDiagnosticChecks(
                 id = spec.id,
                 label = cr.name,
                 layer = CheckLayer.NATIVE,
-                outcome = cr.outcome ?: CheckOutcome.NotMeasured(NotMeasuredReason.NoGroundTruth),
+                outcome = cr.outcome,
                 appDetail = cr.detail,
                 groundTruthDetail = cr.groundTruthDetail,
                 expectedHooks = spec.expectedHooks.toList(),
-                owned = spec.hasHookIn(ownMask),
+                owned = spec.coveredBy(ownedHooks),
             )
         }
     // Java-implemented native-level probes (NetworkInterface enum): no hook
@@ -167,7 +167,7 @@ private fun nativeDiagnosticChecks(
                 id = "",
                 label = cr.name,
                 layer = CheckLayer.NATIVE,
-                outcome = cr.outcome ?: classifyJavaOutcome(cr.passed),
+                outcome = cr.outcome,
                 appDetail = cr.detail,
                 groundTruthDetail = null,
                 expectedHooks = emptyList(),
@@ -185,7 +185,7 @@ private fun javaDiagnosticChecks(results: CheckResults?): List<DiagnosticCheck> 
                 id = "",
                 label = cr.name,
                 layer = CheckLayer.JAVA,
-                outcome = cr.outcome ?: classifyJavaOutcome(cr.passed),
+                outcome = cr.outcome,
                 appDetail = cr.detail,
                 groundTruthDetail = cr.groundTruthDetail,
                 expectedHooks = emptyList(),

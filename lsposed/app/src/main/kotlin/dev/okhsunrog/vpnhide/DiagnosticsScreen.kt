@@ -65,7 +65,7 @@ fun DiagnosticsScreen(
     val scope = rememberCoroutineScope()
 
     val diagState by DiagnosticsCache.state.collectAsState()
-    val summaryFmt = stringResource(R.string.summary_format)
+    val tallyFmt = stringResource(R.string.diag_summary_tally)
 
     // Kick off the diagnostics run once per process. If selfNeedsRestart
     // is true we skip — hooks aren't applied to this app yet, results
@@ -78,15 +78,16 @@ fun DiagnosticsScreen(
     }
 
     val results = (diagState as? DiagnosticsCache.State.Ready)?.results
-    // Native probes that couldn't run (ECONNREFUSED from socket()) are
-    // represented as passed=null by nativeCheck. Java-level checks never
-    // produce that state, so this test isolates the "app has no network
-    // permission" banner from everything else.
-    val networkBlocked = results?.native?.any { it.passed == null } == true
+    // Native probes that couldn't run (ECONNREFUSED from socket()) classify as
+    // NotMeasured(NoNetworkPermission). Java-level checks never produce that state,
+    // so this isolates the "app has no network permission" banner from everything else.
+    val networkBlocked = results?.native?.anyNetworkBlocked() == true
+    // Honest headline: how many vectors we hide vs still leak (the misleading
+    // "N/total passed" score was the thing the report redesign retired).
     val summary =
         results?.let { r ->
-            val score = r.all.score()
-            String.format(summaryFmt, score.passed, score.total)
+            val counts = r.all.protectionCounts()
+            String.format(tallyFmt, counts.hidden, counts.leaks)
         }
 
     Column(
@@ -532,53 +533,33 @@ private data class DiagStatus(
     val expandedByDefault: Boolean,
 )
 
+// Thin renderer: the bucket decision lives in [diagStatusKind] (pure, unit-tested);
+// here we only attach the localized word + theme colour. A leak is the one thing
+// expanded by default. NothingToLeak/SELinux keep the no-alarm green container but
+// a distinct dot + word (grey "nothing", blue "SELinux") so attribution shows.
 @Composable
-private fun diagStatus(r: CheckResult): DiagStatus {
-    val ok = DiagStatus(stringResource(R.string.diag_status_ok), StatusColors.successDot, StatusColors.successContainer(), false)
-    val leak = DiagStatus(stringResource(R.string.diag_status_leak), StatusColors.errorDot, StatusColors.errorContainer(), true)
-    val notMeasured =
-        DiagStatus(stringResource(R.string.diag_status_nomeasure), StatusColors.neutralAccent, StatusColors.neutralContainer(), false)
-    // Nothing to leak on this surface for anyone (root also saw nothing). A grey
-    // "nothing to hide" dot on a green (not-leaking) card — distinct from the green
-    // "OK" the backend earns, so it never reads as active protection where there
-    // is none (e.g. /proc/net/route: the split-tunnel VPN isn't in the main table).
-    val nothingToLeak =
-        DiagStatus(stringResource(R.string.diag_status_nothing), StatusColors.neutralAccent, StatusColors.successContainer(), false)
-    return when (r.outcome) {
-        CheckOutcome.Leak -> {
-            leak
+private fun diagStatus(outcome: CheckOutcome): DiagStatus =
+    when (outcome.diagStatusKind()) {
+        DiagStatusKind.Ok -> {
+            DiagStatus(stringResource(R.string.diag_status_ok), StatusColors.successDot, StatusColors.successContainer(), false)
         }
 
-        // The backend provably hid the VPN here.
-        CheckOutcome.HiddenByBackend -> {
-            ok
+        DiagStatusKind.Leak -> {
+            DiagStatus(stringResource(R.string.diag_status_leak), StatusColors.errorDot, StatusColors.errorContainer(), true)
         }
 
-        // Not hidden by us — there was simply nothing on this surface to leak.
-        CheckOutcome.NothingToLeak -> {
-            nothingToLeak
+        DiagStatusKind.NothingToLeak -> {
+            DiagStatus(stringResource(R.string.diag_status_nothing), StatusColors.neutralAccent, StatusColors.successContainer(), false)
         }
 
-        // Hidden by SELinux, not a backend hook: still a green card (no alarm), but a
-        // blue dot + "SELinux" word flags the distinction the redesign is about.
-        CheckOutcome.HiddenBySelinux -> {
+        DiagStatusKind.Selinux -> {
             DiagStatus(stringResource(R.string.diag_status_selinux), StatusColors.infoAccent, StatusColors.successContainer(), false)
         }
 
-        is CheckOutcome.NotMeasured -> {
-            notMeasured
-        }
-
-        // Java-implemented native-level probes carry no outcome — fall back to passed.
-        null -> {
-            when (r.passed) {
-                true -> ok
-                false -> leak
-                null -> notMeasured
-            }
+        DiagStatusKind.NotMeasured -> {
+            DiagStatus(stringResource(R.string.diag_status_nomeasure), StatusColors.neutralAccent, StatusColors.neutralContainer(), false)
         }
     }
-}
 
 @Composable
 private fun CheckCard(
@@ -586,7 +567,7 @@ private fun CheckCard(
     index: Int = -1,
     count: Int = 1,
 ) {
-    val status = diagStatus(r)
+    val status = diagStatus(r.outcome)
     var expanded by remember(r.name) { mutableStateOf(status.expandedByDefault) }
     val caretRotation by animateFloatAsState(if (expanded) 90f else 0f, label = "caret")
     GroupedCard(

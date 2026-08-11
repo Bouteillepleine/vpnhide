@@ -108,12 +108,11 @@ class LayerStatusTest {
     fun `java layer counts hidden-by-backend and leaks off the outcome, ignoring not-measured`() {
         val checks =
             listOf(
-                CheckResult("a", passed = true, detail = "", outcome = CheckOutcome.HiddenByBackend),
-                CheckResult("b", passed = true, detail = "", outcome = CheckOutcome.HiddenByBackend),
-                CheckResult("c", passed = false, detail = "", outcome = CheckOutcome.Leak),
+                CheckResult("a", detail = "", outcome = CheckOutcome.HiddenByBackend),
+                CheckResult("b", detail = "", outcome = CheckOutcome.HiddenByBackend),
+                CheckResult("c", detail = "", outcome = CheckOutcome.Leak),
                 CheckResult(
                     "d",
-                    passed = null,
                     detail = "",
                     outcome = CheckOutcome.NotMeasured(NotMeasuredReason.NoGroundTruth),
                 ),

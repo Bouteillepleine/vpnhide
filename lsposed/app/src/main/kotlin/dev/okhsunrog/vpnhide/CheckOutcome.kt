@@ -7,8 +7,8 @@ import dev.okhsunrog.vpnhide.checks.CheckStatus
  * The honest per-check outcome, decided from the app's in-process probe result
  * combined with the root ground-truth differential (see [GroundTruthProbe]).
  *
- * Unlike the legacy `passed: Boolean?`, a clean app-view result is split by WHO
- * hid the VPN: the backend (root sees it, the app doesn't), SELinux (the app was
+ * Rather than a bare pass/fail, a clean app-view result is split by WHO hid the
+ * VPN: the backend (root sees it, the app doesn't), SELinux (the app was
  * EACCES-blocked), or nothing at all (root also sees nothing). [NotMeasured] is
  * orthogonal — the probe produced no usable observation, so it votes for neither.
  */
@@ -91,12 +91,12 @@ fun classifyNativeOutcome(
  * "nothing to leak" case on this layer.
  *
  * [NotMeasured] is only a defensive edge for a probe that could not actually run
- * (passed == null): a hidden framework method that reflection can't reach, or no
+ * (clean == null): a hidden framework method that reflection can't reach, or no
  * active network — states the gate makes near-impossible but that we refuse to
  * paint as a backend success.
  */
-fun classifyJavaOutcome(passed: Boolean?): CheckOutcome =
-    when (passed) {
+fun classifyJavaOutcome(clean: Boolean?): CheckOutcome =
+    when (clean) {
         false -> CheckOutcome.Leak
         true -> CheckOutcome.HiddenByBackend
         null -> CheckOutcome.NotMeasured(NotMeasuredReason.NoGroundTruth)

@@ -17,8 +17,6 @@ private val BACKEND_STATE_SECTIONS =
         HookIds.Backend.LSPOSED to "lsposed_state",
     )
 
-private val STATUS_ERRORS_BY_CODE = HookIds.StatusError.entries.associateBy { it.code.toLong() }
-
 internal fun buildHookDiagnosticsText(
     context: Context,
     shellSnapshot: DebugShellSnapshot,
@@ -89,7 +87,7 @@ private fun StringBuilder.appendBackendStatus(
             appendLine("  note: Zygisk currently publishes heartbeat/config evidence but no counters")
         }
     } else {
-        val errorName = STATUS_ERRORS_BY_CODE[status.error]?.name ?: "UNKNOWN"
+        val errorName = status.statusError?.name ?: "UNKNOWN"
         appendLine("  status.backend=${status.backend}")
         appendLine("  status.kver=0x${status.kver.toString(16)}")
         appendLine("  status.hooks=0x${status.hooks.toString(16)}")
@@ -204,26 +202,30 @@ private fun totalDeltaForHook(
     counters: Map<CounterKey, Long>,
     baselineCounters: Map<CounterKey, Long>,
     hasBaseline: Boolean,
-): String {
-    if (!hasBaseline) return "n/a"
-    val current = counters.unsignedSumForHook(hook)
-    val baseline = baselineCounters.unsignedSumForHook(hook)
-    return if (current < baseline) "reset" else "+${formatStatCount(current - baseline)}"
-}
+): String =
+    if (!hasBaseline) {
+        "n/a"
+    } else {
+        unsignedDeltaText(counters.unsignedSumForHook(hook), baselineCounters.unsignedSumForHook(hook))
+    }
 
 internal fun counterDeltaText(
     current: Long,
     baseline: Long?,
     hasBaseline: Boolean,
-): String {
-    if (!hasBaseline) return "n/a"
-    if (baseline == null) return "+${formatStatCount(current)}"
-    return if (current.toULong() < baseline.toULong()) {
-        "reset"
-    } else {
-        "+${formatStatCount(current.toULong() - baseline.toULong())}"
+): String = if (!hasBaseline) "n/a" else unsignedDeltaText(current.toULong(), baseline?.toULong())
+
+/** "reset" when the counter ran backwards (device/backend reset), else "+delta"
+ * unsigned. A null [baseline] means the row is new since the baseline → "+current". */
+private fun unsignedDeltaText(
+    current: ULong,
+    baseline: ULong?,
+): String =
+    when {
+        baseline == null -> "+${formatStatCount(current)}"
+        current < baseline -> "reset"
+        else -> "+${formatStatCount(current - baseline)}"
     }
-}
 
 private fun Map<CounterKey, Long>.unsignedSumForHook(hook: HookIds.Hook): ULong =
     filterKeys { key -> key.hookId == hook.id.toLong() }
@@ -242,23 +244,7 @@ private fun StatisticsState.toCounterMap(): Map<CounterKey, Long> =
             }
         }.toMap()
 
-private fun ownedHooks(backend: HookIds.Backend): List<HookIds.Hook> {
-    val mask =
-        when (backend) {
-            HookIds.Backend.KMOD,
-            HookIds.Backend.KPM,
-            -> HookIds.KERNEL_HOOK_MASK.toLong()
-
-            HookIds.Backend.ZYGISK -> HookIds.ZYGISK_HOOK_MASK.toLong()
-
-            HookIds.Backend.LSPOSED -> HookIds.LSPOSED_HOOK_MASK.toLong()
-        }
-    return HookIds.Hook.entries.filter { mask.hasHook(it) }
-}
-
 private fun hookOwners(hook: HookIds.Hook): List<HookIds.Backend> =
     HookIds.Backend.entries.filter { backend -> hook in ownedHooks(backend) }
-
-private fun Long.hasHook(hook: HookIds.Hook): Boolean = this and (1L shl hook.id) != 0L
 
 private fun formatHook(hook: HookIds.Hook): String = "[${hook.id}] ${hook.hookName} - ${hook.note}"

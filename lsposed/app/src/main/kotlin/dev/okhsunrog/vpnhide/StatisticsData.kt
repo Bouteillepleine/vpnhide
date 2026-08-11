@@ -129,14 +129,6 @@ private fun buildBackendStatistics(
         unavailableReason = unavailableReason,
     )
 
-private val ACTIVE_NATIVE_STATUS_ERRORS =
-    setOf(
-        HookIds.StatusError.OK.code
-            .toLong(),
-        HookIds.StatusError.PARTIAL_HOOKS.code
-            .toLong(),
-    )
-
 private fun selectActiveNativeStatisticsBackend(
     backends: List<BackendStatistics>,
     activeNativeBackendId: NativeBackendId?,
@@ -156,7 +148,7 @@ private fun selectActiveNativeStatisticsBackend(
 private fun BackendStatistics.isActiveNativeStatisticsBackend(): Boolean {
     if (rows.isNotEmpty()) return true
     val status = status ?: return false
-    return status.backend == backend.id.toLong() && status.error in ACTIVE_NATIVE_STATUS_ERRORS
+    return status.backendId == backend && status.statusError?.indicatesActive == true
 }
 
 private fun buildStatisticsRows(

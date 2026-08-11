@@ -52,18 +52,30 @@ private const val TAG = LogTags.TEST
 
 data class CheckResult(
     val name: String,
-    val passed: Boolean?,
     val detail: String,
-    // The who-hid-it attribution for native probes (root differential). Null for
-    // Java-level checks, which have no root ground truth — those fall back to the
-    // legacy [passed] tri-state in the UI.
-    val outcome: CheckOutcome? = null,
+    // The who-hid-it classification — the single per-check truth every consumer
+    // renders. Native probes get it from the root differential ([classifyNativeOutcome]);
+    // Java/nativeExtra probes from their raw observation via [classifyJavaOutcome].
+    val outcome: CheckOutcome,
     // The root ground-truth probe's own detail for native checks — what root saw on
     // this surface. Shown next to the app-view detail so the verdict is explained
     // (e.g. "root: 42 routes, no VPN" is WHY a SELinux-blocked read reads as nothing
     // to leak). Null for Java checks and any probe without a root differential.
     val groundTruthDetail: String? = null,
 )
+
+/**
+ * Build a Java-level [CheckResult] from a raw tri-state observation. Java and
+ * Java-implemented native-level probes have no root differential, so the gate's
+ * guarantee (VPN up + this app routed) makes clean ⟹ hidden-by-LSPosed, dirty ⟹
+ * leak, unrunnable ⟹ not-measured — exactly [classifyJavaOutcome]. The single
+ * place those probes turn a boolean into the canonical [CheckOutcome].
+ */
+internal fun javaCheck(
+    name: String,
+    clean: Boolean?,
+    detail: String,
+): CheckResult = CheckResult(name, detail, outcome = classifyJavaOutcome(clean))
 
 internal data class CheckResults(
     // Rust native probes (in-process app view) from the fast phase.
@@ -83,16 +95,17 @@ internal data class CheckResults(
     val all get() = nativeAll + java
 }
 
-/** Number of passed checks out of those that actually ran (NETWORK_BLOCKED
- * probes report `passed == null` and are excluded from the denominator). */
+/** Vectors the app is protected on out of those actually measured — the numerator
+ * counts every non-leak measured outcome, the denominator excludes NotMeasured
+ * (probes that couldn't run). Read off [CheckResult.outcome]; backs the agent bridge. */
 internal data class CheckScore(
     val passed: Int,
     val total: Int,
 )
 
-internal fun List<CheckResult>.score(): CheckScore {
-    val scored = filter { it.passed != null }
-    return CheckScore(passed = scored.count { it.passed == true }, total = scored.size)
+internal fun Iterable<CheckResult>.protectionScore(): CheckScore {
+    val measured = filter { it.outcome !is CheckOutcome.NotMeasured }
+    return CheckScore(passed = measured.count { it.outcome !is CheckOutcome.Leak }, total = measured.size)
 }
 
 internal suspend fun isVpnActive(): Boolean {
@@ -157,7 +170,7 @@ internal fun runCoreChecks(
             checkTransportInfo(cm, res.getString(R.string.check_transport_info)),
             checkAllNetworksVpn(cm, res.getString(R.string.check_all_networks_vpn)),
             checkLinkPropertiesIfname(cm, res.getString(R.string.check_link_properties)),
-        ).logged().withJavaOutcomes()
+        ).logged()
 
     return CheckResults(
         native = native,
@@ -179,25 +192,17 @@ internal fun runExtraJavaChecks(
         checkNetworkCallbackVpn(cm, res.getString(R.string.check_network_callback)),
         checkLinkPropertiesRoutes(cm, res.getString(R.string.check_link_properties_routes)),
         checkNetworkInfoVpn(cm, res.getString(R.string.check_network_info_vpn)),
-    ).logged().withJavaOutcomes()
+    ).logged()
 }
-
-/**
- * Attach the who-hid-it [CheckOutcome] to Java-level checks. The gate guarantees
- * a VPN is up and this app is routed through it, so clean ⟹ hidden by LSPosed,
- * dirty ⟹ leak (see [classifyJavaOutcome]). Applied only to the pure Java-API
- * checks — the Java-implemented native-level probes stay on the passed tri-state.
- */
-private fun List<CheckResult>.withJavaOutcomes(): List<CheckResult> = map { it.copy(outcome = classifyJavaOutcome(it.passed)) }
 
 /** Log each Java check result; native probes already log via [nativeCheck]. */
 private fun List<CheckResult>.logged(): List<CheckResult> =
     onEach { c ->
         val status =
-            when (c.passed) {
-                true -> "PASS"
-                false -> "FAIL"
-                null -> "SKIP"
+            when (c.outcome) {
+                CheckOutcome.Leak -> "FAIL"
+                is CheckOutcome.NotMeasured -> "SKIP"
+                else -> "PASS"
             }
         VpnHideLog.i(TAG, "[${c.name}] $status: ${c.detail}")
     }
@@ -213,11 +218,11 @@ internal fun runAllChecks(
 private fun nativeCheckResult(
     name: String,
     out: CheckOutput,
-    outcome: CheckOutcome? = null,
+    outcome: CheckOutcome,
     groundTruthDetail: String? = null,
 ): CheckResult {
     VpnHideLog.i(TAG, "[$name] ${out.status}: ${out.detail}")
-    return CheckResult(name, out.status.toPassed(), out.detail, outcome = outcome, groundTruthDetail = groundTruthDetail)
+    return CheckResult(name, out.detail, outcome = outcome, groundTruthDetail = groundTruthDetail)
 }
 
 // ==========================================================================
@@ -226,30 +231,30 @@ private fun nativeCheckResult(
 
 /** Shared preamble for the capability-based checks: resolve the active
  * network's [NetworkCapabilities]. A missing active network / capabilities is
- * reported as `passed == null` (not measured) rather than a green pass: the
- * self-in-tunnel gate guarantees an active network is present, so an absent one
- * means the probe couldn't observe — not that a backend hid the VPN. Classifying
- * it PASS would paint a false "hidden by backend" ([classifyJavaOutcome]). */
+ * reported as not-measured (`javaCheck(name, clean = null, …)`) rather than a green
+ * pass: the self-in-tunnel gate guarantees an active network is present, so an
+ * absent one means the probe couldn't observe — not that a backend hid the VPN.
+ * Classifying it clean would paint a false "hidden by backend" ([classifyJavaOutcome]). */
 private inline fun withActiveCaps(
     cm: ConnectivityManager,
     name: String,
     body: (NetworkCapabilities) -> CheckResult,
 ): CheckResult {
-    val net = cm.activeNetwork ?: return CheckResult(name, null, "no active network")
-    val caps = cm.getNetworkCapabilities(net) ?: return CheckResult(name, null, "no capabilities")
+    val net = cm.activeNetwork ?: return javaCheck(name, null, "no active network")
+    val caps = cm.getNetworkCapabilities(net) ?: return javaCheck(name, null, "no capabilities")
     return body(caps)
 }
 
 /** Shared preamble for the LinkProperties-based checks. A missing active network
- * / link properties is `passed == null` (not measured) for the same reason as
+ * / link properties is not-measured (`clean = null`) for the same reason as
  * [withActiveCaps] — the gate makes it an unobservable edge, not a clean pass. */
 private inline fun withActiveLinkProperties(
     cm: ConnectivityManager,
     name: String,
     body: (LinkProperties) -> CheckResult,
 ): CheckResult {
-    val net = cm.activeNetwork ?: return CheckResult(name, null, "no active network")
-    val lp = cm.getLinkProperties(net) ?: return CheckResult(name, null, "no link properties")
+    val net = cm.activeNetwork ?: return javaCheck(name, null, "no active network")
+    val lp = cm.getLinkProperties(net) ?: return javaCheck(name, null, "no link properties")
     return body(lp)
 }
 
@@ -267,7 +272,7 @@ internal fun checkHasTransportVpn(
             } else {
                 "hasTransport(VPN)=true, WIFI=$hasWifi, CELLULAR=$hasCellular"
             }
-        CheckResult(name, !hasVpn, detail)
+        javaCheck(name, !hasVpn, detail)
     }
 
 internal fun checkHasCapabilityNotVpn(
@@ -277,7 +282,7 @@ internal fun checkHasCapabilityNotVpn(
     withActiveCaps(cm, name) { caps ->
         val notVpn = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
         val detail = if (notVpn) "NOT_VPN capability present" else "NOT_VPN capability MISSING"
-        CheckResult(name, notVpn, detail)
+        javaCheck(name, notVpn, detail)
     }
 
 internal fun checkTransportInfo(
@@ -289,14 +294,14 @@ internal fun checkTransportInfo(
         val className = info?.javaClass?.name ?: "null"
         val isVpn = className.contains("VpnTransportInfo")
         val detail = if (!isVpn) "transportInfo=$className" else "VpnTransportInfo: $info"
-        CheckResult(name, !isVpn, detail)
+        javaCheck(name, !isVpn, detail)
     }
 
 private fun checkNetworkInterfaceEnum(name: String): CheckResult =
     try {
         val ifaces =
             NetworkInterface.getNetworkInterfaces()
-                ?: return CheckResult(name, true, "returned null")
+                ?: return javaCheck(name, true, "returned null")
         val allNames = mutableListOf<String>()
         val vpnNames = mutableListOf<String>()
         for (iface in ifaces) {
@@ -309,9 +314,9 @@ private fun checkNetworkInterfaceEnum(name: String): CheckResult =
             } else {
                 "VPN [${vpnNames.joinToString()}] in [${allNames.joinToString()}]"
             }
-        CheckResult(name, vpnNames.isEmpty(), detail)
+        javaCheck(name, vpnNames.isEmpty(), detail)
     } catch (e: Exception) {
-        CheckResult(name, false, "${e.message}")
+        javaCheck(name, false, "${e.message}")
     }
 
 @Suppress("DEPRECATION")
@@ -320,7 +325,7 @@ internal fun checkAllNetworksVpn(
     name: String,
 ): CheckResult {
     val networks = cm.allNetworks
-    if (networks.isEmpty()) return CheckResult(name, true, "no networks")
+    if (networks.isEmpty()) return javaCheck(name, true, "no networks")
     val vpnNetworks =
         networks.filter { net ->
             cm.getNetworkCapabilities(net)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
@@ -331,7 +336,7 @@ internal fun checkAllNetworksVpn(
         } else {
             "${vpnNetworks.size} network(s) with TRANSPORT_VPN"
         }
-    return CheckResult(name, vpnNetworks.isEmpty(), detail)
+    return javaCheck(name, vpnNetworks.isEmpty(), detail)
 }
 
 private fun checkActiveNetworkVpn(
@@ -355,7 +360,7 @@ private fun checkActiveNetworkVpn(
             } else {
                 "transports include VPN: [${transports.joinToString()}]"
             }
-        CheckResult(name, !hasVpn, detail)
+        javaCheck(name, !hasVpn, detail)
     }
 
 private data class NetworkForTypeResult(
@@ -385,11 +390,11 @@ private fun checkNetworkForTypeVpn(
     name: String,
 ): CheckResult {
     val result = queryNetworkForType(cm, ConnectivityManager.TYPE_VPN)
-    result.error?.let { return CheckResult(name, false, it) }
+    result.error?.let { return javaCheck(name, false, it) }
     // Reflection couldn't reach getNetworkForType — probe didn't run (not measured),
     // not a clean pass. A non-null TYPE_VPN network below is still a legitimate hidden.
-    if (result.unavailable) return CheckResult(name, null, "getNetworkForType unavailable")
-    val vpnNetwork = result.network ?: return CheckResult(name, true, "TYPE_VPN returned null")
+    if (result.unavailable) return javaCheck(name, null, "getNetworkForType unavailable")
+    val vpnNetwork = result.network ?: return javaCheck(name, true, "TYPE_VPN returned null")
 
     val caps = cm.getNetworkCapabilities(vpnNetwork)
     val hasVpn = caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
@@ -399,7 +404,7 @@ private fun checkNetworkForTypeVpn(
         } else {
             "TYPE_VPN returned $vpnNetwork"
         }
-    return CheckResult(name, false, detail)
+    return javaCheck(name, false, detail)
 }
 
 @Suppress("DEPRECATION")
@@ -407,11 +412,11 @@ private fun checkActiveNetworkHandle(
     cm: ConnectivityManager,
     name: String,
 ): CheckResult {
-    val active = cm.activeNetwork ?: return CheckResult(name, null, "no active network")
+    val active = cm.activeNetwork ?: return javaCheck(name, null, "no active network")
     val vpnResult = queryNetworkForType(cm, ConnectivityManager.TYPE_VPN)
-    vpnResult.error?.let { return CheckResult(name, false, it) }
-    if (vpnResult.unavailable) return CheckResult(name, null, "active=$active, getNetworkForType unavailable")
-    val vpnNetwork = vpnResult.network ?: return CheckResult(name, true, "active=$active, TYPE_VPN not exposed")
+    vpnResult.error?.let { return javaCheck(name, false, it) }
+    if (vpnResult.unavailable) return javaCheck(name, null, "active=$active, getNetworkForType unavailable")
+    val vpnNetwork = vpnResult.network ?: return javaCheck(name, true, "active=$active, TYPE_VPN not exposed")
 
     val leaksVpnHandle = active == vpnNetwork
     val detail =
@@ -420,7 +425,7 @@ private fun checkActiveNetworkHandle(
         } else {
             "active=$active, TYPE_VPN=$vpnNetwork"
         }
-    return CheckResult(name, !leaksVpnHandle, detail)
+    return javaCheck(name, !leaksVpnHandle, detail)
 }
 
 @Suppress("DEPRECATION")
@@ -430,9 +435,9 @@ private fun checkAllNetworksHandles(
 ): CheckResult {
     val networks = cm.allNetworks
     val vpnResult = queryNetworkForType(cm, ConnectivityManager.TYPE_VPN)
-    vpnResult.error?.let { return CheckResult(name, false, it) }
-    if (vpnResult.unavailable) return CheckResult(name, null, "${networks.size} networks, getNetworkForType unavailable")
-    val vpnNetwork = vpnResult.network ?: return CheckResult(name, true, "${networks.size} networks, TYPE_VPN not exposed")
+    vpnResult.error?.let { return javaCheck(name, false, it) }
+    if (vpnResult.unavailable) return javaCheck(name, null, "${networks.size} networks, getNetworkForType unavailable")
+    val vpnNetwork = vpnResult.network ?: return javaCheck(name, true, "${networks.size} networks, TYPE_VPN not exposed")
 
     val containsVpnHandle = networks.any { it == vpnNetwork }
     val detail =
@@ -441,7 +446,7 @@ private fun checkAllNetworksHandles(
         } else {
             "${networks.size} networks, TYPE_VPN=$vpnNetwork not listed"
         }
-    return CheckResult(name, !containsVpnHandle, detail)
+    return javaCheck(name, !containsVpnHandle, detail)
 }
 
 // Push-callback leak (issue #70, e.g. VTB): apps using
@@ -472,7 +477,7 @@ internal fun checkNetworkCallbackVpn(
         val fired = latch.await(3, TimeUnit.SECONDS)
         val caps = seen.get()
         if (!fired || caps == null) {
-            CheckResult(name, true, "no callback delivered")
+            javaCheck(name, true, "no callback delivered")
         } else {
             val hasVpn = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
             val notVpn = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
@@ -483,10 +488,10 @@ internal fun checkNetworkCallbackVpn(
                 } else {
                     "callback leaks VPN: hasTransport(VPN)=$hasVpn, NOT_VPN=$notVpn"
                 }
-            CheckResult(name, !leaked, detail)
+            javaCheck(name, !leaked, detail)
         }
     } catch (e: Exception) {
-        CheckResult(name, false, e.message ?: e.javaClass.simpleName)
+        javaCheck(name, false, e.message ?: e.javaClass.simpleName)
     } finally {
         runCatching { cm.unregisterNetworkCallback(callback) }
     }
@@ -507,7 +512,7 @@ internal fun checkLinkPropertiesIfname(
             } else {
                 "ifname=$ifname is a VPN interface"
             }
-        CheckResult(name, !isVpn, detail)
+        javaCheck(name, !isVpn, detail)
     }
 
 private fun checkLinkPropertiesRoutes(
@@ -527,7 +532,7 @@ private fun checkLinkPropertiesRoutes(
             } else {
                 "${vpnRoutes.size} route(s) via VPN"
             }
-        CheckResult(name, vpnRoutes.isEmpty(), detail)
+        javaCheck(name, vpnRoutes.isEmpty(), detail)
     }
 
 // getNetworkInfo(TYPE_VPN) probes the legacy VPN type directly (issue #85). The
@@ -543,7 +548,7 @@ private fun checkNetworkInfoVpn(
 ): CheckResult {
     val info =
         cm.getNetworkInfo(ConnectivityManager.TYPE_VPN)
-            ?: return CheckResult(name, true, "getNetworkInfo(TYPE_VPN) returned null")
+            ?: return javaCheck(name, true, "getNetworkInfo(TYPE_VPN) returned null")
     val leaks = info.isConnectedOrConnecting
     val detail =
         if (!leaks) {
@@ -551,5 +556,5 @@ private fun checkNetworkInfoVpn(
         } else {
             "getNetworkInfo(TYPE_VPN) connected: ${info.typeName} ${info.state}"
         }
-    return CheckResult(name, !leaks, detail)
+    return javaCheck(name, !leaks, detail)
 }

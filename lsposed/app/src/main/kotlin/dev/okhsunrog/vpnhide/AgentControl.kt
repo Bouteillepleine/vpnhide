@@ -656,32 +656,28 @@ private fun LayerStatus.toAgentStatus(): String =
     }
 
 private fun CheckResults.toAgentDiagnosticsReport(): AgentDiagnosticsReport {
-    val score = all.score()
-    // Every check carries its own root-differential/gate outcome now, so no join
-    // back to NATIVE_CHECKS by index. nativeExtra (Java-implemented native-level
-    // probes) has no root differential and reports on the tri-state only.
-    val nativeWithOutcomes =
-        native.map { it.toAgentCheckResult(it.outcome?.token()) } +
-            nativeExtra.map { it.toAgentCheckResult(null) }
+    val score = all.protectionScore()
+    // Every check carries its own root-differential/gate outcome, so the agent
+    // report is a pure render of it — no index join back to NATIVE_CHECKS.
     return AgentDiagnosticsReport(
         state = "ready",
         score = AgentCheckScore(score.passed, score.total),
-        nativeChecks = nativeWithOutcomes,
-        javaChecks = java.map { it.toAgentCheckResult(it.outcome?.token()) },
+        nativeChecks = (native + nativeExtra).map { it.toAgentCheckResult() },
+        javaChecks = java.map { it.toAgentCheckResult() },
     )
 }
 
-private fun CheckResult.toAgentCheckResult(outcome: String? = null): AgentCheckResult =
+private fun CheckResult.toAgentCheckResult(): AgentCheckResult =
     AgentCheckResult(
         name = name,
         status =
-            when (passed) {
-                true -> "pass"
-                false -> "fail"
-                null -> "info"
+            when (outcome) {
+                CheckOutcome.Leak -> "fail"
+                is CheckOutcome.NotMeasured -> "info"
+                else -> "pass"
             },
         detail = detail,
-        outcome = outcome,
+        outcome = outcome.token(),
         groundTruthDetail = groundTruthDetail,
     )
 
@@ -727,19 +723,9 @@ private fun BackendStatistics.toAgentBackendStatistics(): AgentBackendStatistics
 private fun BackendStatistics.statisticsStatusName(): String =
     when {
         unavailableReason != null -> "unavailable"
-
         status == null -> "no_data"
-
-        status.error ==
-            HookIds.StatusError.OK.code
-                .toLong()
-        -> "ok"
-
-        status.error ==
-            HookIds.StatusError.PARTIAL_HOOKS.code
-                .toLong()
-        -> "partial"
-
+        status.statusError == HookIds.StatusError.OK -> "ok"
+        status.statusError == HookIds.StatusError.PARTIAL_HOOKS -> "partial"
         else -> "error"
     }
 

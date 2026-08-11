@@ -1019,21 +1019,10 @@ private fun backendHealth(backend: BackendStatistics): BackendHealth {
     val status = backend.status
     return when {
         backend.unavailableReason != null -> BackendHealth.Unavailable
-
         status == null && backend.rows.isEmpty() -> BackendHealth.NoData
-
         status == null -> BackendHealth.Partial
-
-        status.error ==
-            HookIds.StatusError.OK.code
-                .toLong()
-        -> BackendHealth.Ok
-
-        status.error ==
-            HookIds.StatusError.PARTIAL_HOOKS.code
-                .toLong()
-        -> BackendHealth.Partial
-
+        status.statusError == HookIds.StatusError.OK -> BackendHealth.Ok
+        status.statusError == HookIds.StatusError.PARTIAL_HOOKS -> BackendHealth.Partial
         else -> BackendHealth.Error
     }
 }

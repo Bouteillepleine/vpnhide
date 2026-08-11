@@ -362,7 +362,7 @@
     <string name="logcat_btn_stop">Остановить и сохранить</string>
     <string name="logcat_recording_status">● Запись · %1$s · %2$s</string>
     <string name="logcat_last_recording">Последняя запись · %1$s · %2$s</string>
-    <string name="summary_format">%1$d/%2$d пройдено</string>
+    <string name="diag_summary_tally">Скрыто: %1$d · Утечек: %2$d</string>
     <!-- Статус проверки в диагностике: цветная точка + короткое слово (кто скрыл VPN на этом векторе). -->
     <string name="diag_status_ok">ОК</string>
     <string name="diag_status_leak">Утечка</string>
