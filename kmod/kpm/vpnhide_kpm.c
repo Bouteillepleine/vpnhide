@@ -117,6 +117,19 @@ static bool debug_enabled;
 static uint32_t installed_hooks;
 static uint32_t last_error;
 
+/* Exact registrations owned by this KPM. Teardown must unwrap the same
+ * compiler clone that install_hook resolved, and only after hook_wrap actually
+ * succeeded; resolving names again during exit cannot guarantee either. */
+#define VPNHIDE_MAX_HOOK_REGISTRATIONS 12
+struct vpnhide_hook_registration {
+	void *function;
+	void *before;
+	void *after;
+};
+static struct vpnhide_hook_registration
+	hook_registrations[VPNHIDE_MAX_HOOK_REGISTRATIONS];
+static unsigned int nr_hook_registrations;
+
 /* Native interception stats, cumulative since KPM load. Only the 11
  * kernel-owned hooks need storage; the global 27-id space also contains
  * LSPosed/Zygisk hooks that can never fire here. A zero UID is the empty-slot
@@ -1473,10 +1486,15 @@ static int install_hook(const char *name, int argno, void *before, void *after,
 			enum vpnhide_hook_id hook_id)
 {
 	unsigned long fn = lookup_fn(name);
+	struct vpnhide_hook_registration *registration;
 
-	if (!fn)
+	if (!fn || nr_hook_registrations >= VPNHIDE_MAX_HOOK_REGISTRATIONS)
 		return 0;
 	if (hook_wrap((void *)fn, argno, before, after, 0) == HOOK_NO_ERR) {
+		registration = &hook_registrations[nr_hook_registrations++];
+		registration->function = (void *)fn;
+		registration->before = before;
+		registration->after = after;
 		installed_hooks |= vpnhide_hook_bit(hook_id);
 		return 1;
 	}
@@ -1492,6 +1510,7 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 	      (unsigned int)kver);
 
 	installed_hooks = 0;
+	nr_hook_registrations = 0;
 	last_error = VPNHIDE_ERR_OK;
 	__atomic_store_n(&cfg_seq, 0, __ATOMIC_RELAXED);
 	__atomic_store_n(&cfg_writer, 0, __ATOMIC_RELAXED);
@@ -1701,64 +1720,14 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 
 static long vpnhide_kpm_exit(void *__user reserved)
 {
-	unsigned long fn;
+	while (nr_hook_registrations > 0) {
+		struct vpnhide_hook_registration *registration =
+			&hook_registrations[--nr_hook_registrations];
 
-	fn = lookup_fn("fib_route_seq_show");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)fib_route_before,
-			    (void *)fib_route_after);
-	fn = lookup_fn("rtnl_fill_ifinfo");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)rtnl_fill_before,
-			    (void *)rtnl_fill_after);
-	fn = lookup_fn("ipv6_route_seq_show");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)fib_route_before,
-			    (void *)ipv6_route_after);
-	fn = lookup_fn("inet_fill_ifaddr");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)inet_fill_before,
-			    (void *)inet_fill_after);
-	fn = lookup_fn("inet6_fill_ifaddr");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)inet6_fill_before,
-			    (void *)inet6_fill_after);
-	fn = lookup_fn("dev_ioctl");
-	if (fn)
-		hook_unwrap((void *)fn, 0, (void *)dev_ioctl_after);
-	fn = lookup_fn("sock_ioctl");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)sock_ioctl_before,
-			    (void *)sock_ioctl_after);
-	fn = lookup_fn("fib_dump_info");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)fib_dump_before,
-			    (void *)fib_dump_after);
-	fn = lookup_fn("rt6_fill_node");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)rt6_fill_before,
-			    (void *)rt6_fill_after);
-	fn = lookup_fn("fib_nl_fill_rule");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)fib_rule_before,
-			    (void *)fib_rule_after);
-	if (off && socket_bind_uses_index_hook()) {
-		fn = lookup_fn(socket_bind_index_hook_name());
-		if (fn)
-			hook_unwrap((void *)fn,
-				    (void *)socket_bind_index_before, 0);
-	} else {
-		fn = lookup_fn("sock_setsockopt");
-		if (fn)
-			hook_unwrap((void *)fn, (void *)socket_bind_sock_before,
-				    0);
-		if (off && sockopt_takes_sk()) {
-			fn = lookup_fn("sk_setsockopt");
-			if (fn)
-				hook_unwrap((void *)fn,
-					    (void *)socket_bind_sk_before, 0);
-		}
+		hook_unwrap(registration->function, registration->before,
+			    registration->after);
 	}
+	installed_hooks = 0;
 
 	logki(MODNAME ": KPM unloaded\n");
 	return 0;
