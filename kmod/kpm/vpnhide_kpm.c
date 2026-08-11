@@ -458,6 +458,37 @@ static const char *netdev_name(void *dev)
 	return dev ? (const char *)((char *)dev + off->netdev_name) : 0;
 }
 
+/* Every hook_fargsN type shares this hook_fargs0_t prefix. Keep the common skb
+ * rollback state machine here so all netlink hooks preserve identical error,
+ * trim, return-value, and statistics semantics. */
+static void reset_skb_filter(void *raw_fargs)
+{
+	hook_fargs0_t *fargs = raw_fargs;
+
+	fargs->local.data0 = 0;
+}
+
+static void mark_skb_for_filter(void *raw_fargs, void *skb)
+{
+	hook_fargs0_t *fargs = raw_fargs;
+
+	fargs->local.data0 = 1;
+	fargs->local.data1 = (uint64_t)skb;
+	fargs->local.data2 =
+		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
+}
+
+static void finish_skb_filter(void *raw_fargs, enum vpnhide_hook_id hook_id)
+{
+	hook_fargs0_t *fargs = raw_fargs;
+
+	if (!fargs->local.data0 || (long)fargs->ret < 0)
+		return;
+	_skb_trim((void *)fargs->local.data1, (unsigned int)fargs->local.data2);
+	fargs->ret = 0;
+	record_hook_hit(hook_id);
+}
+
 /* True when `dev` (a route's output device) is physical AND the route is a
  * public /32 host-route — the route a VPN client pins to the uplink so tunnel
  * packets can reach the server, which leaks the server's public IPv4 even when
@@ -608,29 +639,18 @@ static void rtnl_fill_before(hook_fargs12_t *fargs, void *udata)
 	void *skb = (void *)fargs->arg0;
 	void *dev = (void *)fargs->arg1;
 
-	fargs->local.data0 = 0; /* should_filter */
+	reset_skb_filter(fargs);
 	if (!hook_active(VPNHIDE_HOOK_RTNL_FILL_IFINFO) || !skb || !dev)
 		return;
 	if (!iface_is_vpn(netdev_name(dev)))
 		return;
 
-	fargs->local.data0 = 1; /* filter */
-	fargs->local.data1 = (uint64_t)skb;
-	fargs->local.data2 =
-		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
+	mark_skb_for_filter(fargs, skb);
 }
 
 static void rtnl_fill_after(hook_fargs12_t *fargs, void *udata)
 {
-	if (!fargs->local.data0)
-		return;
-	if ((long)fargs->ret < 0)
-		return; /* the fill already failed; nothing to undo */
-	if (_skb_trim)
-		_skb_trim((void *)fargs->local.data1,
-			  (unsigned int)fargs->local.data2);
-	fargs->ret = 0;
-	record_hook_hit(VPNHIDE_HOOK_RTNL_FILL_IFINFO);
+	finish_skb_filter(fargs, VPNHIDE_HOOK_RTNL_FILL_IFINFO);
 }
 
 /* ================================================================== */
@@ -999,29 +1019,18 @@ static void addr_fill_before(hook_fargs4_t *fargs, void *dev,
 {
 	void *skb = (void *)fargs->arg0;
 
-	fargs->local.data0 = 0;
+	reset_skb_filter(fargs);
 	if (!hook_active(hook_id) || !skb || !dev)
 		return;
 	if (!iface_is_vpn(netdev_name(dev)))
 		return;
-	fargs->local.data0 = 1;
-	fargs->local.data1 = (uint64_t)skb;
-	fargs->local.data2 =
-		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
+	mark_skb_for_filter(fargs, skb);
 }
 
 static void addr_fill_after_hook(hook_fargs4_t *fargs,
 				 enum vpnhide_hook_id hook_id)
 {
-	if (!fargs->local.data0)
-		return;
-	if ((long)fargs->ret < 0)
-		return;
-	if (_skb_trim)
-		_skb_trim((void *)fargs->local.data1,
-			  (unsigned int)fargs->local.data2);
-	fargs->ret = 0;
-	record_hook_hit(hook_id);
+	finish_skb_filter(fargs, hook_id);
 }
 
 static void inet_fill_after(hook_fargs4_t *fargs, void *udata)
@@ -1098,7 +1107,7 @@ static void fib_dump_before(hook_fargs12_t *fargs, void *udata)
 	void *p = (void *)fargs->args[off->fib_dump_fi_arg];
 	void *fi, *dev;
 
-	fargs->local.data0 = 0;
+	reset_skb_filter(fargs);
 	if (!hook_active(VPNHIDE_HOOK_FIB_DUMP_INFO) || !skb || !p)
 		return;
 	fi = off->fib_dump_fi_via_fri ? *(void **)p : p; /* fib_rt_info.fi @0 */
@@ -1113,23 +1122,12 @@ static void fib_dump_before(hook_fargs12_t *fargs, void *udata)
 	    !kpm_is_public_host_route4(fargs, p, dev))
 		return;
 
-	fargs->local.data0 = 1;
-	fargs->local.data1 = (uint64_t)skb;
-	fargs->local.data2 =
-		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
+	mark_skb_for_filter(fargs, skb);
 }
 
 static void fib_dump_after(hook_fargs12_t *fargs, void *udata)
 {
-	if (!fargs->local.data0)
-		return;
-	if ((long)fargs->ret < 0)
-		return;
-	if (_skb_trim)
-		_skb_trim((void *)fargs->local.data1,
-			  (unsigned int)fargs->local.data2);
-	fargs->ret = 0;
-	record_hook_hit(VPNHIDE_HOOK_FIB_DUMP_INFO);
+	finish_skb_filter(fargs, VPNHIDE_HOOK_FIB_DUMP_INFO);
 }
 
 /* ================================================================== */
@@ -1165,7 +1163,7 @@ static void rt6_fill_before(hook_fargs12_t *fargs, void *udata)
 	void *rt = (void *)fargs->arg2;
 	void *dev;
 
-	fargs->local.data0 = 0;
+	reset_skb_filter(fargs);
 	if (!hook_active(VPNHIDE_HOOK_RT6_FILL_NODE) || !skb || !rt)
 		return;
 	dev = dev_from_fib6_info(rt);
@@ -1177,23 +1175,12 @@ static void rt6_fill_before(hook_fargs12_t *fargs, void *udata)
 	    !kpm_is_public_host_route6(rt, dev))
 		return;
 
-	fargs->local.data0 = 1;
-	fargs->local.data1 = (uint64_t)skb;
-	fargs->local.data2 =
-		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
+	mark_skb_for_filter(fargs, skb);
 }
 
 static void rt6_fill_after(hook_fargs12_t *fargs, void *udata)
 {
-	if (!fargs->local.data0)
-		return;
-	if ((long)fargs->ret < 0)
-		return;
-	if (_skb_trim)
-		_skb_trim((void *)fargs->local.data1,
-			  (unsigned int)fargs->local.data2);
-	fargs->ret = 0;
-	record_hook_hit(VPNHIDE_HOOK_RT6_FILL_NODE);
+	finish_skb_filter(fargs, VPNHIDE_HOOK_RT6_FILL_NODE);
 }
 
 /* ================================================================== */
@@ -1210,7 +1197,7 @@ static void fib_rule_before(hook_fargs8_t *fargs, void *udata)
 	const char *iif, *oif;
 	int filter = 0;
 
-	fargs->local.data0 = 0;
+	reset_skb_filter(fargs);
 	if (!hook_active(VPNHIDE_HOOK_FIB_NL_FILL_RULE) || !skb || !rule ||
 	    !off->fib_rule_table)
 		return;
@@ -1232,25 +1219,13 @@ static void fib_rule_before(hook_fargs8_t *fargs, void *udata)
 	}
 
 	if (filter) {
-		fargs->local.data0 = 1;
-		fargs->local.data1 = (uint64_t)skb;
-		fargs->local.data2 =
-			(uint64_t) *
-			(unsigned int *)((char *)skb + off->skb_len);
+		mark_skb_for_filter(fargs, skb);
 	}
 }
 
 static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
 {
-	if (!fargs->local.data0)
-		return;
-	if ((long)fargs->ret < 0)
-		return;
-	if (_skb_trim)
-		_skb_trim((void *)fargs->local.data1,
-			  (unsigned int)fargs->local.data2);
-	fargs->ret = 0;
-	record_hook_hit(VPNHIDE_HOOK_FIB_NL_FILL_RULE);
+	finish_skb_filter(fargs, VPNHIDE_HOOK_FIB_NL_FILL_RULE);
 }
 
 /*
