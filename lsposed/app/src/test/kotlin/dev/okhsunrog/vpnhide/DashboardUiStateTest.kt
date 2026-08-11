@@ -172,8 +172,8 @@ class DashboardUiStateTest {
 
     @Test
     fun `moduleActive is true only for active installed module`() {
-        assertTrue(moduleActive(ModuleState.Installed(version = "1.0", active = true, targetCount = 3)))
-        assertFalse(moduleActive(ModuleState.Installed(version = "1.0", active = false, targetCount = 3)))
+        assertTrue(moduleActive(ModuleState.Installed(version = "1.0", active = true)))
+        assertFalse(moduleActive(ModuleState.Installed(version = "1.0", active = false)))
         assertFalse(moduleActive(ModuleState.NotInstalled))
     }
 
@@ -181,8 +181,8 @@ class DashboardUiStateTest {
     fun `activeModuleCount and moduleSummaryText count active runtime modules`() {
         val state =
             dashboardState(
-                kmod = ModuleState.Installed(version = "1.0", active = true, targetCount = 3),
-                zygisk = ModuleState.Installed(version = "1.0", active = false, targetCount = 3),
+                kmod = ModuleState.Installed(version = "1.0", active = true),
+                zygisk = ModuleState.Installed(version = "1.0", active = false),
                 lsposed = LsposedState.Active(version = "1.0", targetCount = 3),
                 ports = ModuleState.NotInstalled,
             )
@@ -207,6 +207,8 @@ class DashboardUiStateTest {
             zygisk = zygisk,
             lsposed = lsposed,
             ports = ports,
+            nativeTargetCount = 0,
+            portsTargetCount = 0,
             nativeBackend = displayNativeBackend(NativeBackendStates(kmod = kmod, kpm = kpm, zygisk = zygisk)),
             nativeInstallRecommendation = null,
             kmodLoadStatus = null,

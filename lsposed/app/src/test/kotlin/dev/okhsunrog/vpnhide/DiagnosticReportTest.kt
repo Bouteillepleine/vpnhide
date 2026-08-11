@@ -11,7 +11,7 @@ import org.junit.Test
  * renderer has to re-derive (and risk disagreeing with) any of it.
  */
 class DiagnosticReportTest {
-    private fun installed(active: Boolean) = ModuleState.Installed(version = "1.0", active = active, targetCount = 1)
+    private fun installed(active: Boolean) = ModuleState.Installed(version = "1.0", active = active)
 
     private fun zygisk(state: ModuleState = installed(active = true)) =
         displayNativeBackend(

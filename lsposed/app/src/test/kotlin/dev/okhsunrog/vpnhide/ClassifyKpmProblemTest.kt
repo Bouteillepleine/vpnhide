@@ -5,7 +5,7 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ClassifyKpmProblemTest {
-    private fun installed(active: Boolean) = ModuleState.Installed(version = "1.0", active = active, targetCount = 0)
+    private fun installed(active: Boolean) = ModuleState.Installed(version = "1.0", active = active)
 
     @Test
     fun `not installed produces no problem`() {

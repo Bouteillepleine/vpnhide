@@ -20,7 +20,6 @@ class DetectModulesTest {
         assertEquals("0.6.3", state.version)
         assertEquals(true, state.active)
         assertEquals("android13-5.10", state.gkiVariant)
-        assertEquals(0, state.targetCount)
     }
 
     @Test
@@ -34,7 +33,6 @@ class DetectModulesTest {
         val sections = mapOf("zygisk_prop" to "version=0.6.3")
         val fresh = detectZygiskModule(sections, "boot_id=boot-1", "boot-1") as ModuleState.Installed
         assertEquals(true, fresh.active)
-        assertEquals(0, fresh.targetCount)
 
         val stale = detectZygiskModule(sections, "boot_id=old", "boot-1") as ModuleState.Installed
         assertEquals(false, stale.active)
@@ -57,7 +55,6 @@ class DetectModulesTest {
             )
         val state = detectPortsModule(sections) as ModuleState.Installed
         assertEquals(true, state.active)
-        assertEquals(0, state.targetCount)
     }
 
     @Test
@@ -69,15 +66,15 @@ class DetectModulesTest {
             )
         val state = detectPortsModule(sections) as ModuleState.Installed
         assertEquals(false, state.active)
-        assertEquals(0, state.targetCount)
     }
 
     @Test
     fun `ports apply problem uses current boot failure detail`() {
-        val ports = ModuleState.Installed(version = "0.6.3", active = false, targetCount = 1)
+        val ports = ModuleState.Installed(version = "0.6.3", active = false)
         val problem =
             detectPortsApplyProblem(
                 ports,
+                1,
                 "boot_id=boot-1\nloaded=0\ndetail=iptables-restore failed\n",
                 currentBootId = "boot-1",
                 portsDisabled = false,
@@ -88,24 +85,25 @@ class DetectModulesTest {
 
     @Test
     fun `ports apply problem is generic when chains are missing without current boot failure`() {
-        val ports = ModuleState.Installed(version = "0.6.3", active = false, targetCount = 1)
+        val ports = ModuleState.Installed(version = "0.6.3", active = false)
 
-        assertEquals(null, detectPortsApplyProblem(ports.copy(active = true), "", "boot-1", portsDisabled = false))
-        assertEquals(null, detectPortsApplyProblem(ports.copy(targetCount = 0), "", "boot-1", portsDisabled = false))
+        assertEquals(null, detectPortsApplyProblem(ports.copy(active = true), 1, "", "boot-1", portsDisabled = false))
+        assertEquals(null, detectPortsApplyProblem(ports, 0, "", "boot-1", portsDisabled = false))
         assertEquals(
             PortsApplyProblem(failureDetail = null),
-            detectPortsApplyProblem(ports, "boot_id=old\nloaded=0\ndetail=old failure\n", "boot-1", portsDisabled = false),
+            detectPortsApplyProblem(ports, 1, "boot_id=old\nloaded=0\ndetail=old failure\n", "boot-1", portsDisabled = false),
         )
     }
 
     @Test
     fun `ports apply problem is suppressed for a deliberately disabled module`() {
-        val ports = ModuleState.Installed(version = "0.6.3", active = false, targetCount = 1)
+        val ports = ModuleState.Installed(version = "0.6.3", active = false)
 
         assertEquals(
             null,
             detectPortsApplyProblem(
                 ports,
+                1,
                 "boot_id=boot-1\nloaded=0\ndetail=iptables-restore failed\n",
                 currentBootId = "boot-1",
                 portsDisabled = true,

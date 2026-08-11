@@ -26,9 +26,7 @@ internal data class TargetsSnapshot(
     val kpmModuleInstalled: Boolean,
     val zygiskModuleInstalled: Boolean,
     val portsModuleInstalled: Boolean,
-    val kmodTargets: Set<String>,
-    val kpmTargets: Set<String>,
-    val zygiskTargets: Set<String>,
+    val nativeTargets: Set<String>,
     val lsposedTargets: Set<String>,
     val hiddenPkgs: Set<String>,
     val observerUids: Set<Int>,
@@ -46,12 +44,6 @@ internal data class TargetsSnapshot(
      * picker's "N" toggle is meaningful only when at least one is present. */
     val anyNativeInstalled: Boolean
         get() = kmodModuleInstalled || kpmModuleInstalled || zygiskModuleInstalled
-
-    /** A package is a native target if it's in ANY native backend's list —
-     * the merged "N" role (the app writes one list to every installed
-     * backend; only the active one acts, §1.5). */
-    val nativeTargets: Set<String>
-        get() = kmodTargets + kpmTargets + zygiskTargets
 
     val displayNativeBackendId: NativeBackendId?
         get() =
@@ -151,9 +143,7 @@ internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
         kpmModuleInstalled = sections["kpm_module_dir"]?.trim() == "1",
         zygiskModuleInstalled = sections["zygisk_module_dir"]?.trim() == "1",
         portsModuleInstalled = portsInstalled,
-        kmodTargets = nativeTargets,
-        kpmTargets = nativeTargets,
-        zygiskTargets = nativeTargets,
+        nativeTargets = nativeTargets,
         lsposedTargets = javaTargets,
         hiddenPkgs = hiddenPkgs,
         observerUids = uidsFor(observerNames),

@@ -17,7 +17,6 @@ sealed interface ModuleState {
     data class Installed(
         val version: String?,
         val active: Boolean,
-        val targetCount: Int,
         // Only populated for kmod builds that carry the stamped `gkiVariant=` field
         // in module.prop (CI-built zips from v0.6.3+). Older builds report null.
         val gkiVariant: String? = null,
@@ -181,12 +180,13 @@ internal data class PortsApplyProblem(
 
 internal fun detectPortsApplyProblem(
     ports: ModuleState,
+    targetCount: Int,
     loadStatusSection: String,
     currentBootId: String,
     portsDisabled: Boolean,
 ): PortsApplyProblem? {
     val installed = ports as? ModuleState.Installed ?: return null
-    if (installed.active || installed.targetCount == 0) return null
+    if (installed.active || targetCount == 0) return null
     // A module the user turned off via their manager (a `disable` marker) is
     // inactive by design — the activator skips it for the same reason. Don't
     // nag "iptables rules are not active" for a deliberately disabled module.
@@ -271,6 +271,8 @@ internal data class DashboardState(
     val zygisk: ModuleState,
     val lsposed: LsposedState,
     val ports: ModuleState,
+    val nativeTargetCount: Int,
+    val portsTargetCount: Int,
     // The one native backend surfaced on the dashboard (kmod > KPM > Zygisk).
     val nativeBackend: DisplayNativeBackend,
     val nativeInstallRecommendation: NativeInstallRecommendation?,
@@ -893,7 +895,6 @@ internal fun detectKmodModule(sections: Map<String, String>): ModuleState {
     return ModuleState.Installed(
         version = prop.version,
         active = active,
-        targetCount = 0,
         gkiVariant = prop.gkiVariant,
     )
 }
@@ -912,7 +913,6 @@ internal fun detectZygiskModule(
     return ModuleState.Installed(
         version = prop.version,
         active = active,
-        targetCount = 0,
     )
 }
 
@@ -932,7 +932,6 @@ internal fun detectKpmModule(
     return ModuleState.Installed(
         version = prop.version,
         active = active,
-        targetCount = 0,
     )
 }
 
@@ -943,7 +942,6 @@ internal fun detectPortsModule(sections: Map<String, String>): ModuleState {
     return ModuleState.Installed(
         version = prop.version,
         active = active,
-        targetCount = 0,
     )
 }
 
@@ -1188,8 +1186,6 @@ internal suspend fun loadDashboardState(
 
     fun countPackages(pkgs: Set<String>): Int = pkgs.count { it != selfPkg }
 
-    fun ModuleState.withTargetCount(count: Int): ModuleState = if (this is ModuleState.Installed) copy(targetCount = count) else this
-
     // ── Module detection ──
     // Each module's state comes from a pure detector (unit-tested). kmod's
     // brokenReason is layered on below, once the kernel recommendation and
@@ -1197,15 +1193,13 @@ internal suspend fun loadDashboardState(
     val currentBootId = shellSnapshot["current_boot_id"].orEmpty()
     val nativeTargetCount = countPackages(targetsSnapshot.nativeTargets)
     val rawNativeBackends = detectNativeBackendStates(shellSnapshot, currentBootId = currentBootId)
-    val kmodRaw = rawNativeBackends.kmod.withTargetCount(nativeTargetCount)
+    val kmodRaw = rawNativeBackends.kmod
     val zygiskStatusRaw = shellSnapshot["zygisk_status"].orEmpty()
-    val zygisk = rawNativeBackends.zygisk.withTargetCount(nativeTargetCount)
-    val kpmRaw = rawNativeBackends.kpm.withTargetCount(nativeTargetCount)
+    val zygisk = rawNativeBackends.zygisk
+    val kpmRaw = rawNativeBackends.kpm
     val standaloneKpm = standaloneKpmLoaded(kpmRaw, shellSnapshot["kpm_runtime_modules"].orEmpty())
-    val ports = detectPortsModule(shellSnapshot).withTargetCount(countPackages(targetsSnapshot.portsObservers))
-    val kmodTargetCount = (kmodRaw as? ModuleState.Installed)?.targetCount ?: 0
-    val kpmTargetCount = (kpmRaw as? ModuleState.Installed)?.targetCount ?: 0
-    val zygiskTargetCount = (zygisk as? ModuleState.Installed)?.targetCount ?: 0
+    val ports = detectPortsModule(shellSnapshot)
+    val portsTargetCount = countPackages(targetsSnapshot.portsObservers)
     VpnHideLog.i(
         TAG,
         "modules: kmodRaw=$kmodRaw kpmRaw=$kpmRaw standaloneKpm=$standaloneKpm zygisk=$zygisk ports=$ports",
@@ -1428,17 +1422,18 @@ internal suspend fun loadDashboardState(
             downloadArtifact = downloadArtifact,
         )
     }
-    val totalTargets = lsposedTargetCount + kmodTargetCount + kpmTargetCount + zygiskTargetCount
+    val totalTargets = lsposedTargetCount + nativeTargetCount
     if (totalTargets == 0) {
         // A fresh, not-yet-configured install isn't broken — guide the user to add
         // apps rather than flag a red error.
         info(res.getString(R.string.dashboard_issue_no_targets))
     }
-    if (ports is ModuleState.Installed && ports.targetCount == 0) {
+    if (ports is ModuleState.Installed && portsTargetCount == 0) {
         info(res.getString(R.string.dashboard_issue_ports_no_observers))
     }
     detectPortsApplyProblem(
         ports,
+        portsTargetCount,
         shellSnapshot["ports_load_status"].orEmpty(),
         currentBootId,
         portsDisabled = shellSnapshot["ports_disabled"].orEmpty().trim() == "1",
@@ -1694,6 +1689,8 @@ internal suspend fun loadDashboardState(
         zygisk = zygisk,
         lsposed = lsposed,
         ports = ports,
+        nativeTargetCount = nativeTargetCount,
+        portsTargetCount = portsTargetCount,
         nativeBackend = nativeBackend,
         nativeInstallRecommendation = nativeInstallRecommendation,
         kmodLoadStatus = kmodLoadStatus,

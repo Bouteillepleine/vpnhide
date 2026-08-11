@@ -9,7 +9,7 @@ import org.junit.Test
  * the fix for the old "inactive backend shows Partial" from SELinux-only passes.
  */
 class LayerStatusTest {
-    private fun installed(active: Boolean) = ModuleState.Installed(version = "1.0", active = active, targetCount = 1)
+    private fun installed(active: Boolean) = ModuleState.Installed(version = "1.0", active = active)
 
     private fun kmod(state: ModuleState) =
         displayNativeBackend(

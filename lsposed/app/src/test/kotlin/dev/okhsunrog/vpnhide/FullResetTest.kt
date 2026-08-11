@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FullResetTest {
-    private val installed = ModuleState.Installed(version = "1.0", active = false, targetCount = 0)
+    private val installed = ModuleState.Installed(version = "1.0", active = false)
     private val activeLsposed = LsposedState.Active(version = "1.0", targetCount = 0)
 
     @Test

@@ -7,7 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NativeBackendTest {
-    private fun installed(active: Boolean) = ModuleState.Installed(version = "1.0", active = active, targetCount = 1)
+    private fun installed(active: Boolean) = ModuleState.Installed(version = "1.0", active = active)
 
     private fun states(
         kmod: ModuleState,
@@ -94,13 +94,12 @@ class NativeBackendTest {
             ModuleState.Installed(
                 version = "1.2.3",
                 active = true,
-                targetCount = 0,
                 gkiVariant = "android14-6.1",
             ),
             states.kmod,
         )
-        assertEquals(ModuleState.Installed(version = "2.0.0", active = true, targetCount = 0), states.kpm)
-        assertEquals(ModuleState.Installed(version = "3.0.0", active = true, targetCount = 0), states.zygisk)
+        assertEquals(ModuleState.Installed(version = "2.0.0", active = true), states.kpm)
+        assertEquals(ModuleState.Installed(version = "3.0.0", active = true), states.zygisk)
         assertEquals(NativeBackendId.Kmod, states.activeId)
     }
 
@@ -253,7 +252,6 @@ class NativeBackendTest {
         val state = detectKpmModule(sections, currentBootId = "boot-1") as ModuleState.Installed
         assertEquals(true, state.active)
         assertEquals("1.0", state.version)
-        assertEquals(0, state.targetCount)
     }
 
     @Test
@@ -286,7 +284,7 @@ class NativeBackendTest {
 
     @Test
     fun `runtime KPM is not standalone when flashable module is installed`() {
-        val installed = ModuleState.Installed(version = "1.0", active = true, targetCount = 0)
+        val installed = ModuleState.Installed(version = "1.0", active = true)
         assertFalse(standaloneKpmLoaded(installed, "available=1\nvpnhide\n"))
     }
 

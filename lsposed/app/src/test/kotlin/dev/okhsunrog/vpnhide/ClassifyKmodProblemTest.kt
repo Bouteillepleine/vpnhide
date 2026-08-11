@@ -8,7 +8,7 @@ class ClassifyKmodProblemTest {
     private fun installed(
         active: Boolean,
         gkiVariant: String? = null,
-    ) = ModuleState.Installed(version = "0.6.3", active = active, targetCount = 0, gkiVariant = gkiVariant)
+    ) = ModuleState.Installed(version = "0.6.3", active = active, gkiVariant = gkiVariant)
 
     private fun loadStatus(
         fresh: Boolean,
