@@ -82,6 +82,36 @@ fn projects_native_roles_to_wire() {
 }
 
 #[test]
+fn native_projection_drops_platform_aids_but_keeps_preinstalled_apps() {
+    // A package sharing "android.uid.system" resolves to 1000 — the same uid as
+    // system_server — so listing it would mean "hide from everything running as
+    // 1000", not "hide from that app". Vendor-preinstalled apps are a different
+    // set: FLAG_SYSTEM but an ordinary 10xxx uid, and they stay targetable.
+    let cfg = parse_canonical(
+        r#"{
+          "version": 1,
+          "apps": {
+            "com.oem.sharesSystemUid": { "native": true },
+            "com.oem.preinstalled": { "native": true }
+          }
+        }"#,
+    )
+    .unwrap();
+    let resolver = parse_pm_packages(
+        "package:com.oem.sharesSystemUid uid:1000\n\
+         package:com.oem.preinstalled uid:10234,1010234\n",
+    );
+
+    assert_eq!(
+        project_native_with_resolver(&cfg, &resolver),
+        "vpnhide 2 config\n\
+         debug 0\n\
+         targets 20003ff 27fa f6a3a\n\
+         end 2\n",
+    );
+}
+
+#[test]
 fn native_projection_ignores_non_kernel_hook_names() {
     let cfg = parse_canonical(
         r#"{

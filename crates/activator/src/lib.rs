@@ -70,6 +70,21 @@ const MAX_NATIVE_TARGETS: usize = MAX_TARGET_UIDS;
 // activator names the constant rather than spelling a bare 0 at each call site,
 // and turning the mode on later is a change here, not in any parser.
 const NO_DEFAULT_MASK: u32 = 0;
+/// First uid Android hands to an ordinary app; everything below is a system AID
+/// (`system_server` 1000, radio 1001, `network_stack` 1073, shell 2000, the OEM
+/// 5000s). Mirrored by both kernel backends, which enforce the same floor.
+const FIRST_APP_UID: u32 = 10_000;
+const PER_USER_RANGE: u32 = 100_000;
+
+/// Whether `uid` identifies an ordinary app rather than a platform AID.
+///
+/// Compared on the app-id, so a uid from a secondary profile — 1010234 in
+/// profile 10 — classifies the same as 10234 in the owner profile. Note this is
+/// **not** `FLAG_SYSTEM`: a vendor-preinstalled app keeps an ordinary 10xxx uid
+/// and stays targetable; only packages sharing a platform AID fall below.
+fn is_app_uid(uid: u32) -> bool {
+    uid % PER_USER_RANGE >= FIRST_APP_UID
+}
 const PM_READY_ATTEMPTS: u32 = 60;
 const APATCH_TRUSTED_SU_KEY: &str = "su";
 const SUPERCALL_HELLO: c_long = 0x1000;

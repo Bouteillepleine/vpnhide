@@ -129,30 +129,77 @@ static bool debug_enabled;
 /*  target` struct + parser the KPM uses (shared/vpnhide_logic.h).    */
 /* ------------------------------------------------------------------ */
 
-static struct vpnhide_target targets[MAX_TARGET_UIDS];
+/* Parallel arrays, not an array of structs: the lookup below touches only the
+ * uids, so keeping them contiguous halves the cache lines a search walks
+ * (a full 64-uid set is one 256-byte run). The parser hands them over sorted
+ * ascending (protocol §4.3), which is what lets the search be a bisection. */
+static u32 target_uids[MAX_TARGET_UIDS];
+static u32 target_masks[MAX_TARGET_UIDS];
 static int nr_targets;
+/* Hookmask for any uid NOT in target_uids (protocol §4.3 `default`). Zero — the
+ * shipped blacklist — makes the array the set to act on; non-zero inverts that
+ * and makes it the exception list. */
+static u32 default_hookmask;
 static DEFINE_SPINLOCK(targets_lock);
-/* OR of every target's hookmask — a lock-free fast-path gate so hook_active()
- * can reject the common case (a hook enabled for nobody, e.g. no targets yet)
- * with a single atomic-free read instead of acquiring targets_lock on every
- * hooked syscall. Recomputed under targets_lock on each config apply; a torn
- * read only costs a brief over- or under-filter around a (rare) config change.
- * Mirrors the KPM's active_hook_mask. */
+/* OR of every target's hookmask AND the default — a lock-free fast-path gate so
+ * hook_active() can reject the common case (a hook enabled for nobody, e.g. no
+ * targets yet) with a single atomic-free read instead of acquiring targets_lock
+ * on every hooked syscall. Recomputed under targets_lock on each config apply; a
+ * torn read only costs a brief over- or under-filter around a (rare) config
+ * change. Mirrors the KPM's active_hook_mask. */
 static u32 active_hook_mask;
 
-/* The enabled-hook mask for the calling UID (0 if it is not a target). */
+/*
+ * First uid Android hands to an ordinary app; everything below is a system AID
+ * (system_server 1000, radio 1001, network_stack 1073, shell 2000, the OEM
+ * 5000s). Compared on the app-id so a uid from a secondary profile — 1010234 in
+ * profile 10 — classifies the same as 10234 in the owner profile.
+ */
+#define VPNHIDE_FIRST_APP_UID 10000
+#define VPNHIDE_PER_USER_RANGE 100000
+
+/* The enabled-hook mask for the calling UID. */
 static u32 target_mask(void)
 {
 	uid_t uid = from_kuid(&init_user_ns, current_uid());
-	u32 mask = 0;
-	int i;
+	u32 mask;
+	int lo, hi;
+
+	/* Below the app range a uid is not an app, it is a platform identity
+	 * shared by many components: an app declaring sharedUserId
+	 * "android.uid.system" resolves to 1000, the same uid as system_server.
+	 * Since UID is the targeting key (§4.3), "hide from that app" is not
+	 * expressible there — the nearest thing the wire can say is "hide from
+	 * everything running as 1000", which is not what anyone asked for and
+	 * is how a device ends up believing it has no route. Note this is NOT
+	 * the same set as FLAG_SYSTEM: vendor-preinstalled apps keep ordinary
+	 * 10xxx uids and stay targetable.
+	 *
+	 * So the floor is unconditional and deliberately not expressible in a
+	 * config — neither a target nor a `default` can lift it. It also keeps
+	 * uid 0 honest, which is what the app's root-differential diagnostics
+	 * use as ground truth. Cheap besides: system daemons hit these syscalls
+	 * constantly and now bail on one compare. The activator applies the
+	 * same rule when projecting, so this is the backstop, not the only gate.
+	 */
+	if (uid % VPNHIDE_PER_USER_RANGE < VPNHIDE_FIRST_APP_UID)
+		return 0;
 
 	spin_lock(&targets_lock);
-	for (i = 0; i < nr_targets; i++) {
-		if (targets[i].uid == uid) {
-			mask = targets[i].hookmask;
+	mask = default_hookmask;
+	lo = 0;
+	hi = nr_targets - 1;
+	while (lo <= hi) {
+		int mid = lo + (hi - lo) / 2;
+
+		if (target_uids[mid] == uid) {
+			mask = target_masks[mid];
 			break;
 		}
+		if (target_uids[mid] < uid)
+			lo = mid + 1;
+		else
+			hi = mid - 1;
 	}
 	spin_unlock(&targets_lock);
 	return mask;
@@ -160,7 +207,7 @@ static u32 target_mask(void)
 
 /* True if `hook_id` is enabled for the calling UID (per-hook gate, §4.3).
  * The .ko owns the full kernel hook mask, so it never masks foreign bits.
- * Fast path: if no target enables this hook, skip the per-uid lock+scan. */
+ * Fast path: if no target enables this hook, skip the per-uid lock+search. */
 static bool hook_active(u32 hook_id)
 {
 	if (!(READ_ONCE(active_hook_mask) & (1u << hook_id)))
@@ -268,23 +315,22 @@ static ssize_t ctl_write(struct file *file, const char __user *ubuf,
 	 * wipe. */
 	if (n < 0)
 		return -EINVAL;
-	/* `default` is the hookmask for uids NOT listed as targets — the
-	 * mechanism a whitelist mode rides on. This backend still stores only
-	 * the target set, so a non-zero default is a config it cannot honour:
-	 * reject it rather than silently read a whitelist config as if it were
-	 * a blacklist. */
-	if (default_mask)
-		return -EINVAL;
 
 	spin_lock(&targets_lock);
-	memcpy(targets, newt, (size_t)n * sizeof(*targets));
-	nr_targets = n;
 	{
-		u32 mask = 0;
+		u32 mask;
 		int i;
 
-		for (i = 0; i < n; i++)
-			mask |= newt[i].hookmask & VPNHIDE_KERNEL_HOOK_MASK;
+		default_mask &= VPNHIDE_KERNEL_HOOK_MASK;
+		mask = default_mask;
+		for (i = 0; i < n; i++) {
+			target_uids[i] = newt[i].uid;
+			target_masks[i] = newt[i].hookmask &
+					  VPNHIDE_KERNEL_HOOK_MASK;
+			mask |= target_masks[i];
+		}
+		nr_targets = n;
+		default_hookmask = default_mask;
 		WRITE_ONCE(active_hook_mask, mask);
 	}
 	spin_unlock(&targets_lock);

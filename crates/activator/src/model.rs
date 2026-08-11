@@ -317,6 +317,19 @@ pub(crate) fn project_native_with_resolver_for_family(
             continue;
         };
         for uid in resolver.uids_for(pkg) {
+            // Below the app range a uid is not an app but a platform identity
+            // shared by many components — a package declaring sharedUserId
+            // "android.uid.system" resolves to 1000, the same uid as
+            // system_server. Since UID is the targeting key, listing one would
+            // mean "hide from everything running as 1000", which is how a
+            // device ends up believing it has no route. This is NOT the same
+            // set as FLAG_SYSTEM: vendor-preinstalled apps keep ordinary 10xxx
+            // uids and stay targetable. `project_ports_with_resolver` has
+            // filtered the same way from the start; the native path had not.
+            // Both kernel backends enforce it too, so this is the polite half.
+            if !is_app_uid(*uid) {
+                continue;
+            }
             by_uid
                 .entry(*uid)
                 .and_modify(|existing| *existing |= mask)
@@ -399,7 +412,7 @@ pub fn project_ports_with_resolver(
             continue;
         }
         for uid in resolver.uids_for(pkg) {
-            if *uid >= 10_000 {
+            if is_app_uid(*uid) {
                 targets.entry(*uid).or_default().merge_app(app);
             }
         }

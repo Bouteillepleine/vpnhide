@@ -79,9 +79,27 @@ static const struct vpnhide_offsets *off; /* selected per running kver */
  * atomic writer gate serializes mutations before cfg_seq is made odd. A
  * contending ctl0 returns busy rather than spinning in preemptible kernel
  * context; the userspace activator retries the rare collision. */
-static struct vpnhide_target targets[MAX_TARGET_UIDS];
+/* Parallel arrays, not an array of structs: the hot-path lookup touches only
+ * the uids, so keeping them contiguous halves the cache lines a search walks
+ * (a full 64-uid set is one 256-byte run). The parser hands them over sorted
+ * ascending (protocol §4.3), which is what lets the search be a bisection. */
+static uint32_t target_uids[MAX_TARGET_UIDS];
+static uint32_t target_masks[MAX_TARGET_UIDS];
 static int nr_targets;
+/* Hookmask for any uid NOT in target_uids (protocol §4.3 `default`). Zero — the
+ * shipped blacklist — makes the array the set to act on; non-zero inverts that
+ * and makes it the exception list. */
+static uint32_t default_hookmask;
 static uint32_t active_hook_mask;
+
+/*
+ * First uid Android hands to an ordinary app; everything below is a system AID
+ * (system_server 1000, radio 1001, network_stack 1073, shell 2000, the OEM
+ * 5000s). Compared on the app-id so a uid from a secondary profile — 1010234 in
+ * profile 10 — classifies the same as 10234 in the owner profile.
+ */
+#define VPNHIDE_FIRST_APP_UID 10000
+#define VPNHIDE_PER_USER_RANGE 100000
 static volatile uint32_t
 	cfg_seq; /* even = stable, odd = a writer is mid-update */
 static volatile uint32_t cfg_writer; /* 0 = free, 1 = config writer active */
@@ -98,8 +116,25 @@ static uint32_t last_error;
 static uint32_t stats_used[MAX_TARGET_UIDS];
 static uint32_t stats_uids[MAX_TARGET_UIDS];
 static unsigned long long stats_counts[MAX_TARGET_UIDS][VPNHIDE_HOOK_COUNT];
-static struct vpnhide_stat_entry
-	stats_snapshot[MAX_TARGET_UIDS * VPNHIDE_HOOK_COUNT];
+/* Single fixed reply buffer for stats/status (§7.2 — no pagination). A few KiB
+ * holds stats for tens of uids; the reader passes a generous outlen and we
+ * truncate on a line boundary (clamp_to_line) if it ever overflows. */
+#define VPNHIDE_OUT_MAX 4096
+
+/*
+ * Serialisation scratch for a `stats` reply. Sized by what the reply can carry,
+ * NOT by MAX_TARGET_UIDS * VPNHIDE_HOOK_COUNT: an entry costs at least
+ * " 0x0:0x0" (8 bytes) once formatted, and the reply is capped at
+ * VPNHIDE_OUT_MAX by this module and by both KPatch and APatch clients, so no
+ * reply can ever deliver more than VPNHIDE_OUT_MAX/8 of them. The product would
+ * be 1728 entries — three quarters of which are unreachable — and, worse, it
+ * would grow with the target ceiling. Static growth is what broke KP boot on
+ * the 6.12 image (see the seqlock note above), so keeping this bound tied to
+ * the transport instead of the ceiling is what lets the ceiling move later.
+ */
+#define VPNHIDE_STATS_SNAPSHOT_MAX (VPNHIDE_OUT_MAX / 8)
+
+static struct vpnhide_stat_entry stats_snapshot[VPNHIDE_STATS_SNAPSHOT_MAX];
 
 /* Kernel functions resolved at init via kallsyms. */
 static unsigned long (*_copy_from_user)(void *, const void *, unsigned long);
@@ -122,15 +157,17 @@ static int (*_netdev_get_name)(void *, char *, int);
 /*  Core helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-/* Recompute the OR of all targets' hookmasks (the fast-path gate). Called by a
- * writer while holding the seqlock (cfg_seq odd), reading the live targets[]. */
+/* Recompute the OR of every target's hookmask and the default (the fast-path
+ * gate). Called by a writer while holding the seqlock (cfg_seq odd), reading
+ * the live arrays. The default has to be folded in: with a non-zero default a
+ * hook can be live for uids that appear in no target record at all. */
 static uint32_t compute_active_hook_mask(int count)
 {
-	uint32_t mask = 0;
+	uint32_t mask = default_hookmask;
 	int i;
 
 	for (i = 0; i < count; i++)
-		mask |= targets[i].hookmask & VPNHIDE_KERNEL_HOOK_MASK;
+		mask |= target_masks[i];
 	return mask;
 }
 
@@ -166,21 +203,47 @@ static int hook_active(uint32_t hook_id)
 	uint32_t s1, s2;
 	int result;
 
+	/* Below the app range a uid is not an app, it is a platform identity
+	 * shared by many components: an app declaring sharedUserId
+	 * "android.uid.system" resolves to 1000, the same uid as system_server.
+	 * Since UID is the targeting key (§4.3), "hide from that app" is not
+	 * expressible there — the nearest thing the wire can say is "hide from
+	 * everything running as 1000", which is how a device ends up believing
+	 * it has no route. NOT the same set as FLAG_SYSTEM: vendor-preinstalled
+	 * apps keep ordinary 10xxx uids and stay targetable.
+	 *
+	 * Unconditional and deliberately not expressible in a config — neither
+	 * a target nor a `default` lifts it. Also keeps uid 0 honest, which the
+	 * app's root-differential diagnostics use as ground truth.
+	 */
+	if (uid % VPNHIDE_PER_USER_RANGE < VPNHIDE_FIRST_APP_UID)
+		return 0;
+
 	do {
 		s1 = __atomic_load_n(&cfg_seq, __ATOMIC_ACQUIRE);
 		if (s1 & 1u)
 			continue; /* a writer is mid-update */
 		result = 0;
 		if (active_hook_mask & (1u << hook_id)) {
-			int i;
+			int lo = 0, hi = nr_targets - 1;
+			uint32_t mask = default_hookmask;
 
-			for (i = 0; i < nr_targets; i++) {
-				if (targets[i].uid == uid) {
-					result = (targets[i].hookmask &
-						  (1u << hook_id)) != 0;
+			/* Sorted ascending by the parser (§4.3), so this is a
+			 * bisection rather than a walk — it runs on every
+			 * hooked call, unlike the parse that ordered it. */
+			while (lo <= hi) {
+				int mid = lo + (hi - lo) / 2;
+
+				if (target_uids[mid] == uid) {
+					mask = target_masks[mid];
 					break;
 				}
+				if (target_uids[mid] < uid)
+					lo = mid + 1;
+				else
+					hi = mid - 1;
 			}
+			result = (mask & (1u << hook_id)) != 0;
 		}
 		s2 = __atomic_load_n(&cfg_seq, __ATOMIC_ACQUIRE);
 	} while (s1 != s2); /* s1 was even; retry if a write started/finished */
@@ -1284,24 +1347,33 @@ static int resolve_symbols(void)
 static void apply_targets(const char *s)
 {
 	unsigned int uids[MAX_TARGET_UIDS];
+	struct vpnhide_target sorted[MAX_TARGET_UIDS];
 	unsigned long n = 0;
-	int cnt, i;
+	int cnt, i, nsorted = 0;
 
 	if (!s)
 		return;
 	while (s[n])
 		n++;
 	cnt = vpnhide_parse_target_uids(s, n, uids, MAX_TARGET_UIDS);
+	/* The load-args list arrives in whatever order the caller wrote it, but
+	 * the hot-path lookup bisects, so it has to be ordered here. Reuse the
+	 * protocol's sorted insert rather than a second ordering rule (it dedups
+	 * too). This runs once at init, off the hot path. */
+	for (i = 0; i < cnt; i++)
+		vpnhide_target_set(sorted, &nsorted, MAX_TARGET_UIDS, uids[i],
+				   VPNHIDE_KERNEL_HOOK_MASK);
 	if (!cfg_try_write_begin())
 		return; /* init path has no concurrent writer; defensive only */
-	for (i = 0; i < cnt; i++) {
-		targets[i].uid = uids[i];
-		targets[i].hookmask = VPNHIDE_KERNEL_HOOK_MASK;
+	for (i = 0; i < nsorted; i++) {
+		target_uids[i] = sorted[i].uid;
+		target_masks[i] = sorted[i].hookmask;
 	}
-	nr_targets = cnt;
-	active_hook_mask = compute_active_hook_mask(cnt);
+	nr_targets = nsorted;
+	default_hookmask = 0;
+	active_hook_mask = compute_active_hook_mask(nsorted);
 	cfg_write_end();
-	vpnhide_dbg("loaded %d target UIDs\n", cnt);
+	vpnhide_dbg("loaded %d target UIDs\n", nsorted);
 }
 
 /* Resolve `name`, wrap it, and record the install in `installed_hooks` so the
@@ -1444,11 +1516,6 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 	return 0;
 }
 
-/* Single fixed reply buffer for stats/status (§7.2 — no pagination). A few KiB
- * holds stats for tens of uids; the reader passes a generous outlen and we
- * truncate on a line boundary (clamp_to_line) if it ever overflows. */
-#define VPNHIDE_OUT_MAX 4096
-
 /*
  * Runtime control/stats channel (protocol §7.1). KernelPatch forwards `args`
  * in and `out_msg` (copy_to_user) out; the `long` return is a short code only,
@@ -1481,18 +1548,15 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 					 MAX_TARGET_UIDS, &dbg, &default_mask);
 		if (n < 0)
 			return -1; /* rejected whole (bad header / end fuse) */
-		/* `default` is the hookmask for uids NOT listed as targets —
-		 * the mechanism a whitelist mode rides on. This backend still
-		 * stores only the target set, so a non-zero default is a config
-		 * it cannot honour: reject it rather than silently read a
-		 * whitelist config as if it were a blacklist. */
-		if (default_mask)
-			return -1;
 		if (!cfg_try_write_begin())
 			return -2; /* concurrent config writer; retry from userspace */
-		for (i = 0; i < n; i++)
-			targets[i] = new_targets[i];
+		for (i = 0; i < n; i++) {
+			target_uids[i] = new_targets[i].uid;
+			target_masks[i] = new_targets[i].hookmask &
+					  VPNHIDE_KERNEL_HOOK_MASK;
+		}
 		nr_targets = n;
+		default_hookmask = default_mask & VPNHIDE_KERNEL_HOOK_MASK;
 		active_hook_mask = compute_active_hook_mask(n);
 		if (dbg >= 0)
 			debug_enabled = dbg ? true : false;
@@ -1507,9 +1571,8 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 		unsigned long available, full, n;
 
 		if (kind == VPNHIDE_KIND_STATS) {
-			int count = snapshot_stats(stats_snapshot,
-						   MAX_TARGET_UIDS *
-							   VPNHIDE_HOOK_COUNT);
+			int count = snapshot_stats(
+				stats_snapshot, VPNHIDE_STATS_SNAPSHOT_MAX);
 
 			full = vpnhide_format_stats(buf, sizeof(buf),
 						    stats_snapshot, count);
