@@ -8,7 +8,7 @@ defines the single on-disk source of truth those bytes are derived from.
 > **Status.** This is the current storage/activation design: one canonical JSON
 > desired-state file, Rust activators that derive runtime state for native and
 > ports backends, and LSPosed reading the JSON directly from `system_server`.
-> Older per-backend text files are migration inputs or derived runtime state, not
+> Per-backend text files exist only as derived runtime state, never as
 > user-managed config.
 
 ---
@@ -221,7 +221,7 @@ crates/
     src/bin/kmod.rs         #   project_native(json) → write("/proc/vpnhide_ctl")
     src/bin/kpm.rs          #   project_native(json) → APatch/FolkPatch supercall / KPatch-Next `kpatch`
     src/bin/zygisk.rs       #   project_native(json) → write_atomic(module_dir file)
-    src/bin/ports.rs        #   project_ports(json) → iptables-restore/ip6tables-restore
+    src/bin/ports.rs        #   activate_ports() → iptables-restore/ip6tables-restore
 zygisk/                     # cdylib — the injected .so. deps: protocol (+ shadowhook).
                             #   Lean: no serde, no JSON in every app process.
 ```
@@ -424,30 +424,7 @@ optional.
 | `/data/system/vpnhide_lsposed_state` | LSPosed status + stats (hook → dashboard) | per-boot |
 | `/data/adb/vpnhide/superkey` | APatch superkey (optional, flag-gated) | persistent, root-only |
 
-No longer user-managed config vs. the pre-redesign layout — kept only as migration
-inputs (read when the canonical JSON is absent) and best-effort cleanup until
-removed (see §9):
-
-- the four per-backend `targets.txt` lists → folded into the **one** canonical;
-- `vpnhide_uids.txt` / `vpnhide_hidden_pkgs.txt` / `vpnhide_observer_uids.txt` →
-  **no longer user-managed** (LSPosed reads the canonical + `packages.list` and
-  derives them in-process).
-
----
-
-## 9. Migration
-
-On first run after the upgrade, if `/data/system/vpnhide_config.json` is absent, the
-app builds it **once** from whatever old per-backend text files exist (package
-lists, observers, hidden, debug flag), writes the canonical, then runs the
-activator. After that the old files are unused; app startup removes the retired
-legacy inputs best-effort once canonical JSON exists. The canonical is the single
-source from then on. Keep the legacy read paths for a few public releases as a
-migration shim, then remove them.
-
----
-
-## 10. Relationship to [protocol.md](protocol.md)
+## 9. Relationship to [protocol.md](protocol.md)
 
 protocol.md remains the frozen **control-v2 / telemetry-v1 wire** specification
 and is still the runtime IPC for the native backends. This document supersedes

@@ -36,14 +36,7 @@ internal val REQUIRED_ROOT_SNAPSHOT_SECTIONS =
         "zygisk_module_dir",
         "kpm_module_dir",
         "canonical_config",
-        "kmod_targets",
-        "zygisk_targets",
-        "kpm_targets",
         "kpm_load_status",
-        "lsposed_targets",
-        "hidden_pkgs",
-        "observer_uids",
-        "ports_observers",
         "ports_load_status",
         "superkey_saved",
         "current_boot_id",
@@ -234,15 +227,6 @@ internal fun buildRootShellSnapshotCommand(
     phase_target_files() {
       phase_start target_files
       emit_file canonical_config $CANONICAL_CONFIG_FILE
-      # Migration shim: the legacy files below are read only when canonical JSON
-      # is absent. Remove after a few public releases with the ShellUtils consts.
-      emit_file kmod_targets $KMOD_TARGETS
-      emit_file zygisk_targets $ZYGISK_TARGETS
-      emit_file kpm_targets $KPM_TARGETS
-      emit_file lsposed_targets $LSPOSED_TARGETS
-      emit_file hidden_pkgs $SS_HIDDEN_PKGS_FILE
-      emit_file observer_uids $SS_OBSERVER_UIDS_FILE
-      emit_file ports_observers $PORTS_OBSERVERS_FILE
       emit_eval superkey_saved '[ -s $SUPERKEY_FILE ] && echo 1 || echo 0'
       phase_end
     }
@@ -364,48 +348,27 @@ private fun buildRootPackageInventoryPhase(): String =
 internal fun parseRootShellSnapshot(
     raw: String,
     recordMetric: (String, Long) -> Unit = StartupTrace::metric,
-): Map<String, String> {
-    val sections = linkedMapOf<String, String>()
-    var currentName: String? = null
-    val currentBody = StringBuilder()
-
-    fun finishSection(name: String) {
-        sections[name] = currentBody.toString()
-        currentBody.clear()
-        currentName = null
-    }
-
-    raw.lineSequence().forEach { line ->
-        if (line.startsWith(ROOT_TIMING_PREFIX)) {
-            val body = line.removePrefix(ROOT_TIMING_PREFIX)
-            val parts = body.split("=", limit = 2)
-            val name = parts.getOrNull(0)?.trim().orEmpty()
-            val durationMs = parts.getOrNull(1)?.trim()?.toLongOrNull()
-            if (name.isNotEmpty() && durationMs != null) {
-                recordMetric("root_shell_$name", durationMs)
+): Map<String, String> =
+    parseFramedSections(
+        raw = raw,
+        beginPrefix = ROOT_SNAPSHOT_BEGIN_PREFIX,
+        endPrefix = ROOT_SNAPSHOT_END_PREFIX,
+        policy =
+            FramedSectionParsePolicy(
+                preserveIncomplete = false,
+                discardOnMismatchedEnd = true,
+                trimSectionEnd = false,
+            ),
+        consumeLine = { line ->
+            if (!line.startsWith(ROOT_TIMING_PREFIX)) {
+                false
+            } else {
+                val (name, duration) =
+                    line.removePrefix(ROOT_TIMING_PREFIX).split("=", limit = 2).let {
+                        it.firstOrNull()?.trim().orEmpty() to it.getOrNull(1)?.trim()?.toLongOrNull()
+                    }
+                if (name.isNotEmpty() && duration != null) recordMetric("root_shell_$name", duration)
+                true
             }
-            return@forEach
-        }
-        if (line.startsWith(ROOT_SNAPSHOT_BEGIN_PREFIX)) {
-            currentName = line.removePrefix(ROOT_SNAPSHOT_BEGIN_PREFIX)
-            currentBody.clear()
-            return@forEach
-        }
-        if (line.startsWith(ROOT_SNAPSHOT_END_PREFIX)) {
-            val endName = line.removePrefix(ROOT_SNAPSHOT_END_PREFIX)
-            val name =
-                currentName?.takeIf { it == endName } ?: run {
-                    currentBody.clear()
-                    currentName = null
-                    return@forEach
-                }
-            finishSection(name)
-            return@forEach
-        }
-        if (currentName != null) {
-            if (currentBody.isNotEmpty()) currentBody.append('\n')
-            currentBody.append(line)
-        }
-    }
-    return sections
-}
+        },
+    ).complete

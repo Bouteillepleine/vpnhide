@@ -10,11 +10,11 @@ class RootSnapshotCacheTest {
     fun `parser keeps multiline sections and records timing metrics`() {
         val raw =
             """
-            __VPNHIDE_ROOT_SECTION_BEGIN__:kmod_targets
+            __VPNHIDE_ROOT_SECTION_BEGIN__:canonical_config
             # Managed by VPN Hide app
             dev.okhsunrog.vpnhide
             com.example.target
-            __VPNHIDE_ROOT_SECTION_END__:kmod_targets
+            __VPNHIDE_ROOT_SECTION_END__:canonical_config
             __VPNHIDE_ROOT_TIMING__:target_files=42
             __VPNHIDE_ROOT_SECTION_BEGIN__:empty_file
             __VPNHIDE_ROOT_SECTION_END__:empty_file
@@ -26,7 +26,7 @@ class RootSnapshotCacheTest {
                 metrics[name] = durationMs
             }
 
-        assertEquals("# Managed by VPN Hide app\ndev.okhsunrog.vpnhide\ncom.example.target", sections["kmod_targets"])
+        assertEquals("# Managed by VPN Hide app\ndev.okhsunrog.vpnhide\ncom.example.target", sections["canonical_config"])
         assertEquals("", sections["empty_file"])
         assertEquals(42L, metrics["root_shell_target_files"])
     }
@@ -46,6 +46,19 @@ class RootSnapshotCacheTest {
 
         assertEquals("ok", sections["complete"])
         assertFalse(sections.containsKey("partial"))
+    }
+
+    @Test
+    fun `parser discards a section after a mismatched end marker`() {
+        val raw =
+            """
+            __VPNHIDE_ROOT_SECTION_BEGIN__:expected
+            unsafe partial body
+            __VPNHIDE_ROOT_SECTION_END__:other
+            __VPNHIDE_ROOT_SECTION_END__:expected
+            """.trimIndent()
+
+        assertFalse(parseRootShellSnapshot(raw, recordMetric = { _, _ -> }).containsKey("expected"))
     }
 
     @Test

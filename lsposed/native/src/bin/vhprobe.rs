@@ -14,30 +14,30 @@
 
 use std::ffi::CString;
 use std::os::raw::{c_long, c_void};
+use std::{env, fs, process};
 use vpnhide_apatch_abi::{
     APATCH_SUPERCALL_NR, command_candidates, encode_command, parse_kernel_version_hint,
 };
+use vpnhide_checks::{run_all_json, self_routed_json};
 
 const SUPERKEY_FILE: &str = "/data/adb/vpnhide/superkey";
 const SUPERCALL_KPM_LIST: c_long = 0x1031;
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let args: Vec<String> = env::args().collect();
     if args.get(1).is_some_and(|arg| arg == "--apatch-kpm-list") {
         print_apatch_kpm_list();
         return;
     }
     if let Some(i) = args.iter().position(|a| a == "--uid") {
-        match args.get(i + 1).and_then(|s| s.parse::<u32>().ok()) {
-            Some(uid) => println!("{}", vpnhide_checks::self_routed_json(uid)),
-            None => {
-                eprintln!("usage: vhprobe --uid <uid>");
-                std::process::exit(2);
-            }
-        }
+        let Some(uid) = args.get(i + 1).and_then(|s| s.parse::<u32>().ok()) else {
+            eprintln!("usage: vhprobe --uid <uid>");
+            process::exit(2);
+        };
+        println!("{}", self_routed_json(uid));
         return;
     }
-    println!("{}", vpnhide_checks::run_all_json());
+    println!("{}", run_all_json());
 }
 
 fn print_apatch_kpm_list() {
@@ -55,7 +55,7 @@ fn print_apatch_kpm_list() {
 
 fn apatch_kpm_list() -> Option<String> {
     let mut keys = Vec::new();
-    if let Ok(saved) = std::fs::read_to_string(SUPERKEY_FILE) {
+    if let Ok(saved) = fs::read_to_string(SUPERKEY_FILE) {
         let saved = saved.trim();
         if !saved.is_empty() {
             keys.push(saved.to_owned());
@@ -70,13 +70,14 @@ fn apatch_kpm_list() -> Option<String> {
         let key = CString::new(key).ok()?;
         for &style in &commands {
             let mut buffer = [0_u8; 4096];
+            let buffer_len = c_long::try_from(buffer.len()).expect("KPM list buffer fits c_long");
             let rc = unsafe {
                 libc::syscall(
                     APATCH_SUPERCALL_NR,
                     key.as_ptr(),
                     encode_command(style, SUPERCALL_KPM_LIST),
                     buffer.as_mut_ptr().cast::<c_void>(),
-                    buffer.len() as c_long,
+                    buffer_len,
                 )
             };
             if rc >= 0 {
@@ -95,7 +96,7 @@ fn apatch_kpm_list() -> Option<String> {
 }
 
 fn apatch_kernel_version_hint() -> Option<c_long> {
-    let output = std::process::Command::new("dmesg").output().ok()?;
+    let output = process::Command::new("dmesg").output().ok()?;
     output
         .status
         .success()
@@ -110,6 +111,6 @@ mod tests {
     fn parses_latest_apatch_version_hint_from_dmesg() {
         let log =
             "old\nKP KernelPatch Version: 000d02\nnoise\nKP KernelPatch Version: 000d03-extra\n";
-        assert_eq!(parse_kernel_version_hint(log), Some(0x000d03));
+        assert_eq!(parse_kernel_version_hint(log), Some(0x0000_0d03));
     }
 }

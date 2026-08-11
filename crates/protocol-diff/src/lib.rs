@@ -6,9 +6,9 @@
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
-    use vpnhide_protocol::{Config, Target, parse_config};
+    use vpnhide_protocol::{Config, MAX_TARGET_UIDS, Target, parse_config};
 
-    const C_TARGET_CAPACITY: usize = vpnhide_protocol::MAX_TARGET_UIDS;
+    const C_TARGET_CAPACITY: usize = MAX_TARGET_UIDS;
 
     #[derive(Clone, Copy, Default)]
     #[repr(C)]

@@ -1,35 +1,16 @@
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
+use std::env;
 use std::error::Error;
-use std::ffi::CString;
 use std::fs;
-use std::fs::OpenOptions;
-use std::io::ErrorKind;
-use std::io::Write;
-use std::os::fd::AsRawFd;
-use std::os::raw::{c_char, c_int, c_long, c_void};
+use std::io::{ErrorKind, Write};
+use std::os::raw::{c_int, c_long};
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
-use std::process::Output;
-use std::process::Stdio;
-use std::ptr;
+use std::str;
 use std::thread;
 use std::time::Duration;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 
-use serde::Deserialize;
-use vpnhide_apatch_abi::{
-    APATCH_SUPERCALL_NR, CommandStyle as ApatchCommandStyle,
-    command_candidates as apatch_command_candidates_for_hint, encode_command as supercall_cmd,
-    parse_kernel_version_hint as parse_apatch_kernel_version_hint,
-};
-use vpnhide_protocol::Target;
-use vpnhide_protocol::hook_ids::{HOOK_NAMES, KERNEL_HOOK_MASK, ZYGISK_HOOK_MASK};
-use vpnhide_protocol::{
-    KPM_ARGS_LEN, Kind, MAX_TARGET_UIDS, format_config, parse_config, peek_kind,
-};
+use vpnhide_protocol::{MAX_TARGET_UIDS, parse_config};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -309,10 +290,7 @@ fn parse_kernel_family(release: &str) -> Option<(u32, u32)> {
     if major_end == 0 {
         return None;
     }
-    let major = std::str::from_utf8(&bytes[..major_end])
-        .ok()?
-        .parse()
-        .ok()?;
+    let major = str::from_utf8(&bytes[..major_end]).ok()?.parse().ok()?;
     let minor_start = major_end + 1;
     let minor_len = bytes[minor_start..]
         .iter()
@@ -328,7 +306,7 @@ fn parse_kernel_family(release: &str) -> Option<(u32, u32)> {
     {
         return None;
     }
-    let minor = std::str::from_utf8(&bytes[minor_start..minor_end])
+    let minor = str::from_utf8(&bytes[minor_start..minor_end])
         .ok()?
         .parse()
         .ok()?;
@@ -376,7 +354,7 @@ pub fn activate_ports_recorded(boot_wait: bool) -> Result<()> {
 
 pub fn boot_wait_requested_from_env() -> Result<bool> {
     let mut boot_wait = false;
-    for arg in std::env::args().skip(1) {
+    for arg in env::args().skip(1) {
         match arg.as_str() {
             "--boot-wait" => boot_wait = true,
             _ => {
@@ -392,7 +370,7 @@ pub fn boot_wait_requested_from_env() -> Result<bool> {
 fn has_native_targets(cfg: &CanonicalConfig, family: NativeHookFamily) -> bool {
     cfg.apps
         .values()
-        .any(|app| app.native.hookmask(family).is_some())
+        .any(|app| app.native.hooks(family).is_some())
 }
 
 fn has_ports_targets(cfg: &CanonicalConfig) -> bool {

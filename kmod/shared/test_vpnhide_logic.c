@@ -141,19 +141,6 @@ static void test_is_physical_iface(void)
 	expect_int("phys NULL", vpnhide_iface_is_physical((const char *)0), 0);
 }
 
-static void test_parse_uids(void)
-{
-	const char *in = "10010\n  10020 \n# a comment\n\n10030\nbad\n10040";
-	unsigned int out[8];
-	int n = vpnhide_parse_target_uids(in, strlen(in), out, 8);
-	if (n != 4 || out[0] != 10010 || out[1] != 10020 || out[2] != 10030 ||
-	    out[3] != 10040) {
-		fprintf(stderr, "FAIL parse_uids: n=%d [%u %u %u %u]\n", n,
-			out[0], out[1], out[2], out[3]);
-		failures++;
-	}
-}
-
 int main(void)
 {
 	test_route_first_field();
@@ -162,8 +149,6 @@ int main(void)
 	test_is_public_ipv4();
 	test_is_public_ipv6();
 	test_is_physical_iface();
-	test_parse_uids();
-
 	if (failures) {
 		fprintf(stderr, "%d test(s) failed\n", failures);
 		return 1;

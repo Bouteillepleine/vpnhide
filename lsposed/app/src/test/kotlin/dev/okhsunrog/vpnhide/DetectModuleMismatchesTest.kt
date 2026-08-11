@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class DetectModuleMismatchesTest {
-    private fun installed(version: String?) = ModuleState.Installed(version = version, active = true, targetCount = 0)
+    private fun installed(version: String?) = ModuleState.Installed(version = version, active = true)
 
     @Test
     fun `no modules produces no mismatches`() {

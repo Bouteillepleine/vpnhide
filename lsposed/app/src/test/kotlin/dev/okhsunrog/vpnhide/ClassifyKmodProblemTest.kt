@@ -8,7 +8,7 @@ class ClassifyKmodProblemTest {
     private fun installed(
         active: Boolean,
         gkiVariant: String? = null,
-    ) = ModuleState.Installed(version = "0.6.3", active = active, targetCount = 0, gkiVariant = gkiVariant)
+    ) = ModuleState.Installed(version = "0.6.3", active = active, gkiVariant = gkiVariant)
 
     private fun loadStatus(
         fresh: Boolean,
@@ -43,7 +43,7 @@ class ClassifyKmodProblemTest {
         androidVersion = "Android 13",
         kernelVersion = "5.10",
         kernelBranch = "Android 13",
-        recommended = if (preferKmod) RecommendedBackend.Kmod else RecommendedBackend.Zygisk,
+        recommended = if (preferKmod) NativeBackendId.Kmod else NativeBackendId.Zygisk,
         recommendedArtifact = artifact,
         recommendedGkiVariant = kmi,
         variantAmbiguous = ambiguous,

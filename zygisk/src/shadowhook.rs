@@ -6,20 +6,13 @@
 //! is linked as a static archive (`libshadowhook.a`) built for
 //! `aarch64-linux-android`; see `build.rs`.
 
-use core::ffi::{c_char, c_int, c_void};
-use std::sync::Once;
+use core::ffi::{CStr, c_char, c_int, c_void};
+use std::sync::OnceLock;
 
-#[allow(non_camel_case_types)]
-#[repr(C)]
-#[derive(Copy, Clone)]
-#[allow(dead_code)]
-pub enum ShadowhookMode {
-    /// Multiple coexisting hooks per symbol (LIFO chain). shadowhook's
-    /// default. Values must match `shadowhook_mode_t` in `shadowhook.h`.
-    Shared = 0,
-    /// One hook per target symbol. Re-hooking returns the same stub.
-    Unique = 1,
-}
+// `SHADOWHOOK_MODE_UNIQUE` from shadowhook.h. We never use shared mode, so a
+// constant represents the one FFI value we pass without carrying a dead enum
+// variant solely to mirror the C declaration.
+const SHADOWHOOK_MODE_UNIQUE: c_int = 1;
 
 unsafe extern "C" {
     /// Initialize shadowhook. Safe to call more than once; subsequent calls
@@ -40,21 +33,15 @@ unsafe extern "C" {
     fn shadowhook_unhook(stub: *mut c_void) -> c_int;
 }
 
-static INIT: Once = Once::new();
-static mut INIT_RC: c_int = 0;
+static INIT_RC: OnceLock<c_int> = OnceLock::new();
 
 /// Initialize shadowhook exactly once per process. Returns Ok on success
 /// or if already initialized; Err with the raw return code otherwise.
 pub fn init_once() -> Result<(), c_int> {
-    INIT.call_once(|| {
+    let rc = *INIT_RC.get_or_init(|| {
         // SAFETY: FFI call with no arguments that reference Rust memory.
-        let rc = unsafe { shadowhook_init(ShadowhookMode::Unique as c_int, false) };
-        // SAFETY: written exactly once inside call_once, read only after.
-        unsafe { INIT_RC = rc };
+        unsafe { shadowhook_init(SHADOWHOOK_MODE_UNIQUE, false) }
     });
-    // SAFETY: INIT_RC is only written inside call_once above and never
-    // mutated again; all reads happen after call_once has completed.
-    let rc = unsafe { INIT_RC };
     if rc == 0 { Ok(()) } else { Err(rc) }
 }
 
@@ -67,8 +54,8 @@ pub fn init_once() -> Result<(), c_int> {
 /// `new_fn` must be a valid function pointer with a signature ABI-compatible
 /// with the real target symbol. `out_orig` must be a valid writable pointer.
 pub unsafe fn hook_sym(
-    lib: &core::ffi::CStr,
-    sym: &core::ffi::CStr,
+    lib: &CStr,
+    sym: &CStr,
     new_fn: *mut c_void,
     out_orig: *mut *mut c_void,
 ) -> *mut c_void {

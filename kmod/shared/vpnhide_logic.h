@@ -230,53 +230,6 @@ vpnhide_compact_seq_lines(char *buf, unsigned long start, unsigned long count,
 	return dst;
 }
 
-/*
- * Parse a newline-separated list of decimal UIDs (with `#` comments and
- * blank lines) from `buf` into `out` (capacity `max`). Returns the count.
- * Pure string work for the legacy decimal load-args path (KPM bring-up + host
- * tests). The protocol config channel uses vpnhide_parse_config instead.
- */
-static inline int vpnhide_parse_target_uids(const char *buf, unsigned long len,
-					    unsigned int *out, int max)
-{
-	unsigned long i = 0;
-	int n = 0;
-
-	while (i < len && n < max) {
-		unsigned long uid = 0;
-		int have_digit = 0;
-
-		/* skip leading spaces/tabs */
-		while (i < len && (buf[i] == ' ' || buf[i] == '\t'))
-			i++;
-
-		/* comment or empty line → skip to next '\n' */
-		if (i < len && (buf[i] == '#' || buf[i] == '\n')) {
-			while (i < len && buf[i] != '\n')
-				i++;
-			if (i < len)
-				i++;
-			continue;
-		}
-
-		while (i < len && buf[i] >= '0' && buf[i] <= '9') {
-			uid = uid * 10u + (unsigned long)(buf[i] - '0');
-			have_digit = 1;
-			i++;
-		}
-		if (have_digit)
-			out[n++] = (unsigned int)uid;
-
-		/* advance to next line */
-		while (i < len && buf[i] != '\n')
-			i++;
-		if (i < len)
-			i++;
-	}
-
-	return n;
-}
-
 /* ====================================================================== */
 /*  Control & stats protocol (docs/protocol.md) — wire parse + serialise  */
 /*                                                                        */

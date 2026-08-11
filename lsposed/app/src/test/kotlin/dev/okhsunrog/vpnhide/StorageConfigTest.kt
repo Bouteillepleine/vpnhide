@@ -1,6 +1,7 @@
 package dev.okhsunrog.vpnhide
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -203,6 +204,41 @@ class StorageConfigTest {
             ),
             cfg.apps.getValue("com.bank").portPolicy,
         )
+    }
+
+    @Test
+    fun `canonical config disables ports instead of broadening malformed policy`() {
+        val malformedPolicies =
+            listOf(
+                """{ "mode": "custom", "rules": [{ "start": 0 }] }""",
+                """{ "mode": "custom", "rules": ["not-an-object"] }""",
+            )
+
+        malformedPolicies.forEach { policy ->
+            val cfg =
+                requireNotNull(
+                    parseCanonicalConfig(
+                        """
+                        {
+                          "version": 1,
+                          "apps": {
+                            "com.bank": {
+                              "native": true,
+                              "ports": true,
+                              "portPolicy": $policy
+                            }
+                          }
+                        }
+                        """.trimIndent(),
+                    ),
+                )
+            val app = cfg.apps.getValue("com.bank")
+
+            assertFalse(app.ports)
+            assertEquals(null, app.portPolicy)
+            assertTrue(app.native.enabled)
+            assertFalse(canonicalConfigJson(cfg).contains("\"ports\": true"))
+        }
     }
 
     @Test
@@ -483,22 +519,20 @@ class StorageConfigTest {
     }
 
     @Test
-    fun `snapshot builder folds legacy roles into canonical config`() {
+    fun `snapshot builder preserves roles while rebuilding canonical config`() {
         val snapshot =
             TargetsSnapshot(
                 kmodModuleInstalled = true,
                 kpmModuleInstalled = false,
                 zygiskModuleInstalled = false,
                 portsModuleInstalled = true,
-                kmodTargets = setOf("com.native"),
-                kpmTargets = emptySet(),
-                zygiskTargets = emptySet(),
+                nativeTargets = setOf("com.native"),
                 lsposedTargets = setOf("com.java"),
                 hiddenPkgs = setOf("com.hidden"),
                 observerUids = setOf(10123),
                 portsObservers = setOf("com.ports"),
                 uidToPkg = mapOf(10123 to "com.observer"),
-                canonicalConfig = null,
+                canonicalConfig = CanonicalConfig(),
             )
 
         val cfg = buildCanonicalConfigFromTargetsSnapshot(snapshot, debug = true)
@@ -509,25 +543,6 @@ class StorageConfigTest {
         assertTrue(cfg.apps.getValue("com.hidden").hidden)
         assertTrue(cfg.apps.getValue("com.observer").appHiding)
         assertTrue(cfg.apps.getValue("com.ports").ports)
-    }
-
-    @Test
-    fun `legacy cleanup removes retired config inputs only`() {
-        val cmd = buildLegacyConfigCleanupCommand()
-
-        listOf(
-            KMOD_TARGETS,
-            KPM_TARGETS,
-            ZYGISK_TARGETS,
-            LSPOSED_TARGETS,
-            PORTS_OBSERVERS_FILE,
-            SS_HIDDEN_PKGS_FILE,
-            SS_OBSERVER_UIDS_FILE,
-            "/data/system/vpnhide_uids.txt",
-        ).forEach { path -> assertTrue(cmd.contains(path)) }
-
-        assertTrue(!cmd.contains(CANONICAL_CONFIG_FILE))
-        assertTrue(!cmd.contains(SUPERKEY_FILE))
     }
 
     private fun sharedStorageFixture(): String =

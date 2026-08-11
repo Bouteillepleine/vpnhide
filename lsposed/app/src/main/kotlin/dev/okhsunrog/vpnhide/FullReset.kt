@@ -18,23 +18,18 @@ package dev.okhsunrog.vpnhide
 internal val FULL_RESET_FILES =
     listOf(
         CANONICAL_CONFIG_FILE,
-        "/data/system/vpnhide_uids.txt",
-        SS_HIDDEN_PKGS_FILE,
-        SS_OBSERVER_UIDS_FILE,
         LSPOSED_STATE_FILE,
         LEGACY_HOOK_STATUS_FILE,
     )
 
-// Data directories under /data/adb (rm -rf — covers targets.txt, load_status,
-// superkey, etc. inside). Each is an explicit, vpnhide-prefixed path — never a
+// Data directories under /data/adb (rm -rf — covers load status, the APatch
+// superkey, and other backend state). Each is an explicit path — never a
 // glob and never a module install dir.
 internal val FULL_RESET_DIRS =
     listOf(
         "/data/adb/vpnhide",
         "/data/adb/vpnhide_kmod",
         "/data/adb/vpnhide_kpm",
-        "/data/adb/vpnhide_zygisk",
-        "/data/adb/vpnhide_lsposed",
         "/data/adb/vpnhide_ports",
     )
 

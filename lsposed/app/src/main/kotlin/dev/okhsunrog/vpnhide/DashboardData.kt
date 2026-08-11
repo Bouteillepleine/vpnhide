@@ -17,7 +17,6 @@ sealed interface ModuleState {
     data class Installed(
         val version: String?,
         val active: Boolean,
-        val targetCount: Int,
         // Only populated for kmod builds that carry the stamped `gkiVariant=` field
         // in module.prop (CI-built zips from v0.6.3+). Older builds report null.
         val gkiVariant: String? = null,
@@ -135,15 +134,9 @@ internal fun classifyMultiNative(
  * redundant state worth warning about so the user removes one.
  */
 internal fun kpmDeferredForConflict(
-    loadStatusSection: String,
+    status: KpmLoadStatus,
     currentBootId: String,
-): Boolean {
-    val load = parseKeyValueLines(loadStatusSection)
-    val bootId = load["boot_id"]?.trim()
-    return load["runtime"]?.trim() == "conflict" &&
-        !bootId.isNullOrEmpty() &&
-        bootId == currentBootId.trim()
-}
+): Boolean = status.runtime == KpmRuntime.Conflict && status.isFreshFor(currentBootId)
 
 /**
  * True when the KPM boot script stood down this boot because it runs under
@@ -157,17 +150,13 @@ internal fun kpmDeferredForConflict(
  * would just show KPM as inactive with no explanation.
  */
 internal fun kpmAwaitingSuperkey(
-    loadStatusSection: String,
+    status: KpmLoadStatus,
     currentBootId: String,
-): Boolean {
-    val load = parseKeyValueLines(loadStatusSection)
-    val bootId = load["boot_id"]?.trim()
-    return load["runtime"]?.trim() == "apatch" &&
-        load["loaded"]?.trim() == "0" &&
-        load["detail"]?.trim() == "awaiting_superkey" &&
-        !bootId.isNullOrEmpty() &&
-        bootId == currentBootId.trim()
-}
+): Boolean =
+    status.runtime == KpmRuntime.Apatch &&
+        status.loaded == false &&
+        status.reason == KpmFailureReason.AwaitingSuperkey &&
+        status.isFreshFor(currentBootId)
 
 internal fun kpatchRuntimeAvailable(kpatchRuntimeSection: String): Boolean {
     val props = parseKeyValueLines(kpatchRuntimeSection)
@@ -181,12 +170,13 @@ internal data class PortsApplyProblem(
 
 internal fun detectPortsApplyProblem(
     ports: ModuleState,
+    targetCount: Int,
     loadStatusSection: String,
     currentBootId: String,
     portsDisabled: Boolean,
 ): PortsApplyProblem? {
     val installed = ports as? ModuleState.Installed ?: return null
-    if (installed.active || installed.targetCount == 0) return null
+    if (installed.active || targetCount == 0) return null
     // A module the user turned off via their manager (a `disable` marker) is
     // inactive by design — the activator skips it for the same reason. Don't
     // nag "iptables rules are not active" for a deliberately disabled module.
@@ -271,6 +261,8 @@ internal data class DashboardState(
     val zygisk: ModuleState,
     val lsposed: LsposedState,
     val ports: ModuleState,
+    val nativeTargetCount: Int,
+    val portsTargetCount: Int,
     // The one native backend surfaced on the dashboard (kmod > KPM > Zygisk).
     val nativeBackend: DisplayNativeBackend,
     val nativeInstallRecommendation: NativeInstallRecommendation?,
@@ -356,17 +348,11 @@ internal fun activeModuleCount(state: DashboardState): Int =
 
 internal fun moduleActive(state: ModuleState): Boolean = (state as? ModuleState.Installed)?.active == true
 
-// Which native backend to recommend installing for this device (protocol §1.5).
-// kmod is the battle-tested default on GKI kernels; KPM (beta) is a single
-// universal binary that covers non-GKI / old kernels (4.14–5.4) where no kmod
-// build exists; zygisk is the detectable last resort.
-internal enum class RecommendedBackend { Kmod, Kpm, Zygisk }
-
 internal data class NativeInstallRecommendation(
     val androidVersion: String,
     val kernelVersion: String,
     val kernelBranch: String?,
-    val recommended: RecommendedBackend,
+    val recommended: NativeBackendId,
     val recommendedArtifact: String,
     val recommendedGkiVariant: String?,
     // For a KPM recommendation: whether a KPatch runtime (APatch or the
@@ -387,7 +373,7 @@ internal data class NativeInstallRecommendation(
     // True when the recommended backend is the .ko. The kmod-problem classifier
     // reuses this to decide whether a wrong-variant / unsupported-kernel
     // diagnosis applies to an installed-but-inactive kmod.
-    val preferKmod: Boolean get() = recommended == RecommendedBackend.Kmod
+    val preferKmod: Boolean get() = recommended == NativeBackendId.Kmod
 }
 
 // Boot-time diagnostics written by kmod/module/post-fs-data.sh into
@@ -492,7 +478,7 @@ internal fun buildNativeInstallRecommendation(
             androidVersion = deviceAndroidLabel,
             kernelVersion = kernelVersion,
             kernelBranch = kernelBranch,
-            recommended = RecommendedBackend.Kmod,
+            recommended = NativeBackendId.Kmod,
             recommendedArtifact = exact.zip,
             recommendedGkiVariant = exact.kmi,
         )
@@ -532,7 +518,7 @@ internal fun buildNativeInstallRecommendation(
             androidVersion = deviceAndroidLabel,
             kernelVersion = kernelVersion,
             kernelBranch = kernelBranch,
-            recommended = RecommendedBackend.Kmod,
+            recommended = NativeBackendId.Kmod,
             recommendedArtifact = primary.zip,
             recommendedGkiVariant = primary.kmi,
             variantAmbiguous = alternative != null,
@@ -549,7 +535,7 @@ internal fun buildNativeInstallRecommendation(
             androidVersion = deviceAndroidLabel,
             kernelVersion = kernelVersion,
             kernelBranch = kernelBranch,
-            recommended = RecommendedBackend.Kpm,
+            recommended = NativeBackendId.Kpm,
             recommendedArtifact = "vpnhide-kpm.zip",
             recommendedGkiVariant = null,
             kpatchRuntimeAvailable = kpatchRuntimeAvailable,
@@ -560,7 +546,7 @@ internal fun buildNativeInstallRecommendation(
         androidVersion = deviceAndroidLabel,
         kernelVersion = kernelVersion,
         kernelBranch = kernelBranch,
-        recommended = RecommendedBackend.Zygisk,
+        recommended = NativeBackendId.Zygisk,
         recommendedArtifact = "vpnhide-zygisk.zip",
         recommendedGkiVariant = null,
     )
@@ -603,13 +589,6 @@ internal fun parseModuleProp(raw: String): ModulePropInfo {
     }
     return ModulePropInfo(true, version, gkiVariant ?: updateJsonKmi)
 }
-
-/** Count configured target packages, excluding the app's own package (it is
- * always present invisibly and must not inflate the user-facing count). */
-internal fun countTargets(
-    raw: String,
-    selfPkg: String,
-): Int = parseConfigLines(raw).count { it != selfPkg }
 
 internal fun readKmodLoadStatus(
     currentBootId: String,
@@ -891,10 +870,7 @@ internal fun resolveLsposedState(
 
 // ── Module detection (pure, from the root snapshot) ──────────────────────
 
-internal fun detectKmodModule(
-    sections: Map<String, String>,
-    selfPkg: String,
-): ModuleState {
+internal fun detectKmodModule(sections: Map<String, String>): ModuleState {
     val prop = parseModuleProp(sections["kmod_prop"].orEmpty())
     if (!prop.installed) return ModuleState.NotInstalled
     val active = sections["proc_exists"].orEmpty().trim() == "1"
@@ -903,7 +879,6 @@ internal fun detectKmodModule(
     return ModuleState.Installed(
         version = prop.version,
         active = active,
-        targetCount = countTargets(sections["kmod_targets"].orEmpty(), selfPkg),
         gkiVariant = prop.gkiVariant,
     )
 }
@@ -911,7 +886,6 @@ internal fun detectKmodModule(
 internal fun detectZygiskModule(
     sections: Map<String, String>,
     zygiskStatusRaw: String,
-    selfPkg: String,
     currentBootId: String,
 ): ModuleState {
     val prop = parseModuleProp(sections["zygisk_prop"].orEmpty())
@@ -923,13 +897,12 @@ internal fun detectZygiskModule(
     return ModuleState.Installed(
         version = prop.version,
         active = active,
-        targetCount = countTargets(sections["zygisk_targets"].orEmpty(), selfPkg),
     )
 }
 
 internal fun detectKpmModule(
     sections: Map<String, String>,
-    selfPkg: String,
+    loadStatus: KpmLoadStatus,
     currentBootId: String,
 ): ModuleState {
     val prop = parseModuleProp(sections["kpm_prop"].orEmpty())
@@ -938,27 +911,20 @@ internal fun detectKpmModule(
     // supercall). The boot script writes load_status with loaded=1 and the
     // boot_id it loaded under, so "active" = loaded for the current boot —
     // the same freshness check the zygisk heartbeat uses.
-    val load = parseKeyValueLines(sections["kpm_load_status"].orEmpty())
-    val bootId = load["boot_id"]?.trim()
-    val active = load["loaded"]?.trim() == "1" && bootId != null && bootId == currentBootId.trim()
+    val active = loadStatus.loaded == true && loadStatus.isFreshFor(currentBootId)
     return ModuleState.Installed(
         version = prop.version,
         active = active,
-        targetCount = countTargets(sections["kpm_targets"].orEmpty(), selfPkg),
     )
 }
 
-internal fun detectPortsModule(
-    sections: Map<String, String>,
-    selfPkg: String,
-): ModuleState {
+internal fun detectPortsModule(sections: Map<String, String>): ModuleState {
     val prop = parseModuleProp(sections["ports_prop"].orEmpty())
     if (!prop.installed) return ModuleState.NotInstalled
     val active = sections["ports_chain"].orEmpty().trim() == "1"
     return ModuleState.Installed(
         version = prop.version,
         active = active,
-        targetCount = countTargets(sections["ports_observers"].orEmpty(), selfPkg),
     )
 }
 
@@ -1203,24 +1169,26 @@ internal suspend fun loadDashboardState(
 
     fun countPackages(pkgs: Set<String>): Int = pkgs.count { it != selfPkg }
 
-    fun ModuleState.withTargetCount(count: Int): ModuleState = if (this is ModuleState.Installed) copy(targetCount = count) else this
-
     // ── Module detection ──
     // Each module's state comes from a pure detector (unit-tested). kmod's
     // brokenReason is layered on below, once the kernel recommendation and
     // load status are known (classifyKmodProblem).
     val currentBootId = shellSnapshot["current_boot_id"].orEmpty()
+    val kpmLoadStatus = parseKpmLoadStatus(shellSnapshot["kpm_load_status"].orEmpty())
     val nativeTargetCount = countPackages(targetsSnapshot.nativeTargets)
-    val rawNativeBackends = detectNativeBackendStates(shellSnapshot, selfPkg, currentBootId)
-    val kmodRaw = rawNativeBackends.kmod.withTargetCount(nativeTargetCount)
+    val rawNativeBackends =
+        detectNativeBackendStates(
+            shellSnapshot,
+            currentBootId = currentBootId,
+            kpmLoadStatus = kpmLoadStatus,
+        )
+    val kmodRaw = rawNativeBackends.kmod
     val zygiskStatusRaw = shellSnapshot["zygisk_status"].orEmpty()
-    val zygisk = rawNativeBackends.zygisk.withTargetCount(nativeTargetCount)
-    val kpmRaw = rawNativeBackends.kpm.withTargetCount(nativeTargetCount)
+    val zygisk = rawNativeBackends.zygisk
+    val kpmRaw = rawNativeBackends.kpm
     val standaloneKpm = standaloneKpmLoaded(kpmRaw, shellSnapshot["kpm_runtime_modules"].orEmpty())
-    val ports = detectPortsModule(shellSnapshot, selfPkg).withTargetCount(countPackages(targetsSnapshot.portsObservers))
-    val kmodTargetCount = (kmodRaw as? ModuleState.Installed)?.targetCount ?: 0
-    val kpmTargetCount = (kpmRaw as? ModuleState.Installed)?.targetCount ?: 0
-    val zygiskTargetCount = (zygisk as? ModuleState.Installed)?.targetCount ?: 0
+    val ports = detectPortsModule(shellSnapshot)
+    val portsTargetCount = countPackages(targetsSnapshot.portsObservers)
     VpnHideLog.i(
         TAG,
         "modules: kmodRaw=$kmodRaw kpmRaw=$kpmRaw standaloneKpm=$standaloneKpm zygisk=$zygisk ports=$ports",
@@ -1262,7 +1230,7 @@ internal suspend fun loadDashboardState(
     // runtime=activator failure cases classifyKpmProblem diagnoses (the
     // conflict / awaiting-superkey cases stay separate warnings below).
     val kpmProblem: ModuleProblem? =
-        classifyKpmProblem(kpmRaw, shellSnapshot["kpm_load_status"].orEmpty(), currentBootId)
+        classifyKpmProblem(kpmRaw, kpmLoadStatus, currentBootId)
             ?.let { renderKpmProblem(it, res) }
     val kpm: ModuleState =
         if (kpmRaw is ModuleState.Installed && kpmProblem?.reason != null) {
@@ -1443,17 +1411,18 @@ internal suspend fun loadDashboardState(
             downloadArtifact = downloadArtifact,
         )
     }
-    val totalTargets = lsposedTargetCount + kmodTargetCount + kpmTargetCount + zygiskTargetCount
+    val totalTargets = lsposedTargetCount + nativeTargetCount
     if (totalTargets == 0) {
         // A fresh, not-yet-configured install isn't broken — guide the user to add
         // apps rather than flag a red error.
         info(res.getString(R.string.dashboard_issue_no_targets))
     }
-    if (ports is ModuleState.Installed && ports.targetCount == 0) {
+    if (ports is ModuleState.Installed && portsTargetCount == 0) {
         info(res.getString(R.string.dashboard_issue_ports_no_observers))
     }
     detectPortsApplyProblem(
         ports,
+        portsTargetCount,
         shellSnapshot["ports_load_status"].orEmpty(),
         currentBootId,
         portsDisabled = shellSnapshot["ports_disabled"].orEmpty().trim() == "1",
@@ -1504,7 +1473,7 @@ internal suspend fun loadDashboardState(
         kpm is ModuleState.NotInstalled
     ) {
         when (kernelRecommendation?.recommended) {
-            RecommendedBackend.Kmod -> {
+            NativeBackendId.Kmod -> {
                 info(
                     res.getString(
                         R.string.dashboard_issue_kmod_capable_but_zygisk,
@@ -1513,7 +1482,7 @@ internal suspend fun loadDashboardState(
                 )
             }
 
-            RecommendedBackend.Kpm -> {
+            NativeBackendId.Kpm -> {
                 if (kernelRecommendation.kpatchRuntimeAvailable) {
                     info(
                         res.getString(
@@ -1534,7 +1503,7 @@ internal suspend fun loadDashboardState(
     // battle-tested alternative for their kernel (kmod on GKI, else Zygisk).
     if (moduleActive(kpm)) {
         val experimentalText =
-            if (kernelRecommendation?.recommended == RecommendedBackend.Kmod) {
+            if (kernelRecommendation?.recommended == NativeBackendId.Kmod) {
                 res.getString(R.string.dashboard_issue_kpm_experimental_kmod)
             } else {
                 res.getString(R.string.dashboard_issue_kpm_experimental_zygisk)
@@ -1565,7 +1534,7 @@ internal suspend fun loadDashboardState(
             // kernel hookers freeze the device). The KPM standing down for a
             // co-installed .ko is the real state to surface — warn so the user
             // removes one of the two kernel backends.
-            if (kpmDeferredForConflict(shellSnapshot["kpm_load_status"].orEmpty(), currentBootId)) {
+            if (kpmDeferredForConflict(kpmLoadStatus, currentBootId)) {
                 warn(res.getString(R.string.dashboard_issue_native_conflict_deferred))
             }
         }
@@ -1575,7 +1544,7 @@ internal suspend fun loadDashboardState(
     // trusted `su` token nor a saved SuperKey was usable. Without this the module
     // just reads as inactive with no reason.
     if (kpm is ModuleState.Installed &&
-        kpmAwaitingSuperkey(shellSnapshot["kpm_load_status"].orEmpty(), currentBootId)
+        kpmAwaitingSuperkey(kpmLoadStatus, currentBootId)
     ) {
         warn(res.getString(R.string.dashboard_issue_kpm_awaiting_superkey))
     }
@@ -1709,6 +1678,8 @@ internal suspend fun loadDashboardState(
         zygisk = zygisk,
         lsposed = lsposed,
         ports = ports,
+        nativeTargetCount = nativeTargetCount,
+        portsTargetCount = portsTargetCount,
         nativeBackend = nativeBackend,
         nativeInstallRecommendation = nativeInstallRecommendation,
         kmodLoadStatus = kmodLoadStatus,

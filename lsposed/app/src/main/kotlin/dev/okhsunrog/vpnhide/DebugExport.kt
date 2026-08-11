@@ -245,18 +245,15 @@ private fun buildBackendsText(
         appendDebugSection("kmod live /proc/vpnhide_ctl", shellSnapshot.section("kmod_state"))
         appendDebugSection("kmod boot load_status", shellSnapshot.section("kmod_load_status"))
         appendDebugSection("kmod boot dmesg", shellSnapshot.section("kmod_load_dmesg"))
-        appendDebugSection("kmod runtime targets", shellSnapshot.section("kmod_targets"))
         appendDebugSection("KPM module.prop", shellSnapshot.section("kpm_prop"))
         appendDebugSection("KPM module state", shellSnapshot.section("kpm_module_state"))
         appendDebugSection("KPM live activator state", shellSnapshot.section("kpm_state"))
         appendDebugSection("KPM boot load_status", shellSnapshot.section("kpm_load_status"))
-        appendDebugSection("KPM runtime targets", shellSnapshot.section("kpm_targets"))
         appendDebugSection("KernelPatch runtime", shellSnapshot.section("kpatch_runtime"))
         appendDebugSection("Zygisk module.prop", shellSnapshot.section("zygisk_prop"))
         appendDebugSection("Zygisk module state", shellSnapshot.section("zygisk_module_state"))
         appendDebugSection("Zygisk heartbeat", shellSnapshot.section("zygisk_status"))
         appendDebugSection("Zygisk runtime modules", shellSnapshot.section("zygisk_runtime"))
-        appendDebugSection("Zygisk runtime targets", shellSnapshot.section("zygisk_targets"))
         appendDebugSection("LSPosed hook state", shellSnapshot.section("lsposed_state"))
         appendDebugSection("LSPosed config DB", buildLsposedConfigText(context))
         appendDebugSection("LSPosed framework", shellSnapshot.section("lsposed_framework"))
@@ -265,7 +262,6 @@ private fun buildBackendsText(
         appendDebugSection("Ports module state", shellSnapshot.section("ports_module_state"))
         appendDebugSection("Ports load_status", shellSnapshot.section("ports_load_status"))
         appendDebugSection("Ports load_log", shellSnapshot.section("ports_load_log"))
-        appendDebugSection("Ports observers", shellSnapshot.section("ports_observers"))
         appendDebugSection("Ports iptables state", shellSnapshot.section("ports_state"))
     }
 
@@ -279,12 +275,6 @@ private fun buildModulesText(shellSnapshot: DebugShellSnapshot): String =
 private fun buildConfigText(shellSnapshot: DebugShellSnapshot): String =
     buildString {
         appendDebugSection("canonical config", shellSnapshot.section("canonical_config"))
-        appendDebugSection("hidden packages", shellSnapshot.section("hidden_pkgs"))
-        appendDebugSection("observer UIDs", shellSnapshot.section("observer_uids"))
-        appendDebugSection("kmod runtime targets", shellSnapshot.section("kmod_targets"))
-        appendDebugSection("KPM runtime targets", shellSnapshot.section("kpm_targets"))
-        appendDebugSection("Zygisk runtime targets", shellSnapshot.section("zygisk_targets"))
-        appendDebugSection("Ports observers", shellSnapshot.section("ports_observers"))
         appendDebugSection("Ports load_status", shellSnapshot.section("ports_load_status"))
     }
 

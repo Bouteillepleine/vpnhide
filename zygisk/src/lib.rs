@@ -78,16 +78,25 @@ mod generated;
 mod hooks;
 mod shadowhook;
 
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::sync::Once;
+use core::ffi::{CStr, c_void};
+use core::ptr;
+use std::fs;
+use std::io::{self, Read};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::path::Path;
+use std::process;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Once, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use log::{debug, error, info};
+use android_logger::Config;
+use log::{LevelFilter, debug, error, info};
 use vpnhide_protocol as protocol;
 use vpnhide_protocol::hook_ids::{Hook, ZYGISK_HOOK_MASK};
-use zygisk_api::ZygiskModule;
 use zygisk_api::api::ZygiskApi;
 use zygisk_api::api::v2::{AppSpecializeArgs, V2, ZygiskOption};
-use zygisk_api::jni::JNIEnv;
+use zygisk_api::jni::{JNIEnv, objects::JString};
+use zygisk_api::{ZygiskModule, register_companion, register_module};
 
 use crate::hooks::{
     hooked_getifaddrs, hooked_ioctl, hooked_openat, hooked_recv, hooked_recvfrom,
@@ -117,9 +126,9 @@ fn init_logger() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
         android_logger::init_once(
-            android_logger::Config::default()
+            Config::default()
                 .with_tag(LOG_TAG)
-                .with_max_level(log::LevelFilter::Trace),
+                .with_max_level(LevelFilter::Trace),
         );
     });
 }
@@ -133,9 +142,9 @@ fn init_logger() {
 /// Same principle as HookLog.e on the Kotlin side.
 fn set_log_level(enabled: bool) {
     let level = if enabled {
-        log::LevelFilter::Trace
+        LevelFilter::Trace
     } else {
-        log::LevelFilter::Error
+        LevelFilter::Error
     };
     log::set_max_level(level);
 }
@@ -148,14 +157,11 @@ pub struct VpnHide {
     /// to hook. Carries only Zygisk-owned hook bits and is read by
     /// `postAppSpecialize`. Accessed single-threaded (Zygisk calls pre/post
     /// sequentially on the zygote main thread).
-    target_hookmask: core::cell::Cell<u32>,
+    target_hookmask: AtomicU32,
     /// True only when the currently specializing app is the VPN Hide app
     /// itself, so we can write a heartbeat the dashboard can trust.
-    report_status: core::cell::Cell<bool>,
+    report_status: AtomicBool,
 }
-
-// Single-threaded access by construction.
-unsafe impl Sync for VpnHide {}
 
 /// The parsed control config this module acts on, cached once per process via
 /// Zygisk's module dir fd.
@@ -169,35 +175,39 @@ unsafe impl Sync for VpnHide {}
 /// `targets` carries one Zygisk-owned hook mask per target UID (protocol §4.3 —
 /// UID is the key on every channel, including Zygisk); `debug` is the folded
 /// debug flag.
+#[derive(Default)]
 struct ZygiskConfig {
     targets: Vec<protocol::Target>,
     debug: bool,
 }
 
-static CACHED_CONFIG: std::sync::OnceLock<ZygiskConfig> = std::sync::OnceLock::new();
+static CACHED_CONFIG: OnceLock<ZygiskConfig> = OnceLock::new();
 
 /// Read + parse the `vpnhide 2 config` snapshot from targets.txt via the module
 /// directory fd Zygisk provides. This fd is opened by Zygisk with root
 /// privileges, bypassing the SELinux restrictions that block direct file
 /// access on Magisk. A missing/unreadable/invalid file fails closed: no
 /// targets, logging off.
-fn load_config_from_dir_fd(dir_fd: std::os::fd::RawFd) -> ZygiskConfig {
-    use std::io::Read;
-    use std::os::fd::FromRawFd;
+fn load_config_from_dir_fd(dir_fd: RawFd) -> ZygiskConfig {
     let empty = ZygiskConfig {
         targets: Vec::new(),
         debug: false,
     };
-    let filename = std::ffi::CString::new(TARGETS_FILENAME).unwrap();
-    let fd = unsafe { libc::openat(dir_fd, filename.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+    let fd = unsafe {
+        libc::openat(
+            dir_fd,
+            c"targets.txt".as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC,
+        )
+    };
     if fd < 0 {
         log::warn!(
             "can't open {TARGETS_FILENAME} via module dir fd: {}",
-            std::io::Error::last_os_error()
+            io::Error::last_os_error()
         );
         return empty;
     }
-    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+    let mut file = unsafe { fs::File::from_raw_fd(fd) };
     let mut content = Vec::new();
     if let Err(e) = file.read_to_end(&mut content) {
         log::warn!("can't read {TARGETS_FILENAME}: {e}");
@@ -232,6 +242,10 @@ impl ZygiskModule for VpnHide {
 
     fn on_load(&self, api: ZygiskApi<'_, V2>, _env: JNIEnv<'_>) {
         init_logger();
+        // Loading the config happens before we know the user's logging choice.
+        // Start from the stealth-safe level so missing/invalid config cannot
+        // emit warnings merely because this process loaded the module.
+        set_log_level(false);
         // Zygisksu returns a raw fd to /data/adb/modules/<id> that we own.
         // Wrap it in OwnedFd so the drop at the end of this function closes
         // it before this app's code starts running. We are already in the
@@ -243,8 +257,22 @@ impl ZygiskModule for VpnHide {
         //   2. Any sub-process the app spawns via fork()/Runtime.exec() —
         //      child inherits our open fd unless we close it here.
         // Either way the fd needs to die before pre_app_specialize returns.
-        let dir_fd = unsafe { OwnedFd::from_raw_fd(api.get_module_dir()) };
-        let cfg = CACHED_CONFIG.get_or_init(|| load_config_from_dir_fd(dir_fd.as_raw_fd()));
+        let raw_dir_fd = api.get_module_dir();
+        let dir_fd = (raw_dir_fd >= 0).then(|| {
+            // SAFETY: a non-negative fd returned by get_module_dir is owned by
+            // this module callback and must be closed after reading the config.
+            unsafe { OwnedFd::from_raw_fd(raw_dir_fd) }
+        });
+        if dir_fd.is_none() {
+            error!("Zygisk did not provide a valid module directory fd");
+        }
+        let cfg = CACHED_CONFIG.get_or_init(|| {
+            dir_fd
+                .as_ref()
+                .map_or_else(ZygiskConfig::default, |dir_fd| {
+                    load_config_from_dir_fd(dir_fd.as_raw_fd())
+                })
+        });
         // Debug is folded into the config snapshot now (§4.3); apply it before
         // anything below logs. Default Off ⇒ silence on a fresh/empty install.
         set_log_level(cfg.debug);
@@ -265,19 +293,24 @@ impl ZygiskModule for VpnHide {
         // UID is the targeting key (protocol §4.3). args.uid already holds the
         // UID this child will become, and one UID covers every process of a
         // multi-process app — so no package/sub-process name matching needed.
-        let uid = *args.uid as u32;
+        let Ok(uid) = u32::try_from(*args.uid) else {
+            self.target_hookmask.store(0, Ordering::Relaxed);
+            self.report_status.store(false, Ordering::Relaxed);
+            mark_cleanup(&mut api);
+            return;
+        };
         // nice_name is still read, but only to recognise the VPN Hide app
         // itself for the status heartbeat — an identity check, not targeting.
         let package = read_jstring(&env, args.nice_name);
         let hookmask = target_hookmask(uid);
         if hookmask != 0 {
             info!("pre_app_specialize: targeting uid {uid} hooks=0x{hookmask:x}");
-            self.target_hookmask.set(hookmask);
+            self.target_hookmask.store(hookmask, Ordering::Relaxed);
             self.report_status
-                .set(package.as_deref() == Some(APP_PACKAGE));
+                .store(package.as_deref() == Some(APP_PACKAGE), Ordering::Relaxed);
         } else {
-            self.target_hookmask.set(0);
-            self.report_status.set(false);
+            self.target_hookmask.store(0, Ordering::Relaxed);
+            self.report_status.store(false, Ordering::Relaxed);
             mark_cleanup(&mut api);
         }
     }
@@ -288,14 +321,14 @@ impl ZygiskModule for VpnHide {
         _env: JNIEnv<'a>,
         _args: &'a AppSpecializeArgs<'_>,
     ) {
-        let hookmask = self.target_hookmask.get();
+        let hookmask = self.target_hookmask.load(Ordering::Relaxed);
         if hookmask == 0 {
             return;
         }
         match install_hooks(hookmask) {
             Ok(()) => {
                 info!("selected libc hooks installed (mask=0x{hookmask:x})");
-                if self.report_status.get() {
+                if self.report_status.load(Ordering::Relaxed) {
                     write_status_file();
                 }
                 // Erase shadowhook's fingerprints from /proc/self/maps
@@ -312,14 +345,14 @@ impl ZygiskModule for VpnHide {
 }
 
 fn write_status_file() {
-    let boot_id = match std::fs::read_to_string("/proc/sys/kernel/random/boot_id") {
+    let boot_id = match fs::read_to_string("/proc/sys/kernel/random/boot_id") {
         Ok(v) => v.trim().to_string(),
         Err(err) => {
             error!("failed to read boot_id: {err}");
             return;
         }
     };
-    let timestamp = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+    let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(v) => v.as_secs(),
         Err(err) => {
             error!("failed to get timestamp: {err}");
@@ -330,16 +363,16 @@ fn write_status_file() {
         "version={}\nboot_id={}\npid={}\ntimestamp={}\n",
         env!("CARGO_PKG_VERSION"),
         boot_id,
-        std::process::id(),
+        process::id(),
         timestamp,
     );
-    if let Some(parent) = std::path::Path::new(APP_STATUS_FILE).parent() {
-        if let Err(err) = std::fs::create_dir_all(parent) {
+    if let Some(parent) = Path::new(APP_STATUS_FILE).parent() {
+        if let Err(err) = fs::create_dir_all(parent) {
             error!("failed to create status dir {}: {err}", parent.display());
             return;
         }
     }
-    match std::fs::write(APP_STATUS_FILE, content) {
+    match fs::write(APP_STATUS_FILE, content) {
         Ok(()) => info!("wrote zygisk status heartbeat to {APP_STATUS_FILE}"),
         Err(err) => error!("failed to write status heartbeat: {err}"),
     }
@@ -349,6 +382,13 @@ fn write_status_file() {
 /// Saves memory in every process where we don't actually hook anything.
 fn mark_cleanup(api: &mut ZygiskApi<'_, V2>) {
     api.set_option(ZygiskOption::DlCloseModuleLibrary);
+}
+
+struct HookDesc {
+    sym: &'static CStr,
+    hook_id: Hook,
+    replacement: *mut c_void,
+    store_orig: fn(*const ()),
 }
 
 /// Install selected inline hooks on `libc.so` via ByteDance shadowhook.
@@ -387,12 +427,6 @@ fn install_hooks(hookmask: u32) -> Result<(), String> {
     // itself is 12 bytes (3 instructions), safe for island-mode hooking.
     // recvfrom + __recvfrom_chk catch FORTIFY'd / direct callers that never
     // touch the `recv` symbol (issue #86 native route dump).
-    struct HookDesc {
-        sym: &'static core::ffi::CStr,
-        hook_id: Hook,
-        replacement: *mut core::ffi::c_void,
-        store_orig: fn(*const ()),
-    }
     let table = [
         HookDesc {
             sym: c"ioctl",
@@ -444,7 +478,7 @@ fn install_hooks(hookmask: u32) -> Result<(), String> {
         },
     ];
 
-    let mut installed: Vec<*mut core::ffi::c_void> = Vec::with_capacity(table.len());
+    let mut installed: Vec<*mut c_void> = Vec::with_capacity(table.len());
     for desc in table {
         if !zygisk_hook_enabled(hookmask, desc.hook_id) {
             continue;
@@ -478,11 +512,11 @@ fn install_hooks(hookmask: u32) -> Result<(), String> {
 /// pointer on success — caller keeps it for the partial-install
 /// rollback in `install_hooks`.
 fn hook_libc_sym(
-    sym: &core::ffi::CStr,
-    new_fn: *mut core::ffi::c_void,
+    sym: &CStr,
+    new_fn: *mut c_void,
     store_orig: fn(*const ()),
-) -> Result<*mut core::ffi::c_void, String> {
-    let mut orig: *mut core::ffi::c_void = core::ptr::null_mut();
+) -> Result<*mut c_void, String> {
+    let mut orig: *mut c_void = ptr::null_mut();
     // SAFETY: `new_fn` has an ABI-compatible signature with the target
     // libc symbol; `&mut orig` is a valid writable pointer.
     let stub = unsafe { shadowhook::hook_sym(c"libc.so", sym, new_fn, &mut orig) };
@@ -532,8 +566,6 @@ fn scrub_shadowhook_maps() {
     // not in the filter list today, but a future addition would silently
     // break this function.
     let maps = {
-        use std::io::Read;
-        use std::os::fd::FromRawFd;
         let fd = unsafe {
             libc::open(
                 c"/proc/self/maps".as_ptr(),
@@ -544,7 +576,7 @@ fn scrub_shadowhook_maps() {
             log::warn!("scrub_shadowhook_maps: can't open /proc/self/maps");
             return;
         }
-        let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+        let mut file = unsafe { fs::File::from_raw_fd(fd) };
         let mut buf = String::new();
         if file.read_to_string(&mut buf).is_err() {
             log::warn!("scrub_shadowhook_maps: can't read /proc/self/maps");
@@ -599,7 +631,7 @@ fn scrub_shadowhook_maps() {
         } else {
             log::warn!(
                 "prctl(PR_SET_VMA_ANON_NAME) failed for {start_hex}-{end_hex}: errno={}",
-                std::io::Error::last_os_error()
+                io::Error::last_os_error()
             );
         }
     }
@@ -614,27 +646,19 @@ fn scrub_shadowhook_maps() {
 /// sub-process name handling (the old package-name path did).
 #[inline(never)]
 fn target_hookmask(uid: u32) -> u32 {
-    match CACHED_CONFIG.get() {
-        Some(cfg) => cfg
-            .targets
-            .iter()
-            .find(|target| target.uid == uid)
-            .map(|target| target.hookmask)
-            .unwrap_or(0),
-        None => 0,
-    }
+    CACHED_CONFIG
+        .get()
+        .and_then(|cfg| cfg.targets.iter().find(|target| target.uid == uid))
+        .map_or(0, |target| target.hookmask)
 }
 
 fn zygisk_hook_enabled(hookmask: u32, hook: Hook) -> bool {
-    hookmask & (1u32 << hook as u32) != 0
+    hookmask & hook.bit() != 0
 }
 
 /// Decode a `JString` (as stored in `AppSpecializeArgs::nice_name`) into
 /// an owned Rust `String`. Returns None on any failure.
-fn read_jstring<'a>(
-    env: &JNIEnv<'a>,
-    jstr: &zygisk_api::jni::objects::JString<'a>,
-) -> Option<String> {
+fn read_jstring<'a>(env: &JNIEnv<'a>, jstr: &JString<'a>) -> Option<String> {
     if jstr.is_null() {
         return None;
     }
@@ -642,11 +666,11 @@ fn read_jstring<'a>(
     env_clone
         .get_string(jstr)
         .ok()
-        .and_then(|s| s.to_str().ok().map(|s| s.to_string()))
+        .and_then(|s| s.to_str().ok().map(str::to_owned))
 }
 
-zygisk_api::register_module!(VpnHide);
+register_module!(VpnHide);
 
 // Empty companion — declared so we don't have to recompile the .so if we
 // ever want to add a root-privileged helper later.
-zygisk_api::register_companion!(|_| ());
+register_companion!(|_| ());

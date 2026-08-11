@@ -42,41 +42,26 @@ internal fun collectHookCounterSnapshot(): DebugShellSnapshot {
 }
 
 internal fun parseDebugShellSnapshot(raw: String): Map<String, String> {
-    val sections = linkedMapOf<String, String>()
-    var currentName: String? = null
-    val currentBody = StringBuilder()
-
-    fun finishSection(name: String) {
-        sections[name] = currentBody.toString().trimEnd()
-        currentBody.clear()
-        currentName = null
-    }
-
-    raw.lineSequence().forEach { line ->
-        when {
-            line.startsWith(DEBUG_SNAPSHOT_BEGIN_PREFIX) -> {
-                currentName = line.removePrefix(DEBUG_SNAPSHOT_BEGIN_PREFIX)
-                currentBody.clear()
-            }
-
-            line.startsWith(DEBUG_SNAPSHOT_END_PREFIX) -> {
-                val endName = line.removePrefix(DEBUG_SNAPSHOT_END_PREFIX)
-                if (currentName == endName) finishSection(endName)
-            }
-
-            currentName != null -> {
-                currentBody.appendLine(line)
-            }
-        }
-    }
+    val parsed =
+        parseFramedSections(
+            raw = raw,
+            beginPrefix = DEBUG_SNAPSHOT_BEGIN_PREFIX,
+            endPrefix = DEBUG_SNAPSHOT_END_PREFIX,
+            policy =
+                FramedSectionParsePolicy(
+                    preserveIncomplete = true,
+                    discardOnMismatchedEnd = false,
+                    trimSectionEnd = true,
+                ),
+        )
+    val sections = parsed.complete.toMutableMap()
     // A command that overran the su timeout leaves the last section open (no END
     // marker) and every later section absent. Keep the partial body but flag it,
     // so a bug report shows "cut off here" instead of a silently-missing section.
-    currentName?.let { name ->
-        sections[name] =
-            (currentBody.toString().trimEnd() + "\n(TRUNCATED: snapshot cut off before this section completed)")
-                .trim()
-        sections["debug_snapshot_truncated"] = name
+    parsed.incomplete?.let { incomplete ->
+        sections[incomplete.name] =
+            (incomplete.body + "\n(TRUNCATED: snapshot cut off before this section completed)").trim()
+        sections["debug_snapshot_truncated"] = incomplete.name
     }
     return sections
 }
@@ -239,14 +224,12 @@ internal fun buildDebugShellSnapshotCommand(): String =
 
     emit_file kmod_prop $KMOD_MODULE_DIR/module.prop
     emit_eval kmod_module_state 'file_flags $KMOD_MODULE_DIR; hash_file $KMOD_MODULE_DIR/vpnhide_kmod.ko; hash_file $KMOD_ACTIVATOR'
-    emit_file kmod_targets $KMOD_TARGETS
     emit_file kmod_load_status $KMOD_LOAD_STATUS_FILE
     emit_file kmod_load_dmesg $KMOD_LOAD_DMESG_FILE
     emit_eval kmod_state '[ -e $PROC_CTL ] && cat $PROC_CTL 2>&1 || echo "(missing: $PROC_CTL)"'
 
     emit_file kpm_prop $KPM_MODULE_DIR/module.prop
     emit_eval kpm_module_state 'file_flags $KPM_MODULE_DIR; hash_file $KPM_MODULE_DIR/vpnhide.kpm; hash_file $KPM_ACTIVATOR'
-    emit_file kpm_targets $KPM_TARGETS
     emit_file kpm_load_status $KPM_LOAD_STATUS_FILE
     emit_eval kpm_state '
       if [ -x $KPM_ACTIVATOR ] && [ ! -f $KPM_MODULE_DIR/disable ]; then
@@ -280,7 +263,6 @@ internal fun buildDebugShellSnapshotCommand(): String =
 
     emit_file zygisk_prop $ZYGISK_MODULE_DIR/module.prop
     emit_eval zygisk_module_state 'file_flags $ZYGISK_MODULE_DIR; hash_file $ZYGISK_MODULE_DIR/zygisk/arm64-v8a.so; hash_file $ZYGISK_ACTIVATOR'
-    emit_file zygisk_targets $ZYGISK_TARGETS
     emit_file zygisk_status $ZYGISK_STATUS_FILE
     emit_eval zygisk_runtime '
       for BASE in /data/adb/modules /data/adb/modules_update; do
@@ -293,7 +275,6 @@ internal fun buildDebugShellSnapshotCommand(): String =
     emit_eval ports_module_state 'file_flags $PORTS_MODULE_DIR; hash_file $PORTS_ACTIVATOR'
     emit_file ports_load_status $PORTS_LOAD_STATUS_FILE
     emit_file ports_load_log $PORTS_LOAD_LOG_FILE
-    emit_file ports_observers $PORTS_OBSERVERS_FILE
     emit_eval ports_state '
       iptables -S OUTPUT 2>&1 | grep vpnhide || true
       iptables -S vpnhide_out 2>&1 || true
@@ -323,8 +304,6 @@ internal fun buildDebugShellSnapshotCommand(): String =
     '
 
     emit_file canonical_config $CANONICAL_CONFIG_FILE
-    emit_file hidden_pkgs $SS_HIDDEN_PKGS_FILE
-    emit_file observer_uids $SS_OBSERVER_UIDS_FILE
     ${
         buildPerUserPackageInventoryShell(
             sectionBeginPrefix = DEBUG_SNAPSHOT_BEGIN_PREFIX,

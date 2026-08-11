@@ -216,13 +216,11 @@ fun DashboardScreen(
         // Module status cards — one grouped block (byIndex corners).
         SectionHeader(stringResource(R.string.dashboard_modules))
         Spacer(Modifier.height(8.dp))
-        // Two layers + ports: the always-on Java backend (LSPosed) and the one
-        // active native backend (kmod / KPM / Zygisk, §1.5), then the separate
-        // ports feature.
+        // Java, the one active native backend (§1.5), and the separate ports feature.
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
             JavaBackendCard(loadedState.lsposed, index = 0, count = 3)
-            NativeBackendCard(loadedState.nativeBackend, selfNeedsRestart, index = 1, count = 3)
-            ModuleCard(stringResource(R.string.dashboard_ports), "P", loadedState.ports, index = 2, count = 3)
+            NativeBackendCard(loadedState.nativeBackend, loadedState.nativeTargetCount, selfNeedsRestart, index = 1, count = 3)
+            ModuleCard(stringResource(R.string.dashboard_ports), "P", loadedState.ports, loadedState.portsTargetCount, index = 2, count = 3)
         }
         loadedState.nativeInstallRecommendation?.let { recommendation ->
             Spacer(Modifier.height(8.dp))
@@ -741,6 +739,7 @@ private data class InstalledVisual(
 @Composable
 private fun installedVisual(
     state: ModuleState.Installed,
+    targetCount: Int,
     selfNeedsRestart: Boolean,
 ): InstalledVisual {
     val active = state.active
@@ -765,7 +764,7 @@ private fun installedVisual(
         subtitle =
             when {
                 brokenSubtitleRes != null -> stringResource(brokenSubtitleRes)
-                active -> stringResource(R.string.dashboard_active_targets, state.targetCount) + variantSuffix
+                active -> stringResource(R.string.dashboard_active_targets, targetCount) + variantSuffix
                 selfNeedsRestart -> stringResource(R.string.dashboard_installed_restart_app)
                 else -> stringResource(R.string.dashboard_installed_inactive) + variantSuffix
             },
@@ -789,6 +788,7 @@ private fun ModuleCard(
     name: String,
     badgeText: String,
     state: ModuleState,
+    targetCount: Int,
     selfNeedsRestart: Boolean = false,
     index: Int = -1,
     count: Int = 1,
@@ -808,7 +808,7 @@ private fun ModuleCard(
         }
 
         is ModuleState.Installed -> {
-            val v = installedVisual(state, selfNeedsRestart)
+            val v = installedVisual(state, targetCount, selfNeedsRestart)
             ModuleCardShell(
                 name = name,
                 badgeText = badgeText,
@@ -894,6 +894,7 @@ private fun JavaBackendCard(
 @Composable
 private fun NativeBackendCard(
     backend: DisplayNativeBackend,
+    targetCount: Int,
     selfNeedsRestart: Boolean,
     index: Int = -1,
     count: Int = 1,
@@ -921,7 +922,7 @@ private fun NativeBackendCard(
                 NativeBackendId.Zygisk -> R.string.dashboard_backend_zygisk
             },
         )
-    val v = installedVisual(state, selfNeedsRestart && backend.id == NativeBackendId.Zygisk)
+    val v = installedVisual(state, targetCount, selfNeedsRestart && backend.id == NativeBackendId.Zygisk)
     ModuleCardShell(
         name = name,
         badgeText = "N",
@@ -1045,7 +1046,7 @@ private fun ModuleDownloadButton(artifact: String) {
 @Composable
 private fun NativeInstallRecommendationCard(recommendation: NativeInstallRecommendation) {
     val containerColor =
-        if (recommendation.recommended == RecommendedBackend.Zygisk) {
+        if (recommendation.recommended == NativeBackendId.Zygisk) {
             StatusColors.zygiskRecommendContainer()
         } else {
             StatusColors.infoContainer()
@@ -1096,14 +1097,14 @@ private fun NativeInstallRecommendationCard(recommendation: NativeInstallRecomme
             Text(
                 text =
                     when (recommendation.recommended) {
-                        RecommendedBackend.Zygisk -> {
+                        NativeBackendId.Zygisk -> {
                             stringResource(
                                 R.string.dashboard_install_recommendation_zygisk,
                                 recommendation.recommendedArtifact,
                             )
                         }
 
-                        RecommendedBackend.Kpm -> {
+                        NativeBackendId.Kpm -> {
                             if (recommendation.kpatchRuntimeAvailable) {
                                 stringResource(
                                     R.string.dashboard_install_recommendation_kpm,
@@ -1117,7 +1118,7 @@ private fun NativeInstallRecommendationCard(recommendation: NativeInstallRecomme
                             }
                         }
 
-                        RecommendedBackend.Kmod -> {
+                        NativeBackendId.Kmod -> {
                             if (recommendation.variantAmbiguous && alternative != null) {
                                 stringResource(
                                     R.string.dashboard_install_recommendation_kmod_ambiguous,
@@ -1140,9 +1141,9 @@ private fun NativeInstallRecommendationCard(recommendation: NativeInstallRecomme
             // beta disclaimer.
             val note =
                 when (recommendation.recommended) {
-                    RecommendedBackend.Zygisk -> R.string.dashboard_install_recommendation_zygisk_warning
-                    RecommendedBackend.Kmod -> R.string.dashboard_install_recommendation_kmod_kpm_alt
-                    RecommendedBackend.Kpm -> R.string.dashboard_install_recommendation_kpm_beta_note
+                    NativeBackendId.Zygisk -> R.string.dashboard_install_recommendation_zygisk_warning
+                    NativeBackendId.Kmod -> R.string.dashboard_install_recommendation_kmod_kpm_alt
+                    NativeBackendId.Kpm -> R.string.dashboard_install_recommendation_kpm_beta_note
                 }
             Spacer(Modifier.height(8.dp))
             Text(

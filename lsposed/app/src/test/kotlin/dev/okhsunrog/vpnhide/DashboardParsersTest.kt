@@ -44,19 +44,6 @@ class DashboardParsersTest {
     }
 
     @Test
-    fun `countTargets excludes self and drops comments and blanks`() {
-        val raw =
-            """
-            # Managed by VPN Hide app
-            dev.okhsunrog.vpnhide
-            com.bank.app
-
-            com.chat.app
-            """.trimIndent()
-        assertEquals(2, countTargets(raw, "dev.okhsunrog.vpnhide"))
-    }
-
-    @Test
     fun `readKmodLoadStatus returns null for blank`() {
         assertNull(readKmodLoadStatus("boot", "", ""))
     }

@@ -546,8 +546,8 @@ private fun DashboardState.toAgentDashboardState(): AgentDashboardState {
         modules =
             listOf(
                 lsposed.toAgentModuleState(),
-                nativeBackend.toAgentModuleState(),
-                ports.toAgentModuleState(id = "ports", layer = "ports", backend = "Ports"),
+                nativeBackend.toAgentModuleState(nativeTargetCount),
+                ports.toAgentModuleState("ports", "ports", "Ports", portsTargetCount),
             ),
         protection = protection.toAgentProtectionSummary(),
         messages = messages.map { AgentDashboardMessage(it.severity.name.lowercase(), it.text) },
@@ -592,7 +592,7 @@ private fun LsposedState.toAgentModuleState(): AgentModuleState =
         }
     }
 
-private fun DisplayNativeBackend.toAgentModuleState(): AgentModuleState =
+private fun DisplayNativeBackend.toAgentModuleState(targetCount: Int): AgentModuleState =
     state.toAgentModuleState(
         id = id?.name?.lowercase() ?: "native",
         layer = "native",
@@ -603,12 +603,14 @@ private fun DisplayNativeBackend.toAgentModuleState(): AgentModuleState =
                 NativeBackendId.Zygisk -> "Zygisk"
                 null -> "Native"
             },
+        targetCount = targetCount,
     )
 
 private fun ModuleState.toAgentModuleState(
     id: String,
     layer: String,
     backend: String,
+    targetCount: Int,
 ): AgentModuleState =
     when (this) {
         ModuleState.NotInstalled -> {

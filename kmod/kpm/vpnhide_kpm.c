@@ -13,7 +13,8 @@
  * offset table and checks all enumeration vectors; socket-bind denial adds a
  * state-level check that verifies the socket stayed unbound, not just errno.
  * Runtime config/status/stats use KernelPatch's ctl0 supercall; the QEMU A/B
- * harness also retains decimal load-args for headless bring-up. Every per-kver
+ * harness passes the same control-v2 snapshot as load args for headless
+ * bring-up. Every per-kver
  * offset must pass the harness before that version ships — a wrong offset can
  * become a contained QEMU panic / A/B failure here or a bootloop on a device.
  *
@@ -70,7 +71,7 @@ static const struct vpnhide_offsets *off; /* selected per running kver */
  *
  * Guarded by a seqlock so a hook reader (every hooked syscall, on any CPU) never
  * sees a half-applied target set. A writer (rare, root-initiated: ctl0 config or
- * the init load-args path) bumps cfg_seq odd, mutates targets[] in place, then
+ * an initial control-v2 snapshot) bumps cfg_seq odd, mutates targets[] in place, then
  * bumps it even; readers snapshot under matching even-seq reads and retry on a
  * concurrent write. KP has no kernel spinlock/RCU, and a double-buffer (two
  * copies of targets[]) grew the .kpm enough to break KP boot on the 6.12 image —
@@ -89,7 +90,6 @@ static uint32_t target_masks[MAX_TARGET_UIDS];
  * snapshot in static storage, serialized independently from the live-config
  * seqlock so hook readers never spin while userspace text is being parsed. */
 static struct vpnhide_target config_staging[MAX_TARGET_UIDS];
-static unsigned int load_uid_staging[MAX_TARGET_UIDS];
 static volatile uint32_t config_staging_writer;
 static int nr_targets;
 /* Hookmask for any uid NOT in target_uids (protocol §4.3 `default`). Zero — the
@@ -110,11 +110,25 @@ static volatile uint32_t
 	cfg_seq; /* even = stable, odd = a writer is mid-update */
 static volatile uint32_t cfg_writer; /* 0 = free, 1 = config writer active */
 static bool debug_enabled;
+#define VPNHIDE_CFG_READ_ATTEMPTS 4
 
 /* status (protocol §4.3/§5.1): which hooks actually installed, and the dominant
  * fault code. Filled at init, read back via ctl0 `status`. */
 static uint32_t installed_hooks;
 static uint32_t last_error;
+
+/* Exact registrations owned by this KPM. Teardown must unwrap the same
+ * compiler clone that install_hook resolved, and only after hook_wrap actually
+ * succeeded; resolving names again during exit cannot guarantee either. */
+#define VPNHIDE_MAX_HOOK_REGISTRATIONS 12
+struct vpnhide_hook_registration {
+	void *function;
+	void *before;
+	void *after;
+};
+static struct vpnhide_hook_registration
+	hook_registrations[VPNHIDE_MAX_HOOK_REGISTRATIONS];
+static unsigned int nr_hook_registrations;
 
 /* Native interception stats, cumulative since KPM load. Only the 11
  * kernel-owned hooks need storage; the global 27-id space also contains
@@ -141,10 +155,10 @@ static int (*_netdev_get_name)(void *, char *, int);
 #define VPNHIDE_SYS_ID_AA64MMFR1_EL1 0x180720u
 #define VPNHIDE_ID_AA64MMFR1_PAN_SHIFT 20u
 
-#define vpnhide_dbg(fmt, ...)                                   \
-	do {                                                    \
-		if (debug_enabled)                              \
-			logki(MODNAME ": " fmt, ##__VA_ARGS__); \
+#define vpnhide_dbg(fmt, ...)                                          \
+	do {                                                           \
+		if (__atomic_load_n(&debug_enabled, __ATOMIC_RELAXED)) \
+			logki(MODNAME ": " fmt, ##__VA_ARGS__);        \
 	} while (0)
 
 /* ------------------------------------------------------------------ */
@@ -157,11 +171,11 @@ static int (*_netdev_get_name)(void *, char *, int);
  * hook can be live for uids that appear in no target record at all. */
 static uint32_t compute_active_hook_mask(int count)
 {
-	uint32_t mask = default_hookmask;
+	uint32_t mask = __atomic_load_n(&default_hookmask, __ATOMIC_RELAXED);
 	int i;
 
 	for (i = 0; i < count; i++)
-		mask |= target_masks[i];
+		mask |= __atomic_load_n(&target_masks[i], __ATOMIC_RELAXED);
 	return mask;
 }
 
@@ -176,7 +190,9 @@ static int cfg_try_write_begin(void)
 	if (!__atomic_compare_exchange_n(&cfg_writer, &expected, 1, false,
 					 __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
 		return 0;
-	__atomic_fetch_add(&cfg_seq, 1, __ATOMIC_RELEASE);
+	/* Acquire ordering keeps the protected writes below from moving before
+	 * the odd sequence value becomes visible to readers. */
+	__atomic_fetch_add(&cfg_seq, 1, __ATOMIC_ACQ_REL);
 	return 1;
 }
 
@@ -205,15 +221,17 @@ static void config_staging_release(void)
 }
 
 /* True if `hook_id` is enabled for the calling uid (per-hook gate, §4.3).
- * Seqlock read side: retry while a writer holds the lock (odd) or if the config
- * changed across the read, so the mask gate and the per-uid scan always come
- * from one consistent snapshot. Config writes are rare, so this normally makes
- * a single pass. */
-static int hook_active(uint32_t hook_id)
+ * Seqlock read side: accept only matching even sequence reads, so the mask gate
+ * and per-uid scan come from one consistent snapshot. Retries are bounded: a
+ * hook callback can preempt the ctl0 writer on the same CPU, where spinning
+ * until that writer resumes would deadlock. A call that collides with the very
+ * short config copy therefore passes through unchanged. */
+static int hook_active(enum vpnhide_hook_id hook_id)
 {
 	uid_t uid = current_uid();
 	uint32_t s1, s2;
-	int result;
+	uint32_t bit = vpnhide_hook_bit(hook_id);
+	int attempt;
 
 	/* Below the app range a uid is not an app, it is a platform identity
 	 * shared by many components: an app declaring sharedUserId
@@ -231,14 +249,20 @@ static int hook_active(uint32_t hook_id)
 	if (uid % VPNHIDE_PER_USER_RANGE < VPNHIDE_FIRST_APP_UID)
 		return 0;
 
-	do {
+	for (attempt = 0; attempt < VPNHIDE_CFG_READ_ATTEMPTS; attempt++) {
+		int result = 0;
+
 		s1 = __atomic_load_n(&cfg_seq, __ATOMIC_ACQUIRE);
 		if (s1 & 1u)
 			continue; /* a writer is mid-update */
-		result = 0;
-		if (active_hook_mask & (1u << hook_id)) {
-			int lo = 0, hi = nr_targets - 1;
-			uint32_t mask = default_hookmask;
+		if (__atomic_load_n(&active_hook_mask, __ATOMIC_RELAXED) &
+		    bit) {
+			int lo = 0;
+			int hi =
+				__atomic_load_n(&nr_targets, __ATOMIC_RELAXED) -
+				1;
+			uint32_t mask = __atomic_load_n(&default_hookmask,
+							__ATOMIC_RELAXED);
 
 			/* Sorted ascending by the parser (§4.3), so this is a
 			 * bisection rather than a walk — it runs on every
@@ -246,20 +270,28 @@ static int hook_active(uint32_t hook_id)
 			while (lo <= hi) {
 				int mid = lo + (hi - lo) / 2;
 
-				if (target_uids[mid] == uid) {
-					mask = target_masks[mid];
+				uint32_t target_uid = __atomic_load_n(
+					&target_uids[mid], __ATOMIC_RELAXED);
+
+				if (target_uid == uid) {
+					mask = __atomic_load_n(
+						&target_masks[mid],
+						__ATOMIC_RELAXED);
 					break;
 				}
-				if (target_uids[mid] < uid)
+				if (target_uid < uid)
 					lo = mid + 1;
 				else
 					hi = mid - 1;
 			}
-			result = (mask & (1u << hook_id)) != 0;
+			result = (mask & bit) != 0;
 		}
 		s2 = __atomic_load_n(&cfg_seq, __ATOMIC_ACQUIRE);
-	} while (s1 != s2); /* s1 was even; retry if a write started/finished */
-	return result;
+		if (s1 == s2)
+			return result;
+		/* s1 was even; retry if a write started or finished. */
+	}
+	return 0;
 }
 
 static int stats_slot_for_uid(uint32_t uid)
@@ -291,7 +323,7 @@ static int stats_slot_for_uid(uint32_t uid)
 	return -1;
 }
 
-static void record_hook_hit(uint32_t hook_id)
+static void record_hook_hit(enum vpnhide_hook_id hook_id)
 {
 	int hook_slot, uid_slot;
 
@@ -396,6 +428,16 @@ static unsigned long format_stats_page(char *buf, unsigned long cap,
 	return b.len;
 }
 
+static long copy_ctl_reply(char __user *out_msg, const char *buf,
+			   unsigned long len)
+{
+	if (!len)
+		return 0;
+	if (!out_msg || !_copy_to_user || _copy_to_user(out_msg, buf, len))
+		return -1;
+	return (long)len;
+}
+
 /* NUL-safe copy of a kernel iface name, then match via the generated rules. */
 static int iface_is_vpn(const char *name)
 {
@@ -414,6 +456,37 @@ static int iface_is_vpn(const char *name)
 static const char *netdev_name(void *dev)
 {
 	return dev ? (const char *)((char *)dev + off->netdev_name) : 0;
+}
+
+/* Every hook_fargsN type shares this hook_fargs0_t prefix. Keep the common skb
+ * rollback state machine here so all netlink hooks preserve identical error,
+ * trim, return-value, and statistics semantics. */
+static void reset_skb_filter(void *raw_fargs)
+{
+	hook_fargs0_t *fargs = raw_fargs;
+
+	fargs->local.data0 = 0;
+}
+
+static void mark_skb_for_filter(void *raw_fargs, void *skb)
+{
+	hook_fargs0_t *fargs = raw_fargs;
+
+	fargs->local.data0 = 1;
+	fargs->local.data1 = (uint64_t)skb;
+	fargs->local.data2 =
+		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
+}
+
+static void finish_skb_filter(void *raw_fargs, enum vpnhide_hook_id hook_id)
+{
+	hook_fargs0_t *fargs = raw_fargs;
+
+	if (!fargs->local.data0 || (long)fargs->ret < 0)
+		return;
+	_skb_trim((void *)fargs->local.data1, (unsigned int)fargs->local.data2);
+	fargs->ret = 0;
+	record_hook_hit(hook_id);
 }
 
 /* True when `dev` (a route's output device) is physical AND the route is a
@@ -566,29 +639,18 @@ static void rtnl_fill_before(hook_fargs12_t *fargs, void *udata)
 	void *skb = (void *)fargs->arg0;
 	void *dev = (void *)fargs->arg1;
 
-	fargs->local.data0 = 0; /* should_filter */
+	reset_skb_filter(fargs);
 	if (!hook_active(VPNHIDE_HOOK_RTNL_FILL_IFINFO) || !skb || !dev)
 		return;
 	if (!iface_is_vpn(netdev_name(dev)))
 		return;
 
-	fargs->local.data0 = 1; /* filter */
-	fargs->local.data1 = (uint64_t)skb;
-	fargs->local.data2 =
-		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
+	mark_skb_for_filter(fargs, skb);
 }
 
 static void rtnl_fill_after(hook_fargs12_t *fargs, void *udata)
 {
-	if (!fargs->local.data0)
-		return;
-	if ((long)fargs->ret < 0)
-		return; /* the fill already failed; nothing to undo */
-	if (_skb_trim)
-		_skb_trim((void *)fargs->local.data1,
-			  (unsigned int)fargs->local.data2);
-	fargs->ret = 0;
-	record_hook_hit(VPNHIDE_HOOK_RTNL_FILL_IFINFO);
+	finish_skb_filter(fargs, VPNHIDE_HOOK_RTNL_FILL_IFINFO);
 }
 
 /* ================================================================== */
@@ -952,32 +1014,23 @@ static void *deref2(void *base, unsigned int off1, unsigned int off2)
 /* Shared by both addr-fill hooks: stash skb + len if ifa's dev is VPN. The
  * caller passes its own hook id so the per-hook gate (§4.3) is per-hook even
  * though the body is shared. */
-static void addr_fill_before(hook_fargs4_t *fargs, void *dev, uint32_t hook_id)
+static void addr_fill_before(hook_fargs4_t *fargs, void *dev,
+			     enum vpnhide_hook_id hook_id)
 {
 	void *skb = (void *)fargs->arg0;
 
-	fargs->local.data0 = 0;
+	reset_skb_filter(fargs);
 	if (!hook_active(hook_id) || !skb || !dev)
 		return;
 	if (!iface_is_vpn(netdev_name(dev)))
 		return;
-	fargs->local.data0 = 1;
-	fargs->local.data1 = (uint64_t)skb;
-	fargs->local.data2 =
-		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
+	mark_skb_for_filter(fargs, skb);
 }
 
-static void addr_fill_after_hook(hook_fargs4_t *fargs, uint32_t hook_id)
+static void addr_fill_after_hook(hook_fargs4_t *fargs,
+				 enum vpnhide_hook_id hook_id)
 {
-	if (!fargs->local.data0)
-		return;
-	if ((long)fargs->ret < 0)
-		return;
-	if (_skb_trim)
-		_skb_trim((void *)fargs->local.data1,
-			  (unsigned int)fargs->local.data2);
-	fargs->ret = 0;
-	record_hook_hit(hook_id);
+	finish_skb_filter(fargs, hook_id);
 }
 
 static void inet_fill_after(hook_fargs4_t *fargs, void *udata)
@@ -1054,7 +1107,7 @@ static void fib_dump_before(hook_fargs12_t *fargs, void *udata)
 	void *p = (void *)fargs->args[off->fib_dump_fi_arg];
 	void *fi, *dev;
 
-	fargs->local.data0 = 0;
+	reset_skb_filter(fargs);
 	if (!hook_active(VPNHIDE_HOOK_FIB_DUMP_INFO) || !skb || !p)
 		return;
 	fi = off->fib_dump_fi_via_fri ? *(void **)p : p; /* fib_rt_info.fi @0 */
@@ -1069,23 +1122,12 @@ static void fib_dump_before(hook_fargs12_t *fargs, void *udata)
 	    !kpm_is_public_host_route4(fargs, p, dev))
 		return;
 
-	fargs->local.data0 = 1;
-	fargs->local.data1 = (uint64_t)skb;
-	fargs->local.data2 =
-		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
+	mark_skb_for_filter(fargs, skb);
 }
 
 static void fib_dump_after(hook_fargs12_t *fargs, void *udata)
 {
-	if (!fargs->local.data0)
-		return;
-	if ((long)fargs->ret < 0)
-		return;
-	if (_skb_trim)
-		_skb_trim((void *)fargs->local.data1,
-			  (unsigned int)fargs->local.data2);
-	fargs->ret = 0;
-	record_hook_hit(VPNHIDE_HOOK_FIB_DUMP_INFO);
+	finish_skb_filter(fargs, VPNHIDE_HOOK_FIB_DUMP_INFO);
 }
 
 /* ================================================================== */
@@ -1121,7 +1163,7 @@ static void rt6_fill_before(hook_fargs12_t *fargs, void *udata)
 	void *rt = (void *)fargs->arg2;
 	void *dev;
 
-	fargs->local.data0 = 0;
+	reset_skb_filter(fargs);
 	if (!hook_active(VPNHIDE_HOOK_RT6_FILL_NODE) || !skb || !rt)
 		return;
 	dev = dev_from_fib6_info(rt);
@@ -1133,23 +1175,12 @@ static void rt6_fill_before(hook_fargs12_t *fargs, void *udata)
 	    !kpm_is_public_host_route6(rt, dev))
 		return;
 
-	fargs->local.data0 = 1;
-	fargs->local.data1 = (uint64_t)skb;
-	fargs->local.data2 =
-		(uint64_t) * (unsigned int *)((char *)skb + off->skb_len);
+	mark_skb_for_filter(fargs, skb);
 }
 
 static void rt6_fill_after(hook_fargs12_t *fargs, void *udata)
 {
-	if (!fargs->local.data0)
-		return;
-	if ((long)fargs->ret < 0)
-		return;
-	if (_skb_trim)
-		_skb_trim((void *)fargs->local.data1,
-			  (unsigned int)fargs->local.data2);
-	fargs->ret = 0;
-	record_hook_hit(VPNHIDE_HOOK_RT6_FILL_NODE);
+	finish_skb_filter(fargs, VPNHIDE_HOOK_RT6_FILL_NODE);
 }
 
 /* ================================================================== */
@@ -1166,7 +1197,7 @@ static void fib_rule_before(hook_fargs8_t *fargs, void *udata)
 	const char *iif, *oif;
 	int filter = 0;
 
-	fargs->local.data0 = 0;
+	reset_skb_filter(fargs);
 	if (!hook_active(VPNHIDE_HOOK_FIB_NL_FILL_RULE) || !skb || !rule ||
 	    !off->fib_rule_table)
 		return;
@@ -1188,25 +1219,13 @@ static void fib_rule_before(hook_fargs8_t *fargs, void *udata)
 	}
 
 	if (filter) {
-		fargs->local.data0 = 1;
-		fargs->local.data1 = (uint64_t)skb;
-		fargs->local.data2 =
-			(uint64_t) *
-			(unsigned int *)((char *)skb + off->skb_len);
+		mark_skb_for_filter(fargs, skb);
 	}
 }
 
 static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
 {
-	if (!fargs->local.data0)
-		return;
-	if ((long)fargs->ret < 0)
-		return;
-	if (_skb_trim)
-		_skb_trim((void *)fargs->local.data1,
-			  (unsigned int)fargs->local.data2);
-	fargs->ret = 0;
-	record_hook_hit(VPNHIDE_HOOK_FIB_NL_FILL_RULE);
+	finish_skb_filter(fargs, VPNHIDE_HOOK_FIB_NL_FILL_RULE);
 }
 
 /*
@@ -1403,57 +1422,65 @@ static int resolve_symbols(void)
 	return 0;
 }
 
-/*
- * Load-time / test target path: a bare newline/space-separated decimal UID list
- * (KernelPatch load extra-args, e.g. sc_kpm_load(key, path, "10010 10020"), as
- * the QEMU A/B harness uses). Each listed uid gets the FULL kernel hook mask —
- * i.e. "enable everything for these uids". Per-hook control is the job of the
- * runtime ctl0 `config` channel (vpnhide_parse_config); this path predates it
- * and stays for headless bring-up where no superkey/ctl0 round-trip is wired.
- */
-static void apply_targets(const char *s)
+/* Parse and atomically apply the one supported config representation. Both the
+ * runtime ctl0 path and the QEMU harness's optional load args use the frozen
+ * control-v2 wire, so they cannot drift into separate parsers or semantics. */
+static int apply_config(const char *wire, unsigned long wire_len)
 {
-	unsigned long n = 0;
-	int cnt, i, nsorted = 0;
+	unsigned int default_mask = 0;
+	int dbg = -1; /* absent debug record preserves live value */
+	int i, n;
 
-	if (!s)
-		return;
-	while (s[n])
-		n++;
-	cnt = vpnhide_parse_target_uids(s, n, load_uid_staging,
-					MAX_TARGET_UIDS);
-	/* The load-args list arrives in whatever order the caller wrote it, but
-	 * the hot-path lookup bisects, so it has to be ordered here. Reuse the
-	 * protocol's sorted insert rather than a second ordering rule (it dedups
-	 * too). This runs once at init, off the hot path. */
-	for (i = 0; i < cnt; i++)
-		vpnhide_target_set(config_staging, &nsorted, MAX_TARGET_UIDS,
-				   load_uid_staging[i],
-				   VPNHIDE_KERNEL_HOOK_MASK);
-	if (!cfg_try_write_begin())
-		return; /* init path has no concurrent writer; defensive only */
-	for (i = 0; i < nsorted; i++) {
-		target_uids[i] = config_staging[i].uid;
-		target_masks[i] = config_staging[i].hookmask;
+	if (!config_staging_try_claim())
+		return -2;
+	n = vpnhide_parse_config(wire, wire_len, config_staging,
+				 MAX_TARGET_UIDS, &dbg, &default_mask);
+	if (n < 0) {
+		config_staging_release();
+		return -1;
 	}
-	nr_targets = nsorted;
-	default_hookmask = 0;
-	active_hook_mask = compute_active_hook_mask(nsorted);
+	if (!cfg_try_write_begin()) {
+		config_staging_release();
+		return -2;
+	}
+	for (i = 0; i < n; i++) {
+		__atomic_store_n(&target_uids[i], config_staging[i].uid,
+				 __ATOMIC_RELAXED);
+		__atomic_store_n(&target_masks[i],
+				 config_staging[i].hookmask &
+					 VPNHIDE_KERNEL_HOOK_MASK,
+				 __ATOMIC_RELAXED);
+	}
+	__atomic_store_n(&nr_targets, n, __ATOMIC_RELAXED);
+	__atomic_store_n(&default_hookmask,
+			 default_mask & VPNHIDE_KERNEL_HOOK_MASK,
+			 __ATOMIC_RELAXED);
+	__atomic_store_n(&active_hook_mask, compute_active_hook_mask(n),
+			 __ATOMIC_RELAXED);
+	if (dbg >= 0)
+		__atomic_store_n(&debug_enabled, dbg ? true : false,
+				 __ATOMIC_RELAXED);
 	cfg_write_end();
-	vpnhide_dbg("loaded %d target UIDs\n", nsorted);
+	config_staging_release();
+	return 0;
 }
 
 /* Resolve `name`, wrap it, and record the install in `installed_hooks` so the
  * status channel (§4.3 `hooks`) reflects what actually took. */
 static int install_hook(const char *name, int argno, void *before, void *after,
-			uint32_t hook_id)
+			enum vpnhide_hook_id hook_id)
 {
 	unsigned long fn = lookup_fn(name);
+	struct vpnhide_hook_registration *registration;
 
-	if (!fn)
+	if (!fn || nr_hook_registrations >= VPNHIDE_MAX_HOOK_REGISTRATIONS)
 		return 0;
 	if (hook_wrap((void *)fn, argno, before, after, 0) == HOOK_NO_ERR) {
-		installed_hooks |= (1u << hook_id);
+		registration = &hook_registrations[nr_hook_registrations++];
+		registration->function = (void *)fn;
+		registration->before = before;
+		registration->after = after;
+		installed_hooks |= vpnhide_hook_bit(hook_id);
 		return 1;
 	}
 	return 0;
@@ -1462,16 +1489,22 @@ static int install_hook(const char *name, int argno, void *before, void *after,
 static long vpnhide_kpm_init(const char *args, const char *event,
 			     void *__user reserved)
 {
+	unsigned long args_len = 0;
+
 	logki(MODNAME ": KPM init (event=%s) kver=0x%x\n", event ? event : "",
 	      (unsigned int)kver);
 
 	installed_hooks = 0;
+	nr_hook_registrations = 0;
 	last_error = VPNHIDE_ERR_OK;
-	cfg_seq = 0;
-	cfg_writer = 0;
-	nr_targets =
-		0; /* empty config until load-args / ctl0 (pre-hook, no readers) */
-	active_hook_mask = 0;
+	__atomic_store_n(&cfg_seq, 0, __ATOMIC_RELAXED);
+	__atomic_store_n(&cfg_writer, 0, __ATOMIC_RELAXED);
+	__atomic_store_n(&config_staging_writer, 0, __ATOMIC_RELAXED);
+	__atomic_store_n(&nr_targets, 0,
+			 __ATOMIC_RELAXED); /* empty until control v2 */
+	__atomic_store_n(&default_hookmask, 0, __ATOMIC_RELAXED);
+	__atomic_store_n(&active_hook_mask, 0, __ATOMIC_RELAXED);
+	__atomic_store_n(&debug_enabled, false, __ATOMIC_RELAXED);
 
 	/* `kver` is KernelPatch's running-kernel version (common.h), encoded
 	 * the same way as VPNHIDE_KVER. NULL table = unsupported → bail. */
@@ -1486,10 +1519,17 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 		return -1;
 	}
 
-	/* Targets can come at load time: sc_kpm_load(key, path, "10010 10020")
-	 * (decimal list, all hooks). The runtime ctl0 `config` channel feeds the
-	 * same set with per-hook masks. */
-	apply_targets(args);
+	/* The headless QEMU harness may supply an initial snapshot through load
+	 * args. It is the same control-v2 payload as ctl0, not a second legacy UID
+	 * grammar. Production activation normally applies it through ctl0. */
+	if (args && args[0]) {
+		while (args[args_len])
+			args_len++;
+		if (apply_config(args, args_len) != 0) {
+			logki(MODNAME ": invalid initial config snapshot\n");
+			return -1;
+		}
+	}
 
 	/*
 	 * Install hooks. Fields used as availability gates are nonzero only where
@@ -1567,8 +1607,8 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 					bind_ok;
 		}
 		if (!bind_ok)
-			installed_hooks &=
-				~(1u << VPNHIDE_HOOK_SOCKET_BIND_INTERFACE);
+			installed_hooks &= ~vpnhide_hook_bit(
+				VPNHIDE_HOOK_SOCKET_BIND_INTERFACE);
 	}
 
 	/* Healthy iff every kernel-owned hook installed; otherwise honestly
@@ -1603,40 +1643,17 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 	kind = vpnhide_peek_kind(args, n_args);
 
 	if (kind == VPNHIDE_KIND_CONFIG) {
-		/* Parse into serialized static scratch before claiming the very short
-		 * live writer gate. A bad header/version never touches live state; a
-		 * concurrent ctl0 writer gets -2 (busy) and userspace retries. */
-		unsigned int default_mask = 0;
-		int dbg = -1; /* absent debug record preserves live value */
-		int i, n;
+		/* A bad header/version never touches live state; a concurrent ctl0
+		 * writer gets -2 (busy) and userspace retries. */
+		long result = apply_config(args, n_args);
 
-		if (!config_staging_try_claim())
-			return -2;
-		n = vpnhide_parse_config(args, n_args, config_staging,
-					 MAX_TARGET_UIDS, &dbg, &default_mask);
-		if (n < 0) {
-			config_staging_release();
-			return -1; /* rejected whole (bad header / end fuse) */
-		}
-		if (!cfg_try_write_begin()) {
-			config_staging_release();
-			return -2; /* concurrent config writer; retry from userspace */
-		}
-		for (i = 0; i < n; i++) {
-			target_uids[i] = config_staging[i].uid;
-			target_masks[i] = config_staging[i].hookmask &
-					  VPNHIDE_KERNEL_HOOK_MASK;
-		}
-		nr_targets = n;
-		default_hookmask = default_mask & VPNHIDE_KERNEL_HOOK_MASK;
-		active_hook_mask = compute_active_hook_mask(n);
-		if (dbg >= 0)
-			debug_enabled = dbg ? true : false;
-		cfg_write_end();
-		config_staging_release();
-		vpnhide_dbg("ctl0 config: %d targets, debug=%d\n", n,
-			    debug_enabled ? 1 : 0);
-		return 0;
+		if (result == 0)
+			vpnhide_dbg("ctl0 config applied, debug=%d\n",
+				    __atomic_load_n(&debug_enabled,
+						    __ATOMIC_RELAXED) ?
+					    1 :
+					    0);
+		return result;
 	}
 
 	if (kind == VPNHIDE_KIND_STATS || kind == VPNHIDE_KIND_STATUS) {
@@ -1652,9 +1669,7 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 			if (available > sizeof(buf))
 				available = sizeof(buf);
 			n = format_stats_page(buf, available, after);
-			if (_copy_to_user && out_msg && n)
-				_copy_to_user(out_msg, buf, n);
-			return (long)n;
+			return copy_ctl_reply(out_msg, buf, n);
 		} else {
 			struct vpnhide_status st;
 
@@ -1678,9 +1693,7 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 		if (available > sizeof(buf))
 			available = sizeof(buf);
 		n = vpnhide_clamp_to_line(buf, full, available);
-		if (_copy_to_user && out_msg && n)
-			_copy_to_user(out_msg, buf, n);
-		return (long)n;
+		return copy_ctl_reply(out_msg, buf, n);
 	}
 
 	return -1; /* unknown kind */
@@ -1688,64 +1701,14 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 
 static long vpnhide_kpm_exit(void *__user reserved)
 {
-	unsigned long fn;
+	while (nr_hook_registrations > 0) {
+		struct vpnhide_hook_registration *registration =
+			&hook_registrations[--nr_hook_registrations];
 
-	fn = lookup_fn("fib_route_seq_show");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)fib_route_before,
-			    (void *)fib_route_after);
-	fn = lookup_fn("rtnl_fill_ifinfo");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)rtnl_fill_before,
-			    (void *)rtnl_fill_after);
-	fn = lookup_fn("ipv6_route_seq_show");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)fib_route_before,
-			    (void *)ipv6_route_after);
-	fn = lookup_fn("inet_fill_ifaddr");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)inet_fill_before,
-			    (void *)inet_fill_after);
-	fn = lookup_fn("inet6_fill_ifaddr");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)inet6_fill_before,
-			    (void *)inet6_fill_after);
-	fn = lookup_fn("dev_ioctl");
-	if (fn)
-		hook_unwrap((void *)fn, 0, (void *)dev_ioctl_after);
-	fn = lookup_fn("sock_ioctl");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)sock_ioctl_before,
-			    (void *)sock_ioctl_after);
-	fn = lookup_fn("fib_dump_info");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)fib_dump_before,
-			    (void *)fib_dump_after);
-	fn = lookup_fn("rt6_fill_node");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)rt6_fill_before,
-			    (void *)rt6_fill_after);
-	fn = lookup_fn("fib_nl_fill_rule");
-	if (fn)
-		hook_unwrap((void *)fn, (void *)fib_rule_before,
-			    (void *)fib_rule_after);
-	if (off && socket_bind_uses_index_hook()) {
-		fn = lookup_fn(socket_bind_index_hook_name());
-		if (fn)
-			hook_unwrap((void *)fn,
-				    (void *)socket_bind_index_before, 0);
-	} else {
-		fn = lookup_fn("sock_setsockopt");
-		if (fn)
-			hook_unwrap((void *)fn, (void *)socket_bind_sock_before,
-				    0);
-		if (off && sockopt_takes_sk()) {
-			fn = lookup_fn("sk_setsockopt");
-			if (fn)
-				hook_unwrap((void *)fn,
-					    (void *)socket_bind_sk_before, 0);
-		}
+		hook_unwrap(registration->function, registration->before,
+			    registration->after);
 	}
+	installed_hooks = 0;
 
 	logki(MODNAME ": KPM unloaded\n");
 	return 0;

@@ -7,7 +7,7 @@ import org.junit.Test
 
 class TargetsCacheTest {
     @Test
-    fun `targets snapshot parses module flags target files and observer names`() {
+    fun `targets snapshot derives roles and observer UIDs from canonical config`() {
         val rootSnapshot =
             RootSnapshot(
                 sections =
@@ -15,12 +15,22 @@ class TargetsCacheTest {
                         "kmod_module_dir" to "1",
                         "zygisk_module_dir" to "0",
                         "ports_prop" to "version=1.2.3",
-                        "kmod_targets" to "# comment\ndev.okhsunrog.vpnhide\ncom.bank.app\n",
-                        "zygisk_targets" to "com.chat.app\n\n",
-                        "lsposed_targets" to "system\n# ignored\n",
-                        "hidden_pkgs" to "com.hidden.one\ncom.hidden.two\n",
-                        "observer_uids" to "10123\n1010123\nnot-a-uid\n",
-                        "ports_observers" to "com.browser\n",
+                        "canonical_config" to
+                            """
+                            {
+                              "version": 1,
+                              "apps": {
+                                "dev.okhsunrog.vpnhide": { "native": true },
+                                "com.bank.app": { "native": true },
+                                "com.chat.app": { "native": true },
+                                "system": { "java": true },
+                                "com.hidden.one": { "hidden": true },
+                                "com.hidden.two": { "hidden": true },
+                                "com.observer": { "appHiding": true },
+                                "com.browser": { "ports": true }
+                              }
+                            }
+                            """.trimIndent(),
                         "superkey_saved" to "1",
                         "pm_packages" to
                             "package:com.observer uid:10123,1010123\n" +
@@ -33,8 +43,7 @@ class TargetsCacheTest {
         assertTrue(targets.kmodModuleInstalled)
         assertFalse(targets.zygiskModuleInstalled)
         assertTrue(targets.portsModuleInstalled)
-        assertEquals(setOf("dev.okhsunrog.vpnhide", "com.bank.app"), targets.kmodTargets)
-        assertEquals(setOf("com.chat.app"), targets.zygiskTargets)
+        assertEquals(setOf("dev.okhsunrog.vpnhide", "com.bank.app", "com.chat.app"), targets.nativeTargets)
         assertEquals(setOf("system"), targets.lsposedTargets)
         assertEquals(setOf("com.hidden.one", "com.hidden.two"), targets.hiddenPkgs)
         assertEquals(setOf(10123, 1010123), targets.observerUids)
@@ -45,7 +54,7 @@ class TargetsCacheTest {
     }
 
     @Test
-    fun `targets snapshot prefers canonical config over legacy files`() {
+    fun `targets snapshot preserves canonical per-hook selections`() {
         val rootSnapshot =
             RootSnapshot(
                 sections =
@@ -67,12 +76,6 @@ class TargetsCacheTest {
                               }
                             }
                             """.trimIndent(),
-                        "kmod_targets" to "legacy.native\n",
-                        "zygisk_targets" to "",
-                        "lsposed_targets" to "legacy.java\n",
-                        "hidden_pkgs" to "legacy.hidden\n",
-                        "observer_uids" to "19999\n",
-                        "ports_observers" to "legacy.ports\n",
                         "pm_packages" to "package:com.observer uid:10123,1010123\n",
                     ),
             )
@@ -102,13 +105,6 @@ class TargetsCacheTest {
                 "kpm_module_dir" to "0",
                 "ports_prop" to "",
                 "canonical_config" to "",
-                "kmod_targets" to "",
-                "zygisk_targets" to "dev.okhsunrog.vpnhide\ncom.target\n",
-                "kpm_targets" to "",
-                "lsposed_targets" to "",
-                "hidden_pkgs" to "",
-                "observer_uids" to "",
-                "ports_observers" to "",
                 "superkey_saved" to "0",
                 "pm_packages" to "",
                 "kmod_prop" to "",

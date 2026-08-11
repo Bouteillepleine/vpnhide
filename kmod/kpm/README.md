@@ -136,7 +136,8 @@ the authoritative safety boundary; userspace preflight provides an actionable
 `unsupported_kernel` status to the app.
 
 Targeting / control plane: our target-UID set is delivered via the module's
-own `KPM_CTL0` supercall + load-args (the shape the QEMU harness exercises) —
+own `KPM_CTL0` supercall. The QEMU harness passes the same control-v2 snapshot
+as load args because it has no userspace ctl0 client during early bring-up —
 this is independent of KPatch-Next's generic `package_config` →
 `kpatch exclude_set <uid>` mechanism. The app stores package roles in
 `/data/system/vpnhide_config.json`; the KPM activator resolves that canonical
