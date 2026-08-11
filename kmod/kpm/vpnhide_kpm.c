@@ -110,6 +110,7 @@ static volatile uint32_t
 	cfg_seq; /* even = stable, odd = a writer is mid-update */
 static volatile uint32_t cfg_writer; /* 0 = free, 1 = config writer active */
 static bool debug_enabled;
+#define VPNHIDE_CFG_READ_ATTEMPTS 4
 
 /* status (protocol §4.3/§5.1): which hooks actually installed, and the dominant
  * fault code. Filled at init, read back via ctl0 `status`. */
@@ -141,10 +142,10 @@ static int (*_netdev_get_name)(void *, char *, int);
 #define VPNHIDE_SYS_ID_AA64MMFR1_EL1 0x180720u
 #define VPNHIDE_ID_AA64MMFR1_PAN_SHIFT 20u
 
-#define vpnhide_dbg(fmt, ...)                                   \
-	do {                                                    \
-		if (debug_enabled)                              \
-			logki(MODNAME ": " fmt, ##__VA_ARGS__); \
+#define vpnhide_dbg(fmt, ...)                                          \
+	do {                                                           \
+		if (__atomic_load_n(&debug_enabled, __ATOMIC_RELAXED)) \
+			logki(MODNAME ": " fmt, ##__VA_ARGS__);        \
 	} while (0)
 
 /* ------------------------------------------------------------------ */
@@ -157,11 +158,11 @@ static int (*_netdev_get_name)(void *, char *, int);
  * hook can be live for uids that appear in no target record at all. */
 static uint32_t compute_active_hook_mask(int count)
 {
-	uint32_t mask = default_hookmask;
+	uint32_t mask = __atomic_load_n(&default_hookmask, __ATOMIC_RELAXED);
 	int i;
 
 	for (i = 0; i < count; i++)
-		mask |= target_masks[i];
+		mask |= __atomic_load_n(&target_masks[i], __ATOMIC_RELAXED);
 	return mask;
 }
 
@@ -176,7 +177,9 @@ static int cfg_try_write_begin(void)
 	if (!__atomic_compare_exchange_n(&cfg_writer, &expected, 1, false,
 					 __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
 		return 0;
-	__atomic_fetch_add(&cfg_seq, 1, __ATOMIC_RELEASE);
+	/* Acquire ordering keeps the protected writes below from moving before
+	 * the odd sequence value becomes visible to readers. */
+	__atomic_fetch_add(&cfg_seq, 1, __ATOMIC_ACQ_REL);
 	return 1;
 }
 
@@ -205,16 +208,17 @@ static void config_staging_release(void)
 }
 
 /* True if `hook_id` is enabled for the calling uid (per-hook gate, §4.3).
- * Seqlock read side: retry while a writer holds the lock (odd) or if the config
- * changed across the read, so the mask gate and the per-uid scan always come
- * from one consistent snapshot. Config writes are rare, so this normally makes
- * a single pass. */
+ * Seqlock read side: accept only matching even sequence reads, so the mask gate
+ * and per-uid scan come from one consistent snapshot. Retries are bounded: a
+ * hook callback can preempt the ctl0 writer on the same CPU, where spinning
+ * until that writer resumes would deadlock. A call that collides with the very
+ * short config copy therefore passes through unchanged. */
 static int hook_active(enum vpnhide_hook_id hook_id)
 {
 	uid_t uid = current_uid();
 	uint32_t s1, s2;
 	uint32_t bit = vpnhide_hook_bit(hook_id);
-	int result;
+	int attempt;
 
 	/* Below the app range a uid is not an app, it is a platform identity
 	 * shared by many components: an app declaring sharedUserId
@@ -232,14 +236,20 @@ static int hook_active(enum vpnhide_hook_id hook_id)
 	if (uid % VPNHIDE_PER_USER_RANGE < VPNHIDE_FIRST_APP_UID)
 		return 0;
 
-	do {
+	for (attempt = 0; attempt < VPNHIDE_CFG_READ_ATTEMPTS; attempt++) {
+		int result = 0;
+
 		s1 = __atomic_load_n(&cfg_seq, __ATOMIC_ACQUIRE);
 		if (s1 & 1u)
 			continue; /* a writer is mid-update */
-		result = 0;
-		if (active_hook_mask & bit) {
-			int lo = 0, hi = nr_targets - 1;
-			uint32_t mask = default_hookmask;
+		if (__atomic_load_n(&active_hook_mask, __ATOMIC_RELAXED) &
+		    bit) {
+			int lo = 0;
+			int hi =
+				__atomic_load_n(&nr_targets, __ATOMIC_RELAXED) -
+				1;
+			uint32_t mask = __atomic_load_n(&default_hookmask,
+							__ATOMIC_RELAXED);
 
 			/* Sorted ascending by the parser (§4.3), so this is a
 			 * bisection rather than a walk — it runs on every
@@ -247,11 +257,16 @@ static int hook_active(enum vpnhide_hook_id hook_id)
 			while (lo <= hi) {
 				int mid = lo + (hi - lo) / 2;
 
-				if (target_uids[mid] == uid) {
-					mask = target_masks[mid];
+				uint32_t target_uid = __atomic_load_n(
+					&target_uids[mid], __ATOMIC_RELAXED);
+
+				if (target_uid == uid) {
+					mask = __atomic_load_n(
+						&target_masks[mid],
+						__ATOMIC_RELAXED);
 					break;
 				}
-				if (target_uids[mid] < uid)
+				if (target_uid < uid)
 					lo = mid + 1;
 				else
 					hi = mid - 1;
@@ -259,8 +274,11 @@ static int hook_active(enum vpnhide_hook_id hook_id)
 			result = (mask & bit) != 0;
 		}
 		s2 = __atomic_load_n(&cfg_seq, __ATOMIC_ACQUIRE);
-	} while (s1 != s2); /* s1 was even; retry if a write started/finished */
-	return result;
+		if (s1 == s2)
+			return result;
+		/* s1 was even; retry if a write started or finished. */
+	}
+	return 0;
 }
 
 static int stats_slot_for_uid(uint32_t uid)
@@ -1428,15 +1446,22 @@ static int apply_config(const char *wire, unsigned long wire_len)
 		return -2;
 	}
 	for (i = 0; i < n; i++) {
-		target_uids[i] = config_staging[i].uid;
-		target_masks[i] = config_staging[i].hookmask &
-				  VPNHIDE_KERNEL_HOOK_MASK;
+		__atomic_store_n(&target_uids[i], config_staging[i].uid,
+				 __ATOMIC_RELAXED);
+		__atomic_store_n(&target_masks[i],
+				 config_staging[i].hookmask &
+					 VPNHIDE_KERNEL_HOOK_MASK,
+				 __ATOMIC_RELAXED);
 	}
-	nr_targets = n;
-	default_hookmask = default_mask & VPNHIDE_KERNEL_HOOK_MASK;
-	active_hook_mask = compute_active_hook_mask(n);
+	__atomic_store_n(&nr_targets, n, __ATOMIC_RELAXED);
+	__atomic_store_n(&default_hookmask,
+			 default_mask & VPNHIDE_KERNEL_HOOK_MASK,
+			 __ATOMIC_RELAXED);
+	__atomic_store_n(&active_hook_mask, compute_active_hook_mask(n),
+			 __ATOMIC_RELAXED);
 	if (dbg >= 0)
-		debug_enabled = dbg ? true : false;
+		__atomic_store_n(&debug_enabled, dbg ? true : false,
+				 __ATOMIC_RELAXED);
 	cfg_write_end();
 	config_staging_release();
 	return 0;
@@ -1468,13 +1493,14 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 
 	installed_hooks = 0;
 	last_error = VPNHIDE_ERR_OK;
-	cfg_seq = 0;
-	cfg_writer = 0;
-	config_staging_writer = 0;
-	nr_targets = 0; /* empty config until control v2 is applied */
-	default_hookmask = 0;
-	active_hook_mask = 0;
-	debug_enabled = false;
+	__atomic_store_n(&cfg_seq, 0, __ATOMIC_RELAXED);
+	__atomic_store_n(&cfg_writer, 0, __ATOMIC_RELAXED);
+	__atomic_store_n(&config_staging_writer, 0, __ATOMIC_RELAXED);
+	__atomic_store_n(&nr_targets, 0,
+			 __ATOMIC_RELAXED); /* empty until control v2 */
+	__atomic_store_n(&default_hookmask, 0, __ATOMIC_RELAXED);
+	__atomic_store_n(&active_hook_mask, 0, __ATOMIC_RELAXED);
+	__atomic_store_n(&debug_enabled, false, __ATOMIC_RELAXED);
 
 	/* `kver` is KernelPatch's running-kernel version (common.h), encoded
 	 * the same way as VPNHIDE_KVER. NULL table = unsupported → bail. */
@@ -1619,7 +1645,10 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 
 		if (result == 0)
 			vpnhide_dbg("ctl0 config applied, debug=%d\n",
-				    debug_enabled ? 1 : 0);
+				    __atomic_load_n(&debug_enabled,
+						    __ATOMIC_RELAXED) ?
+					    1 :
+					    0);
 		return result;
 	}
 
