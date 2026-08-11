@@ -21,19 +21,19 @@ internal fun Long.hasHook(hook: HookIds.Hook): Boolean = this and hook.bit != 0L
 internal fun Iterable<HookIds.Hook>.toHookMask(): Long = fold(0L) { acc, hook -> acc or hook.bit }
 
 /** The hooks a raw wire mask selects, in registry order. */
-internal fun hooksInMask(mask: Long): List<HookIds.Hook> = HookIds.Hook.entries.filter { mask.hasHook(it) }
+internal fun hooksInMask(mask: Long): Set<HookIds.Hook> = HookIds.Hook.entries.filterTo(linkedSetOf()) { mask.hasHook(it) }
 
 /**
  * Hooks each backend owns, derived **once** from the generated per-backend masks.
  * A backend acts only on the hooks it owns and ignores foreign bits (protocol §1.4).
  */
-internal val KERNEL_HOOKS: List<HookIds.Hook> = hooksInMask(HookIds.KERNEL_HOOK_MASK.toLong())
-internal val KMOD_HOOKS: List<HookIds.Hook> = hooksInMask(HookIds.KMOD_HOOK_MASK.toLong())
-internal val ZYGISK_HOOKS: List<HookIds.Hook> = hooksInMask(HookIds.ZYGISK_HOOK_MASK.toLong())
-internal val LSPOSED_HOOKS: List<HookIds.Hook> = hooksInMask(HookIds.LSPOSED_HOOK_MASK.toLong())
+internal val KERNEL_HOOKS: Set<HookIds.Hook> = hooksInMask(HookIds.KERNEL_HOOK_MASK.toLong())
+internal val KMOD_HOOKS: Set<HookIds.Hook> = hooksInMask(HookIds.KMOD_HOOK_MASK.toLong())
+internal val ZYGISK_HOOKS: Set<HookIds.Hook> = hooksInMask(HookIds.ZYGISK_HOOK_MASK.toLong())
+internal val LSPOSED_HOOKS: Set<HookIds.Hook> = hooksInMask(HookIds.LSPOSED_HOOK_MASK.toLong())
 
 /** The hooks owned by [backend] (its generated mask), or an empty set for an unknown id. */
-internal fun ownedHooks(backend: HookIds.Backend): List<HookIds.Hook> =
+internal fun ownedHooks(backend: HookIds.Backend): Set<HookIds.Hook> =
     when (backend) {
         HookIds.Backend.KMOD -> KERNEL_HOOKS + KMOD_HOOKS
         HookIds.Backend.KPM -> KERNEL_HOOKS
@@ -49,20 +49,34 @@ internal fun ownedHooks(backend: HookIds.Backend): List<HookIds.Hook> =
  */
 internal fun ownedNativeHooks(
     id: NativeBackendId?,
-    kmodFilesystemHookInstalled: Boolean = false,
+    installedKmodHooks: Set<HookIds.Hook> = emptySet(),
 ): Set<HookIds.Hook> =
     when (id) {
         NativeBackendId.Kmod -> {
-            (KERNEL_HOOKS + if (kmodFilesystemHookInstalled) KMOD_HOOKS else emptyList()).toSet()
+            KERNEL_HOOKS + installedKmodHooks.intersect(KMOD_HOOKS)
         }
 
         NativeBackendId.Zygisk -> {
-            ZYGISK_HOOKS.toSet()
+            ZYGISK_HOOKS
         }
 
         NativeBackendId.Kpm, null -> {
-            KERNEL_HOOKS.toSet()
+            KERNEL_HOOKS
         }
+    }
+
+/** Decode a backend's installed-hook wire mask into the typed registry set. */
+internal fun installedHooks(statusRaw: String): Set<HookIds.Hook> = parseProtocolStatusBlock(statusRaw)?.hooks?.let(::hooksInMask).orEmpty()
+
+/** Hooks expected in a live status snapshot. Kmod-only hooks are optional and
+ * become part of the expectation only when that boot actually installed them. */
+internal fun expectedInstalledHooks(
+    backend: HookIds.Backend,
+    installed: Set<HookIds.Hook>,
+): Set<HookIds.Hook> =
+    when (backend) {
+        HookIds.Backend.KMOD -> KERNEL_HOOKS + installed.intersect(KMOD_HOOKS)
+        else -> ownedHooks(backend)
     }
 
 /** Whether any hook that should cover this vector is in [hooks]. */

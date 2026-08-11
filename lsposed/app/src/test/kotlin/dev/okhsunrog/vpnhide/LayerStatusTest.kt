@@ -1,5 +1,6 @@
 package dev.okhsunrog.vpnhide
 
+import dev.okhsunrog.vpnhide.generated.HookIds
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -90,11 +91,19 @@ class LayerStatusTest {
         assertEquals(1, unownedNativeLeaks(backend, outcomes))
         assertEquals(
             LayerStatus.Active(hidden = 0, leaks = 1),
-            summarizeNativeLayer(backend, outcomes, kmodFilesystemHookInstalled = true),
+            summarizeNativeLayer(
+                backend,
+                outcomes,
+                installedKmodHooks = setOf(HookIds.Hook.FILESYSTEM_IFACE_PATHS),
+            ),
         )
         assertEquals(
             0,
-            unownedNativeLeaks(backend, outcomes, kmodFilesystemHookInstalled = true),
+            unownedNativeLeaks(
+                backend,
+                outcomes,
+                installedKmodHooks = setOf(HookIds.Hook.FILESYSTEM_IFACE_PATHS),
+            ),
         )
     }
 

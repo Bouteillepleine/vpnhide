@@ -83,13 +83,11 @@ private data class ParsedHookRole(
     val hooks: List<String>? = null,
 )
 
-internal val NativeKernelHookEntries: List<HookIds.Hook> = KERNEL_HOOKS
+internal val NativeKernelHookEntries: List<HookIds.Hook> = KERNEL_HOOKS.toList()
 
-internal val NativeKmodHookEntries: List<HookIds.Hook> = KERNEL_HOOKS + KMOD_HOOKS
+internal val NativeKmodHookEntries: List<HookIds.Hook> = (KERNEL_HOOKS + KMOD_HOOKS).toList()
 
-internal val ZygiskNativeHookEntries: List<HookIds.Hook> = ZYGISK_HOOKS
-
-internal val NativeHookEntries: List<HookIds.Hook> = NativeKernelHookEntries
+internal val ZygiskNativeHookEntries: List<HookIds.Hook> = ZYGISK_HOOKS.toList()
 
 internal val LsposedJavaHookEntries: List<HookIds.Hook> =
     LSPOSED_HOOKS.filter { it != HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY }

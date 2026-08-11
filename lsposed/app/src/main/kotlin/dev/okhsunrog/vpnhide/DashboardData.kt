@@ -1606,8 +1606,7 @@ internal suspend fun loadDashboardState(
     // differential and so aren't in nativeOutcomes. Set during the protection
     // computation, surfaced via the hero warning so a leak there is never invisible.
     var unownedNativeLeakCount = 0
-    val filesystemHookInstalled =
-        kmodFilesystemHookInstalled(shellSnapshot["kmod_state"].orEmpty())
+    val installedKmodHooks = installedHooks(shellSnapshot["kmod_state"].orEmpty())
     // Single source of truth: the cache does all the gating (VPN off / needs-restart /
     // self-not-routed) through the one fold. awaitTerminal returns the terminal state
     // itself, so the reason for "no results" (blocked gate vs a failed run) is carried
@@ -1630,7 +1629,7 @@ internal suspend fun loadDashboardState(
                         backend = nativeBackend,
                         lsposedActive = lsposed is LsposedState.Active,
                         complete = true,
-                        kmodFilesystemHookInstalled = filesystemHookInstalled,
+                        installedKmodHooks = installedKmodHooks,
                     )
                 unownedNativeLeakCount = report.native.unownedLeaks
                 ProtectionCheck.Checked(report.native.status, report.java.status)
