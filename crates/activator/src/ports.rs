@@ -1,4 +1,15 @@
-use super::*;
+use std::collections::BTreeMap;
+use std::fs;
+use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+use std::process::{Command, Output, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::{
+    PORTS_CHAIN4, PORTS_CHAIN6, PORTS_LOAD_LOG, PORTS_LOAD_STATUS, PORTS_STATUS_DIR, PortProtocol,
+    PortRule, PortUidPolicy, PortsActivationReport, PortsRuleset, Result, write_atomic,
+};
 
 pub(crate) fn build_ports_ruleset(
     chain: &str,

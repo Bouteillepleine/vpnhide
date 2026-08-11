@@ -1,5 +1,13 @@
 use super::*;
+use std::collections::{BTreeMap, BTreeSet};
 use std::os::unix::process::ExitStatusExt;
+
+use vpnhide_apatch_abi::{
+    CommandStyle as ApatchCommandStyle, encode_command as supercall_cmd,
+    parse_kernel_version_hint as parse_apatch_kernel_version_hint,
+};
+use vpnhide_protocol::hook_ids::ZYGISK_HOOK_MASK;
+use vpnhide_protocol::{KPM_ARGS_LEN, Target, format_config};
 
 #[test]
 fn parses_android_kernel_release_families_without_prefix_matches() {

@@ -1,6 +1,8 @@
 //! KernelPatch/APatch supercall command compatibility shared by the KPM
 //! activator and the APK's read-only runtime probe.
 
+use std::iter;
+
 pub const APATCH_SUPERCALL_NR: i64 = 45;
 pub const APATCH_SUPERCALL_DEFAULT_VERSION_CODE: i64 = 0x000d00;
 pub const APATCH_SUPERCALL_MAGIC: i64 = 0x1158;
@@ -19,7 +21,7 @@ pub fn command_candidates(version_hint: Option<i64>) -> Vec<CommandStyle> {
     for style in version_hint
         .map(CommandStyle::Versioned)
         .into_iter()
-        .chain(std::iter::once(CommandStyle::Versioned(
+        .chain(iter::once(CommandStyle::Versioned(
             APATCH_SUPERCALL_DEFAULT_VERSION_CODE,
         )))
         .chain(
@@ -28,7 +30,7 @@ pub fn command_candidates(version_hint: Option<i64>) -> Vec<CommandStyle> {
                 .copied()
                 .map(CommandStyle::Versioned),
         )
-        .chain(std::iter::once(CommandStyle::Raw))
+        .chain(iter::once(CommandStyle::Raw))
     {
         if !styles.contains(&style) {
             styles.push(style);

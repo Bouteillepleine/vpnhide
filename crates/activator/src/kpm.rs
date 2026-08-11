@@ -1,4 +1,26 @@
-use super::*;
+use std::ffi::CString;
+use std::fs::{self, OpenOptions};
+use std::io;
+use std::os::fd::AsRawFd;
+use std::os::raw::{c_char, c_long, c_void};
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitStatus};
+use std::time::Duration;
+use std::{env, ptr, thread};
+
+use vpnhide_apatch_abi::{
+    APATCH_SUPERCALL_NR, CommandStyle as ApatchCommandStyle,
+    command_candidates as apatch_command_candidates_for_hint, encode_command as supercall_cmd,
+    parse_kernel_version_hint as parse_apatch_kernel_version_hint,
+};
+use vpnhide_protocol::{KPM_ARGS_LEN, Kind, TELEMETRY_VERSION, parse_config, peek_kind};
+
+use crate::{
+    APATCH_DIR, APATCH_TRUSTED_SU_KEY, KPM_CTL_LOCK, KPM_MODULE_FILE, KPM_NAME,
+    KPM_TRUNCATION_MARKER, LOCK_EX, Result, SUPERCALL_HELLO, SUPERCALL_HELLO_MAGIC,
+    SUPERCALL_KPM_CONTROL, SUPERCALL_KPM_LIST, SUPERCALL_KPM_LOAD, SUPERKEY_FILE, flock, syscall,
+};
 
 fn find_kpatch() -> Option<PathBuf> {
     [
@@ -12,8 +34,8 @@ fn find_kpatch() -> Option<PathBuf> {
             let p = PathBuf::from(candidate);
             p.is_file().then_some(p)
         } else {
-            std::env::var_os("PATH").and_then(|paths| {
-                std::env::split_paths(&paths)
+            env::var_os("PATH").and_then(|paths| {
+                env::split_paths(&paths)
                     .map(|dir| dir.join(candidate))
                     .find(|path| path.is_file())
             })
@@ -79,7 +101,7 @@ impl KpmCtlLock {
             .open(KPM_CTL_LOCK)?;
         fs::set_permissions(KPM_CTL_LOCK, fs::Permissions::from_mode(0o600))?;
         if unsafe { flock(file.as_raw_fd(), LOCK_EX) } != 0 {
-            return Err(std::io::Error::last_os_error().into());
+            return Err(io::Error::last_os_error().into());
         }
         Ok(Self { _file: file })
     }
@@ -438,16 +460,13 @@ pub(crate) fn collect_kpm_stats_pages(
     mut read: impl FnMut(&str) -> Result<String>,
 ) -> Result<String> {
     let mut cursor = 0u32;
-    let mut aggregate = format!("vpnhide {} stats\n", vpnhide_protocol::TELEMETRY_VERSION);
+    let mut aggregate = format!("vpnhide {TELEMETRY_VERSION} stats\n");
 
     for page_index in 0..MAX_KPM_STATS_PAGES {
         let request = if page_index == 0 {
             aggregate.trim_end().to_owned()
         } else {
-            format!(
-                "vpnhide {} stats\nafter 0x{cursor:x}\n",
-                vpnhide_protocol::TELEMETRY_VERSION
-            )
+            format!("vpnhide {} stats\nafter 0x{cursor:x}\n", TELEMETRY_VERSION)
         };
         let reply = read(&request)?;
         let Some(page) = parse_kpm_stats_page(&reply, cursor)? else {
@@ -468,7 +487,7 @@ pub(crate) fn collect_kpm_stats_pages(
     Err(format!("KPM stats exceeded {MAX_KPM_STATS_PAGES} pages").into())
 }
 
-pub(crate) fn kpatch_ctl0_config_status_ok(status: std::process::ExitStatus, wire: &str) -> bool {
+pub(crate) fn kpatch_ctl0_config_status_ok(status: ExitStatus, wire: &str) -> bool {
     if status.success() {
         return true;
     }

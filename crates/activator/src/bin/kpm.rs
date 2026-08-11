@@ -1,4 +1,9 @@
-use vpnhide_activator::KpmBootOutcome;
+use std::{env, process};
+
+use vpnhide_activator::{
+    KpmBootOutcome, Result, activate_kpm, activate_kpm_boot, load_kpm_boot, read_kpm_state,
+    read_kpm_stats, read_kpm_status,
+};
 
 /// Exit code returned from `--boot-wait` when the KPM stood down because the
 /// .ko backend is present (protocol §1.5). Distinct from 0 (configured) and 1
@@ -13,32 +18,30 @@ const EXIT_UNSUPPORTED_KERNEL: i32 = 5;
 
 fn main() {
     match run() {
-        Ok(code) => std::process::exit(code),
+        Ok(code) => process::exit(code),
         Err(e) => {
             eprintln!("vpnhide kpm activator failed: {e}");
-            std::process::exit(1);
+            process::exit(1);
         }
     }
 }
 
-fn run() -> vpnhide_activator::Result<i32> {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
+fn run() -> Result<i32> {
+    let args = env::args().skip(1).collect::<Vec<_>>();
     match args.as_slice() {
-        [] => vpnhide_activator::activate_kpm().map(|_| 0),
-        [arg] if arg == "--boot-wait" => {
-            Ok(boot_exit_code(vpnhide_activator::activate_kpm_boot()?))
-        }
-        [arg] if arg == "--load-only" => Ok(boot_exit_code(vpnhide_activator::load_kpm_boot()?)),
+        [] => activate_kpm().map(|()| 0),
+        [arg] if arg == "--boot-wait" => Ok(boot_exit_code(activate_kpm_boot()?)),
+        [arg] if arg == "--load-only" => Ok(boot_exit_code(load_kpm_boot()?)),
         [arg] if arg == "status" => {
-            print!("{}", vpnhide_activator::read_kpm_status()?);
+            print!("{}", read_kpm_status()?);
             Ok(0)
         }
         [arg] if arg == "stats" => {
-            print!("{}", vpnhide_activator::read_kpm_stats()?);
+            print!("{}", read_kpm_stats()?);
             Ok(0)
         }
         [arg] if arg == "state" => {
-            print!("{}", vpnhide_activator::read_kpm_state()?);
+            print!("{}", read_kpm_state()?);
             Ok(0)
         }
         _ => Err("usage: activator [--boot-wait|--load-only|status|stats|state]".into()),

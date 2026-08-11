@@ -1,4 +1,16 @@
-use super::*;
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde::Deserialize;
+use vpnhide_protocol::Target;
+use vpnhide_protocol::format_config;
+use vpnhide_protocol::hook_ids::{Hook, KERNEL_HOOK_MASK, ZYGISK_HOOK_MASK};
+
+use crate::ports::build_ports_ruleset;
+use crate::{
+    APP_PACKAGE, MAX_NATIVE_TARGETS, NO_DEFAULT_MASK, PER_USER_RANGE, PM_READY_ATTEMPTS,
+    PORTS_CHAIN4, PORTS_CHAIN6, PmReadyWait, Result, has_native_targets, has_ports_targets,
+    is_app_uid, pm_list_packages, pm_list_users, wait_for_pm_ready,
+};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

@@ -9,6 +9,8 @@
 //! Roles (§1.4): backends PARSE config and EMIT stats/status. The activator
 //! also uses this crate to FORMAT config snapshots for native backends.
 
+use core::iter;
+
 pub mod generated;
 
 pub use generated::hook_ids;
@@ -118,7 +120,7 @@ fn is_ascii_printable(b: u8) -> bool {
 fn lines(buf: &[u8]) -> impl Iterator<Item = &[u8]> {
     let mut i = 0usize;
     let len = buf.len();
-    core::iter::from_fn(move || {
+    iter::from_fn(move || {
         if i >= len {
             return None;
         }
