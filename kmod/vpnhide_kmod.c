@@ -305,6 +305,15 @@ static void record_hook_hit(enum vpnhide_hook_id hook_id)
 /* Forward decl: the probe registration table drives the `status` hooks mask. */
 static u32 installed_hook_mask(void);
 
+static u32 expected_hook_mask(void)
+{
+	u32 mask = VPNHIDE_KERNEL_HOOK_MASK;
+
+	if (READ_ONCE(filesystem_hiding))
+		mask |= vpnhide_hook_bit(VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS);
+	return mask;
+}
+
 static ssize_t ctl_write(struct file *file, const char __user *ubuf,
 			 size_t count, loff_t *ppos)
 {
@@ -401,8 +410,8 @@ static int ctl_seq_show(struct seq_file *m, void *v)
 		seq_puts(m, VPNHIDE_READ_BANNER);
 	} else if (item == 1) {
 		u32 hooks = installed_hook_mask();
-		u32 error = (hooks & VPNHIDE_KERNEL_HOOK_MASK) ==
-					    VPNHIDE_KERNEL_HOOK_MASK ?
+		u32 expected_hooks = expected_hook_mask();
+		u32 error = (hooks & expected_hooks) == expected_hooks ?
 				    VPNHIDE_ERR_OK :
 				    VPNHIDE_ERR_PARTIAL_HOOKS;
 
