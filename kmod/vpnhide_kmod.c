@@ -225,14 +225,57 @@ struct stats_row {
 };
 
 static struct stats_row stats_rows[MAX_TARGET_UIDS];
+/* Sorted by stats_rows[index].uid for binary lookup. Rows themselves stay in
+ * insertion order so adding a UID shifts at most this compact index (640
+ * bytes), not the roughly 15 KiB stats table, while seq_file iteration remains
+ * stable when another UID records its first hit concurrently. */
+static int stats_uid_order[MAX_TARGET_UIDS];
 static int nr_stats_rows;
 static DEFINE_SPINLOCK(stats_lock);
 
+/* stats_lock must be held. */
+static struct stats_row *find_or_add_stats_row(uid_t uid)
+{
+	struct stats_row *row;
+	int lo = 0;
+	int hi = nr_stats_rows;
+	int mid, row_index;
+
+	while (lo < hi) {
+		mid = lo + (hi - lo) / 2;
+		row = &stats_rows[stats_uid_order[mid]];
+		if (row->uid < uid)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+
+	if (lo < nr_stats_rows) {
+		row = &stats_rows[stats_uid_order[lo]];
+		if (row->uid == uid)
+			return row;
+	}
+	if (nr_stats_rows >= MAX_TARGET_UIDS)
+		return NULL;
+
+	row_index = nr_stats_rows;
+	memmove(&stats_uid_order[lo + 1], &stats_uid_order[lo],
+		(nr_stats_rows - lo) * sizeof(stats_uid_order[0]));
+	stats_uid_order[lo] = row_index;
+	nr_stats_rows++;
+
+	row = &stats_rows[row_index];
+	row->uid = uid;
+	memset(row->counts, 0, sizeof(row->counts));
+	return row;
+}
+
 static void record_hook_hit(enum vpnhide_hook_id hook_id)
 {
+	struct stats_row *row;
 	uid_t uid;
 	unsigned long flags;
-	int hook_slot, i;
+	int hook_slot;
 
 	hook_slot = vpnhide_kernel_hook_slot(hook_id);
 	if (hook_slot < 0)
@@ -240,19 +283,9 @@ static void record_hook_hit(enum vpnhide_hook_id hook_id)
 
 	uid = from_kuid(&init_user_ns, current_uid());
 	spin_lock_irqsave(&stats_lock, flags);
-	for (i = 0; i < nr_stats_rows; i++) {
-		if (stats_rows[i].uid == uid) {
-			stats_rows[i].counts[hook_slot]++;
-			spin_unlock_irqrestore(&stats_lock, flags);
-			return;
-		}
-	}
-	if (nr_stats_rows < MAX_TARGET_UIDS) {
-		i = nr_stats_rows++;
-		stats_rows[i].uid = uid;
-		memset(stats_rows[i].counts, 0, sizeof(stats_rows[i].counts));
-		stats_rows[i].counts[hook_slot] = 1;
-	}
+	row = find_or_add_stats_row(uid);
+	if (row)
+		row->counts[hook_slot]++;
 	spin_unlock_irqrestore(&stats_lock, flags);
 }
 
