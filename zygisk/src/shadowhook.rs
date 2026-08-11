@@ -7,7 +7,7 @@
 //! `aarch64-linux-android`; see `build.rs`.
 
 use core::ffi::{c_char, c_int, c_void};
-use std::sync::Once;
+use std::sync::OnceLock;
 
 // `SHADOWHOOK_MODE_UNIQUE` from shadowhook.h. We never use shared mode, so a
 // constant represents the one FFI value we pass without carrying a dead enum
@@ -33,21 +33,15 @@ unsafe extern "C" {
     fn shadowhook_unhook(stub: *mut c_void) -> c_int;
 }
 
-static INIT: Once = Once::new();
-static mut INIT_RC: c_int = 0;
+static INIT_RC: OnceLock<c_int> = OnceLock::new();
 
 /// Initialize shadowhook exactly once per process. Returns Ok on success
 /// or if already initialized; Err with the raw return code otherwise.
 pub fn init_once() -> Result<(), c_int> {
-    INIT.call_once(|| {
+    let rc = *INIT_RC.get_or_init(|| {
         // SAFETY: FFI call with no arguments that reference Rust memory.
-        let rc = unsafe { shadowhook_init(SHADOWHOOK_MODE_UNIQUE, false) };
-        // SAFETY: written exactly once inside call_once, read only after.
-        unsafe { INIT_RC = rc };
+        unsafe { shadowhook_init(SHADOWHOOK_MODE_UNIQUE, false) }
     });
-    // SAFETY: INIT_RC is only written inside call_once above and never
-    // mutated again; all reads happen after call_once has completed.
-    let rc = unsafe { INIT_RC };
     if rc == 0 { Ok(()) } else { Err(rc) }
 }
 
