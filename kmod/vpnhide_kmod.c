@@ -369,12 +369,27 @@ static int ctl_show(struct seq_file *m, void *v)
 	st.error = (st.hooks == VPNHIDE_KERNEL_HOOK_MASK) ?
 			   VPNHIDE_ERR_OK :
 			   VPNHIDE_ERR_PARTIAL_HOOKS;
+	/*
+	 * vpnhide_format_* report the FULL intended length (snprintf semantics),
+	 * which can exceed the buffer they filled. Clamping with min() would emit
+	 * the first CTL_READ_BUF_SIZE bytes cut wherever they land — a record
+	 * severed mid-line, with nothing to say the snapshot is partial, so the
+	 * reader would total a half-parsed counter as if it were whole.
+	 * vpnhide_clamp_to_line instead ends on a complete line and drops the
+	 * final newline, which is the protocol's truncation signal (§7.2) — the
+	 * same guard the KPM's ctl0 reply uses.
+	 *
+	 * Reachable: stats cost up to ~640 bytes per uid (27 hooks, saturated u64
+	 * counters), so a full target set can format past 32 KiB. Status is four
+	 * fixed records and cannot, but it goes through the same call so the rule
+	 * is one rule.
+	 */
 	len = vpnhide_format_status(buf, CTL_READ_BUF_SIZE, &st);
-	seq_write(m, buf, min_t(size_t, len, CTL_READ_BUF_SIZE));
+	seq_write(m, buf, vpnhide_clamp_to_line(buf, len, CTL_READ_BUF_SIZE));
 
 	n = snapshot_stats(stats, MAX_STATS_ENTRIES);
 	len = vpnhide_format_stats(buf, CTL_READ_BUF_SIZE, stats, n);
-	seq_write(m, buf, min_t(size_t, len, CTL_READ_BUF_SIZE));
+	seq_write(m, buf, vpnhide_clamp_to_line(buf, len, CTL_READ_BUF_SIZE));
 
 	kfree(stats);
 	kfree(buf);
