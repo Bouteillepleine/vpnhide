@@ -1,7 +1,5 @@
 package dev.okhsunrog.vpnhide
 
-import dev.okhsunrog.vpnhide.generated.HookIds
-
 /**
  * Per-layer backend health for a dashboard tile. Presence (Absent / Inactive)
  * is decided *before* the checks, so an unloaded backend can never render as a
@@ -39,16 +37,12 @@ val LayerStatus.Active.verdict: Verdict
             else -> Verdict.Broken
         }
 
-internal fun NativeCheckSpec.hasHookIn(mask: Int): Boolean = expectedHooks.any { (1 shl it.id) and mask != 0 }
-
-/**
- * The hook mask the given native backend owns: Zygisk owns the zygisk hooks;
- * every kernel backend — and the null/none case — owns the kernel hooks. Single
- * source so the tile verdict, the unowned-leak count, and [buildDiagnosticReport]
- * all scope "owned vectors" the same way.
- */
-internal fun nativeOwnMask(id: NativeBackendId?): Int =
-    if (id == NativeBackendId.Zygisk) HookIds.ZYGISK_HOOK_MASK else HookIds.KERNEL_HOOK_MASK
+/** Native-check ids the active backend owns — its checks whose expected hooks the
+ * backend covers. One derivation shared by the tile summary and the unowned count. */
+private fun ownedNativeCheckIds(backend: DisplayNativeBackend): Set<String> {
+    val owned = ownedNativeHooks(backend.id)
+    return NATIVE_CHECKS.filter { it.coveredBy(owned) }.map { it.id }.toSet()
+}
 
 /**
  * Native tile = health of the active backend, judged **only on vectors it owns**
@@ -63,8 +57,7 @@ internal fun summarizeNativeLayer(
 ): LayerStatus {
     if (backend.state is ModuleState.NotInstalled) return LayerStatus.Absent
     if (!moduleActive(backend.state)) return LayerStatus.Inactive
-    val ownMask = nativeOwnMask(backend.id)
-    val ownedIds = NATIVE_CHECKS.filter { it.hasHookIn(ownMask) }.map { it.id }.toSet()
+    val ownedIds = ownedNativeCheckIds(backend)
     // Both counts are scoped to vectors this backend owns, so hidden and leaks
     // describe the same vector set — a cross-backend hidden (only possible if the
     // one-active-backend invariant ever breaks) can't mask an owned Broken verdict.
@@ -100,7 +93,6 @@ internal fun unownedNativeLeaks(
     outcomes: Map<String, CheckOutcome>,
 ): Int {
     if (backend.state !is ModuleState.Installed || !moduleActive(backend.state)) return 0
-    val ownMask = nativeOwnMask(backend.id)
-    val ownedIds = NATIVE_CHECKS.filter { it.hasHookIn(ownMask) }.map { it.id }.toSet()
+    val ownedIds = ownedNativeCheckIds(backend)
     return outcomes.count { (id, outcome) -> outcome is CheckOutcome.Leak && id !in ownedIds }
 }

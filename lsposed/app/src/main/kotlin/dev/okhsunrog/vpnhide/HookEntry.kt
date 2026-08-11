@@ -120,7 +120,7 @@ class HookEntry : IXposedHookLoadPackage {
             var installedMask = hookInstall.installedHookMask
             val installFailures = hookInstall.installFailures.toMutableList()
             if (tryHook("PackageVisibility", installFailures) { PackageVisibilityHooks.install(lpparam.classLoader) }) {
-                installedMask = installedMask or hookBit(HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY)
+                installedMask = installedMask or HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY.bit
             }
             // ConnectivityService hooks attach asynchronously (the reliable path
             // only fires when "connectivity" registers, after this returns), so
@@ -157,8 +157,6 @@ class HookEntry : IXposedHookLoadPackage {
     // ------------------------------------------------------------------
 
     private fun isVpnInterfaceName(name: String): Boolean = IfaceLists.isVpnIface(name)
-
-    private fun hookBit(hook: HookIds.Hook): Int = 1 shl hook.id
 
     // Recursively sanitizes mIfaceName + mRoutes + nested mStackedLinks; the
     // length and nesting are inherent to walking that object graph by reflection.
@@ -556,7 +554,7 @@ class HookEntry : IXposedHookLoadPackage {
     // user can see and report the AOSP drift.
     private data class HookInstallResult(
         val brokenFields: List<String>,
-        val installedHookMask: Int,
+        val installedHookMask: Long,
         val installFailures: List<String>,
     )
 
@@ -565,7 +563,7 @@ class HookEntry : IXposedHookLoadPackage {
         if (brokenFields.isNotEmpty()) {
             HookLog.e("VpnHide: reflection smoke-check found broken keys: $brokenFields")
         }
-        var installedHookMask = 0
+        var installedHookMask = 0L
         val installFailures = mutableListOf<String>()
 
         // Match a probe key against either an exact entry in `broken` or
@@ -581,14 +579,14 @@ class HookEntry : IXposedHookLoadPackage {
             installFailures += "LP.writeToParcel: skipped critical reflection broken: ${brokenFields.joinToString(",")}"
         } else {
             if (tryHook("LP.writeToParcel", installFailures) { hookLPWriteToParcel() }) {
-                installedHookMask = installedHookMask or hookBit(HookIds.Hook.LSPOSED_LINK_PROPERTIES)
+                installedHookMask = installedHookMask or HookIds.Hook.LSPOSED_LINK_PROPERTIES.bit
             }
         }
 
         // NC uses public NetworkCapabilities mutators now, so private AOSP
         // field drift must not disable this hook.
         if (tryHook("NC.writeToParcel", installFailures) { hookNCWriteToParcel() }) {
-            installedHookMask = installedHookMask or hookBit(HookIds.Hook.LSPOSED_NETWORK_CAPABILITIES)
+            installedHookMask = installedHookMask or HookIds.Hook.LSPOSED_NETWORK_CAPABILITIES.bit
         }
 
         // NI: every field + ctor is critical — the hook body has no
@@ -599,11 +597,11 @@ class HookEntry : IXposedHookLoadPackage {
             installFailures += "NI.writeToParcel: skipped critical reflection broken: ${brokenFields.joinToString(",")}"
         } else {
             if (tryHook("NI.writeToParcel", installFailures) { hookNIWriteToParcel() }) {
-                installedHookMask = installedHookMask or hookBit(HookIds.Hook.LSPOSED_NETWORK_INFO)
+                installedHookMask = installedHookMask or HookIds.Hook.LSPOSED_NETWORK_INFO.bit
             }
         }
         if (tryHook("Network.writeToParcel", installFailures) { hookNetworkWriteToParcel() }) {
-            installedHookMask = installedHookMask or hookBit(HookIds.Hook.LSPOSED_NETWORK)
+            installedHookMask = installedHookMask or HookIds.Hook.LSPOSED_NETWORK.bit
         }
 
         tryHook("FileObserver", installFailures) { watchCanonicalConfigFile() }

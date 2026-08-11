@@ -242,23 +242,7 @@ private fun StatisticsState.toCounterMap(): Map<CounterKey, Long> =
             }
         }.toMap()
 
-private fun ownedHooks(backend: HookIds.Backend): List<HookIds.Hook> {
-    val mask =
-        when (backend) {
-            HookIds.Backend.KMOD,
-            HookIds.Backend.KPM,
-            -> HookIds.KERNEL_HOOK_MASK.toLong()
-
-            HookIds.Backend.ZYGISK -> HookIds.ZYGISK_HOOK_MASK.toLong()
-
-            HookIds.Backend.LSPOSED -> HookIds.LSPOSED_HOOK_MASK.toLong()
-        }
-    return HookIds.Hook.entries.filter { mask.hasHook(it) }
-}
-
 private fun hookOwners(hook: HookIds.Hook): List<HookIds.Backend> =
     HookIds.Backend.entries.filter { backend -> hook in ownedHooks(backend) }
-
-private fun Long.hasHook(hook: HookIds.Hook): Boolean = this and (1L shl hook.id) != 0L
 
 private fun formatHook(hook: HookIds.Hook): String = "[${hook.id}] ${hook.hookName} - ${hook.note}"

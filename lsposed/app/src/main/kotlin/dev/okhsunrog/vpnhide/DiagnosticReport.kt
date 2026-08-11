@@ -142,7 +142,7 @@ private fun nativeDiagnosticChecks(
     backend: DisplayNativeBackend,
 ): List<DiagnosticCheck> {
     if (results == null) return emptyList()
-    val ownMask = nativeOwnMask(backend.id)
+    val ownedHooks = ownedNativeHooks(backend.id)
     // native and nativeExtra are built in NATIVE_CHECKS order, so a positional zip
     // is stable by construction — the spec carries the stable id + hook coverage,
     // the result carries the localized label, outcome, and root ground-truth detail.
@@ -156,7 +156,7 @@ private fun nativeDiagnosticChecks(
                 appDetail = cr.detail,
                 groundTruthDetail = cr.groundTruthDetail,
                 expectedHooks = spec.expectedHooks.toList(),
-                owned = spec.hasHookIn(ownMask),
+                owned = spec.coveredBy(ownedHooks),
             )
         }
     // Java-implemented native-level probes (NetworkInterface enum): no hook

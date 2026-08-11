@@ -9,7 +9,7 @@ internal class ConnectivityAttachDiagnostics {
 
     @Volatile private var attachedMeta: Map<String, String> = emptyMap()
 
-    @Volatile private var attachedBits: Int = 0
+    @Volatile private var attachedBits: Long = 0L
 
     /** Compact classloader-chain fingerprint, e.g. PathClassLoader<BootClassLoader. */
     fun describeLoader(classLoader: ClassLoader?): String {
@@ -40,10 +40,10 @@ internal class ConnectivityAttachDiagnostics {
         networkCounts: Map<String, Int>,
         callbackCounts: Map<String, Int>,
     ) {
-        var bits = 0
-        if (resultCounts.values.any { it > 0 }) bits = bits or hookBit(HookIds.Hook.LSPOSED_CONNECTIVITY_RESULT)
-        if (networkCounts.values.any { it > 0 }) bits = bits or hookBit(HookIds.Hook.LSPOSED_CONNECTIVITY_NETWORK)
-        if (callbackCounts.values.any { it > 0 }) bits = bits or hookBit(HookIds.Hook.LSPOSED_CONNECTIVITY_CALLBACK)
+        var bits = 0L
+        if (resultCounts.values.any { it > 0 }) bits = bits or HookIds.Hook.LSPOSED_CONNECTIVITY_RESULT.bit
+        if (networkCounts.values.any { it > 0 }) bits = bits or HookIds.Hook.LSPOSED_CONNECTIVITY_NETWORK.bit
+        if (callbackCounts.values.any { it > 0 }) bits = bits or HookIds.Hook.LSPOSED_CONNECTIVITY_CALLBACK.bit
         attachedBits = bits
 
         attachedMeta =
@@ -70,6 +70,4 @@ internal class ConnectivityAttachDiagnostics {
     }
 
     private fun formatCounts(counts: Map<String, Int>): String = counts.entries.joinToString(",") { "${it.key}=${it.value}" }
-
-    private fun hookBit(hook: HookIds.Hook): Int = 1 shl hook.id
 }

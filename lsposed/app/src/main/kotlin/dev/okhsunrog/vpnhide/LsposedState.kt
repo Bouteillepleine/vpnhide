@@ -90,7 +90,7 @@ internal object LsposedStats {
             writeState()
         }
 
-    @Volatile private var installedHooks: Int = 0
+    @Volatile private var installedHooks: Long = 0L
 
     @Volatile private var brokenFields: List<String> = emptyList()
 
@@ -103,12 +103,12 @@ internal object LsposedStats {
     // they land. cs_* meta keys are persisted install telemetry — they survive
     // from boot to the next debug capture without depending on logcat or the
     // debug-logging toggle, which is what makes "hook didn't attach" diagnosable.
-    @Volatile private var connectivityBits: Int = 0
+    @Volatile private var connectivityBits: Long = 0L
 
     @Volatile private var connectivityMeta: Map<String, String> = emptyMap()
 
     fun setConnectivityDiagnostics(
-        attachedBits: Int,
+        attachedBits: Long,
         meta: Map<String, String>,
     ) {
         connectivityBits = attachedBits
@@ -121,7 +121,7 @@ internal object LsposedStats {
     }
 
     fun setStatus(
-        installedHookMask: Int,
+        installedHookMask: Long,
         broken: List<String>,
         failures: List<String> = emptyList(),
     ) {
@@ -173,7 +173,7 @@ internal object LsposedStats {
         // "install call didn't throw").
         val installed = installedHooks or connectivityBits
         val error =
-            if (installed == HookIds.LSPOSED_HOOK_MASK) {
+            if (installed == HookIds.LSPOSED_HOOK_MASK.toLong()) {
                 HookIds.StatusError.OK.code
             } else {
                 HookIds.StatusError.PARTIAL_HOOKS.code
@@ -184,7 +184,7 @@ internal object LsposedStats {
                     HookIds.Backend.LSPOSED.id
                         .toLong(),
                 kver = 0,
-                hooks = installed.toLong(),
+                hooks = installed,
                 error = error.toLong(),
             )
         return formatLsposedState(

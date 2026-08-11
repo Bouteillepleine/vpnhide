@@ -79,19 +79,12 @@ private data class ParsedHookRole(
     val hooks: List<String>? = null,
 )
 
-internal val NativeKernelHookEntries: List<HookIds.Hook> =
-    HookIds.Hook.entries.filter { hookBit(it) and HookIds.KERNEL_HOOK_MASK.toLong() != 0L }
+internal val NativeKernelHookEntries: List<HookIds.Hook> = KERNEL_HOOKS
 
-internal val ZygiskNativeHookEntries: List<HookIds.Hook> =
-    HookIds.Hook.entries.filter { hookBit(it) and HookIds.ZYGISK_HOOK_MASK.toLong() != 0L }
-
-internal val NativeHookEntries: List<HookIds.Hook> = NativeKernelHookEntries
+internal val ZygiskNativeHookEntries: List<HookIds.Hook> = ZYGISK_HOOKS
 
 internal val LsposedJavaHookEntries: List<HookIds.Hook> =
-    HookIds.Hook.entries.filter {
-        hookBit(it) and HookIds.LSPOSED_HOOK_MASK.toLong() != 0L &&
-            it != HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY
-    }
+    LSPOSED_HOOKS.filter { it != HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY }
 
 internal fun nativeHookEntriesFor(family: NativeHookFamily): List<HookIds.Hook> =
     when (family) {
@@ -111,13 +104,11 @@ internal fun hookSelectionMask(
     entries: List<HookIds.Hook>,
 ): Long {
     if (!enabled) return 0L
-    val allMask = entries.fold(0L) { acc, hook -> acc or hookBit(hook) }
+    val allMask = entries.toHookMask()
     if (hooks == null) return allMask
     val allowedByName = entries.associateBy { it.hookName }
-    return hooks.fold(0L) { acc, name -> acc or (allowedByName[name]?.let(::hookBit) ?: 0L) }
+    return hooks.fold(0L) { acc, name -> acc or (allowedByName[name]?.bit ?: 0L) }
 }
-
-private fun hookBit(hook: HookIds.Hook): Long = 1L shl hook.id
 
 internal fun parseCanonicalConfig(raw: String): CanonicalConfig? {
     if (raw.isBlank()) return null

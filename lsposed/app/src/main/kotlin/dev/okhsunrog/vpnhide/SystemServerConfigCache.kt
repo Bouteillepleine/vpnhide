@@ -101,9 +101,7 @@ internal object SystemServerConfigCache {
         hook: HookIds.Hook,
     ): Boolean {
         if (uid < android.os.Process.FIRST_APPLICATION_UID) return false
-        return load().javaTargetHookMasksByAppId[appId(uid)]?.let { mask ->
-            mask and (1L shl hook.id) != 0L
-        } == true
+        return load().javaTargetHookMasksByAppId[appId(uid)]?.hasHook(hook) == true
     }
 
     fun appId(uid: Int): Int = uid % USER_ID_MODULO
