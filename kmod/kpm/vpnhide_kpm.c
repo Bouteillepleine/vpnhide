@@ -428,6 +428,16 @@ static unsigned long format_stats_page(char *buf, unsigned long cap,
 	return b.len;
 }
 
+static long copy_ctl_reply(char __user *out_msg, const char *buf,
+			   unsigned long len)
+{
+	if (!len)
+		return 0;
+	if (!out_msg || !_copy_to_user || _copy_to_user(out_msg, buf, len))
+		return -1;
+	return (long)len;
+}
+
 /* NUL-safe copy of a kernel iface name, then match via the generated rules. */
 static int iface_is_vpn(const char *name)
 {
@@ -1684,9 +1694,7 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 			if (available > sizeof(buf))
 				available = sizeof(buf);
 			n = format_stats_page(buf, available, after);
-			if (_copy_to_user && out_msg && n)
-				_copy_to_user(out_msg, buf, n);
-			return (long)n;
+			return copy_ctl_reply(out_msg, buf, n);
 		} else {
 			struct vpnhide_status st;
 
@@ -1710,9 +1718,7 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 		if (available > sizeof(buf))
 			available = sizeof(buf);
 		n = vpnhide_clamp_to_line(buf, full, available);
-		if (_copy_to_user && out_msg && n)
-			_copy_to_user(out_msg, buf, n);
-		return (long)n;
+		return copy_ctl_reply(out_msg, buf, n);
 	}
 
 	return -1; /* unknown kind */
