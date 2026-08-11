@@ -648,8 +648,43 @@ fn scrub_shadowhook_maps() {
 fn target_hookmask(uid: u32) -> u32 {
     CACHED_CONFIG
         .get()
-        .and_then(|cfg| cfg.targets.iter().find(|target| target.uid == uid))
-        .map_or(0, |target| target.hookmask)
+        .map_or(0, |cfg| hookmask_for_uid(&cfg.targets, uid))
+}
+
+fn hookmask_for_uid(targets: &[protocol::Target], uid: u32) -> u32 {
+    targets
+        .binary_search_by_key(&uid, |target| target.uid)
+        .map_or(0, |index| targets[index].hookmask)
+}
+
+#[cfg(test)]
+mod target_lookup_tests {
+    use super::*;
+
+    #[test]
+    fn finds_hookmask_in_sorted_targets() {
+        let targets = [
+            protocol::Target {
+                uid: 10_001,
+                hookmask: 0x1,
+            },
+            protocol::Target {
+                uid: 10_100,
+                hookmask: 0x2,
+            },
+            protocol::Target {
+                uid: 19_999,
+                hookmask: 0x4,
+            },
+        ];
+
+        assert_eq!(hookmask_for_uid(&targets, 10_001), 0x1);
+        assert_eq!(hookmask_for_uid(&targets, 10_100), 0x2);
+        assert_eq!(hookmask_for_uid(&targets, 19_999), 0x4);
+        assert_eq!(hookmask_for_uid(&targets, 10_000), 0);
+        assert_eq!(hookmask_for_uid(&targets, 10_101), 0);
+        assert_eq!(hookmask_for_uid(&[], 10_001), 0);
+    }
 }
 
 fn zygisk_hook_enabled(hookmask: u32, hook: Hook) -> bool {
