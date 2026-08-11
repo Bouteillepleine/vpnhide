@@ -109,6 +109,7 @@ internal object AppListCache : StateCache<List<AppSummary>>(
         context: Context,
     ) {
         appContext = context.applicationContext
+        RootSnapshotCache.invalidate()
         forceRefresh(scope)
     }
 
@@ -120,69 +121,49 @@ internal object AppListCache : StateCache<List<AppSummary>>(
         return if (!force) {
             apps.value ?: load(force = false)
         } else {
+            RootSnapshotCache.invalidate()
             load(force = true)
         }
     }
 
-    override suspend fun load(force: Boolean): List<AppSummary> {
+    override suspend fun load(
+        @Suppress("UNUSED_PARAMETER") force: Boolean,
+    ): List<AppSummary> {
         val appContext = requireNotNull(appContext) { "AppListCache.load before ensureLoaded/refresh" }
         return withContext(Dispatchers.IO) {
             val pm = appContext.packageManager
             val vpnServicePkgs = queryVpnServiceProviders(pm)
-            val (packages, users) = loadPackagesAndUsersViaRoot()
-            _userNames.value = users.mapValues { (_, profile) -> profileDisplayName(appContext, profile) }
-            if (packages.isNotEmpty()) {
-                packages.entries
-                    .map { (pkg, meta) ->
-                        val info = runCatching { pm.getApplicationInfo(pkg, 0) }.getOrNull()
-                        val archiveInfo =
-                            if (info == null) loadArchiveApplicationInfo(pm, meta.apkPath) else null
-                        val effectiveInfo = info ?: archiveInfo
+            val inventory = requireCompletePackageInventory(RootSnapshotCache.getOrLoad().sections)
+            _userNames.value =
+                inventory.profiles.mapValues { (_, profile) -> profileDisplayName(appContext, profile) }
+            inventory.packages.entries
+                .map { (pkg, meta) ->
+                    val info = runCatching { pm.getApplicationInfo(pkg, 0) }.getOrNull()
+                    val archiveInfo =
+                        if (info == null) loadArchiveApplicationInfo(pm, meta.apkPath) else null
+                    val effectiveInfo = info ?: archiveInfo
 
-                        // Archive-parsed ApplicationInfo doesn't carry
-                        // FLAG_SYSTEM (that bit is attached by PM at
-                        // install time, not stored in the manifest), so
-                        // for secondary-only packages we'd misclassify
-                        // every system app as user-installed. Fall back
-                        // to the APK path: /data/app/... is user-
-                        // installed, everything else is baked into the
-                        // system image.
-                        val isSystem =
-                            if (info != null) {
-                                (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-                            } else {
-                                !meta.apkPath.startsWith("/data/app/")
-                            }
-                        val label = effectiveInfo?.loadLabel(pm)?.toString() ?: pkg
+                    // Archive-parsed ApplicationInfo doesn't carry FLAG_SYSTEM
+                    // (that bit is attached by PM at install time, not stored in
+                    // the manifest), so use the APK path for secondary-only apps.
+                    val isSystem =
+                        if (info != null) {
+                            (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+                        } else {
+                            !meta.apkPath.orEmpty().startsWith("/data/app/")
+                        }
+                    val label = effectiveInfo?.loadLabel(pm)?.toString() ?: pkg
 
-                        AppSummary(
-                            packageName = pkg,
-                            label = label,
-                            icon = effectiveInfo?.let { runCatching { pm.getApplicationIcon(it) }.getOrNull() },
-                            isSystem = isSystem,
-                            userIds = meta.userIds,
-                            declaresVpnService = pkg in vpnServicePkgs,
-                            nameContainsVpn = !isSystem && looksLikeVpnAppName(label),
-                        )
-                    }.sortedBy { it.label.lowercase() }
-            } else {
-                // Fallback: current-profile only (legacy behavior)
-                pm
-                    .getInstalledApplications(0)
-                    .map { info ->
-                        val label = info.loadLabel(pm).toString()
-                        val isSystem = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-                        AppSummary(
-                            packageName = info.packageName,
-                            label = label,
-                            icon = runCatching { pm.getApplicationIcon(info) }.getOrNull(),
-                            isSystem = isSystem,
-                            userIds = listOf(Process.myUid() / 100000),
-                            declaresVpnService = info.packageName in vpnServicePkgs,
-                            nameContainsVpn = !isSystem && looksLikeVpnAppName(label),
-                        )
-                    }.sortedBy { it.label.lowercase() }
-            }
+                    AppSummary(
+                        packageName = pkg,
+                        label = label,
+                        icon = effectiveInfo?.let { runCatching { pm.getApplicationIcon(it) }.getOrNull() },
+                        isSystem = isSystem,
+                        userIds = meta.userIds,
+                        declaresVpnService = pkg in vpnServicePkgs,
+                        nameContainsVpn = !isSystem && looksLikeVpnAppName(label),
+                    )
+                }.sortedBy { it.label.lowercase() }
         }
     }
 
@@ -204,52 +185,6 @@ internal object AppListCache : StateCache<List<AppSummary>>(
             }.toSet()
     }
 
-    private data class PkgMeta(
-        val apkPath: String,
-        val userIds: List<Int>,
-    )
-
-    private const val USERS_SENTINEL = "===VPNHIDE-USERS-BOUNDARY==="
-
-    /**
-     * Enumerate every installed package and every user profile in a
-     * single `su` invocation. `pm list packages -U -f --user all` gives
-     * APK path + UID per (pkg, user) tuple; `pm list users` gives the
-     * profile names ("Work", "Second Space") and types that the UI
-     * renders instead of raw user IDs. One `su` spawn — the packages
-     * section is separated from the users section by a sentinel the
-     * parser splits on.
-     *
-     * Both `pm list users` forms are emitted. `-v` is what carries the
-     * profile *type* (`profile.CLONE`, `profile.MANAGED`, …), which is
-     * the only way to name a profile the OS left nameless; it exists
-     * since Android 11 but prints "Invalid option" on anything older,
-     * so the plain form follows as the naming fallback. AOSP pins the
-     * plain format, which also makes it a safety net if an OEM reworks
-     * the verbose printf.
-     *
-     * Packages output is one of:
-     *   package:<apk_path>=<pkg> uid:<uid>            (single-user)
-     *   package:<apk_path>=<pkg> uid:<uid>,<uid>,...  (AOSP --user all)
-     *   package:<apk_path>=<pkg> uid:<uid>            (repeated per user
-     *                                                  on some ROMs)
-     * Users output is parsed by [parseUserProfiles].
-     */
-    private fun loadPackagesAndUsersViaRoot(): Pair<Map<String, PkgMeta>, Map<Int, UserProfileInfo>> {
-        val (exitCode, raw) =
-            suExec(
-                "pm list packages -U -f --user all 2>/dev/null; " +
-                    "echo '$USERS_SENTINEL'; " +
-                    "pm list users -v 2>/dev/null; " +
-                    "pm list users 2>/dev/null",
-            )
-        if (exitCode != 0) return emptyMap<String, PkgMeta>() to emptyMap()
-        val parts = raw.split(USERS_SENTINEL, limit = 2)
-        val packages = parsePackages(parts[0])
-        val users = if (parts.size > 1) parseUserProfiles(parts[1]) else emptyMap()
-        return packages to users
-    }
-
     /**
      * A profile's own name wins — it is what the system UI shows. Only
      * when the OS reports none do we synthesize one from the profile
@@ -268,43 +203,6 @@ internal object AppListCache : StateCache<List<AppSummary>>(
             UserProfileKind.SECONDARY -> context.getString(R.string.profile_kind_secondary, profile.id)
             UserProfileKind.UNKNOWN -> context.getString(R.string.profile_kind_unknown, profile.id)
         }
-    }
-
-    private fun parsePackages(raw: String): Map<String, PkgMeta> {
-        val out = LinkedHashMap<String, PkgMeta>()
-        raw
-            .lineSequence()
-            .map { it.trim() }
-            .filter { it.startsWith("package:") }
-            .forEach { line ->
-                val body = line.removePrefix("package:")
-                val uidMarker = body.lastIndexOf(" uid:")
-                if (uidMarker <= 0) return@forEach
-                val pathAndPkg = body.substring(0, uidMarker)
-                val uidPart = body.substring(uidMarker + " uid:".length).trim()
-                val eq = pathAndPkg.lastIndexOf('=')
-                if (eq <= 0 || eq >= pathAndPkg.lastIndex) return@forEach
-                val apkPath = pathAndPkg.substring(0, eq).trim()
-                val pkg = pathAndPkg.substring(eq + 1).trim()
-                if (apkPath.isEmpty() || pkg.isEmpty()) return@forEach
-
-                val userIds =
-                    uidPart
-                        .split(',')
-                        .mapNotNull { it.trim().toIntOrNull() }
-                        .map { it / 100000 }
-
-                val existing = out[pkg]
-                out[pkg] =
-                    if (existing == null) {
-                        PkgMeta(apkPath, userIds.distinct().sorted())
-                    } else {
-                        existing.copy(
-                            userIds = (existing.userIds + userIds).distinct().sorted(),
-                        )
-                    }
-            }
-        return out
     }
 
     @Suppress("DEPRECATION")

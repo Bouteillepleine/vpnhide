@@ -66,7 +66,9 @@ class DebugShellSnapshotTest {
         assertTrue(command.contains("/data/adb/lspd/config/modules_config.db"))
         assertTrue(command.contains("dumpsys connectivity"))
         assertTrue(command.contains("androidboot[.]serialno"))
-        assertTrue(command.contains("pm list packages -U --user all"))
+        assertTrue(command.contains("pm list users"))
+        assertTrue(command.contains("pm list packages -U -f --user \"${'$'}PM_USER_ID\""))
+        assertFalse(command.contains("--user all"))
         assertFalse(command.contains("debug_logging"))
     }
 

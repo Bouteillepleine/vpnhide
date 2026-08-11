@@ -143,26 +143,18 @@ internal fun parseKeyValueLines(raw: String): Map<String, String> =
             if (parts.size == 2) parts[0] to parts[1] else null
         }.toMap()
 
-private val PM_PACKAGE_UID_LINE = Regex("^package:(\\S+) uid:(\\S+)")
-
 /**
- * Parse `pm list packages -U [--user all]` output (the form *without* `-f`,
- * so the token after `package:` is the package name, not an APK path) into
- * `package → uids`. Multi-profile packages report comma-separated UIDs
- * (`uid:10187,1010187`); repeated lines for the same package are unioned.
- * UIDs that aren't integers are dropped. The `-f` variant has a different
- * shape and is parsed separately in [AppListCache].
+ * Parse `pm list packages -U` output into `package → uids`. Both the plain
+ * and `-f` path-prefixed forms are accepted. Repeated per-user rows and
+ * comma-separated `--user all` rows are unioned.
  */
 internal fun parsePackageUidMap(raw: String): Map<String, List<Int>> {
-    val out = LinkedHashMap<String, MutableList<Int>>()
+    val out = LinkedHashMap<String, MutableSet<Int>>()
     raw.lineSequence().forEach { line ->
-        val m = PM_PACKAGE_UID_LINE.find(line) ?: return@forEach
-        val uids = out.getOrPut(m.groupValues[1]) { mutableListOf() }
-        m.groupValues[2].split(',').forEach { token ->
-            token.trim().toIntOrNull()?.let(uids::add)
-        }
+        val parsed = parsePackageUidLine(line) ?: return@forEach
+        out.getOrPut(parsed.packageName) { linkedSetOf() }.addAll(parsed.uids)
     }
-    return out
+    return out.mapValues { (_, uids) -> uids.sorted() }
 }
 
 internal fun parseVpnIfaceStates(raw: String): List<Pair<String, String>> =
@@ -239,6 +231,7 @@ internal data class SelfTargetPreparation(
     val selfNeedsRestart: Boolean,
     val currentBootId: String?,
     val pmPackages: String? = null,
+    val pmUsers: String? = null,
     val error: String? = null,
     val failureKind: SelfTargetFailureKind = SelfTargetFailureKind.Unknown,
 )
@@ -305,6 +298,7 @@ internal fun ensureSelfInTargets(
     }
     cleanupLegacyConfigInputs(timeoutSec)
     val pmPackages = sections["pm_packages"]?.trimEnd()?.takeIf { it.isNotBlank() }
+    val pmUsers = sections["pm_users"]?.trimEnd()?.takeIf { it.isNotBlank() }
     val currentBootId = sections["current_boot_id"]?.trim()?.takeIf { it.isNotBlank() }
     VpnHideLog.d(TAG, "ensureSelfInTargets: done, selfNeedsRestart=${update.selfNeedsRestart}")
     return SelfTargetPreparation(
@@ -312,6 +306,7 @@ internal fun ensureSelfInTargets(
         selfNeedsRestart = update.selfNeedsRestart,
         currentBootId = currentBootId,
         pmPackages = pmPackages,
+        pmUsers = pmUsers,
     )
 }
 

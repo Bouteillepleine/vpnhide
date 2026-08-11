@@ -22,6 +22,8 @@ import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
 @Composable
 internal fun TargetsLoadErrorCard(
     onRetry: () -> Unit,
+    title: String,
+    message: String,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -40,14 +42,14 @@ internal fun TargetsLoadErrorCard(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    text = stringResource(R.string.targets_load_failed_title),
+                    text = title,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = stringResource(R.string.targets_load_failed_message),
+                    text = message,
                     style = MaterialTheme.typography.bodyMedium,
                     textAlign = TextAlign.Center,
                 )

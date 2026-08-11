@@ -71,7 +71,8 @@ class RootSnapshotCacheTest {
         assertTrue(command.contains("EPOCHREALTIME"))
         assertTrue(command.contains("/proc/uptime"))
         assertTrue(command.contains("cat \"${'$'}PATH_TO_READ\""))
-        assertTrue(command.contains("pm list packages -U --user all"))
+        assertTrue(command.contains("pm list users"))
+        assertTrue(command.contains("pm list packages -U -f --user \"${'$'}PM_USER_ID\""))
         assertTrue(command.contains("grep -H . /sys/class/net/*/operstate"))
         assertTrue(command.contains("[ -s $SUPERKEY_FILE ] && echo 1 || echo 0"))
         assertTrue(command.contains("cat $PROC_CTL"))
@@ -82,6 +83,7 @@ class RootSnapshotCacheTest {
         assertTrue(command.contains("probe_ok=1"))
         assertTrue(command.contains("iptables -C OUTPUT -j vpnhide_out"))
         assertTrue(command.contains("ip6tables -C OUTPUT -j vpnhide_out6"))
+        assertFalse(command.contains("--user all"))
         assertFalse(command.contains("while IFS= read"))
         assertFalse(command.contains("base64"))
         assertFalse(command.contains("date +%s%3N"))
@@ -105,7 +107,8 @@ class RootSnapshotCacheTest {
     fun `snapshot command can skip package enumeration when startup seeded it`() {
         val command = buildRootShellSnapshotCommand(includePmPackages = false)
 
-        assertFalse(command.contains("pm list packages -U --user all"))
+        assertFalse(command.contains("pm list packages"))
+        assertFalse(command.contains("pm list users"))
         assertTrue(command.contains("phase_target_files"))
         assertTrue(command.contains("phase_vpn_ifaces"))
     }

@@ -28,7 +28,7 @@ internal class StartupCoordinator(
     private val appVersionName: String = BuildConfig.VERSION_NAME,
     private val prepareSelfTargetsCommand: (String) -> SelfTargetPreparation = ::ensureSelfInTargets,
     private val cleanupZygiskStatus: (Context, String?) -> Unit = ::cleanupStaleZygiskStatus,
-    private val seedRootSnapshotPackages: (String?) -> Unit = RootSnapshotCache::seedPmPackages,
+    private val seedRootSnapshotInventory: (PackageInventorySeed?) -> Unit = RootSnapshotCache::seedPackageInventory,
     private val markStartupEvent: (String) -> Unit = StartupTrace::mark,
     private val reconcileRuntimeConfig: () -> Unit = { runRuntimeConfigReconcile() },
     private val reconcileAutoHidden: (CanonicalConfig, List<AppAutoHideSignal>) -> Unit =
@@ -59,7 +59,13 @@ internal class StartupCoordinator(
             withContext(Dispatchers.IO) {
                 val next = prepareSelfTargetsCommand(appContext.packageName)
                 if (next.rootAvailable) {
-                    seedRootSnapshotPackages(next.pmPackages)
+                    val inventory =
+                        if (next.pmPackages != null && next.pmUsers != null) {
+                            PackageInventorySeed(next.pmPackages, next.pmUsers)
+                        } else {
+                            null
+                        }
+                    seedRootSnapshotInventory(inventory)
                     cleanupZygiskStatus(appContext, next.currentBootId)
                 }
                 next

@@ -11,7 +11,7 @@ class StartupCoordinatorTest {
     fun `successful self target preparation seeds package list and cleanup boot id`() =
         runBlocking {
             val markers = mutableListOf<String>()
-            var seededPackages: String? = null
+            var seededInventory: PackageInventorySeed? = null
             var cleanupBootId: String? = null
             val coordinator =
                 StartupCoordinator(
@@ -23,17 +23,24 @@ class StartupCoordinatorTest {
                             selfNeedsRestart = true,
                             currentBootId = "boot-1",
                             pmPackages = "package:dev.okhsunrog.vpnhide uid:10123",
+                            pmUsers = "UserInfo{0:Owner:c13}",
                         )
                     },
                     cleanupZygiskStatus = { _, bootId -> cleanupBootId = bootId },
-                    seedRootSnapshotPackages = { seededPackages = it },
+                    seedRootSnapshotInventory = { seededInventory = it },
                     markStartupEvent = markers::add,
                 )
 
             coordinator.prepareSelfTargets()
 
             assertEquals(StartupSelfTargetState.Ready(selfNeedsRestart = true), coordinator.selfTargetState.value)
-            assertEquals("package:dev.okhsunrog.vpnhide uid:10123", seededPackages)
+            assertEquals(
+                PackageInventorySeed(
+                    packages = "package:dev.okhsunrog.vpnhide uid:10123",
+                    users = "UserInfo{0:Owner:c13}",
+                ),
+                seededInventory,
+            )
             assertEquals("boot-1", cleanupBootId)
             assertEquals(listOf("self_targets_start", "self_targets_done"), markers)
         }
@@ -42,7 +49,7 @@ class StartupCoordinatorTest {
     fun `failed self target preparation reports error without seeding or cleanup`() =
         runBlocking {
             val markers = mutableListOf<String>()
-            var seededPackages: String? = null
+            var seededInventory: PackageInventorySeed? = null
             var cleanupBootId: String? = null
             val coordinator =
                 StartupCoordinator(
@@ -57,7 +64,7 @@ class StartupCoordinatorTest {
                         )
                     },
                     cleanupZygiskStatus = { _, bootId -> cleanupBootId = bootId },
-                    seedRootSnapshotPackages = { seededPackages = it },
+                    seedRootSnapshotInventory = { seededInventory = it },
                     markStartupEvent = markers::add,
                 )
 
@@ -67,7 +74,7 @@ class StartupCoordinatorTest {
                 StartupSelfTargetState.Failed(SelfTargetFailureKind.RootUnavailable, "exit=-1"),
                 coordinator.selfTargetState.value,
             )
-            assertNull(seededPackages)
+            assertNull(seededInventory)
             assertNull(cleanupBootId)
             assertEquals(
                 listOf("self_targets_start", "self_targets_done", "self_targets_failed"),
