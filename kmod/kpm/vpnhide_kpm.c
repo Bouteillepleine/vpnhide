@@ -110,12 +110,14 @@ static bool debug_enabled;
 static uint32_t installed_hooks;
 static uint32_t last_error;
 
-/* Native interception stats, cumulative since KPM load. The KernelPatch build
- * does not use the target kernel's spinlock headers, so slots are reserved with
- * atomic builtins: used=0 empty, 2 initializing, 1 ready. */
-static uint32_t stats_used[MAX_TARGET_UIDS];
+/* Native interception stats, cumulative since KPM load. Only the 11
+ * kernel-owned hooks need storage; the global 27-id space also contains
+ * LSPosed/Zygisk hooks that can never fire here. A zero UID is the empty-slot
+ * sentinel (system AIDs are unconditionally excluded), claimed atomically by
+ * open addressing so concurrent first hits for one UID converge on one slot. */
 static uint32_t stats_uids[MAX_TARGET_UIDS];
-static unsigned long long stats_counts[MAX_TARGET_UIDS][VPNHIDE_HOOK_COUNT];
+static unsigned long long stats_counts[MAX_TARGET_UIDS]
+				      [VPNHIDE_KERNEL_HOOK_COUNT];
 /* Single fixed reply buffer for stats/status (§7.2 — no pagination). A few KiB
  * holds stats for tens of uids; the reader passes a generous outlen and we
  * truncate on a line boundary (clamp_to_line) if it ever overflows. */
@@ -254,45 +256,28 @@ static int hook_active(uint32_t hook_id)
 
 static int stats_slot_for_uid(uint32_t uid)
 {
-	int i;
+	uint32_t first;
+	int probe;
 
-	for (i = 0; i < MAX_TARGET_UIDS; i++) {
-		if (__atomic_load_n(&stats_used[i], __ATOMIC_ACQUIRE) == 1 &&
-		    stats_uids[i] == uid)
+	if (!uid)
+		return -1;
+	first = (uid * 2654435761u) % MAX_TARGET_UIDS;
+	for (probe = 0; probe < MAX_TARGET_UIDS; probe++) {
+		int i = (int)((first + (uint32_t)probe) % MAX_TARGET_UIDS);
+		uint32_t owner =
+			__atomic_load_n(&stats_uids[i], __ATOMIC_ACQUIRE);
+
+		if (owner == uid)
 			return i;
-	}
-
-	for (i = 0; i < MAX_TARGET_UIDS; i++) {
-		uint32_t st;
-
-		/* Wait out a concurrent claimer that is mid-init (state 2):
-		 * until it settles to state 1 we can't read its uid, and just
-		 * skipping it (the old code's `continue`) would let us allocate a
-		 * SECOND slot for the SAME uid. The init window is a few
-		 * instructions (CAS -> store uid -> store state 1), so this
-		 * settles immediately. */
-		while ((st = __atomic_load_n(&stats_used[i],
-					     __ATOMIC_ACQUIRE)) == 2)
-			;
-		if (st == 1) {
-			if (stats_uids[i] == uid)
-				return i; /* already ours */
-			continue; /* another uid owns this slot */
-		}
-		/* st == 0: free — try to claim it. */
-		if (__sync_bool_compare_and_swap(&stats_used[i], 0, 2)) {
-			stats_uids[i] = uid;
-			__sync_synchronize();
-			__atomic_store_n(&stats_used[i], 1, __ATOMIC_RELEASE);
+		if (owner != 0)
+			continue;
+		if (__sync_bool_compare_and_swap(&stats_uids[i], 0, uid))
 			return i;
-		}
-		/* Lost the CAS to a concurrent claimer — re-examine THIS slot (it
-		 * may be settling to our uid) instead of moving on and allocating
-		 * a duplicate. (A residual window remains only if two first-hits
-		 * for one uid claim two different free slots simultaneously; that
-		 * just splits a counter across two stats lines, never a crash —
-		 * a perfect lock-free find-or-insert needs a lock KP lacks.) */
-		i--;
+		/* A competing first hit claimed this deterministic probe position.
+		 * Re-read it before advancing: if it was the same UID, returning this
+		 * slot prevents the duplicate-row race of the old two-pass scan. */
+		if (__atomic_load_n(&stats_uids[i], __ATOMIC_ACQUIRE) == uid)
+			return i;
 	}
 
 	return -1;
@@ -300,13 +285,14 @@ static int stats_slot_for_uid(uint32_t uid)
 
 static void record_hook_hit(uint32_t hook_id)
 {
-	int slot;
+	int hook_slot, uid_slot;
 
-	if (hook_id >= VPNHIDE_HOOK_COUNT)
+	hook_slot = vpnhide_kernel_hook_slot(hook_id);
+	if (hook_slot < 0)
 		return;
-	slot = stats_slot_for_uid((uint32_t)current_uid());
-	if (slot >= 0)
-		__sync_fetch_and_add(&stats_counts[slot][hook_id], 1ULL);
+	uid_slot = stats_slot_for_uid((uint32_t)current_uid());
+	if (uid_slot >= 0)
+		__sync_fetch_and_add(&stats_counts[uid_slot][hook_slot], 1ULL);
 }
 
 static int snapshot_stats(struct vpnhide_stat_entry *out, int max)
@@ -314,16 +300,20 @@ static int snapshot_stats(struct vpnhide_stat_entry *out, int max)
 	int i, hook, n = 0;
 
 	for (i = 0; i < MAX_TARGET_UIDS && n < max; i++) {
-		if (__atomic_load_n(&stats_used[i], __ATOMIC_ACQUIRE) != 1)
+		uint32_t uid =
+			__atomic_load_n(&stats_uids[i], __ATOMIC_ACQUIRE);
+
+		if (!uid)
 			continue;
-		for (hook = 0; hook < VPNHIDE_HOOK_COUNT && n < max; hook++) {
+		for (hook = 0; hook < VPNHIDE_KERNEL_HOOK_COUNT && n < max;
+		     hook++) {
 			unsigned long long count = __atomic_load_n(
 				&stats_counts[i][hook], __ATOMIC_RELAXED);
 
 			if (count == 0)
 				continue;
-			out[n].uid = stats_uids[i];
-			out[n].hook_id = (unsigned int)hook;
+			out[n].uid = uid;
+			out[n].hook_id = vpnhide_kernel_hook_id(hook);
 			out[n].count = count;
 			n++;
 		}

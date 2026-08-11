@@ -79,7 +79,7 @@
  * activator truncates the projected config to this many targets, so keep both in
  * sync. */
 #define MAX_TARGET_UIDS 64
-#define MAX_STATS_ENTRIES (MAX_TARGET_UIDS * VPNHIDE_HOOK_COUNT)
+#define MAX_STATS_ENTRIES (MAX_TARGET_UIDS * VPNHIDE_KERNEL_HOOK_COUNT)
 #define CTL_READ_BUF_SIZE 32768
 
 /*
@@ -221,7 +221,7 @@ static bool hook_active(u32 hook_id)
 
 struct stats_row {
 	uid_t uid;
-	u64 counts[VPNHIDE_HOOK_COUNT];
+	u64 counts[VPNHIDE_KERNEL_HOOK_COUNT];
 };
 
 static struct stats_row stats_rows[MAX_TARGET_UIDS];
@@ -232,16 +232,17 @@ static void record_hook_hit(u32 hook_id)
 {
 	uid_t uid;
 	unsigned long flags;
-	int i;
+	int hook_slot, i;
 
-	if (hook_id >= VPNHIDE_HOOK_COUNT)
+	hook_slot = vpnhide_kernel_hook_slot(hook_id);
+	if (hook_slot < 0)
 		return;
 
 	uid = from_kuid(&init_user_ns, current_uid());
 	spin_lock_irqsave(&stats_lock, flags);
 	for (i = 0; i < nr_stats_rows; i++) {
 		if (stats_rows[i].uid == uid) {
-			stats_rows[i].counts[hook_id]++;
+			stats_rows[i].counts[hook_slot]++;
 			spin_unlock_irqrestore(&stats_lock, flags);
 			return;
 		}
@@ -250,7 +251,7 @@ static void record_hook_hit(u32 hook_id)
 		i = nr_stats_rows++;
 		stats_rows[i].uid = uid;
 		memset(stats_rows[i].counts, 0, sizeof(stats_rows[i].counts));
-		stats_rows[i].counts[hook_id] = 1;
+		stats_rows[i].counts[hook_slot] = 1;
 	}
 	spin_unlock_irqrestore(&stats_lock, flags);
 }
@@ -262,11 +263,12 @@ static int snapshot_stats(struct vpnhide_stat_entry *out, int max)
 
 	spin_lock_irqsave(&stats_lock, flags);
 	for (i = 0; i < nr_stats_rows && n < max; i++) {
-		for (hook = 0; hook < VPNHIDE_HOOK_COUNT && n < max; hook++) {
+		for (hook = 0; hook < VPNHIDE_KERNEL_HOOK_COUNT && n < max;
+		     hook++) {
 			if (stats_rows[i].counts[hook] == 0)
 				continue;
 			out[n].uid = stats_rows[i].uid;
-			out[n].hook_id = hook;
+			out[n].hook_id = vpnhide_kernel_hook_id(hook);
 			out[n].count = stats_rows[i].counts[hook];
 			n++;
 		}

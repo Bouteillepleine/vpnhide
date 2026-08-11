@@ -149,6 +149,28 @@ def emit_kmod(hooks: list[Hook], errs: list[Err], backends: list[Backend]) -> st
     for b in KNOWN_BACKENDS:
         L.append(f"#define VPNHIDE_{upper(b)}_HOOK_MASK 0x{backend_mask(hooks, b):x}u")
     L.append("")
+    kernel_hooks = [h for h in hooks if h.backend == "kernel"]
+    L.append("/* Dense storage slots for kernel-owned stats counters. The wire keeps")
+    L.append("   global hook ids; native backends use these helpers only in memory. */")
+    L.append(f"#define VPNHIDE_KERNEL_HOOK_COUNT {len(kernel_hooks)}")
+    L.append("static inline int vpnhide_kernel_hook_slot(unsigned int id)")
+    L.append("{")
+    L.append("\tswitch (id) {")
+    for slot, h in enumerate(kernel_hooks):
+        L.append(f"\tcase {h.id}: return {slot};")
+    L.append("\tdefault: return -1;")
+    L.append("\t}")
+    L.append("}")
+    L.append("")
+    L.append("static inline unsigned int vpnhide_kernel_hook_id(unsigned int slot)")
+    L.append("{")
+    L.append("\tswitch (slot) {")
+    for slot, h in enumerate(kernel_hooks):
+        L.append(f"\tcase {slot}: return {h.id};")
+    L.append("\tdefault: return VPNHIDE_HOOK_COUNT;")
+    L.append("\t}")
+    L.append("}")
+    L.append("")
     L.append("/* status error codes (protocol §5.1). */")
     ewidth = max(len(f"VPNHIDE_ERR_{upper(e.name)}") for e in errs)
     for e in errs:
