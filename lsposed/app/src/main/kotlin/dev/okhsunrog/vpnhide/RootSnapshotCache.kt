@@ -36,14 +36,7 @@ internal val REQUIRED_ROOT_SNAPSHOT_SECTIONS =
         "zygisk_module_dir",
         "kpm_module_dir",
         "canonical_config",
-        "kmod_targets",
-        "zygisk_targets",
-        "kpm_targets",
         "kpm_load_status",
-        "lsposed_targets",
-        "hidden_pkgs",
-        "observer_uids",
-        "ports_observers",
         "ports_load_status",
         "superkey_saved",
         "current_boot_id",
@@ -234,15 +227,6 @@ internal fun buildRootShellSnapshotCommand(
     phase_target_files() {
       phase_start target_files
       emit_file canonical_config $CANONICAL_CONFIG_FILE
-      # Migration shim: the legacy files below are read only when canonical JSON
-      # is absent. Remove after a few public releases with the ShellUtils consts.
-      emit_file kmod_targets $KMOD_TARGETS
-      emit_file zygisk_targets $ZYGISK_TARGETS
-      emit_file kpm_targets $KPM_TARGETS
-      emit_file lsposed_targets $LSPOSED_TARGETS
-      emit_file hidden_pkgs $SS_HIDDEN_PKGS_FILE
-      emit_file observer_uids $SS_OBSERVER_UIDS_FILE
-      emit_file ports_observers $PORTS_OBSERVERS_FILE
       emit_eval superkey_saved '[ -s $SUPERKEY_FILE ] && echo 1 || echo 0'
       phase_end
     }

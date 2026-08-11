@@ -10,22 +10,11 @@ import java.util.concurrent.atomic.AtomicReference
 
 private const val TAG = LogTags.APP
 
-// Legacy storage files retained as read-only migration inputs when canonical
-// JSON is absent. New writes go to CANONICAL_CONFIG_FILE only.
-// TODO(storage-migration): remove these shims after a few public releases once
-// upgraded devices have had a chance to fold old files into canonical JSON.
-internal const val KMOD_TARGETS = "/data/adb/vpnhide_kmod/targets.txt"
-internal const val ZYGISK_TARGETS = "/data/adb/vpnhide_zygisk/targets.txt"
-internal const val LSPOSED_TARGETS = "/data/adb/vpnhide_lsposed/targets.txt"
-
 // The kmod's folded control+stats node (docs/protocol.md §OPEN-4): a write is a
 // `vpnhide 2 config` snapshot, a read returns telemetry-v1 status+stats.
 // Replaces the old /proc/vpnhide_targets (decimal UID list) +
 // /proc/vpnhide_debug nodes.
 internal const val PROC_CTL = "/proc/vpnhide_ctl"
-internal const val SS_HIDDEN_PKGS_FILE = "/data/system/vpnhide_hidden_pkgs.txt"
-internal const val SS_OBSERVER_UIDS_FILE = "/data/system/vpnhide_observer_uids.txt"
-internal const val PORTS_OBSERVERS_FILE = "/data/adb/vpnhide_ports/observers.txt"
 internal const val PORTS_LOAD_STATUS_FILE = "/data/adb/vpnhide_ports/load_status"
 internal const val PORTS_LOAD_LOG_FILE = "/data/adb/vpnhide_ports/load_log"
 internal const val PORTS_MODULE_DIR = "/data/adb/modules/vpnhide_ports"
@@ -41,7 +30,6 @@ internal const val ZYGISK_STATUS_FILE = "/data/user/0/dev.okhsunrog.vpnhide/file
 // KPM (KernelPatch Module) backend — the third native backend. The KPM has no
 // /proc node; its runtime channel is the kpatch ctl0 supercall, so the app reads
 // load_status for liveness instead of a proc marker.
-internal const val KPM_TARGETS = "/data/adb/vpnhide_kpm/targets.txt"
 internal const val KPM_MODULE_DIR = "/data/adb/modules/vpnhide_kpm"
 internal const val KPM_LOAD_STATUS_FILE = "/data/adb/vpnhide_kpm/load_status"
 internal const val KMOD_ACTIVATOR = "$KMOD_MODULE_DIR/activator"
@@ -296,7 +284,6 @@ internal fun ensureSelfInTargets(
         }
         RootSnapshotCache.invalidate()
     }
-    cleanupLegacyConfigInputs(timeoutSec)
     val pmPackages = sections["pm_packages"]?.trimEnd()?.takeIf { it.isNotBlank() }
     val pmUsers = sections["pm_users"]?.trimEnd()?.takeIf { it.isNotBlank() }
     val currentBootId = sections["current_boot_id"]?.trim()?.takeIf { it.isNotBlank() }
@@ -345,9 +332,7 @@ private fun buildCanonicalSelfUpdate(
     selfPkg: String,
 ): CanonicalSelfUpdate {
     val targets = parseTargetsSnapshot(RootSnapshot(sections))
-    val baseCanonical =
-        targets.canonicalConfig
-            ?: buildCanonicalConfigFromTargetsSnapshot(targets, debug = false)
+    val baseCanonical = targets.canonicalConfig ?: CanonicalConfig()
     val previousSelf = baseCanonical.apps[selfPkg]
     val selfNeedsRestart =
         previousSelf == null ||
@@ -378,13 +363,6 @@ private fun writeStartupCanonical(
         "ensureSelfInTargets: canonical write failed (exit=${result.exitCode}): ${result.output.trim()}",
     )
     return "canonical write exit=${result.exitCode}"
-}
-
-private fun cleanupLegacyConfigInputs(timeoutSec: Long) {
-    val (exit, out) = suExec(buildLegacyConfigCleanupCommand(), timeoutSec = timeoutSec)
-    if (exit != 0) {
-        VpnHideLog.w(TAG, "legacy config cleanup failed (exit=$exit): ${out.trim()}")
-    }
 }
 
 private fun selfTargetPreparationFailure(

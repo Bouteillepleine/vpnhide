@@ -519,7 +519,7 @@ class StorageConfigTest {
     }
 
     @Test
-    fun `snapshot builder folds legacy roles into canonical config`() {
+    fun `snapshot builder preserves roles while rebuilding canonical config`() {
         val snapshot =
             TargetsSnapshot(
                 kmodModuleInstalled = true,
@@ -534,7 +534,7 @@ class StorageConfigTest {
                 observerUids = setOf(10123),
                 portsObservers = setOf("com.ports"),
                 uidToPkg = mapOf(10123 to "com.observer"),
-                canonicalConfig = null,
+                canonicalConfig = CanonicalConfig(),
             )
 
         val cfg = buildCanonicalConfigFromTargetsSnapshot(snapshot, debug = true)
@@ -545,25 +545,6 @@ class StorageConfigTest {
         assertTrue(cfg.apps.getValue("com.hidden").hidden)
         assertTrue(cfg.apps.getValue("com.observer").appHiding)
         assertTrue(cfg.apps.getValue("com.ports").ports)
-    }
-
-    @Test
-    fun `legacy cleanup removes retired config inputs only`() {
-        val cmd = buildLegacyConfigCleanupCommand()
-
-        listOf(
-            KMOD_TARGETS,
-            KPM_TARGETS,
-            ZYGISK_TARGETS,
-            LSPOSED_TARGETS,
-            PORTS_OBSERVERS_FILE,
-            SS_HIDDEN_PKGS_FILE,
-            SS_OBSERVER_UIDS_FILE,
-            "/data/system/vpnhide_uids.txt",
-        ).forEach { path -> assertTrue(cmd.contains(path)) }
-
-        assertTrue(!cmd.contains(CANONICAL_CONFIG_FILE))
-        assertTrue(!cmd.contains(SUPERKEY_FILE))
     }
 
     private fun sharedStorageFixture(): String =

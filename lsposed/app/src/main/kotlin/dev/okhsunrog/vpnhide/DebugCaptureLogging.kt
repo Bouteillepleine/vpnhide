@@ -178,8 +178,8 @@ private suspend fun applyCanonicalDebugToggle(
 
 /**
  * Parse canonical config from snapshot and clone it with only [`debug`] changed.
- * No rebuild from legacy target files happens here; callers are responsible for
- * having canonical JSON available as the source of truth.
+ * Callers are responsible for having canonical JSON available as the source of
+ * truth.
  */
 internal fun debugToggledCanonicalConfig(
     snapshot: RootSnapshot?,

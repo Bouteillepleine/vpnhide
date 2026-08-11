@@ -12,21 +12,16 @@ set -euo pipefail
 # Files under /data/system (rm -f).
 RESET_FILES=(
   /data/system/vpnhide_config.json
-  /data/system/vpnhide_uids.txt
-  /data/system/vpnhide_hidden_pkgs.txt
-  /data/system/vpnhide_observer_uids.txt
   /data/system/vpnhide_lsposed_state
   /data/system/vpnhide_hook_active
 )
 
-# Directories under /data/adb (rm -rf — covers targets.txt, load_status,
-# superkey, etc. inside). /data/adb/vpnhide holds the superkey, so it goes first.
+# Directories under /data/adb (rm -rf — covers load status, logs, the ctl lock,
+# and the superkey). /data/adb/vpnhide holds the superkey, so it goes first.
 RESET_DIRS=(
   /data/adb/vpnhide
   /data/adb/vpnhide_kmod
   /data/adb/vpnhide_kpm
-  /data/adb/vpnhide_zygisk
-  /data/adb/vpnhide_lsposed
   /data/adb/vpnhide_ports
 )
 

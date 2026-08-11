@@ -4,7 +4,7 @@
 
 PERSIST_DIR="/data/adb/vpnhide_kmod"
 
-rm -f "$PERSIST_DIR/load_status" "$PERSIST_DIR/load_dmesg" "$PERSIST_DIR/targets.txt"
+rm -f "$PERSIST_DIR/load_status" "$PERSIST_DIR/load_dmesg"
 rmdir "$PERSIST_DIR" 2>/dev/null || true
 
 log -t vpnhide "kmod: persistent module state removed"

@@ -125,11 +125,9 @@ internal object TargetsCache : StateCache<TargetsSnapshot>(
 
 internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
     val sections = rootSnapshot.sections
-
-    fun nonEmptyLines(raw: String?): Set<String> = raw?.let { parseConfigLines(it).toSet() } ?: emptySet()
-
     val portsInstalled = sections["ports_prop"]?.isNotBlank() == true
     val canonical = runCatching { parseCanonicalConfig(sections["canonical_config"].orEmpty()) }.getOrNull()
+    val desired = canonical ?: CanonicalConfig()
 
     // The inventory contains one block per Android user. Each resolved UID
     // becomes its own reverse-map entry so observer lookups from any profile
@@ -143,48 +141,25 @@ internal fun parseTargetsSnapshot(rootSnapshot: RootSnapshot): TargetsSnapshot {
     fun uidsFor(pkgs: Set<String>): Set<Int> = pkgs.flatMap { pkgToUids[it].orEmpty() }.toSet()
     val activeNativeBackendId = detectNativeBackendStates(sections).activeId
 
-    if (canonical != null) {
-        val javaTargets = canonical.apps.filterValues { it.java }.keys
-        val nativeTargets = canonical.apps.filterValues { it.native.enabled }.keys
-        val observerNames = canonical.apps.filterValues { it.appHiding }.keys
-        val hiddenPkgs = canonical.apps.filterValues { it.hidden }.keys
-        val portsObservers = canonical.apps.filterValues { it.ports }.keys
-        return TargetsSnapshot(
-            kmodModuleInstalled = sections["kmod_module_dir"]?.trim() == "1",
-            kpmModuleInstalled = sections["kpm_module_dir"]?.trim() == "1",
-            zygiskModuleInstalled = sections["zygisk_module_dir"]?.trim() == "1",
-            portsModuleInstalled = portsInstalled,
-            kmodTargets = nativeTargets,
-            kpmTargets = nativeTargets,
-            zygiskTargets = nativeTargets,
-            lsposedTargets = javaTargets,
-            hiddenPkgs = hiddenPkgs,
-            observerUids = uidsFor(observerNames),
-            portsObservers = portsObservers,
-            uidToPkg = uidToPkg,
-            canonicalConfig = canonical,
-            apatchSuperkeySaved = sections["superkey_saved"]?.trim() == "1",
-            activeNativeBackendId = activeNativeBackendId,
-            packageUids = pkgToUids,
-        )
-    }
-
-    val observerUids = nonEmptyLines(sections["observer_uids"]).mapNotNull { it.toIntOrNull() }.toSet()
-
+    val javaTargets = desired.apps.filterValues { it.java }.keys
+    val nativeTargets = desired.apps.filterValues { it.native.enabled }.keys
+    val observerNames = desired.apps.filterValues { it.appHiding }.keys
+    val hiddenPkgs = desired.apps.filterValues { it.hidden }.keys
+    val portsObservers = desired.apps.filterValues { it.ports }.keys
     return TargetsSnapshot(
         kmodModuleInstalled = sections["kmod_module_dir"]?.trim() == "1",
         kpmModuleInstalled = sections["kpm_module_dir"]?.trim() == "1",
         zygiskModuleInstalled = sections["zygisk_module_dir"]?.trim() == "1",
         portsModuleInstalled = portsInstalled,
-        kmodTargets = nonEmptyLines(sections["kmod_targets"]),
-        kpmTargets = nonEmptyLines(sections["kpm_targets"]),
-        zygiskTargets = nonEmptyLines(sections["zygisk_targets"]),
-        lsposedTargets = nonEmptyLines(sections["lsposed_targets"]),
-        hiddenPkgs = nonEmptyLines(sections["hidden_pkgs"]),
-        observerUids = observerUids,
-        portsObservers = nonEmptyLines(sections["ports_observers"]),
+        kmodTargets = nativeTargets,
+        kpmTargets = nativeTargets,
+        zygiskTargets = nativeTargets,
+        lsposedTargets = javaTargets,
+        hiddenPkgs = hiddenPkgs,
+        observerUids = uidsFor(observerNames),
+        portsObservers = portsObservers,
         uidToPkg = uidToPkg,
-        canonicalConfig = null,
+        canonicalConfig = canonical,
         apatchSuperkeySaved = sections["superkey_saved"]?.trim() == "1",
         activeNativeBackendId = activeNativeBackendId,
         packageUids = pkgToUids,

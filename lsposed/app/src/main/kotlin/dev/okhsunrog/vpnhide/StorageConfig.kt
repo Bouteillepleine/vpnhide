@@ -564,20 +564,3 @@ internal fun buildSuperkeyWriteCommand(superkey: String): String =
     ).joinToString(" && ")
 
 internal fun buildSuperkeyClearCommand(): String = "rm -f $SUPERKEY_FILE"
-
-internal fun buildLegacyConfigCleanupCommand(): String =
-    listOf(
-        "rm -f " +
-            listOf(
-                KMOD_TARGETS,
-                KPM_TARGETS,
-                ZYGISK_TARGETS,
-                LSPOSED_TARGETS,
-                PORTS_OBSERVERS_FILE,
-                SS_HIDDEN_PKGS_FILE,
-                SS_OBSERVER_UIDS_FILE,
-                "/data/system/vpnhide_uids.txt",
-                LEGACY_HOOK_STATUS_FILE,
-            ).joinToString(" "),
-        "rmdir /data/adb/vpnhide_zygisk /data/adb/vpnhide_lsposed /data/adb/vpnhide_ports 2>/dev/null || true",
-    ).joinToString(" ; ")

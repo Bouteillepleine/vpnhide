@@ -25,7 +25,7 @@ The single managed desired-state file.
 - Roles per package: `java`, `native` (`Boolean` or hook-name array),
   `appHiding`, `ports`, and the app-owned extension `hidden`.
 - Writer: VPN Hide app via `su` (`StorageConfig.kt`) on Save, startup
-  migration/self-target preparation, debug toggle, and APatch SuperKey setting.
+  self-target preparation, debug toggle, and APatch SuperKey setting.
 - Readers:
   - Rust activator bins (`crates/activator`) for native and ports backends.
   - LSPosed hooks in `system_server` (`SystemServerConfigCache`) directly.
@@ -34,27 +34,8 @@ The single managed desired-state file.
 - Lifetime: persistent across reboot, module reinstall, and app reinstall.
 
 The app writes it atomically via temp-file + `mv`. If it is absent, native
-activators treat it as an empty config; the app folds legacy inputs into it on
-startup.
-
-### Legacy Migration Inputs
-
-These files are no longer created or written by current code. If present on a
-device without `vpnhide_config.json`, the app reads them once and folds their
-state into the canonical JSON:
-
-- `/data/adb/vpnhide_kmod/targets.txt`
-- `/data/adb/vpnhide_kpm/targets.txt`
-- `/data/adb/vpnhide_zygisk/targets.txt`
-- `/data/adb/vpnhide_lsposed/targets.txt`
-- `/data/adb/vpnhide_ports/observers.txt`
-- `/data/system/vpnhide_hidden_pkgs.txt`
-- `/data/system/vpnhide_observer_uids.txt`
-
-After canonical JSON exists, app startup removes these retired inputs
-best-effort. The LSPosed hooks do not read them anymore. These read paths are
-temporary migration shims; remove them after a few public releases once upgraded
-devices have had a chance to fold old files into canonical JSON.
+activators treat it as an empty config and app startup creates a new config
+containing the mandatory VPN Hide self-target.
 
 ---
 
@@ -68,8 +49,7 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 - `module.prop`: module metadata, version, and stamped `gkiVariant=`.
 - `post-fs-data.sh`: loads `vpnhide_kmod.ko`, writes load diagnostics.
 - `service.sh`: starts `activator --boot-wait` in the background.
-- `uninstall.sh`: removes kmod-specific persistent diagnostics and legacy
-  targets under `/data/adb/vpnhide_kmod/`.
+- `uninstall.sh`: removes kmod-specific persistent diagnostics.
 - `activator`: Rust bin that reads canonical JSON, lists Android users and
   resolves packages with `pm list packages -U --user <id>` for each user,
   formats text wire, waits for
@@ -83,8 +63,7 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
   major.minor kernel family and load KPM automatically on keyless KPatch-Next;
   on APatch/FolkPatch records a deferred status and leaves load/config to service.
 - `service.sh`: starts `activator --boot-wait` in the background.
-- `uninstall.sh`: removes KPM-specific persistent status, the ctl0 lock, and
-  legacy targets under `/data/adb/vpnhide_kpm/`.
+- `uninstall.sh`: removes KPM-specific persistent status and the ctl0 lock.
 - `activator`: Rust bin that refuses to run when the `.ko` backend is present,
   refuses unsupported kernel families before invoking KernelPatch,
   reads optional `/data/adb/vpnhide/superkey`, loads/configures KPM through
@@ -95,11 +74,9 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 ### `/data/adb/modules/vpnhide_zygisk/`
 
 - `module.prop`: module metadata.
-- `customize.sh`: install hook; only preserves an old in-module `targets.txt`
-  into the legacy migration path if needed.
+- `customize.sh`: install hook that applies module file permissions.
 - `service.sh`: starts `activator --boot-wait` in the background.
-- `uninstall.sh`: removes Zygisk-specific legacy migration state under
-  `/data/adb/vpnhide_zygisk/`.
+- `uninstall.sh`: leaves the app-owned canonical config intact.
 - `activator`: Rust bin that writes the Zygisk runtime config.
 - `zygisk/arm64-v8a.so`: Rust cdylib injected into app processes.
 - `targets.txt`: runtime `vpnhide 2 config` text snapshot read through Zygisk's
@@ -114,8 +91,8 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 - `activator`: Rust bin that reads canonical JSON, derives `ports: true`
   packages, resolves UIDs, applies iptables rules, and records the latest
   apply status under `/data/adb/vpnhide_ports/`.
-- `uninstall.sh`: removes `vpnhide_out`, `vpnhide_out6`, legacy
-  `/data/adb/vpnhide_ports/observers.txt`, and portshide diagnostics.
+- `uninstall.sh`: removes `vpnhide_out`, `vpnhide_out6`, and portshide
+  diagnostics.
 
 ---
 
@@ -167,8 +144,8 @@ is exportable and readable by `system_server`.
 - Permissions: default root/system-server write behavior; app reads via `su`.
 - Lifetime: per boot.
 
-`/data/system/vpnhide_hook_active` is the retired status-only marker. App
-startup removes it best-effort after canonical JSON migration.
+`/data/system/vpnhide_hook_active` is the retired status-only marker. The Full
+Reset action removes it if it remains from an old installation.
 
 The canonical config is also in `/data/system`, but it is covered in section 1
 because it is the storage root for every layer.
@@ -355,6 +332,6 @@ zygote app fork:
 | Per app launch | `filesDir/vpnhide_zygisk_active`, `filesDir/vhprobe` |
 | Persistent root-managed | `/data/system/vpnhide_config.json`, `/data/adb/vpnhide/superkey` |
 | Module-dir derived state | `/data/adb/modules/vpnhide_zygisk/targets.txt` |
-| Removed on module uninstall | `/data/adb/vpnhide_kmod/`, `/data/adb/vpnhide_kpm/`, `/data/adb/vpnhide_zygisk/`, `/data/adb/vpnhide_ports/` when empty after deleting module-specific files |
+| Removed on module uninstall | `/data/adb/vpnhide_kmod/`, `/data/adb/vpnhide_kpm/`, `/data/adb/vpnhide_ports/` when empty after deleting module-specific files |
 | Wiped on module reinstall | files under `/data/adb/modules/vpnhide_*/` |
 | Wiped on app reinstall | app SharedPreferences, except Vector redirects the physical path under `/data/misc/<uuid>/prefs/` |

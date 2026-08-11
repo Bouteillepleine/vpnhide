@@ -604,13 +604,6 @@ internal fun parseModuleProp(raw: String): ModulePropInfo {
     return ModulePropInfo(true, version, gkiVariant ?: updateJsonKmi)
 }
 
-/** Count configured target packages, excluding the app's own package (it is
- * always present invisibly and must not inflate the user-facing count). */
-internal fun countTargets(
-    raw: String,
-    selfPkg: String,
-): Int = parseConfigLines(raw).count { it != selfPkg }
-
 internal fun readKmodLoadStatus(
     currentBootId: String,
     raw: String,
@@ -891,10 +884,7 @@ internal fun resolveLsposedState(
 
 // ── Module detection (pure, from the root snapshot) ──────────────────────
 
-internal fun detectKmodModule(
-    sections: Map<String, String>,
-    selfPkg: String,
-): ModuleState {
+internal fun detectKmodModule(sections: Map<String, String>): ModuleState {
     val prop = parseModuleProp(sections["kmod_prop"].orEmpty())
     if (!prop.installed) return ModuleState.NotInstalled
     val active = sections["proc_exists"].orEmpty().trim() == "1"
@@ -903,7 +893,7 @@ internal fun detectKmodModule(
     return ModuleState.Installed(
         version = prop.version,
         active = active,
-        targetCount = countTargets(sections["kmod_targets"].orEmpty(), selfPkg),
+        targetCount = 0,
         gkiVariant = prop.gkiVariant,
     )
 }
@@ -911,7 +901,6 @@ internal fun detectKmodModule(
 internal fun detectZygiskModule(
     sections: Map<String, String>,
     zygiskStatusRaw: String,
-    selfPkg: String,
     currentBootId: String,
 ): ModuleState {
     val prop = parseModuleProp(sections["zygisk_prop"].orEmpty())
@@ -923,13 +912,12 @@ internal fun detectZygiskModule(
     return ModuleState.Installed(
         version = prop.version,
         active = active,
-        targetCount = countTargets(sections["zygisk_targets"].orEmpty(), selfPkg),
+        targetCount = 0,
     )
 }
 
 internal fun detectKpmModule(
     sections: Map<String, String>,
-    selfPkg: String,
     currentBootId: String,
 ): ModuleState {
     val prop = parseModuleProp(sections["kpm_prop"].orEmpty())
@@ -944,21 +932,18 @@ internal fun detectKpmModule(
     return ModuleState.Installed(
         version = prop.version,
         active = active,
-        targetCount = countTargets(sections["kpm_targets"].orEmpty(), selfPkg),
+        targetCount = 0,
     )
 }
 
-internal fun detectPortsModule(
-    sections: Map<String, String>,
-    selfPkg: String,
-): ModuleState {
+internal fun detectPortsModule(sections: Map<String, String>): ModuleState {
     val prop = parseModuleProp(sections["ports_prop"].orEmpty())
     if (!prop.installed) return ModuleState.NotInstalled
     val active = sections["ports_chain"].orEmpty().trim() == "1"
     return ModuleState.Installed(
         version = prop.version,
         active = active,
-        targetCount = countTargets(sections["ports_observers"].orEmpty(), selfPkg),
+        targetCount = 0,
     )
 }
 
@@ -1211,13 +1196,13 @@ internal suspend fun loadDashboardState(
     // load status are known (classifyKmodProblem).
     val currentBootId = shellSnapshot["current_boot_id"].orEmpty()
     val nativeTargetCount = countPackages(targetsSnapshot.nativeTargets)
-    val rawNativeBackends = detectNativeBackendStates(shellSnapshot, selfPkg, currentBootId)
+    val rawNativeBackends = detectNativeBackendStates(shellSnapshot, currentBootId = currentBootId)
     val kmodRaw = rawNativeBackends.kmod.withTargetCount(nativeTargetCount)
     val zygiskStatusRaw = shellSnapshot["zygisk_status"].orEmpty()
     val zygisk = rawNativeBackends.zygisk.withTargetCount(nativeTargetCount)
     val kpmRaw = rawNativeBackends.kpm.withTargetCount(nativeTargetCount)
     val standaloneKpm = standaloneKpmLoaded(kpmRaw, shellSnapshot["kpm_runtime_modules"].orEmpty())
-    val ports = detectPortsModule(shellSnapshot, selfPkg).withTargetCount(countPackages(targetsSnapshot.portsObservers))
+    val ports = detectPortsModule(shellSnapshot).withTargetCount(countPackages(targetsSnapshot.portsObservers))
     val kmodTargetCount = (kmodRaw as? ModuleState.Installed)?.targetCount ?: 0
     val kpmTargetCount = (kpmRaw as? ModuleState.Installed)?.targetCount ?: 0
     val zygiskTargetCount = (zygisk as? ModuleState.Installed)?.targetCount ?: 0

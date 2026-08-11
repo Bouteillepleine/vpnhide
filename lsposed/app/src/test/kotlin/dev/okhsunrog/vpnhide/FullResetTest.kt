@@ -12,15 +12,16 @@ class FullResetTest {
     @Test
     fun `reset command removes every leftover service path`() {
         val cmd = buildFullResetCommand()
-        // canonical, legacy + SS files, and every /data/adb/vpnhide* data dir.
+        // Canonical config, current status files, and backend-owned state dirs.
         assertTrue(cmd.contains(CANONICAL_CONFIG_FILE))
-        assertTrue(cmd.contains(SS_HIDDEN_PKGS_FILE))
-        assertTrue(cmd.contains(SS_OBSERVER_UIDS_FILE))
         assertTrue(cmd.contains(LSPOSED_STATE_FILE))
         assertTrue(cmd.contains(LEGACY_HOOK_STATUS_FILE))
         assertTrue(cmd.contains("rm -rf /data/adb/vpnhide "))
-        listOf("kmod", "kpm", "zygisk", "lsposed", "ports").forEach {
+        listOf("kmod", "kpm", "ports").forEach {
             assertTrue("missing /data/adb/vpnhide_$it", cmd.contains("rm -rf /data/adb/vpnhide_$it"))
+        }
+        listOf("vpnhide_uids.txt", "vpnhide_hidden_pkgs.txt", "vpnhide_observer_uids.txt").forEach {
+            assertFalse("retired migration path remains: $it", cmd.contains(it))
         }
     }
 
