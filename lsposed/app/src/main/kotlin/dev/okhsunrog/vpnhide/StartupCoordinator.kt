@@ -87,7 +87,9 @@ internal class StartupCoordinator(
     ) {
         AppListCache.ensureLoaded(scope, appContext)
         DashboardCache.ensureLoaded(scope, appContext, selfNeedsRestart)
-        if (!selfNeedsRestart) DiagnosticsCache.run(scope, appContext)
+        // The cache parks at Blocked(NEEDS_RESTART) itself when selfNeedsRestart — this
+        // is also the first run() call, so it stamps the process-constant flag.
+        DiagnosticsCache.run(scope, appContext, selfNeedsRestart)
         startAutoHideReconcile(scope)
     }
 

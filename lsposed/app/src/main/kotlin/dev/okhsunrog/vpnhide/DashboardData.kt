@@ -1637,49 +1637,37 @@ internal suspend fun loadDashboardState(
     // differential and so aren't in nativeOutcomes. Set during the protection
     // computation, surfaced via the hero warning so a leak there is never invisible.
     var unownedNativeLeakCount = 0
+    // Single source of truth: the cache does all the gating (VPN off / needs-restart /
+    // self-not-routed) through the one fold. awaitTerminal returns the terminal state
+    // itself, so the reason for "no results" (blocked gate vs a failed run) is carried
+    // through instead of re-derived from a second VPN sensor or a raced state.value read.
     val protection: ProtectionCheck =
-        when {
-            !vpnActive -> {
-                ProtectionCheck.Blocked(DiagnosticGate.VPN_OFF)
+        when (val terminal = DiagnosticsCache.awaitTerminal(context, selfNeedsRestart)) {
+            is DiagnosticsCache.State.Blocked -> {
+                ProtectionCheck.Blocked(terminal.gate)
             }
 
-            selfNeedsRestart -> {
-                ProtectionCheck.Blocked(DiagnosticGate.NEEDS_RESTART)
+            is DiagnosticsCache.State.Ready -> {
+                // Derive tiles from the one canonical report (the same object the
+                // debug bundle renders), so the on-screen verdict and the exported
+                // one can never diverge. Tiles judge each backend on the vectors it
+                // owns; unowned leaks are surfaced via the hero warning below.
+                val report =
+                    buildDiagnosticReport(
+                        gate = DiagnosticGate.ROUTED,
+                        results = terminal.results,
+                        backend = nativeBackend,
+                        lsposedActive = lsposed is LsposedState.Active,
+                        complete = true,
+                    )
+                unownedNativeLeakCount = report.native.unownedLeaks
+                ProtectionCheck.Checked(report.native.status, report.java.status)
             }
 
+            // State.Failed, and defensively the never-terminal NotRun/Running:
+            // the run couldn't measure — distinct from a VPN-off gate.
             else -> {
-                // Single source of truth: reuse the cached run. awaitTerminal returns
-                // the terminal state itself, so the reason for "no results" (blocked
-                // gate vs a failed run) is carried through instead of reconstructed by
-                // re-reading state.value (which would race a subsequent run).
-                when (val terminal = DiagnosticsCache.awaitTerminal(context)) {
-                    is DiagnosticsCache.State.Blocked -> {
-                        ProtectionCheck.Blocked(terminal.gate)
-                    }
-
-                    is DiagnosticsCache.State.Ready -> {
-                        // Derive tiles from the one canonical report (the same object the
-                        // debug bundle renders), so the on-screen verdict and the exported
-                        // one can never diverge. Tiles judge each backend on the vectors it
-                        // owns; unowned leaks are surfaced via the hero warning below.
-                        val report =
-                            buildDiagnosticReport(
-                                gate = DiagnosticGate.ROUTED,
-                                results = terminal.results,
-                                backend = nativeBackend,
-                                lsposedActive = lsposed is LsposedState.Active,
-                                complete = true,
-                            )
-                        unownedNativeLeakCount = report.native.unownedLeaks
-                        ProtectionCheck.Checked(report.native.status, report.java.status)
-                    }
-
-                    // State.Failed, and defensively the never-terminal NotRun/Running:
-                    // the run couldn't measure — distinct from a VPN-off gate.
-                    else -> {
-                        ProtectionCheck.Failed
-                    }
-                }
+                ProtectionCheck.Failed
             }
         }
 

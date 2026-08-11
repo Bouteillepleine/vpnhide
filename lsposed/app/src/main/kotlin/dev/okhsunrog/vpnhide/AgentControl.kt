@@ -38,7 +38,9 @@ internal object AgentControl {
         withAppContext(context) { context ->
             // awaitTerminal carries the reason (blocked gate / failed) instead of
             // re-reading state.value after a null (a race) — same fix as the dashboard.
-            when (val terminal = DiagnosticsCache.awaitTerminal(context)) {
+            // The agent doesn't know selfNeedsRestart; false is safe because the cache's
+            // sticky flag keeps a UI-set NEEDS_RESTART from being cleared here.
+            when (val terminal = DiagnosticsCache.awaitTerminal(context, selfNeedsRestart = false)) {
                 is DiagnosticsCache.State.Ready -> {
                     terminal.results.toAgentDiagnosticsReport()
                 }

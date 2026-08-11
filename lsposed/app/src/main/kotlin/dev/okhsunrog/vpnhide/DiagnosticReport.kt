@@ -20,10 +20,14 @@ internal enum class CheckLayer { NATIVE, JAVA }
 internal enum class DiagnosticGate { VPN_OFF, SELF_NOT_ROUTED, NEEDS_RESTART, ROUTED }
 
 /**
- * Fold the three independent gate signals — VPN presence, this app's self-in-tunnel
- * routing, and a pending self-restart — into one [DiagnosticGate], worst-first, so
- * the dashboard, the live cache, and the debug export classify the run the same way.
- * Only [DiagnosticGate.ROUTED] means "measured; verdicts are meaningful".
+ * Fold the three independent gate signals — a pending self-restart, VPN presence,
+ * and this app's self-in-tunnel routing — into one [DiagnosticGate], most-blocking
+ * first, so the dashboard, the live cache, and the debug export classify the run the
+ * same way. Only [DiagnosticGate.ROUTED] means "measured; verdicts are meaningful".
+ *
+ * [NEEDS_RESTART] outranks [VPN_OFF]: when this app was just added as a target its
+ * own hooks aren't applied to this process yet, so a run would measure nothing no
+ * matter the VPN state — "reboot to apply" is the actionable step, not "turn on VPN".
  */
 internal fun resolveDiagnosticGate(
     vpnActive: Boolean,
@@ -31,8 +35,8 @@ internal fun resolveDiagnosticGate(
     selfNeedsRestart: Boolean,
 ): DiagnosticGate =
     when {
-        !vpnActive -> DiagnosticGate.VPN_OFF
         selfNeedsRestart -> DiagnosticGate.NEEDS_RESTART
+        !vpnActive -> DiagnosticGate.VPN_OFF
         selfRouted == false -> DiagnosticGate.SELF_NOT_ROUTED
         else -> DiagnosticGate.ROUTED
     }

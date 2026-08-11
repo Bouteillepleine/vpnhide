@@ -80,15 +80,35 @@ internal object DiagnosticsCache {
     // summary), so they survive even if no screen scope is active.
     private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    // Whether this app's own hooks need a reboot to apply (it was just added as a
+    // target). Process-constant, so it is sticky-OR: the first run() call sets it and
+    // no later caller can clear it. When set, a run measures nothing (the hooks aren't
+    // in this process), so the cache parks at Blocked(NEEDS_RESTART) and never probes.
+    @Volatile private var restartPending = false
+
     /** Start a run if one isn't already in flight and we don't have a
      * completed result yet. Idempotent — safe to call from both
      * Dashboard and Diagnostics screens on every composition.
+     *
+     * [selfNeedsRestart] is the shared gate signal: once any caller reports true the
+     * cache stays at Blocked(NEEDS_RESTART) (a run would be meaningless), so a caller
+     * that doesn't know it — the agent bridge — can safely pass false.
      */
     @Synchronized
     fun run(
         scope: CoroutineScope,
         context: Context,
+        selfNeedsRestart: Boolean,
     ) {
+        restartPending = restartPending || selfNeedsRestart
+        if (restartPending) {
+            // Publish the gate synchronously and never launch doRun — this keeps the
+            // Job/cancellation machinery reserved for the real run. selfNeedsRestart is
+            // process-constant, so this is decided on the first run() and never flips
+            // out from under an in-flight run.
+            _state.value = State.Blocked(DiagnosticGate.NEEDS_RESTART)
+            return
+        }
         val current = _state.value
         when (current) {
             is State.Ready -> {
@@ -116,7 +136,8 @@ internal object DiagnosticsCache {
     fun retry(
         scope: CoroutineScope,
         context: Context,
-    ) = run(scope, context)
+        selfNeedsRestart: Boolean,
+    ) = run(scope, context, selfNeedsRestart)
 
     /**
      * Suspend until the full Diagnostics result is available. Dashboard uses
@@ -124,8 +145,11 @@ internal object DiagnosticsCache {
      * probe shown in Settings → Detailed diagnostics, including the slow push-callback
      * and route/NetworkInfo Java checks.
      */
-    suspend fun awaitTerminal(context: Context): State {
-        run(cacheScope, context)
+    suspend fun awaitTerminal(
+        context: Context,
+        selfNeedsRestart: Boolean,
+    ): State {
+        run(cacheScope, context, selfNeedsRestart)
         return state.first {
             it is State.Blocked || it is State.Failed || (it is State.Ready && it.complete)
         }
@@ -135,7 +159,10 @@ internal object DiagnosticsCache {
      * measurement (blocked or failed). Callers that need to distinguish *why*
      * there are no results should use [awaitTerminal] — reading [state] again
      * after a null here would race a subsequent run. */
-    suspend fun awaitFullResults(context: Context): CheckResults? = (awaitTerminal(context) as? State.Ready)?.results
+    suspend fun awaitFullResults(
+        context: Context,
+        selfNeedsRestart: Boolean,
+    ): CheckResults? = (awaitTerminal(context, selfNeedsRestart) as? State.Ready)?.results
 
     private suspend fun doRun(appContext: Context) {
         _state.value = State.Running

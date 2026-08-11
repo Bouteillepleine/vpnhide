@@ -181,7 +181,7 @@ fun DashboardScreen(
         // protection probes) and re-runs the diag cache so both screens recover together.
         val onRetry = {
             DashboardCache.refresh(scope, context, selfNeedsRestart)
-            DiagnosticsCache.retry(scope, context)
+            DiagnosticsCache.retry(scope, context, selfNeedsRestart)
         }
         val protection = loadedState.protection
         when {

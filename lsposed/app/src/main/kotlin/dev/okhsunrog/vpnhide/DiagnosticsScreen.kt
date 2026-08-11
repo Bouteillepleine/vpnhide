@@ -67,14 +67,11 @@ fun DiagnosticsScreen(
     val diagState by DiagnosticsCache.state.collectAsState()
     val tallyFmt = stringResource(R.string.diag_summary_tally)
 
-    // Kick off the diagnostics run once per process. If selfNeedsRestart
-    // is true we skip — hooks aren't applied to this app yet, results
-    // would be meaningless. DiagnosticsCache.run is idempotent: no-op
-    // when Ready/Running.
+    // Kick off the diagnostics run once per process. The cache parks at
+    // Blocked(NEEDS_RESTART) itself when selfNeedsRestart (hooks aren't applied to this
+    // app yet, so a run would be meaningless); run is idempotent otherwise.
     LaunchedEffect(selfNeedsRestart) {
-        if (!selfNeedsRestart) {
-            DiagnosticsCache.run(scope, context)
-        }
+        DiagnosticsCache.run(scope, context, selfNeedsRestart)
     }
 
     val results = (diagState as? DiagnosticsCache.State.Ready)?.results
@@ -100,8 +97,12 @@ fun DiagnosticsScreen(
     ) {
         Spacer(Modifier.height(8.dp))
 
+        val onRetry = {
+            DiagnosticsCache.retry(scope, context, selfNeedsRestart)
+            DashboardCache.refresh(scope, context, selfNeedsRestart)
+        }
         when {
-            selfNeedsRestart -> {
+            blockedGate == DiagnosticGate.NEEDS_RESTART -> {
                 StatusBanner(
                     text = stringResource(R.string.banner_added_self),
                     containerColor = MaterialTheme.colorScheme.tertiaryContainer,
@@ -110,30 +111,15 @@ fun DiagnosticsScreen(
             }
 
             blockedGate == DiagnosticGate.VPN_OFF -> {
-                VpnOffPrompt(
-                    onRetry = {
-                        DiagnosticsCache.retry(scope, context)
-                        DashboardCache.refresh(scope, context, selfNeedsRestart)
-                    },
-                )
+                VpnOffPrompt(onRetry = onRetry)
             }
 
             blockedGate == DiagnosticGate.SELF_NOT_ROUTED -> {
-                SelfNotRoutedPrompt(
-                    onRetry = {
-                        DiagnosticsCache.retry(scope, context)
-                        DashboardCache.refresh(scope, context, selfNeedsRestart)
-                    },
-                )
+                SelfNotRoutedPrompt(onRetry = onRetry)
             }
 
             diagState is DiagnosticsCache.State.Failed -> {
-                DiagnosticsFailedPrompt(
-                    onRetry = {
-                        DiagnosticsCache.retry(scope, context)
-                        DashboardCache.refresh(scope, context, selfNeedsRestart)
-                    },
-                )
+                DiagnosticsFailedPrompt(onRetry = onRetry)
             }
 
             diagState is DiagnosticsCache.State.Running ||
