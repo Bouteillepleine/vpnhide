@@ -27,7 +27,6 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,7 +48,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import dev.okhsunrog.vpnhide.generated.HookIds
 import dev.okhsunrog.vpnhide.settings.LocalSettingsState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -175,6 +173,12 @@ internal fun AppPickerScreen(
             anyNativeInstalled = targets.anyNativeInstalled,
             nativeBackendId = targets.displayNativeBackendId,
             nativeHookFamily = nativeHookFamily,
+            filesystemHidingEnabled =
+                KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS in
+                    targets.canonicalConfig
+                        ?.settings
+                        ?.kernelBootFeatures
+                        .orEmpty(),
             portsInstalled = targets.portsModuleInstalled,
             onToggle = { layer ->
                 onChange(
@@ -403,6 +407,7 @@ private fun AppRow(
     anyNativeInstalled: Boolean,
     nativeBackendId: NativeBackendId?,
     nativeHookFamily: NativeHookFamily,
+    filesystemHidingEnabled: Boolean,
     portsInstalled: Boolean,
     onToggle: (Layer) -> Unit,
     onJavaHooksChange: (List<String>?) -> Unit,
@@ -501,6 +506,12 @@ private fun AppRow(
             hookEntries = nativeHookEntriesFor(nativeHookFamily),
             selectedHooks = nativeHooks,
             roleEnabled = app.native,
+            notice =
+                if (nativeHookFamily == NativeHookFamily.Kmod && !filesystemHidingEnabled) {
+                    stringResource(R.string.native_hooks_filesystem_hiding_disabled)
+                } else {
+                    null
+                },
             onDismiss = { nativeHookDialogOpen = false },
             onSave = { hooks ->
                 onNativeHooksChange(hooks)
@@ -800,133 +811,5 @@ private fun PortRuleEditorRow(
                 contentDescription = stringResource(R.string.ports_policy_delete_rule),
             )
         }
-    }
-}
-
-@Composable
-private fun HooksDialog(
-    app: AppEntry,
-    title: String,
-    hookEntries: List<HookIds.Hook>,
-    selectedHooks: List<String>?,
-    roleEnabled: Boolean,
-    onDismiss: () -> Unit,
-    onSave: (List<String>?) -> Unit,
-) {
-    val hookNames = remember(hookEntries) { hookEntries.map { it.hookName } }
-    // `selectedHooks == null` is ambiguous: it means BOTH "role on with all
-    // hooks" and "role off". Disambiguate with roleEnabled so opening the dialog
-    // on a disabled role starts with nothing checked — otherwise it would show
-    // every hook pre-checked and Save would silently turn the role into a full
-    // target (resolveHookSelection(all) -> null -> enabled).
-    var selected by remember(app.packageName, selectedHooks, roleEnabled, hookNames) {
-        mutableStateOf(
-            when {
-                selectedHooks != null -> selectedHooks.toSet()
-                roleEnabled -> hookNames.toSet()
-                else -> emptySet()
-            },
-        )
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = app.label,
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                Text(
-                    text = app.packageName,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                // Group hooks by detection method, with a header explaining what
-                // the method is and how an app uses it to detect a VPN — same
-                // taxonomy/wording as the Statistics per-hook detail.
-                val grouped =
-                    remember(hookEntries) {
-                        hookEntries.groupBy { DetectionMethod.of(it) }.toSortedMap(compareBy { it.ordinal })
-                    }
-                LazyColumn(modifier = Modifier.heightIn(max = 460.dp)) {
-                    grouped.forEach { (method, hooks) ->
-                        item(key = "header_${method.name}") {
-                            MethodHeader(method)
-                        }
-                        items(hooks, key = { it.hookName }) { hook ->
-                            HookRow(
-                                hook = hook,
-                                checked = hook.hookName in selected,
-                                onCheckedChange = { enabled ->
-                                    selected =
-                                        if (enabled) {
-                                            selected + hook.hookName
-                                        } else {
-                                            selected - hook.hookName
-                                        }
-                                },
-                            )
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    onSave(resolveHookSelection(hookNames, selected))
-                },
-            ) {
-                Text(stringResource(R.string.btn_save))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.btn_cancel))
-            }
-        },
-    )
-}
-
-@Composable
-private fun MethodHeader(method: DetectionMethod) {
-    Column(modifier = Modifier.padding(top = 10.dp, bottom = 2.dp)) {
-        Text(
-            text = stringResource(method.labelRes),
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.Bold,
-        )
-        Text(
-            text = stringResource(method.descriptionRes),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
-private fun HookRow(
-    hook: HookIds.Hook,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier =
-            Modifier
-                .clickable { onCheckedChange(!checked) }
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Checkbox(checked = checked, onCheckedChange = onCheckedChange)
-        // The friendly method name + explanation live in the group header; the
-        // row just needs the precise hook (its technical note) to disambiguate.
-        Text(
-            text = hook.note,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(start = 8.dp),
-        )
     }
 }

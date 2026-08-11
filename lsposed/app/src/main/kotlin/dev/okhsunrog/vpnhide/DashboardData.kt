@@ -394,6 +394,9 @@ internal data class KmodLoadStatus(
     val insmodStderr: String?,
     val dmesgTail: String?,
     val freshForCurrentBoot: Boolean,
+    val filesystemHiding: Boolean? = null,
+    val filesystemConfigExit: Int? = null,
+    val filesystemConfigError: String? = null,
 )
 
 private const val TAG = LogTags.DASHBOARD
@@ -612,6 +615,12 @@ internal fun readKmodLoadStatus(
         insmodStderr = props["insmod_stderr"]?.trim()?.ifBlank { null },
         dmesgTail = dmesgRaw.trim().ifBlank { null },
         freshForCurrentBoot = bootId != null && bootId == currentBootId,
+        filesystemHiding =
+            props["filesystem_hiding"]
+                ?.trim()
+                ?.let { value -> value == "1" },
+        filesystemConfigExit = props["filesystem_config_exit"]?.trim()?.toIntOrNull(),
+        filesystemConfigError = props["filesystem_config_error"]?.trim()?.ifBlank { null },
     )
 }
 
@@ -1548,6 +1557,17 @@ internal suspend fun loadDashboardState(
     ) {
         warn(res.getString(R.string.dashboard_issue_kpm_awaiting_superkey))
     }
+
+    filesystemHidingDashboardMessage(
+        desiredEnabled =
+            KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS in
+                targetsSnapshot.canonicalConfig
+                    ?.settings
+                    ?.kernelBootFeatures
+                    .orEmpty(),
+        sections = shellSnapshot,
+        res = res,
+    )?.let(messages::add)
 
     // User has debug logging turned on. Only adb/root can read those
     // verbose lines, so this is a neutral dashboard note rather than an issue.

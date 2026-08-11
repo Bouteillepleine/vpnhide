@@ -5,6 +5,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -28,7 +32,10 @@ internal fun FilesystemHidingSettingsSection() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val targets by TargetsCache.snapshot.collectAsState()
+    val rootSnapshot by RootSnapshotCache.snapshot.collectAsState()
     var saving by remember { mutableStateOf(false) }
+    var confirmationOpen by remember { mutableStateOf(false) }
+    var saveStatus by remember { mutableStateOf<String?>(null) }
     val enabledFeatures =
         targets
             ?.canonicalConfig
@@ -36,10 +43,57 @@ internal fun FilesystemHidingSettingsSection() {
             ?.kernelBootFeatures
             .orEmpty()
     val enabled = KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS in enabledFeatures
+    val runtimeState =
+        remember(enabled, rootSnapshot) {
+            resolveFilesystemHidingState(
+                desiredEnabled = enabled,
+                sections = rootSnapshot?.sections.orEmpty(),
+            )
+        }
+    val savedMessage = stringResource(R.string.settings_filesystem_hiding_saved)
+    val failedMessage = stringResource(R.string.settings_filesystem_hiding_failed)
+
+    fun persist(value: Boolean) {
+        saving = true
+        saveStatus = null
+        scope.launch {
+            val exit = withContext(Dispatchers.IO) { writeFilesystemHidingSetting(value) }
+            saving = false
+            saveStatus = if (exit == 0) savedMessage else failedMessage
+            if (exit == 0) TargetsCache.refreshAfterSave(scope, context)
+        }
+    }
 
     LaunchedEffect(Unit) { TargetsCache.ensureLoaded(scope, context) }
 
-    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+    if (confirmationOpen) {
+        AlertDialog(
+            onDismissRequest = { if (!saving) confirmationOpen = false },
+            title = { Text(stringResource(R.string.settings_filesystem_hiding_confirm_title)) },
+            text = { Text(stringResource(R.string.settings_filesystem_hiding_confirm_body)) },
+            confirmButton = {
+                TextButton(
+                    enabled = !saving,
+                    onClick = {
+                        confirmationOpen = false
+                        persist(true)
+                    },
+                ) {
+                    Text(stringResource(R.string.settings_filesystem_hiding_enable))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !saving,
+                    onClick = { confirmationOpen = false },
+                ) {
+                    Text(stringResource(R.string.btn_cancel))
+                }
+            },
+        )
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SectionHeader(
             text = stringResource(R.string.settings_experimental_protection),
             bold = false,
@@ -47,21 +101,64 @@ internal fun FilesystemHidingSettingsSection() {
         )
         PreferenceRowSwitch(
             title = stringResource(R.string.settings_filesystem_hiding),
-            subtitle = stringResource(R.string.settings_filesystem_hiding_sub),
+            subtitle = filesystemHidingStatusText(runtimeState),
             icon = Icons.Default.VisibilityOff,
             checked = enabled,
-            enabled = targets != null && !saving,
+            enabled = targets != null && !saving && (runtimeState.kmodInstalled || enabled),
             onCheckedChange = { value ->
-                saving = true
-                scope.launch {
-                    val exit = withContext(Dispatchers.IO) { writeFilesystemHidingSetting(value) }
-                    saving = false
-                    if (exit == 0) TargetsCache.refresh(scope, context)
-                }
+                if (value) confirmationOpen = true else persist(false)
             },
         )
+        StatusBanner(
+            text = stringResource(R.string.settings_filesystem_hiding_sub),
+            containerColor = StatusColors.warningContainer(),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        )
+        saveStatus?.let { status ->
+            Text(
+                text = status,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp),
+            )
+        }
     }
 }
+
+@Composable
+private fun filesystemHidingStatusText(state: FilesystemHidingState): String =
+    when (state.status) {
+        FilesystemHidingStatus.Unavailable -> {
+            stringResource(R.string.settings_filesystem_hiding_unavailable)
+        }
+
+        FilesystemHidingStatus.Disabled -> {
+            stringResource(R.string.settings_filesystem_hiding_disabled)
+        }
+
+        FilesystemHidingStatus.Active -> {
+            stringResource(R.string.settings_filesystem_hiding_active)
+        }
+
+        FilesystemHidingStatus.PendingEnable -> {
+            stringResource(R.string.settings_filesystem_hiding_pending_enable)
+        }
+
+        FilesystemHidingStatus.PendingDisable -> {
+            stringResource(R.string.settings_filesystem_hiding_pending_disable)
+        }
+
+        FilesystemHidingStatus.BootConfigError -> {
+            stringResource(
+                R.string.settings_filesystem_hiding_boot_error,
+                state.errorDetail.orEmpty(),
+            )
+        }
+
+        FilesystemHidingStatus.HookSetupError -> {
+            stringResource(R.string.settings_filesystem_hiding_setup_error)
+        }
+    }
 
 private fun writeFilesystemHidingSetting(enabled: Boolean): Int {
     val snapshot = TargetsCache.snapshot.value ?: return 1
