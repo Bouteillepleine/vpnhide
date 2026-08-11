@@ -33,9 +33,13 @@ echo "https://dl-cdn.alpinelinux.org/alpine/v3.21/main" > /etc/apk/repositories
 if apk add --no-cache iproute2 >/dev/null 2>&1; then echo "IPROUTE2=ok"; else echo "IPROUTE2=FAIL"; fi
 
 # Hooks deliberately ignore Android system AIDs (< 10000). Run every shell
-# vector as a regular app UID so this harness exercises the target path.
+# vector as a regular app UID so this harness exercises the target path. The
+# legacy Android kernels also require apps that open AF_INET sockets to carry
+# the INTERNET permission's supplemental inet group (AID_INET = 3003).
 TARGET_UID=10000
-if adduser -D -u "$TARGET_UID" vpnhide-target >/dev/null 2>&1; then
+if addgroup -g 3003 android-inet >/dev/null 2>&1 &&
+	adduser -D -u "$TARGET_UID" vpnhide-target >/dev/null 2>&1 &&
+	addgroup vpnhide-target android-inet >/dev/null 2>&1; then
 	echo "TARGET_USER=ok"
 else
 	echo "TARGET_USER=FAIL"

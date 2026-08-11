@@ -21,6 +21,7 @@
  */
 
 #include <errno.h>
+#include <grp.h>
 #include <linux/if.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -50,11 +51,22 @@
 
 #define ACTOR_UID 10000
 #define OBSERVER_UID 10001
+#define AID_INET 3003
 
 struct call_result {
 	int ret;
 	int err;
 };
+
+static int become_app(uid_t uid, int needs_internet)
+{
+	gid_t groups[] = { AID_INET };
+
+	if (setgroups(needs_internet ? 1 : 0, groups) != 0 ||
+	    setgid(uid) != 0 || setuid(uid) != 0)
+		return -1;
+	return 0;
+}
 
 static long raw_syscall5(long nr, long a0, long a1, long a2, long a3, long a4)
 {
@@ -146,7 +158,7 @@ static struct call_result actor_setsockopt(int fd, int optname,
 		long rc;
 
 		close(pipefd[0]);
-		if (setuid(ACTOR_UID) != 0) {
+		if (become_app(ACTOR_UID, 1) != 0) {
 			result.ret = -1;
 			result.err = errno;
 		} else {
@@ -197,7 +209,7 @@ static int observer_name_state(int fd, const char *expected)
 		long rc;
 
 		close(pipefd[0]);
-		if (setuid(OBSERVER_UID) != 0) {
+		if (become_app(OBSERVER_UID, 0) != 0) {
 			state = -errno;
 		} else {
 			rc = raw_getsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE,
@@ -246,7 +258,7 @@ static int observer_index_state(int fd, int expected)
 		long rc;
 
 		close(pipefd[0]);
-		if (setuid(OBSERVER_UID) != 0) {
+		if (become_app(OBSERVER_UID, 0) != 0) {
 			state = -errno;
 		} else {
 			rc = raw_getsockopt(fd, SOL_SOCKET, SO_BINDTOIFINDEX,
