@@ -1,16 +1,16 @@
 //! The actual libc hook functions.
 //!
-//! These are called INSTEAD OF the real libc symbols from any PLT we've
-//! patched. Each hook calls the saved original function via a function
-//! pointer stored in `statics` after `pltHookRegister` ran. We can't rely
-//! on linkage-time names like `libc::ioctl` because those would resolve
-//! back through our own PLT entry — which would either recurse infinitely
-//! or, in a different library's process, not be hooked at all.
+//! These replace the real libc symbols through shadowhook's inline trampolines.
+//! Each hook calls the original function through the trampoline captured when
+//! the inline hook was installed. We can't call linkage-time names such as
+//! `libc::ioctl`, because they would resolve back through the hooked entry point
+//! and recurse.
 //!
 //! ## Important safety notes
 //!
-//! * The `*const ()` function pointers used by Zygisk's PLT hook API are
-//!   variadic in C (`ioctl` is `int ioctl(int fd, unsigned long req, ...)`)
+//! * The `*const ()` function pointers returned by shadowhook represent
+//!   functions that may be variadic in C (`ioctl` is
+//!   `int ioctl(int fd, unsigned long req, ...)`)
 //!   but Rust doesn't have first-class variadic functions. We work around
 //!   this by declaring the relevant `ioctl` signatures we care about
 //!   (`SIOCGIFNAME`, `SIOCGIFFLAGS`) as 3-argument forms and trusting the
@@ -23,12 +23,17 @@
 //!   original. Panicking would abort the entire process.
 
 use core::cell::{Cell, RefCell};
-use core::ffi::{c_int, c_void};
+use core::ffi::{CStr, c_int, c_void};
 use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
+use core::{mem, ptr, slice};
 
 use libc::{SIOCGIFCONF, SIOCGIFNAME, ifreq};
 
-use crate::filter::is_vpn_iface_bytes;
+use crate::filter::{
+    MAX_VPN_ADDRS, RTM_NEWADDR, RTM_NEWLINK, RTM_NEWROUTE, filter_dev_buf, filter_if_inet6_buf,
+    filter_ipv6_route_buf, filter_netlink_dump, filter_route_buf, filter_tcp4_buf, filter_tcp6_buf,
+    is_vpn_iface_bytes, is_vpn_iface_cstr,
+};
 
 /// `struct ifconf` from `<net/if.h>`. Not exported by the `libc` crate.
 #[repr(C)]
@@ -46,7 +51,6 @@ struct ifconf {
 // causing errors like `ioctl(SIOCGIFFLAGS) for "tun0" failed in ifaddrs`
 // and corrupting NFC/HCE payment flows).
 thread_local! {
-    #[allow(clippy::missing_const_for_thread_local)]
     static IN_GETIFADDRS: Cell<bool> = const { Cell::new(false) };
 
     /// Reusable contiguous view for scatter/gather netlink recvmsg payloads.
@@ -55,6 +59,17 @@ thread_local! {
     /// and scatter the compacted bytes back.
     #[allow(clippy::missing_const_for_thread_local)]
     static NETLINK_IOV_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(65536));
+}
+
+/// Run one libc operation without letting the ioctl hook filter nested calls.
+/// Preserve the previous value so nested guarded operations remain correct.
+fn with_ioctl_passthrough<T>(operation: impl FnOnce() -> T) -> T {
+    IN_GETIFADDRS.with(|guard| {
+        let previous = guard.replace(true);
+        let result = operation();
+        guard.set(previous);
+        result
+    })
 }
 
 /// Returns true if `fd` is an `AF_NETLINK` socket.
@@ -69,7 +84,7 @@ thread_local! {
 /// chance accumulates to near-certain breakage.
 fn is_netlink_fd(fd: c_int) -> bool {
     let mut domain: c_int = 0;
-    let mut optlen = core::mem::size_of::<c_int>() as libc::socklen_t;
+    let mut optlen = mem::size_of::<c_int>() as libc::socklen_t;
     let rc = unsafe {
         libc::getsockopt(
             fd,
@@ -113,7 +128,7 @@ fn set_errno(val: c_int) {
 //  Saved originals
 // ============================================================================
 
-/// Declare a saved-original slot for one PLT-hooked libc function.
+/// Declare a saved-original slot for one inline-hooked libc function.
 ///
 /// Each hook needs the same four items to call through to the function it
 /// replaced, so we generate them from one declaration instead of hand-copying
@@ -121,8 +136,7 @@ fn set_errno(val: c_int) {
 ///   - `static $slot: AtomicPtr<c_void>` — the captured original pointer,
 ///   - `type $ty` — its function-pointer shape (doc comments carry through),
 ///   - `fn $getter() -> Option<$ty>` — None before install or if somehow null,
-///   - `pub fn $setter(p: *const ())` — what `pltHookRegister` feeds the
-///     original into.
+///   - `pub fn $setter(p: *const ())` — stores the original trampoline.
 ///
 /// The slot is read/written with relaxed atomics: install happens-before any
 /// hook fires, so no stronger ordering is needed and no locks are taken.
@@ -134,7 +148,7 @@ macro_rules! saved_original {
         fn $getter:ident;
         pub fn $setter:ident;
     ) => {
-        static $slot: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+        static $slot: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 
         $(#[$tymeta])*
         type $ty = $sig;
@@ -147,11 +161,11 @@ macro_rules! saved_original {
             } else {
                 // SAFETY: the slot only ever holds a valid pointer of this
                 // exact shape, stored once at install via the setter below.
-                Some(unsafe { core::mem::transmute::<*mut c_void, $ty>(raw) })
+                Some(unsafe { mem::transmute::<*mut c_void, $ty>(raw) })
             }
         }
 
-        /// Stash the original pointer returned by `pltHookRegister`.
+        /// Stash the original trampoline returned by shadowhook.
         pub fn $setter(p: *const ()) {
             $slot.store(p as *mut c_void, Ordering::Relaxed);
         }
@@ -230,14 +244,14 @@ fn kernel_needs_socket_bind_hiding() -> bool {
         _ => {}
     }
 
-    let mut uts = core::mem::MaybeUninit::<libc::utsname>::zeroed();
+    let mut uts = mem::MaybeUninit::<libc::utsname>::zeroed();
     let hook = unsafe {
         if libc::uname(uts.as_mut_ptr()) != 0 {
             false
         } else {
             let uts = uts.assume_init();
             let release =
-                core::slice::from_raw_parts(uts.release.as_ptr().cast::<u8>(), uts.release.len());
+                slice::from_raw_parts(uts.release.as_ptr().cast::<u8>(), uts.release.len());
             let end = release
                 .iter()
                 .position(|&byte| byte == 0)
@@ -278,16 +292,16 @@ fn copy_from_self(src: *const c_void, dst: &mut [u8]) -> bool {
     let remote = libc::iovec {
         // process_vm_readv's ABI uses mutable iovec fields even though the
         // remote side is read-only.
-        iov_base: src as *mut c_void,
+        iov_base: src.cast_mut(),
         iov_len: dst.len(),
     };
     let copied = unsafe {
         libc::syscall(
             libc::SYS_process_vm_readv,
             libc::getpid(),
-            &local as *const libc::iovec,
+            ptr::from_ref(&local),
             1usize,
-            &remote as *const libc::iovec,
+            ptr::from_ref(&remote),
             1usize,
             0usize,
         )
@@ -306,11 +320,8 @@ fn ifindex_is_vpn(ifindex: c_int) -> Option<bool> {
     }
 
     let mut name = [0u8; libc::IFNAMSIZ];
-    let result = IN_GETIFADDRS.with(|guard| {
-        let previous = guard.replace(true);
-        let result = unsafe { libc::if_indextoname(ifindex as u32, name.as_mut_ptr().cast()) };
-        guard.set(previous);
-        result
+    let result = with_ioctl_passthrough(|| unsafe {
+        libc::if_indextoname(ifindex as u32, name.as_mut_ptr().cast())
     });
     (!result.is_null()).then(|| is_vpn_iface_bytes(&name))
 }
@@ -328,7 +339,7 @@ fn deny_ifindex_bind(ifindex: c_int, resolved_is_vpn: Option<bool>) -> bool {
 /// its native `EBADF`/`ENOTSOCK` ordering before we inspect the interface name.
 fn is_socket_fd(fd: c_int) -> bool {
     let mut socket_type: c_int = 0;
-    let mut len = core::mem::size_of::<c_int>() as libc::socklen_t;
+    let mut len = mem::size_of::<c_int>() as libc::socklen_t;
     unsafe {
         libc::getsockopt(
             fd,
@@ -415,13 +426,13 @@ pub unsafe extern "C" fn hooked_setsockopt(
     }
 
     if optname == SO_BINDTOIFINDEX {
-        if optlen < core::mem::size_of::<c_int>() as libc::socklen_t
+        if optlen < mem::size_of::<c_int>() as libc::socklen_t
             || optlen > c_int::MAX as libc::socklen_t
         {
             return unsafe { real(fd, level, optname, optval, optlen) };
         }
 
-        let mut raw = [0u8; core::mem::size_of::<c_int>()];
+        let mut raw = [0u8; mem::size_of::<c_int>()];
         if !copy_from_self(optval, &mut raw) {
             return unsafe { real(fd, level, optname, optval, optlen) };
         }
@@ -439,7 +450,7 @@ pub unsafe extern "C" fn hooked_setsockopt(
                 level,
                 optname,
                 (&ifindex as *const c_int).cast(),
-                core::mem::size_of::<c_int>() as libc::socklen_t,
+                mem::size_of::<c_int>() as libc::socklen_t,
             )
         };
     }
@@ -501,7 +512,7 @@ pub unsafe extern "C" fn hooked_ioctl(
         if ret == 0 && !arg.is_null() {
             let req = unsafe { &*(arg as *const ifreq) };
             let name_bytes = unsafe {
-                core::slice::from_raw_parts(req.ifr_name.as_ptr().cast::<u8>(), req.ifr_name.len())
+                slice::from_raw_parts(req.ifr_name.as_ptr().cast::<u8>(), req.ifr_name.len())
             };
             if is_vpn_iface_bytes(name_bytes) {
                 set_errno(libc::ENODEV);
@@ -516,7 +527,7 @@ pub unsafe extern "C" fn hooked_ioctl(
     if !arg.is_null() && is_siocgif(request) {
         let req = unsafe { &*(arg as *const ifreq) };
         let name_bytes = unsafe {
-            core::slice::from_raw_parts(req.ifr_name.as_ptr().cast::<u8>(), req.ifr_name.len())
+            slice::from_raw_parts(req.ifr_name.as_ptr().cast::<u8>(), req.ifr_name.len())
         };
         if is_vpn_iface_bytes(name_bytes) {
             set_errno(libc::ENODEV);
@@ -553,21 +564,21 @@ unsafe fn filter_ifconf(ifc: *mut ifconf) {
         return;
     }
 
-    let entry_size = core::mem::size_of::<ifreq>() as c_int;
+    let entry_size = mem::size_of::<ifreq>() as c_int;
     let n = ifc.ifc_len / entry_size;
     let mut dst = 0i32;
 
     for i in 0..n {
         let entry = unsafe { &*ifc.ifc_req.offset(i as isize) };
         let name_bytes = unsafe {
-            core::slice::from_raw_parts(entry.ifr_name.as_ptr().cast::<u8>(), entry.ifr_name.len())
+            slice::from_raw_parts(entry.ifr_name.as_ptr().cast::<u8>(), entry.ifr_name.len())
         };
         if is_vpn_iface_bytes(name_bytes) {
             continue;
         }
         if dst != i {
             unsafe {
-                core::ptr::copy_nonoverlapping(
+                ptr::copy_nonoverlapping(
                     ifc.ifc_req.offset(i as isize),
                     ifc.ifc_req.offset(dst as isize),
                     1,
@@ -581,7 +592,7 @@ unsafe fn filter_ifconf(ifc: *mut ifconf) {
         // A caller can inspect its buffer past the shortened ifc_len. Erase
         // only slots returned by the kernel and removed by compaction.
         unsafe {
-            core::ptr::write_bytes(ifc.ifc_req.offset(dst as isize), 0, (n - dst) as usize);
+            ptr::write_bytes(ifc.ifc_req.offset(dst as isize), 0, (n - dst) as usize);
         }
     }
 
@@ -688,9 +699,7 @@ pub unsafe extern "C" fn hooked_getifaddrs(ifap: *mut *mut libc::ifaddrs) -> c_i
     // Set the thread-local guard so hooked_ioctl passes through while
     // libc's real getifaddrs runs (it internally calls ioctl for each
     // interface to get flags — we must not filter those).
-    IN_GETIFADDRS.with(|f| f.set(true));
-    let rc = unsafe { real(ifap) };
-    IN_GETIFADDRS.with(|f| f.set(false));
+    let rc = with_ioctl_passthrough(|| unsafe { real(ifap) });
 
     if rc != 0 || ifap.is_null() {
         return rc;
@@ -708,8 +717,8 @@ pub unsafe extern "C" fn hooked_getifaddrs(ifap: *mut *mut libc::ifaddrs) -> c_i
             let is_vpn = if name_ptr.is_null() {
                 false
             } else {
-                let name = core::ffi::CStr::from_ptr(name_ptr);
-                crate::filter::is_vpn_iface_cstr(name)
+                let name = CStr::from_ptr(name_ptr);
+                is_vpn_iface_cstr(name)
             };
             if is_vpn {
                 *slot = (*entry).ifa_next;
@@ -914,7 +923,7 @@ pub unsafe extern "C" fn hooked_openat(
     };
 
     if !pathname.is_null() {
-        let path = unsafe { core::ffi::CStr::from_ptr(pathname) };
+        let path = unsafe { CStr::from_ptr(pathname) };
         let path_bytes = path.to_bytes();
 
         let matched = if path_bytes.first() == Some(&b'/') {
@@ -1033,8 +1042,6 @@ unsafe fn open_filtered_proc_net(
 
 /// Dispatch to the right filter function based on the file type.
 fn apply_filter(data: &mut [u8], kind: ProcNetFile) -> usize {
-    use crate::filter::*;
-
     match kind {
         ProcNetFile::Route => filter_route_buf(data),
         ProcNetFile::Ipv6Route => filter_ipv6_route_buf(data),
@@ -1066,16 +1073,13 @@ fn apply_filter(data: &mut [u8], kind: ProcNetFile) -> usize {
 /// getifaddrs calls ioctl(SIOCGIFFLAGS) internally. Returns `false` if
 /// the real getifaddrs() symbol couldn't be resolved or the call failed;
 /// the closure is then never invoked.
-unsafe fn walk_getifaddrs_vpn(mut f: impl FnMut(&core::ffi::CStr, &libc::ifaddrs)) -> bool {
+unsafe fn walk_getifaddrs_vpn(mut f: impl FnMut(&CStr, &libc::ifaddrs)) -> bool {
     let Some(real) = real_getifaddrs() else {
         return false;
     };
 
-    let mut ifap: *mut libc::ifaddrs = core::ptr::null_mut();
-
-    IN_GETIFADDRS.with(|flag| flag.set(true));
-    let rc = unsafe { real(&mut ifap) };
-    IN_GETIFADDRS.with(|flag| flag.set(false));
+    let mut ifap: *mut libc::ifaddrs = ptr::null_mut();
+    let rc = with_ioctl_passthrough(|| unsafe { real(&mut ifap) });
 
     if rc != 0 || ifap.is_null() {
         return false;
@@ -1089,8 +1093,8 @@ unsafe fn walk_getifaddrs_vpn(mut f: impl FnMut(&core::ffi::CStr, &libc::ifaddrs
         if entry.ifa_name.is_null() {
             continue;
         }
-        let name = unsafe { core::ffi::CStr::from_ptr(entry.ifa_name) };
-        if !crate::filter::is_vpn_iface_cstr(name) {
+        let name = unsafe { CStr::from_ptr(entry.ifa_name) };
+        if !is_vpn_iface_cstr(name) {
             continue;
         }
 
@@ -1105,13 +1109,11 @@ unsafe fn walk_getifaddrs_vpn(mut f: impl FnMut(&core::ffi::CStr, &libc::ifaddrs
 /// real (unhooked) `getifaddrs`. Sets `IN_GETIFADDRS` guard so our
 /// ioctl hook doesn't interfere with libc's internal SIOCGIFFLAGS calls.
 fn collect_vpn_addrs() -> (
-    [u32; crate::filter::MAX_VPN_ADDRS],
+    [u32; MAX_VPN_ADDRS],
     usize,
-    [[u32; 4]; crate::filter::MAX_VPN_ADDRS],
+    [[u32; 4]; MAX_VPN_ADDRS],
     usize,
 ) {
-    use crate::filter::MAX_VPN_ADDRS;
-
     let mut addrs4 = [0u32; MAX_VPN_ADDRS];
     let mut addrs6 = [[0u32; 4]; MAX_VPN_ADDRS];
     let mut n4 = 0usize;
@@ -1221,7 +1223,7 @@ pub unsafe extern "C" fn hooked_recvmsg(fd: c_int, msg: *mut libc::msghdr, flags
                 hdr.msg_iovlen,
                 in_iovecs,
                 &mut scratch,
-                |data| crate::filter::filter_netlink_dump(data, &indices[..n]),
+                |data| filter_netlink_dump(data, &indices[..n]),
             )
         }) else {
             return ret;
@@ -1286,7 +1288,7 @@ unsafe fn rewrite_iovec_payload(
         if entry.iov_base.is_null() {
             return None;
         }
-        let bytes = unsafe { core::slice::from_raw_parts(entry.iov_base.cast::<u8>(), take) };
+        let bytes = unsafe { slice::from_raw_parts(entry.iov_base.cast::<u8>(), take) };
         scratch.extend_from_slice(bytes);
         remaining -= take;
     }
@@ -1306,7 +1308,7 @@ unsafe fn rewrite_iovec_payload(
             continue;
         }
         unsafe {
-            core::ptr::copy_nonoverlapping(
+            ptr::copy_nonoverlapping(
                 scratch.as_ptr().add(copied),
                 entry.iov_base.cast::<u8>(),
                 take,
@@ -1349,16 +1351,13 @@ unsafe fn maybe_filter_netlink_buf(fd: c_int, buf: *mut u8, ret: isize) -> isize
         return ret;
     }
 
-    let data = unsafe { core::slice::from_raw_parts_mut(buf, ret as usize) };
+    let data = unsafe { slice::from_raw_parts_mut(buf, ret as usize) };
 
     // Quick check: first message type must be one we filter. Route dumps
     // (RTM_GETROUTE) come back as RTM_NEWROUTE and must not be skipped —
     // that gap was the issue #86 `if<N>` leak.
     let nlmsg_type = u16::from_ne_bytes([data[4], data[5]]);
-    if nlmsg_type != crate::filter::RTM_NEWADDR
-        && nlmsg_type != crate::filter::RTM_NEWLINK
-        && nlmsg_type != crate::filter::RTM_NEWROUTE
-    {
+    if nlmsg_type != RTM_NEWADDR && nlmsg_type != RTM_NEWLINK && nlmsg_type != RTM_NEWROUTE {
         return ret;
     }
 
@@ -1367,7 +1366,7 @@ unsafe fn maybe_filter_netlink_buf(fd: c_int, buf: *mut u8, ret: isize) -> isize
         return ret;
     }
 
-    crate::filter::filter_netlink_dump(data, &indices[..n]) as isize
+    filter_netlink_dump(data, &indices[..n]) as isize
 }
 
 // ============================================================================
@@ -1505,9 +1504,7 @@ pub unsafe extern "C" fn hooked_recvfrom_chk(
 /// Collect interface indices of VPN interfaces. Uses real_getifaddrs
 /// (with IN_GETIFADDRS guard) and `if_nametoindex` (which calls
 /// ioctl(SIOCGIFINDEX) — passed through by our ioctl hook).
-fn collect_vpn_iface_indices() -> ([u32; crate::filter::MAX_VPN_ADDRS], usize) {
-    use crate::filter::MAX_VPN_ADDRS;
-
+fn collect_vpn_iface_indices() -> ([u32; MAX_VPN_ADDRS], usize) {
     let mut indices = [0u32; MAX_VPN_ADDRS];
     let mut n = 0usize;
 
@@ -1520,13 +1517,7 @@ fn collect_vpn_iface_indices() -> ([u32; crate::filter::MAX_VPN_ADDRS], usize) {
             // now blocks for VPN names. Run it under the IN_GETIFADDRS guard so
             // it passes through to the real index — otherwise this filter loses
             // the VPN indices and the netlink route dump (#86) stops filtering.
-            let idx = IN_GETIFADDRS.with(|f| {
-                let prev = f.get();
-                f.set(true);
-                let i = libc::if_nametoindex(entry.ifa_name);
-                f.set(prev);
-                i
-            });
+            let idx = with_ioctl_passthrough(|| libc::if_nametoindex(entry.ifa_name));
             if idx == 0 || indices[..n].contains(&idx) {
                 return;
             }

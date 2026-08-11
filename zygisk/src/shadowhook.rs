@@ -6,7 +6,7 @@
 //! is linked as a static archive (`libshadowhook.a`) built for
 //! `aarch64-linux-android`; see `build.rs`.
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{CStr, c_char, c_int, c_void};
 use std::sync::OnceLock;
 
 // `SHADOWHOOK_MODE_UNIQUE` from shadowhook.h. We never use shared mode, so a
@@ -54,8 +54,8 @@ pub fn init_once() -> Result<(), c_int> {
 /// `new_fn` must be a valid function pointer with a signature ABI-compatible
 /// with the real target symbol. `out_orig` must be a valid writable pointer.
 pub unsafe fn hook_sym(
-    lib: &core::ffi::CStr,
-    sym: &core::ffi::CStr,
+    lib: &CStr,
+    sym: &CStr,
     new_fn: *mut c_void,
     out_orig: *mut *mut c_void,
 ) -> *mut c_void {

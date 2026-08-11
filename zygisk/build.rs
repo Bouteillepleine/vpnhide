@@ -11,8 +11,8 @@
 //!
 //! See the fork's commit message for the full rationale.
 
-use std::env;
 use std::path::PathBuf;
+use std::{env, fs};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -24,9 +24,10 @@ fn main() {
         // the Android cdylib; skip the whole native build step.
         return;
     }
-    if !target.starts_with("aarch64") {
-        panic!("vpnhide-zygisk currently only supports aarch64-linux-android (target={target})");
-    }
+    assert!(
+        target.starts_with("aarch64"),
+        "vpnhide-zygisk currently only supports aarch64-linux-android (target={target})"
+    );
 
     // cargo-ndk sets ANDROID_NDK_HOME before invoking us.
     let ndk = env::var("ANDROID_NDK_HOME")
@@ -96,9 +97,9 @@ fn main() {
 /// Typical layout: `<ndk>/toolchains/llvm/prebuilt/<host>/lib/clang/<ver>/lib/linux/…`.
 fn find_ndk_builtins(ndk: &str) -> Option<PathBuf> {
     let base = PathBuf::from(ndk).join("toolchains/llvm/prebuilt");
-    for host in std::fs::read_dir(&base).ok()?.flatten() {
+    for host in fs::read_dir(&base).ok()?.flatten() {
         let clang_dir = host.path().join("lib/clang");
-        let Ok(versions) = std::fs::read_dir(&clang_dir) else {
+        let Ok(versions) = fs::read_dir(&clang_dir) else {
             continue;
         };
         for v in versions.flatten() {

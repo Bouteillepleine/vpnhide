@@ -46,8 +46,7 @@ fn compact_lines(data: &mut [u8], mut hide: impl FnMut(&[u8]) -> bool) -> usize 
         let line_end = data[read_pos..]
             .iter()
             .position(|&b| b == b'\n')
-            .map(|p| read_pos + p + 1)
-            .unwrap_or(len);
+            .map_or(len, |position| read_pos + position + 1);
 
         if !hide(&data[read_pos..line_end]) {
             let line_len = line_end - read_pos;
@@ -96,12 +95,11 @@ pub fn filter_ipv6_route_buf(data: &mut [u8]) -> usize {
 /// drop lines whose interface name (trimmed, before the first ':') is a VPN
 /// interface. The two header lines have no `name:` token and are kept.
 pub fn filter_dev_buf(data: &mut [u8]) -> usize {
-    compact_lines(data, |line| match line.iter().position(|&b| b == b':') {
-        Some(colon) => {
+    compact_lines(data, |line| {
+        line.iter().position(|&b| b == b':').is_some_and(|colon| {
             let name = trim_ascii_ws(&line[..colon]);
             !name.is_empty() && is_vpn_iface_bytes(name)
-        }
-        None => false,
+        })
     })
 }
 
@@ -215,7 +213,7 @@ fn parse_hex_u32(hex: &[u8]) -> Option<u32> {
             b'a'..=b'f' => b - b'a' + 10,
             _ => return None,
         };
-        val = val.checked_shl(4)? | digit as u32;
+        val = val.checked_shl(4)? | u32::from(digit);
     }
     Some(val)
 }
@@ -341,10 +339,8 @@ pub fn filter_netlink_dump(data: &mut [u8], vpn_indices: &[u32]) -> usize {
             vpn_indices.contains(&if_index)
         } else if nlmsg_type == RTM_NEWROUTE && nlmsg_len >= NLMSG_HDRLEN + RTMSG_HDRLEN {
             // Output interface is an RTA_OIF rtattr after struct rtmsg.
-            match route_oif(&data[read_pos..read_pos + nlmsg_len]) {
-                Some(oif) => vpn_indices.contains(&oif),
-                None => false,
-            }
+            route_oif(&data[read_pos..read_pos + nlmsg_len])
+                .is_some_and(|oif| vpn_indices.contains(&oif))
         } else {
             false
         };
@@ -374,6 +370,7 @@ pub fn filter_netlink_dump(data: &mut [u8], vpn_indices: &[u32]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::str;
 
     #[test]
     fn detects_tun0() {
@@ -390,7 +387,7 @@ face |bytes    packets errs drop\n    lo:  100    1    0    0\n  wlan0:  200    
 tun0:  300    3    0    0\n"
                 .to_vec();
         let n = filter_dev_buf(&mut buf);
-        let out = core::str::from_utf8(&buf[..n]).unwrap();
+        let out = str::from_utf8(&buf[..n]).unwrap();
         assert!(out.contains("Inter-|"), "header kept");
         assert!(out.contains("face |"), "second header kept");
         assert!(out.contains("lo:"), "lo kept");
@@ -457,7 +454,7 @@ tun0:  300    3    0    0\n"
                        rmnet0\tFEFFFFFF\t00000000\n";
         let mut buf = input.to_vec();
         let new_len = filter_route_buf(&mut buf);
-        let result = core::str::from_utf8(&buf[..new_len]).unwrap();
+        let result = str::from_utf8(&buf[..new_len]).unwrap();
         assert!(result.contains("Iface\t"));
         assert!(result.contains("wlan0\t"));
         assert!(result.contains("rmnet0\t"));
@@ -479,7 +476,7 @@ tun0:  300    3    0    0\n"
         let input = b"Iface\tDest\nwg0\t00000000\nwlan0\t00000000\n";
         let mut buf = input.to_vec();
         let new_len = filter_route_buf(&mut buf);
-        let result = core::str::from_utf8(&buf[..new_len]).unwrap();
+        let result = str::from_utf8(&buf[..new_len]).unwrap();
         assert!(!result.contains("wg0"));
         assert!(result.contains("wlan0"));
     }
