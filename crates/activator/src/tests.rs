@@ -674,3 +674,56 @@ fn kpm_readback_rejects_empty_or_wrong_kind_replies() {
         .is_err(),
     );
 }
+
+#[test]
+fn kpm_stats_pages_are_validated_and_folded_into_legacy_telemetry() {
+    let replies = [
+        "vpnhide 1 stats\n0x2800 0x0:0x12 0x19:0x5\npage 0x0 0x2800 0x1",
+        "vpnhide 1 stats\n0x2801 0x2:0x7\npage 0x2800 done 0x1\n",
+    ];
+    let mut replies = replies.into_iter();
+    let mut requests = Vec::new();
+    let stats = collect_kpm_stats_pages(|request| {
+        requests.push(request.to_owned());
+        Ok(replies.next().unwrap().to_owned())
+    })
+    .unwrap();
+
+    assert_eq!(
+        requests,
+        ["vpnhide 1 stats", "vpnhide 1 stats\nafter 0x2800\n",]
+    );
+    assert_eq!(
+        stats,
+        "vpnhide 1 stats\n0x2800 0x0:0x12 0x19:0x5\n0x2801 0x2:0x7\n"
+    );
+}
+
+#[test]
+fn kpm_stats_reader_accepts_a_complete_legacy_reply() {
+    let legacy = "vpnhide 1 stats\n0x2800 0x0:0x12\n";
+    assert_eq!(
+        collect_kpm_stats_pages(|_| Ok(legacy.to_owned())).unwrap(),
+        legacy
+    );
+}
+
+#[test]
+fn kpm_stats_pages_reject_broken_integrity_signals() {
+    let cases = [
+        // Echoed cursor mismatch.
+        "vpnhide 1 stats\n0x2800 0x0:0x1\npage 0x1 0x2800 0x1",
+        // Declared row count mismatch.
+        "vpnhide 1 stats\n0x2800 0x0:0x1\npage 0x0 0x2800 0x2",
+        // A non-final page must retain the old-reader truncation signal.
+        "vpnhide 1 stats\n0x2800 0x0:0x1\npage 0x0 0x2800 0x1\n",
+        // A final page must be conventionally newline-terminated.
+        "vpnhide 1 stats\n0x2800 0x0:0x1\npage 0x0 done 0x1",
+    ];
+    for reply in cases {
+        assert!(
+            collect_kpm_stats_pages(|_| Ok(reply.to_owned())).is_err(),
+            "{reply:?}"
+        );
+    }
+}

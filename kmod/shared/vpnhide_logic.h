@@ -619,6 +619,36 @@ static inline enum vpnhide_kind vpnhide_peek_kind(const char *b,
 	return vpnhide_parse_header(b, len, 0);
 }
 
+/* Parse the optional KPM stats-page cursor (§7.2). Unknown records retain the
+ * normal extensibility rule; a present `after` record is strict and unique so
+ * a malformed/repeated cursor can never silently select the wrong page. */
+static inline int vpnhide_parse_stats_after(const char *b, unsigned long len,
+					    unsigned int *after)
+{
+	unsigned long i, ls, le, cs, p, ts, te;
+	unsigned long long value;
+	int ascii, seen = 0;
+
+	if (vpnhide_parse_header(b, len, &i) != VPNHIDE_KIND_STATS)
+		return 0;
+	*after = 0;
+	while (vpnhide_next_line(b, len, &i, &ls, &le)) {
+		if (!vpnhide_line_significant(b, ls, le, &cs, &ascii) || !ascii)
+			continue;
+		p = cs;
+		if (!vpnhide_next_token(b, &p, le, &ts, &te) ||
+		    !vpnhide_tok_eq(b, ts, te, "after"))
+			continue;
+		if (seen || !vpnhide_next_token(b, &p, le, &ts, &te) ||
+		    !vpnhide_tok_hex(b, ts, te, 32, &value) ||
+		    vpnhide_next_token(b, &p, le, &ts, &te))
+			return 0;
+		*after = (unsigned int)value;
+		seen = 1;
+	}
+	return 1;
+}
+
 /* --- config parse (§4.3) --------------------------------------------- */
 
 /*

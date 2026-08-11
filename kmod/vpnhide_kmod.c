@@ -79,8 +79,6 @@
  * activator truncates the projected config to this many targets, so keep both in
  * sync. */
 #define MAX_TARGET_UIDS 64
-#define MAX_STATS_ENTRIES (MAX_TARGET_UIDS * VPNHIDE_KERNEL_HOOK_COUNT)
-#define CTL_READ_BUF_SIZE 32768
 
 /*
  * Pre-allocated kretprobe instance pool size, applied to every probe.
@@ -256,27 +254,6 @@ static void record_hook_hit(u32 hook_id)
 	spin_unlock_irqrestore(&stats_lock, flags);
 }
 
-static int snapshot_stats(struct vpnhide_stat_entry *out, int max)
-{
-	unsigned long flags;
-	int i, hook, n = 0;
-
-	spin_lock_irqsave(&stats_lock, flags);
-	for (i = 0; i < nr_stats_rows && n < max; i++) {
-		for (hook = 0; hook < VPNHIDE_KERNEL_HOOK_COUNT && n < max;
-		     hook++) {
-			if (stats_rows[i].counts[hook] == 0)
-				continue;
-			out[n].uid = stats_rows[i].uid;
-			out[n].hook_id = vpnhide_kernel_hook_id(hook);
-			out[n].count = stats_rows[i].counts[hook];
-			n++;
-		}
-	}
-	spin_unlock_irqrestore(&stats_lock, flags);
-	return n;
-}
-
 /* ------------------------------------------------------------------ */
 /*  /proc/vpnhide_ctl — the folded control + stats channel            */
 /* ------------------------------------------------------------------ */
@@ -342,65 +319,81 @@ static ssize_t ctl_write(struct file *file, const char __user *ubuf,
 	return count;
 }
 
-/*
- * Read side: a self-documenting banner + `status` + `stats` (§4.3/§7.1).
- * The shared formatters render into a temporary buffer which we hand to
- * seq_file. Stats are cumulative since module load and sparse per uid/hook.
- */
-static int ctl_show(struct seq_file *m, void *v)
+/* Read side: banner, status, stats header, then one UID per seq_file record.
+ * seq_file may replay a record when its current userspace read buffer fills,
+ * so the output streams without a whole-snapshot allocation or byte ceiling. */
+static void *ctl_seq_start(struct seq_file *m, loff_t *pos)
 {
-	char *buf;
-	struct vpnhide_stat_entry *stats;
-	struct vpnhide_status st;
-	unsigned long len;
-	int n;
+	if (*pos >= 3 + MAX_TARGET_UIDS)
+		return NULL;
+	return (void *)(unsigned long)(*pos + 1);
+}
 
-	seq_puts(m, VPNHIDE_READ_BANNER);
+static void *ctl_seq_next(struct seq_file *m, void *v, loff_t *pos)
+{
+	(*pos)++;
+	return ctl_seq_start(m, pos);
+}
 
-	buf = kmalloc(CTL_READ_BUF_SIZE, GFP_KERNEL);
-	stats = kcalloc(MAX_STATS_ENTRIES, sizeof(*stats), GFP_KERNEL);
-	if (!buf || !stats) {
-		kfree(stats);
-		kfree(buf);
-		return -ENOMEM;
+static void ctl_seq_stop(struct seq_file *m, void *v)
+{
+}
+
+static int ctl_seq_show(struct seq_file *m, void *v)
+{
+	unsigned long item = (unsigned long)v - 1;
+
+	if (item == 0) {
+		seq_puts(m, VPNHIDE_READ_BANNER);
+	} else if (item == 1) {
+		u32 hooks = installed_hook_mask();
+		u32 error = hooks == VPNHIDE_KERNEL_HOOK_MASK ?
+				    VPNHIDE_ERR_OK :
+				    VPNHIDE_ERR_PARTIAL_HOOKS;
+
+		seq_printf(m,
+			   "vpnhide %u status\nbackend 0x%x\nkver 0x%x\n"
+			   "hooks 0x%x\nerror 0x%x\n",
+			   VPNHIDE_TELEMETRY_VERSION, VPNHIDE_BACKEND_KMOD,
+			   LINUX_VERSION_CODE, hooks, error);
+	} else if (item == 2) {
+		seq_printf(m, "vpnhide %u stats\n", VPNHIDE_TELEMETRY_VERSION);
+	} else {
+		struct stats_row row;
+		unsigned long flags;
+		int hook, index = (int)item - 3;
+
+		spin_lock_irqsave(&stats_lock, flags);
+		if (index >= nr_stats_rows) {
+			spin_unlock_irqrestore(&stats_lock, flags);
+			return 0;
+		}
+		row = stats_rows[index];
+		spin_unlock_irqrestore(&stats_lock, flags);
+
+		seq_printf(m, "0x%x", row.uid);
+		for (hook = 0; hook < VPNHIDE_KERNEL_HOOK_COUNT; hook++) {
+			if (!row.counts[hook])
+				continue;
+			seq_printf(m, " 0x%x:0x%llx",
+				   vpnhide_kernel_hook_id(hook),
+				   row.counts[hook]);
+		}
+		seq_putc(m, '\n');
 	}
-
-	st.backend = VPNHIDE_BACKEND_KMOD;
-	st.kver = LINUX_VERSION_CODE;
-	st.hooks = installed_hook_mask();
-	st.error = (st.hooks == VPNHIDE_KERNEL_HOOK_MASK) ?
-			   VPNHIDE_ERR_OK :
-			   VPNHIDE_ERR_PARTIAL_HOOKS;
-	/*
-	 * vpnhide_format_* report the FULL intended length (snprintf semantics),
-	 * which can exceed the buffer they filled. Clamping with min() would emit
-	 * the first CTL_READ_BUF_SIZE bytes cut wherever they land — a record
-	 * severed mid-line, with nothing to say the snapshot is partial, so the
-	 * reader would total a half-parsed counter as if it were whole.
-	 * vpnhide_clamp_to_line instead ends on a complete line and drops the
-	 * final newline, which is the protocol's truncation signal (§7.2) — the
-	 * same guard the KPM's ctl0 reply uses.
-	 *
-	 * Reachable: stats cost up to ~640 bytes per uid (27 hooks, saturated u64
-	 * counters), so a full target set can format past 32 KiB. Status is four
-	 * fixed records and cannot, but it goes through the same call so the rule
-	 * is one rule.
-	 */
-	len = vpnhide_format_status(buf, CTL_READ_BUF_SIZE, &st);
-	seq_write(m, buf, vpnhide_clamp_to_line(buf, len, CTL_READ_BUF_SIZE));
-
-	n = snapshot_stats(stats, MAX_STATS_ENTRIES);
-	len = vpnhide_format_stats(buf, CTL_READ_BUF_SIZE, stats, n);
-	seq_write(m, buf, vpnhide_clamp_to_line(buf, len, CTL_READ_BUF_SIZE));
-
-	kfree(stats);
-	kfree(buf);
 	return 0;
 }
 
+static const struct seq_operations ctl_seq_ops = {
+	.start = ctl_seq_start,
+	.next = ctl_seq_next,
+	.stop = ctl_seq_stop,
+	.show = ctl_seq_show,
+};
+
 static int ctl_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, ctl_show, NULL);
+	return seq_open(file, &ctl_seq_ops);
 }
 
 static const struct proc_ops ctl_proc_ops = {
@@ -408,7 +401,7 @@ static const struct proc_ops ctl_proc_ops = {
 	.proc_read = seq_read,
 	.proc_write = ctl_write,
 	.proc_lseek = seq_lseek,
-	.proc_release = single_release,
+	.proc_release = seq_release,
 };
 
 /* ================================================================== */

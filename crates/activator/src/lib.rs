@@ -230,13 +230,14 @@ pub fn read_kpm_status() -> Result<String> {
 }
 
 pub fn read_kpm_stats() -> Result<String> {
-    read_kpm_payload("vpnhide 1 stats")
+    let client = KpmClient::detect()?;
+    client.ctl0_stats()
 }
 
 pub fn read_kpm_state() -> Result<String> {
     let client = KpmClient::detect()?;
     let mut out = client.ctl0_read("vpnhide 1 status")?;
-    out.push_str(&client.ctl0_read("vpnhide 1 stats")?);
+    out.push_str(&client.ctl0_stats()?);
     Ok(out)
 }
 

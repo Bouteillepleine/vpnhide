@@ -60,38 +60,30 @@ slots. A user with a work profile reaches 64 UIDs at around 32 apps.
 
 ## Telemetry — how many apps report counters
 
-There is no fixed app count. A uid's cost depends on how many hooks fired for it
-and how large its counters grew, and counters are cumulative since the backend
-loaded — so the same device fits fewer uids after a week of uptime than after a
-reboot. Measured with the real formatter, 5-digit uids:
+There is no fixed output app count. A uid's text cost depends on how many hooks
+fired for it and how large its cumulative counters grew. Representative
+single-record sizes from the real formatter, for 5-digit uids:
 
-| profile | bytes/uid | fits in 4096 (KPM) | fits in 32768 (kmod) |
-|---|---|---|---|
-| 2 hooks, counts < 256 | 25 | 163 | 1310 |
-| 4 hooks, counts < 65k | 51 | 80 | 642 |
-| 8 hooks, counts ~1e6 | 103 | 39 | 317 |
-| 27 hooks, saturated u64 | 639 | 6 | 51 |
+| profile | bytes/uid | approximate rows in one 4096-byte KPM page |
+|---|---|---|
+| 2 hooks, counts < 256 | 25 | 160 |
+| 4 hooks, counts < 65k | 51 | 79 |
+| 8 hooks, counts ~1e6 | 103 | 39 |
+| all 11 kernel hooks, saturated u64 | 261 | 15 |
 
 The two backends are not in the same position:
 
-- **KPM** — 4096 B hard: `VPNHIDE_OUT_MAX` in `kmod/kpm/vpnhide_kpm.c`, and the
-  KPatch and APatch clients cap their side at the same figure, so a larger
-  userspace buffer does not help. On overflow it clamps to a whole record, the
-  activator marks the reply `# vpnhide truncated`, and the app drops that
-  backend's stats rather than showing partial totals
-  (`StatisticsData.kt`). Blunt, but it never reports a wrong number.
-- **kmod** — 32 KiB (`CTL_READ_BUF_SIZE`), and its entry array is already
-  heap-allocated. Eight times the room.
+- **KPM** — each ctl0 reply remains capped at 4096 B by the module and both
+  clients. The backend pages by ascending UID; the activator validates and
+  aggregates every page before exposing one normal telemetry block to the app.
+- **kmod** — `/proc/vpnhide_ctl` is a real `seq_operations` stream with one UID
+  per record. There is no whole-output buffer or formatter ceiling.
 
-The KPM's serialisation scratch is deliberately sized by the transport
-(`VPNHIDE_STATS_SNAPSHOT_MAX = VPNHIDE_OUT_MAX / 8`), not by
-`MAX_TARGET_UIDS * VPNHIDE_HOOK_COUNT`. The product would reserve 1728 entries
-when no reply can carry more than ~510. This removed one source of target-cap
-growth, but not all of it: the live `stats_used`, `stats_uids`, and
-`stats_counts[MAX_TARGET_UIDS][VPNHIDE_HOOK_COUNT]` arrays still scale with the
-cap. Static growth is what broke KernelPatch boot on the 6.12 image. At 64
-targets `.bss` is 23120 B (down from 42576 B); a source-only build with the cap
-changed to 160 measured **45392 B**, before any boot test.
+KPM keeps no serialisation snapshot. Its live table stores only the 11
+kernel-owned hook counters rather than the 27-id global registry, and a zero UID
+is the hash-table empty sentinel, so no separate `stats_used` array is needed.
+At the current 64-target cap the resulting `.bss` is **6480 B**, down from
+23120 B before compact storage and cursor output.
 
 ## Raising a ceiling — options and cost
 
@@ -121,16 +113,12 @@ Ordered by cost. None of these are scheduled; this is the menu.
 
 ### Telemetry
 
-1. **Bare hex in a telemetry v2** — the same trick control v2 used:
+1. **Bare hex in a future telemetry v2** — the same trick control v2 used:
    ` 0x3:0xf4240` → ` 3:f4240`, four bytes per cell, roughly +45% uids per read
    at the heavy profile. Cheap in code, expensive in delivery: telemetry's
    reader is the app, so bumping it means shipping the APK in step with every
    module. Only worth bundling with some other telemetry change.
-2. **A cursor** — `stats <after-uid>`, read in a loop. [protocol.md §7.2](protocol.md)
-   currently says "no pagination" for the KPM; that was a decision, not a law.
-   This is the only option that actually scales, and it is confined to the KPM
-   transport.
-3. **Cap by policy, not by configuration** — emit the top-N uids by total and
+2. **Cap by policy, not by configuration** — emit the top-N uids by total and
    mark that it happened. The user gets numbers for the apps that did something
    and configures nothing.
 
@@ -147,14 +135,6 @@ captures activator stderr, and the picker shows a localized long-duration
 warning instead of the normal success message. The canonical package selection
 is still saved in full; the warning describes the capped native runtime
 projection.
-
-## Known gaps
-
-- The app does not act on the truncation signal for the **kmod** stats channel.
-  It reads `/proc/vpnhide_ctl` directly and only looks for the activator's
-  `# vpnhide truncated` marker, which exists on the KPM path. After the clamp
-  fix a truncated kmod read ends on a whole record, so the numbers shown are
-  correct — there are just silently fewer of them.
 
 ## Re-measuring
 

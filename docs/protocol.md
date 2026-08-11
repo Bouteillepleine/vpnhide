@@ -534,8 +534,9 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
         return nr_target_uids;           /* short code only (NOT surfaced as text) */
     }
     if (kind_is_stats(args) || kind_is_status(args)) {
-        char buf[OUT_MAX];               /* "vpnhide 1 stats" / "...status" */
-        int n = kind_is_stats(args) ? format_stats(buf, sizeof buf)
+        char buf[OUT_MAX];               /* one stats page, or all of status */
+        int n = kind_is_stats(args) ? format_stats_page(buf, sizeof buf,
+                                                        parse_after(args))
                                     : format_status(buf, sizeof buf);
         if (n > outlen)
             n = clamp_to_line(buf, outlen);        /* never mid-record */
@@ -547,19 +548,43 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 }
 ```
 
-### 7.2 The one KPM-specific rule: no pagination
+### 7.2 KPM stats cursor
 
-`out_msg`/`outlen` is a single fixed buffer per call — unlike seq_file, which
-paginates. Therefore:
+`out_msg`/`outlen` is a single fixed 4096-byte buffer per call. Stats therefore
+uses an additive UID cursor while keeping telemetry v1 and the ordinary §4.3 UID
+records. The first request is the legacy request; later pages add one record:
 
-1. The reader passes a generously large `outlen` (stats for tens of uids is a few
-   KiB).
-2. The module truncates **only on a line boundary** (`clamp_to_line`), never
-   mid-record — otherwise the app parses a garbage tail.
-3. Truncation is signalled by the **absence of a trailing `\n`**. The app, seeing
-   no trailing `\n`, knows the snapshot is incomplete and either re-reads with a
-   bigger buffer or accepts the partial. (This is exactly the §4.1 rule that a
-   trailing `\n` is optional on read but meaningful here.)
+```text
+vpnhide 1 stats
+after 0x27ff
+```
+
+Every new-backend response ends in an integrity trailer:
+
+```text
+vpnhide 1 stats
+0x2800 0x0:0x12 0x19:0x5
+0x2801 0x2:0x7
+page 0x27ff 0x2801 0x2
+```
+
+The fields are the requested cursor, the next cursor (or literal `done`), and
+the number of UID rows carried by this page. UID rows are strictly increasing
+and contain only UIDs greater than `after`. The activator validates the echoed
+cursor, monotonic next cursor, row count, and every numeric field while holding
+the cross-process ctl0 lock across the full loop. It then folds all pages into
+one ordinary `vpnhide 1 stats` block, so the APK parser is unchanged.
+
+A non-final page deliberately omits the trailing `\n`; the `page` record itself
+is complete. An old activator therefore applies its existing truncation rule and
+drops the incomplete stats instead of presenting a partial total. A final page
+uses `page <requested> done <count>\n`. Conversely, a new activator accepts a
+newline-terminated legacy response with no `page` trailer as a complete
+single-page snapshot from an older backend.
+
+The `.ko` transport needs no cursor: `/proc/vpnhide_ctl` uses `seq_operations`
+with one UID per record, so the kernel streams arbitrarily many complete rows to
+the reader without constructing a fixed-size snapshot.
 
 On write, the whole snapshot must fit in `args`, including its trailing NUL.
 Bound it by `MAX_TARGET_UIDS`, check the formatted byte length before the
