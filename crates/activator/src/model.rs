@@ -14,7 +14,7 @@ use crate::{
     is_app_uid, pm_list_packages, pm_list_users, wait_for_pm_ready,
 };
 
-pub const KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS: &str = Hook::FilesystemIfacePaths.name();
+pub const OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS: &str = Hook::FilesystemIfacePaths.name();
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -35,7 +35,7 @@ pub struct Settings {
     #[serde(default)]
     pub remember_superkey: bool,
     #[serde(default)]
-    pub kernel_boot_features: BTreeSet<String>,
+    pub optional_features: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]

@@ -172,7 +172,7 @@ fn kmod_projection_includes_the_optional_filesystem_hook() {
     let cfg = parse_canonical(
         r#"{
           "version": 1,
-          "settings": { "kernelBootFeatures": ["filesystem_iface_paths"] },
+          "settings": { "optionalFeatures": ["filesystem_iface_paths"] },
           "apps": { "com.example.full": { "native": true } }
         }"#,
     )
@@ -181,8 +181,8 @@ fn kmod_projection_includes_the_optional_filesystem_hook() {
 
     assert!(
         cfg.settings
-            .kernel_boot_features
-            .contains(KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS)
+            .optional_features
+            .contains(OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS)
     );
     assert_eq!(
         project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Kmod),

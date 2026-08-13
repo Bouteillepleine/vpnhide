@@ -40,9 +40,9 @@ internal fun FilesystemHidingSettingsSection() {
         targets
             ?.canonicalConfig
             ?.settings
-            ?.kernelBootFeatures
+            ?.optionalFeatures
             .orEmpty()
-    val enabled = KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS in enabledFeatures
+    val enabled = OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS in enabledFeatures
     val runtimeState =
         remember(enabled, rootSnapshot) {
             resolveFilesystemHidingState(
@@ -167,11 +167,11 @@ private fun writeFilesystemHidingSetting(enabled: Boolean): Int {
         base.copy(
             settings =
                 base.settings.copy(
-                    kernelBootFeatures =
+                    optionalFeatures =
                         if (enabled) {
-                            base.settings.kernelBootFeatures + KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS
+                            base.settings.optionalFeatures + OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS
                         } else {
-                            base.settings.kernelBootFeatures - KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS
+                            base.settings.optionalFeatures - OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS
                         },
                 ),
         )

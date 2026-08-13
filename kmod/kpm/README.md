@@ -147,7 +147,7 @@ or KPatch-Next `kpatch kpm ctl0`.
 ### Optional filesystem hook loader contract
 
 Optional boot features are outside control v2. When canonical
-`settings.kernelBootFeatures` contains `filesystem_iface_paths`, the production
+`settings.optionalFeatures` contains `filesystem_iface_paths`, the production
 activator passes the exact KPM load argument `filesystem_hiding=1`. When it is
 disabled, the activator passes a null/absent argument; the explicit
 `filesystem_hiding=0` spelling is also accepted as disabled but is not emitted by

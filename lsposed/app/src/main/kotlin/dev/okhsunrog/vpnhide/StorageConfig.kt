@@ -6,7 +6,7 @@ import org.json.JSONObject
 
 internal const val CANONICAL_CONFIG_FILE = "/data/system/vpnhide_config.json"
 internal const val SUPERKEY_FILE = "/data/adb/vpnhide/superkey"
-internal val KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS = HookIds.Hook.FILESYSTEM_IFACE_PATHS.hookName
+internal val OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS = HookIds.Hook.FILESYSTEM_IFACE_PATHS.hookName
 
 internal data class CanonicalConfig(
     val version: Int = 1,
@@ -18,7 +18,7 @@ internal data class CanonicalConfig(
 
 internal data class CanonicalSettings(
     val rememberSuperkey: Boolean = false,
-    val kernelBootFeatures: Set<String> = emptySet(),
+    val optionalFeatures: Set<String> = emptySet(),
     val autoHideVpnServices: Boolean = true,
     val autoHideVpnName: Boolean = false,
     val autoHideExcludedPackages: Set<String> = emptySet(),
@@ -146,7 +146,7 @@ internal fun parseCanonicalConfig(raw: String): CanonicalConfig? {
         settings =
             CanonicalSettings(
                 rememberSuperkey = settingsJson?.optBoolean("rememberSuperkey", defaultSettings.rememberSuperkey) == true,
-                kernelBootFeatures = parseStringSet(settingsJson?.optJSONArray("kernelBootFeatures")),
+                optionalFeatures = parseStringSet(settingsJson?.optJSONArray("optionalFeatures")),
                 autoHideVpnServices =
                     settingsJson?.optBoolean("autoHideVpnServices", defaultSettings.autoHideVpnServices)
                         ?: defaultSettings.autoHideVpnServices,
@@ -404,8 +404,8 @@ internal fun canonicalConfigJson(config: CanonicalConfig): String =
         append("    \"rememberSuperkey\": ")
         append(config.settings.rememberSuperkey)
         append(",\n")
-        append("    \"kernelBootFeatures\": [")
-        config.settings.kernelBootFeatures.toSortedSet().forEachIndexed { index, feature ->
+        append("    \"optionalFeatures\": [")
+        config.settings.optionalFeatures.toSortedSet().forEachIndexed { index, feature ->
             if (index != 0) append(", ")
             appendJsonString(feature)
         }

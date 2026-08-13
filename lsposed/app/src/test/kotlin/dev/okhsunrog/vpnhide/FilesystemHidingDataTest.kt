@@ -9,8 +9,8 @@ class FilesystemHidingDataTest {
     @Test
     fun `filesystem hiding remains opt in by default`() {
         assertFalse(
-            KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS in
-                CanonicalSettings().kernelBootFeatures,
+            OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS in
+                CanonicalSettings().optionalFeatures,
         )
     }
 

@@ -174,10 +174,10 @@ internal fun AppPickerScreen(
             nativeBackendId = targets.displayNativeBackendId,
             nativeHookFamily = nativeHookFamily,
             filesystemHidingEnabled =
-                KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS in
+                OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS in
                     targets.canonicalConfig
                         ?.settings
-                        ?.kernelBootFeatures
+                        ?.optionalFeatures
                         .orEmpty(),
             portsInstalled = targets.portsModuleInstalled,
             onToggle = { layer ->

@@ -1576,10 +1576,10 @@ internal suspend fun loadDashboardState(
 
     filesystemHidingDashboardMessage(
         desiredEnabled =
-            KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS in
+            OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS in
                 targetsSnapshot.canonicalConfig
                     ?.settings
-                    ?.kernelBootFeatures
+                    ?.optionalFeatures
                     .orEmpty(),
         sections = shellSnapshot,
         res = res,

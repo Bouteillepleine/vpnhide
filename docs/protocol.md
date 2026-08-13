@@ -41,7 +41,7 @@ This document defines four things:
 It does **not** define the canonical JSON schema, package-to-UID projection,
 native-backend selection, boot order, APatch credential persistence, or the
 arguments used to load `.ko`/KPM artifacts. In particular,
-`settings.kernelBootFeatures` and the `filesystem_hiding=1` loader argument are
+`settings.optionalFeatures` and the `filesystem_hiding=1` loader argument are
 not control-v2 records. See [storage.md](storage.md) for desired state and
 activation, and [state.md](state.md) for paths, lifetimes, and boot sequencing.
 

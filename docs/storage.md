@@ -97,7 +97,7 @@ Shape (illustrative):
   },
   "settings": {
     "rememberSuperkey": false,
-    "kernelBootFeatures": []
+    "optionalFeatures": []
   }
 }
 ```
@@ -140,12 +140,12 @@ selection; the native wire carries the resolved `hookmask`.
 The `rememberSuperkey` boolean lives here (it is a preference, not a secret). The
 superkey itself does **not** (§6).
 
-### 2.2 Optional kernel boot features
+### 2.2 Optional features
 
-`settings.kernelBootFeatures` is a canonical **desired-state field**, not a
-control-v2 record. It names expensive or experimental kernel capabilities that
-must be selected before a backend installs its global hooks. Unknown names are
-preserved so newer versions can extend the set without a schema migration.
+`settings.optionalFeatures` is a canonical **desired-state field**, not a
+control-v2 record. It names expensive or experimental capabilities whose
+backend-specific activation is defined here. Unknown names are preserved so
+newer versions can extend the set without a schema migration.
 
 The current projection is:
 

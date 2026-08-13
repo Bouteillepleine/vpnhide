@@ -100,7 +100,7 @@ static int nr_targets;
 static uint32_t default_hookmask;
 static uint32_t active_hook_mask;
 /* Locked at module load: these globally hot hooks cannot be added or removed by
- * a later ctl0 config. The canonical kernelBootFeatures setting is projected
+ * a later ctl0 config. The canonical optionalFeatures setting is projected
  * into KPM load args by the activator. */
 static bool filesystem_hiding_requested;
 
