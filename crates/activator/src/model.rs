@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Deserialize;
 use vpnhide_protocol::Target;
 use vpnhide_protocol::format_config;
-use vpnhide_protocol::hook_ids::{Hook, KERNEL_HOOK_MASK, ZYGISK_HOOK_MASK};
+use vpnhide_protocol::hook_ids::{Hook, KERNEL_HOOK_MASK, KMOD_HOOK_MASK, ZYGISK_HOOK_MASK};
 
 use crate::ports::build_ports_ruleset;
 use crate::{
@@ -11,6 +11,8 @@ use crate::{
     PORTS_CHAIN4, PORTS_CHAIN6, PmReadyWait, Result, has_native_targets, has_ports_targets,
     is_app_uid, pm_list_packages, pm_list_users, wait_for_pm_ready,
 };
+
+pub const KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS: &str = Hook::FilesystemIfacePaths.name();
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -30,6 +32,8 @@ pub struct CanonicalConfig {
 pub struct Settings {
     #[serde(default)]
     pub remember_superkey: bool,
+    #[serde(default)]
+    pub kernel_boot_features: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -137,14 +141,16 @@ fn default_enabled() -> bool {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NativeHookFamily {
-    Kernel,
+    Kmod,
+    Kpm,
     Zygisk,
 }
 
 impl NativeHookFamily {
     fn full_set(self) -> HookSet {
         match self {
-            NativeHookFamily::Kernel => HookSet::from_bits(KERNEL_HOOK_MASK),
+            NativeHookFamily::Kmod => HookSet::from_bits(KERNEL_HOOK_MASK | KMOD_HOOK_MASK),
+            NativeHookFamily::Kpm => HookSet::from_bits(KERNEL_HOOK_MASK),
             NativeHookFamily::Zygisk => HookSet::from_bits(ZYGISK_HOOK_MASK),
         }
     }
@@ -196,7 +202,7 @@ impl NativeSelection {
                     return None;
                 }
                 let hooks = match family {
-                    NativeHookFamily::Kernel => {
+                    NativeHookFamily::Kmod | NativeHookFamily::Kpm => {
                         HookSet::from_names(names).restricted_to(family.full_set())
                     }
                     NativeHookFamily::Zygisk => family.full_set(),
@@ -208,7 +214,7 @@ impl NativeSelection {
                     return None;
                 }
                 let selected = match family {
-                    NativeHookFamily::Kernel => &detail.kernel,
+                    NativeHookFamily::Kmod | NativeHookFamily::Kpm => &detail.kernel,
                     NativeHookFamily::Zygisk => &detail.zygisk,
                 };
                 let Some(names) = selected else {
@@ -364,7 +370,7 @@ fn validate_port_policies(cfg: &CanonicalConfig) -> Result<()> {
 pub fn project_native(json: &str) -> Result<String> {
     project_native_with_pm_wait(
         json,
-        NativeHookFamily::Kernel,
+        NativeHookFamily::Kpm,
         PmReadyWait::Bounded(PM_READY_ATTEMPTS),
     )
 }
@@ -458,7 +464,7 @@ pub(crate) fn native_target_capacity_warning(total: usize) -> String {
 }
 
 pub fn project_native_with_resolver(cfg: &CanonicalConfig, resolver: &PackageUidMap) -> String {
-    project_native_with_resolver_for_family(cfg, resolver, NativeHookFamily::Kernel)
+    project_native_with_resolver_for_family(cfg, resolver, NativeHookFamily::Kpm)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -41,6 +41,7 @@ internal enum class DetectionMethod(
                 HookIds.Hook.RTNL_FILL_IFINFO,
                 HookIds.Hook.INET_FILL_IFADDR,
                 HookIds.Hook.INET6_FILL_IFADDR,
+                HookIds.Hook.FILESYSTEM_IFACE_PATHS,
                 -> Interfaces
 
                 HookIds.Hook.DEV_IOCTL,

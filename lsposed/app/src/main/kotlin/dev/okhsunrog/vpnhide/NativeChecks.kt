@@ -107,5 +107,14 @@ internal val NATIVE_CHECKS: List<NativeCheckSpec> =
             labelRes = R.string.check_proc_dev,
             expectedHooks = setOf(HookIds.Hook.ZYGISK_OPENAT),
         ),
-        NativeCheckSpec("sys_class_net", R.string.check_sys_class_net),
+        NativeCheckSpec(
+            "sys_class_net",
+            R.string.check_sys_class_net,
+            expectedHooks = setOf(HookIds.Hook.FILESYSTEM_IFACE_PATHS),
+        ),
+        NativeCheckSpec(
+            "proc_sys_net",
+            R.string.check_proc_sys_net,
+            expectedHooks = setOf(HookIds.Hook.FILESYSTEM_IFACE_PATHS),
+        ),
     )

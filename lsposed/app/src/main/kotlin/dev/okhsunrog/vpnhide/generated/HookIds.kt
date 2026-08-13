@@ -89,10 +89,14 @@ internal object HookIds {
 
         // libc setsockopt() best-effort socket-interface bind denial
         ZYGISK_SETSOCKOPT(26, "zygisk_setsockopt", "libc setsockopt() best-effort socket-interface bind denial"),
+
+        // Optional reboot-gated sysfs/proc-sys VPN interface path concealment
+        FILESYSTEM_IFACE_PATHS(27, "filesystem_iface_paths", "Optional reboot-gated sysfs/proc-sys VPN interface path concealment"),
     }
 
     // Hooks owned by each backend: apply `mask and own`.
     const val KERNEL_HOOK_MASK = 0x20003ff
+    const val KMOD_HOOK_MASK = 0x8000000
     const val ZYGISK_HOOK_MASK = 0x5fc0000
     const val LSPOSED_HOOK_MASK = 0x3fc00
 

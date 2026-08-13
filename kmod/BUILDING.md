@@ -61,6 +61,11 @@ adb shell "su -c 'dmesg | grep vpnhide'"
 adb shell "su -c 'cat /proc/vpnhide_ctl'"
 ```
 
+The optional `.ko` filesystem-hiding probes are controlled from the app's
+Settings screen and applied on the next reboot. For direct development loads,
+pass `filesystem_hiding=1` to `insmod`; omitting it leaves the global VFS hooks
+unregistered.
+
 ## Troubleshooting
 
 **`insmod: Exec format error`** — symvers CRC mismatch. Rebuild via the DDK container (`./kmod/build.py --kmi <kmi>`); the container image carries matched symvers.

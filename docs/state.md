@@ -20,6 +20,7 @@ The single managed desired-state file.
 
 - Format: JSON object, `version: 1`, `debug: Boolean`, `apps: { package ->
   roles }`, `settings.rememberSuperkey: Boolean`,
+  `settings.kernelBootFeatures: [feature name]`,
   `settings.autoHideVpnServices: Boolean`, `settings.autoHideVpnName: Boolean`,
   `settings.autoHiddenPackages: [package]`.
 - Roles per package: `java`, `native` (`Boolean` or hook-name array),
@@ -102,7 +103,7 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 
 | File | Format | Writer | Reader | Lifetime |
 |---|---|---|---|---|
-| `load_status` | `key=value`: timestamp, boot_id, uname_r, gki_variant, kmod_version, root_manager, kprobes, kretprobes, insmod_exit, loaded, insmod_stderr | `kmod/module/post-fs-data.sh` | app dashboard | overwritten each boot |
+| `load_status` | `key=value`: timestamp, boot_id, uname_r, gki_variant, kmod_version, root_manager, kprobes, kretprobes, filesystem_hiding, filesystem_config_exit, filesystem_config_error, insmod_exit, loaded, insmod_stderr | `kmod/module/post-fs-data.sh` | app dashboard | overwritten each boot |
 | `load_dmesg` | filtered dmesg excerpt | `kmod/module/post-fs-data.sh` | app dashboard/debug export | overwritten each boot |
 
 ### `/data/adb/vpnhide_kpm/`

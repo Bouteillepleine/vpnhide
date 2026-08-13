@@ -53,7 +53,7 @@ OUT_LSP_KT = lsposed_generated_kt("HookIds.kt")
 
 GENERATED_HEADER_LINE = generated_header("data/hooks.toml", "uv run scripts/codegen-hooks.py")
 
-KNOWN_BACKENDS = ("kernel", "zygisk", "lsposed")
+KNOWN_BACKENDS = ("kernel", "kmod", "zygisk", "lsposed")
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +113,35 @@ def backend_mask(hooks: list[Hook], backend: str) -> int:
     return m
 
 
+def append_dense_hook_mapping(
+    lines: list[str], name: str, hooks: list[Hook], description: str
+) -> None:
+    """Emit dense in-memory slots while preserving global hook IDs on wire."""
+    symbol = upper(name)
+    lines.append(f"/* {description}")
+    lines.append("   The wire keeps global hook ids; these helpers only compact the")
+    lines.append("   backend's in-memory counters. */")
+    lines.append(f"#define VPNHIDE_{symbol}_HOOK_COUNT {len(hooks)}")
+    lines.append(f"static inline int vpnhide_{name}_hook_slot(enum vpnhide_hook_id id)")
+    lines.append("{")
+    lines.append("\tswitch (id) {")
+    for slot, hook in enumerate(hooks):
+        lines.append(f"\tcase VPNHIDE_HOOK_{upper(hook.name)}: return {slot};")
+    lines.append("\tdefault: return -1;")
+    lines.append("\t}")
+    lines.append("}")
+    lines.append("")
+    lines.append(f"static inline enum vpnhide_hook_id vpnhide_{name}_hook_id(unsigned int slot)")
+    lines.append("{")
+    lines.append("\tswitch (slot) {")
+    for slot, hook in enumerate(hooks):
+        lines.append(f"\tcase {slot}: return VPNHIDE_HOOK_{upper(hook.name)};")
+    lines.append("\tdefault: return VPNHIDE_HOOK_COUNT;")
+    lines.append("\t}")
+    lines.append("}")
+    lines.append("")
+
+
 # name-casing helpers ------------------------------------------------------
 
 
@@ -157,27 +186,19 @@ def emit_kmod(hooks: list[Hook], errs: list[Err], backends: list[Backend]) -> st
         L.append(f"#define VPNHIDE_{upper(b)}_HOOK_MASK 0x{backend_mask(hooks, b):x}u")
     L.append("")
     kernel_hooks = [h for h in hooks if h.backend == "kernel"]
-    L.append("/* Dense storage slots for kernel-owned stats counters. The wire keeps")
-    L.append("   global hook ids; native backends use these helpers only in memory. */")
-    L.append(f"#define VPNHIDE_KERNEL_HOOK_COUNT {len(kernel_hooks)}")
-    L.append("static inline int vpnhide_kernel_hook_slot(enum vpnhide_hook_id id)")
-    L.append("{")
-    L.append("\tswitch (id) {")
-    for slot, h in enumerate(kernel_hooks):
-        L.append(f"\tcase VPNHIDE_HOOK_{upper(h.name)}: return {slot};")
-    L.append("\tdefault: return -1;")
-    L.append("\t}")
-    L.append("}")
-    L.append("")
-    L.append("static inline enum vpnhide_hook_id vpnhide_kernel_hook_id(unsigned int slot)")
-    L.append("{")
-    L.append("\tswitch (slot) {")
-    for slot, h in enumerate(kernel_hooks):
-        L.append(f"\tcase {slot}: return VPNHIDE_HOOK_{upper(h.name)};")
-    L.append("\tdefault: return VPNHIDE_HOOK_COUNT;")
-    L.append("\t}")
-    L.append("}")
-    L.append("")
+    append_dense_hook_mapping(
+        L,
+        "kernel",
+        kernel_hooks,
+        "Dense stats slots shared by the .ko and KPM kernel hooks.",
+    )
+    kmod_hooks = [h for h in hooks if h.backend in ("kernel", "kmod")]
+    append_dense_hook_mapping(
+        L,
+        "kmod_stats",
+        kmod_hooks,
+        "Dense stats slots for every hook the .ko can install.",
+    )
     L.append("/* status error codes (protocol §5.1). */")
     ewidth = max(len(f"VPNHIDE_ERR_{upper(e.name)}") for e in errs)
     L.append("enum vpnhide_status_error {")
@@ -226,6 +247,14 @@ def emit_rust(hooks: list[Hook], errs: list[Err], backends: list[Backend]) -> st
     L.append("    /// This hook's bit in the control/stats wire mask.")
     L.append("    pub const fn bit(self) -> u32 {")
     L.append("        1u32 << self as u32")
+    L.append("    }")
+    L.append("")
+    L.append("    /// This hook's canonical config name.")
+    L.append("    pub const fn name(self) -> &'static str {")
+    L.append("        match self {")
+    for h in hooks:
+        L.append(f'            Self::{pascal(h.name)} => "{h.name}",')
+    L.append("        }")
     L.append("    }")
     L.append("")
     L.append("    /// Resolve a canonical config hook name.")

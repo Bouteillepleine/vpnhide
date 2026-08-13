@@ -1,5 +1,7 @@
 package dev.okhsunrog.vpnhide
 
+import dev.okhsunrog.vpnhide.generated.HookIds
+
 /**
  * Per-layer backend health for a dashboard tile. Presence (Absent / Inactive)
  * is decided *before* the checks, so an unloaded backend can never render as a
@@ -39,8 +41,11 @@ val LayerStatus.Active.verdict: Verdict
 
 /** Native-check ids the active backend owns — its checks whose expected hooks the
  * backend covers. One derivation shared by the tile summary and the unowned count. */
-private fun ownedNativeCheckIds(backend: DisplayNativeBackend): Set<String> {
-    val owned = ownedNativeHooks(backend.id)
+private fun ownedNativeCheckIds(
+    backend: DisplayNativeBackend,
+    installedKmodHooks: Set<HookIds.Hook> = emptySet(),
+): Set<String> {
+    val owned = ownedNativeHooks(backend.id, installedKmodHooks)
     return NATIVE_CHECKS.filter { it.coveredBy(owned) }.map { it.id }.toSet()
 }
 
@@ -54,10 +59,11 @@ private fun ownedNativeCheckIds(backend: DisplayNativeBackend): Set<String> {
 internal fun summarizeNativeLayer(
     backend: DisplayNativeBackend,
     outcomes: Map<String, CheckOutcome>,
+    installedKmodHooks: Set<HookIds.Hook> = emptySet(),
 ): LayerStatus {
     if (backend.state is ModuleState.NotInstalled) return LayerStatus.Absent
     if (!moduleActive(backend.state)) return LayerStatus.Inactive
-    val ownedIds = ownedNativeCheckIds(backend)
+    val ownedIds = ownedNativeCheckIds(backend, installedKmodHooks)
     // Both counts are scoped to vectors this backend owns, so hidden and leaks
     // describe the same vector set — a cross-backend hidden (only possible if the
     // one-active-backend invariant ever breaks) can't mask an owned Broken verdict.
@@ -91,8 +97,9 @@ internal fun summarizeJavaLayer(
 internal fun unownedNativeLeaks(
     backend: DisplayNativeBackend,
     outcomes: Map<String, CheckOutcome>,
+    installedKmodHooks: Set<HookIds.Hook> = emptySet(),
 ): Int {
     if (backend.state !is ModuleState.Installed || !moduleActive(backend.state)) return 0
-    val ownedIds = ownedNativeCheckIds(backend)
+    val ownedIds = ownedNativeCheckIds(backend, installedKmodHooks)
     return outcomes.count { (id, outcome) -> outcome is CheckOutcome.Leak && id !in ownedIds }
 }

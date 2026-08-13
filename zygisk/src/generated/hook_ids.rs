@@ -60,12 +60,48 @@ pub enum Hook {
     SocketBindInterface = 25,
     /// libc setsockopt() best-effort socket-interface bind denial
     ZygiskSetsockopt = 26,
+    /// Optional reboot-gated sysfs/proc-sys VPN interface path concealment
+    FilesystemIfacePaths = 27,
 }
 
 impl Hook {
     /// This hook's bit in the control/stats wire mask.
     pub const fn bit(self) -> u32 {
         1u32 << self as u32
+    }
+
+    /// This hook's canonical config name.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::FibRouteSeqShow => "fib_route_seq_show",
+            Self::Ipv6RouteSeqShow => "ipv6_route_seq_show",
+            Self::RtnlFillIfinfo => "rtnl_fill_ifinfo",
+            Self::InetFillIfaddr => "inet_fill_ifaddr",
+            Self::Inet6FillIfaddr => "inet6_fill_ifaddr",
+            Self::DevIoctl => "dev_ioctl",
+            Self::SockIoctl => "sock_ioctl",
+            Self::FibDumpInfo => "fib_dump_info",
+            Self::Rt6FillNode => "rt6_fill_node",
+            Self::FibNlFillRule => "fib_nl_fill_rule",
+            Self::LsposedLinkProperties => "lsposed_link_properties",
+            Self::LsposedNetworkCapabilities => "lsposed_network_capabilities",
+            Self::LsposedNetworkInfo => "lsposed_network_info",
+            Self::LsposedNetwork => "lsposed_network",
+            Self::LsposedConnectivityResult => "lsposed_connectivity_result",
+            Self::LsposedConnectivityCallback => "lsposed_connectivity_callback",
+            Self::LsposedConnectivityNetwork => "lsposed_connectivity_network",
+            Self::LsposedPackageVisibility => "lsposed_package_visibility",
+            Self::ZygiskIoctl => "zygisk_ioctl",
+            Self::ZygiskGetifaddrs => "zygisk_getifaddrs",
+            Self::ZygiskOpenat => "zygisk_openat",
+            Self::ZygiskRecvmsg => "zygisk_recvmsg",
+            Self::ZygiskRecv => "zygisk_recv",
+            Self::ZygiskRecvfrom => "zygisk_recvfrom",
+            Self::ZygiskRecvfromChk => "zygisk_recvfrom_chk",
+            Self::SocketBindInterface => "socket_bind_interface",
+            Self::ZygiskSetsockopt => "zygisk_setsockopt",
+            Self::FilesystemIfacePaths => "filesystem_iface_paths",
+        }
     }
 
     /// Resolve a canonical config hook name.
@@ -98,15 +134,17 @@ impl Hook {
             "zygisk_recvfrom_chk" => Some(Self::ZygiskRecvfromChk),
             "socket_bind_interface" => Some(Self::SocketBindInterface),
             "zygisk_setsockopt" => Some(Self::ZygiskSetsockopt),
+            "filesystem_iface_paths" => Some(Self::FilesystemIfacePaths),
             _ => None,
         }
     }
 }
 
-pub const HOOK_COUNT: u32 = 27;
+pub const HOOK_COUNT: u32 = 28;
 
 /// Hooks owned by each backend: apply `mask & own`.
 pub const KERNEL_HOOK_MASK: u32 = 0x20003ff;
+pub const KMOD_HOOK_MASK: u32 = 0x8000000;
 pub const ZYGISK_HOOK_MASK: u32 = 0x5fc0000;
 pub const LSPOSED_HOOK_MASK: u32 = 0x3fc00;
 

@@ -189,6 +189,14 @@ name = "zygisk_setsockopt"
 backend = "zygisk"
 note = "libc setsockopt() best-effort socket-interface bind denial"
 
+# Optional .ko-only VFS interception. This is not part of the shared kernel
+# mask because KPM deliberately does not install these hot-path hooks.
+[[hook]]
+id = 27
+name = "filesystem_iface_paths"
+backend = "kmod"
+note = "Optional reboot-gated sysfs/proc-sys VPN interface path concealment"
+
 # --- backend ids (protocol §4.3 `status backend <id>`) ----------------------
 # Which backend answered a `status` read. Distinct from the hook `backend`
 # field above (.ko and KPM both own "kernel" hooks but are separate backends).

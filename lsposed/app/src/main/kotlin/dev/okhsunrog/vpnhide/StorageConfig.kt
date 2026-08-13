@@ -6,6 +6,7 @@ import org.json.JSONObject
 
 internal const val CANONICAL_CONFIG_FILE = "/data/system/vpnhide_config.json"
 internal const val SUPERKEY_FILE = "/data/adb/vpnhide/superkey"
+internal val KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS = HookIds.Hook.FILESYSTEM_IFACE_PATHS.hookName
 
 internal data class CanonicalConfig(
     val version: Int = 1,
@@ -17,6 +18,7 @@ internal data class CanonicalConfig(
 
 internal data class CanonicalSettings(
     val rememberSuperkey: Boolean = false,
+    val kernelBootFeatures: Set<String> = emptySet(),
     val autoHideVpnServices: Boolean = true,
     val autoHideVpnName: Boolean = false,
     val autoHideExcludedPackages: Set<String> = emptySet(),
@@ -48,6 +50,8 @@ internal data class NativeRole(
 
 internal enum class NativeHookFamily {
     Kernel,
+    Kmod,
+    Kpm,
     Zygisk,
 }
 
@@ -57,7 +61,7 @@ internal data class NativeHookOverrides(
 ) {
     fun hooksFor(family: NativeHookFamily): List<String>? =
         when (family) {
-            NativeHookFamily.Kernel -> kernel
+            NativeHookFamily.Kernel, NativeHookFamily.Kmod, NativeHookFamily.Kpm -> kernel
             NativeHookFamily.Zygisk -> zygisk
         }
 
@@ -66,7 +70,7 @@ internal data class NativeHookOverrides(
         hooks: List<String>?,
     ): NativeHookOverrides =
         when (family) {
-            NativeHookFamily.Kernel -> copy(kernel = hooks)
+            NativeHookFamily.Kernel, NativeHookFamily.Kmod, NativeHookFamily.Kpm -> copy(kernel = hooks)
             NativeHookFamily.Zygisk -> copy(zygisk = hooks)
         }
 
@@ -79,9 +83,11 @@ private data class ParsedHookRole(
     val hooks: List<String>? = null,
 )
 
-internal val NativeKernelHookEntries: List<HookIds.Hook> = KERNEL_HOOKS
+internal val NativeKernelHookEntries: List<HookIds.Hook> = KERNEL_HOOKS.toList()
 
-internal val ZygiskNativeHookEntries: List<HookIds.Hook> = ZYGISK_HOOKS
+internal val NativeKmodHookEntries: List<HookIds.Hook> = (KERNEL_HOOKS + KMOD_HOOKS).toList()
+
+internal val ZygiskNativeHookEntries: List<HookIds.Hook> = ZYGISK_HOOKS.toList()
 
 internal val LsposedJavaHookEntries: List<HookIds.Hook> =
     LSPOSED_HOOKS.filter { it != HookIds.Hook.LSPOSED_PACKAGE_VISIBILITY }
@@ -89,13 +95,17 @@ internal val LsposedJavaHookEntries: List<HookIds.Hook> =
 internal fun nativeHookEntriesFor(family: NativeHookFamily): List<HookIds.Hook> =
     when (family) {
         NativeHookFamily.Kernel -> NativeKernelHookEntries
+        NativeHookFamily.Kmod -> NativeKmodHookEntries
+        NativeHookFamily.Kpm -> NativeKernelHookEntries
         NativeHookFamily.Zygisk -> ZygiskNativeHookEntries
     }
 
 internal fun nativeHookFamilyFor(backend: NativeBackendId?): NativeHookFamily =
     when (backend) {
         NativeBackendId.Zygisk -> NativeHookFamily.Zygisk
-        NativeBackendId.Kmod, NativeBackendId.Kpm, null -> NativeHookFamily.Kernel
+        NativeBackendId.Kmod -> NativeHookFamily.Kmod
+        NativeBackendId.Kpm -> NativeHookFamily.Kpm
+        null -> NativeHookFamily.Kernel
     }
 
 internal fun hookSelectionMask(
@@ -136,6 +146,7 @@ internal fun parseCanonicalConfig(raw: String): CanonicalConfig? {
         settings =
             CanonicalSettings(
                 rememberSuperkey = settingsJson?.optBoolean("rememberSuperkey", defaultSettings.rememberSuperkey) == true,
+                kernelBootFeatures = parseStringSet(settingsJson?.optJSONArray("kernelBootFeatures")),
                 autoHideVpnServices =
                     settingsJson?.optBoolean("autoHideVpnServices", defaultSettings.autoHideVpnServices)
                         ?: defaultSettings.autoHideVpnServices,
@@ -393,6 +404,12 @@ internal fun canonicalConfigJson(config: CanonicalConfig): String =
         append("    \"rememberSuperkey\": ")
         append(config.settings.rememberSuperkey)
         append(",\n")
+        append("    \"kernelBootFeatures\": [")
+        config.settings.kernelBootFeatures.toSortedSet().forEachIndexed { index, feature ->
+            if (index != 0) append(", ")
+            appendJsonString(feature)
+        }
+        append("],\n")
         append("    \"autoHideVpnServices\": ")
         append(config.settings.autoHideVpnServices)
         append(",\n")

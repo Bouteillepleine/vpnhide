@@ -199,7 +199,7 @@ Any issues found are shown as actionable cards with specific instructions.
 | 17 | `/proc/net/udp`, `udp6` | blocked | | | | |
 | 18 | `/proc/net/dev` | blocked | | | | |
 | 19 | `/proc/net/fib_trie` | blocked | | | | |
-| 20 | `/sys/class/net/tun0/` | blocked | | | | |
+| 20 | `/sys/class/net/tun0/` and `/proc/sys/net/*/{conf,neigh}/tun0` | blocked | opt-in | | | |
 | 21 | `NetworkCapabilities` (hasTransport, NOT_VPN, transportInfo) | | | | | x |
 | 22 | `NetworkInfo` (getType, getTypeName) | | | | | x |
 | 23 | `ConnectivityManager.getActiveNetwork()` | | | | | x |
@@ -209,9 +209,12 @@ Any issues found are shown as actionable cards with specific instructions.
 | 27 | `NetworkInterface.getNetworkInterfaces()` | | x | x | x | |
 | 28 | `/proc/net/route` via Java `FileInputStream` | blocked | x | x | x | |
 
-**blocked** = on stock-enforcing builds (Android 10+) SELinux usually denies untrusted apps access to that `/proc/net/*` / `/sys` file. But **SELinux policy is configured differently across devices and ROMs** (OEM and custom ROMs, `permissive` builds), so the vpnhide layers filter these paths anyway and never rely on SELinux.
+**blocked** = on stock-enforcing builds (Android 10+) SELinux usually denies untrusted apps access to that `/proc/net/*` / `/sys` file. But **SELinux policy is configured differently across devices and ROMs** (OEM and custom ROMs, `permissive` builds), so only explicit coverage shown in the table should be treated as vpnhide protection.
 
 **libc** = best-effort Zygisk coverage: a direct syscall bypasses the inline hook.
+
+**opt-in** = the `.ko` filesystem-hiding feature is disabled by default. Enable
+it in Settings and reboot; when disabled its global VFS probes are not installed.
 
 Important: `ioctl` and netlink dumps are available to a regular app without help from SELinux; on Linux 5.7+, so is the first socket-interface bind. This is how detectors such as RKNHardering bypass the `/proc/net/route` denial through netlink (see [issue #86](https://github.com/okhsunrog/vpnhide/issues/86)). Kernel-level backends (kmod/KPM) cover the native paths marked above with no target-process footprint. Zygisk covers libc-routed calls only; a direct raw syscall bypasses its hooks. On older kernels, the kernel itself rejects an unprivileged interface bind. Everything else is either often SELinux-blocked on stock (device-dependent) or goes through Java APIs and is covered by LSPosed.
 

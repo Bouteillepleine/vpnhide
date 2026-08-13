@@ -109,10 +109,10 @@ private fun StringBuilder.appendInstalledHooks(
     backend: HookIds.Backend,
     installedMask: Long,
 ) {
-    val owned = ownedHooks(backend)
-    val installed = owned.filter { installedMask.hasHook(it) }
-    val missing = owned.filterNot { installedMask.hasHook(it) }
-    appendLine("  installed hooks (${installed.size}/${owned.size}):")
+    val installed = ownedHooks(backend).intersect(hooksInMask(installedMask))
+    val expected = expectedInstalledHooks(backend, installed)
+    val missing = expected - installed
+    appendLine("  installed hooks (${installed.size}/${expected.size} expected):")
     if (installed.isEmpty()) {
         appendLine("    (none)")
     } else {

@@ -6,6 +6,7 @@
 
 MODDIR="${0%/*}"
 KO="$MODDIR/vpnhide_kmod.ko"
+ACTIVATOR="$MODDIR/activator"
 MODULE_PROP="$MODDIR/module.prop"
 STATUS_DIR="/data/adb/vpnhide_kmod"
 STATUS_FILE="$STATUS_DIR/load_status"
@@ -52,11 +53,33 @@ if [ -r /proc/config.gz ]; then
     fi
 fi
 
+FILESYSTEM_HIDING=0
+FILESYSTEM_CONFIG_ERROR=""
+if [ ! -x "$ACTIVATOR" ]; then
+    FILESYSTEM_CONFIG_EXIT=127
+    FILESYSTEM_CONFIG_ERROR="activator not found or not executable at $ACTIVATOR"
+else
+    FILESYSTEM_CONFIG_ERROR=$("$ACTIVATOR" boot-feature-enabled filesystem_iface_paths 2>&1 >/dev/null)
+    FILESYSTEM_CONFIG_EXIT=$?
+    case "$FILESYSTEM_CONFIG_EXIT" in
+        0)
+            FILESYSTEM_HIDING=1
+            ;;
+        1)
+            # The config was read successfully and the feature is disabled.
+            FILESYSTEM_CONFIG_ERROR=""
+            ;;
+        *)
+            log -t vpnhide "cannot read filesystem hiding boot feature (exit=$FILESYSTEM_CONFIG_EXIT): $FILESYSTEM_CONFIG_ERROR"
+            ;;
+    esac
+fi
+
 if [ ! -f "$KO" ]; then
     INSMOD_EXIT=127
     INSMOD_STDERR="vpnhide_kmod.ko not found at $KO"
 else
-    INSMOD_STDERR=$(insmod "$KO" 2>&1 >/dev/null)
+    INSMOD_STDERR=$(insmod "$KO" filesystem_hiding="$FILESYSTEM_HIDING" 2>&1 >/dev/null)
     INSMOD_EXIT=$?
 fi
 
@@ -79,6 +102,9 @@ chmod 0644 "$DMESG_FILE" 2>/dev/null
     printf 'root_manager=%s\n' "$ROOT_MANAGER"
     printf 'kprobes=%s\n' "$KPROBES"
     printf 'kretprobes=%s\n' "$KRETPROBES"
+    printf 'filesystem_hiding=%s\n' "$FILESYSTEM_HIDING"
+    printf 'filesystem_config_exit=%s\n' "$FILESYSTEM_CONFIG_EXIT"
+    printf 'filesystem_config_error=%s\n' "$(sanitize "$FILESYSTEM_CONFIG_ERROR")"
     printf 'insmod_exit=%s\n' "$INSMOD_EXIT"
     printf 'loaded=%s\n' "$LOADED"
     printf 'insmod_stderr=%s\n' "$(sanitize "$INSMOD_STDERR")"

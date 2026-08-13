@@ -46,16 +46,17 @@ run_as_target() {
 }
 
 # --- load the module --------------------------------------------------------
-if insmod /vpnhide_kmod.ko; then echo "INSMOD=ok"; else echo "INSMOD=FAIL"; fi
+if insmod /vpnhide_kmod.ko filesystem_hiding=1; then echo "INSMOD=ok"; else echo "INSMOD=FAIL"; fi
 REGISTERED=$(dmesg | grep -c 'vpnhide:.*registered')
 echo "REGISTERED=$REGISTERED"
 
 # Write a control-protocol config snapshot (docs/protocol.md) enabling every
-# kernel hook (mask 0x20003ff) for a single UID, with debug logging on. Replaces
+# kernel and optional filesystem hooks (mask 0xa0003ff) for a single UID, with
+# debug logging on. Replaces
 # the old `echo <uid> > /proc/vpnhide_targets` + `echo 1 > /proc/vpnhide_debug`
 # — both folded into the one /proc/vpnhide_ctl node.
 set_target() {
-	printf 'vpnhide 2 config\ndebug 1\ntargets 20003ff %x\nend 1\n' "$1" \
+	printf 'vpnhide 2 config\ndebug 1\ntargets a0003ff %x\nend 1\n' "$1" \
 		> /proc/vpnhide_ctl 2>/dev/null
 }
 
@@ -230,6 +231,9 @@ check_socket_bind() {
 		return
 	fi
 
+	# Root reads the fixture metadata before becoming a target itself; the VFS
+	# feature must not hide vpn0 from this non-target setup step.
+	set_target 5555
 	_vpn_ifindex=$(cat /sys/class/net/vpn0/ifindex 2>/dev/null)
 	if [ -z "$_vpn_ifindex" ]; then
 		for _vec in bind_device_raw bind_device_nul bind_bad_pointer bind_bad_length bind_ifindex keep_bind_device; do
@@ -332,6 +336,25 @@ check_hide hostroute4      "ip route show table all"      "1\.2\.3\.4" # fib_dum
 check_hide netlink_route6  "ip -6 route show table all"   "vpn0"   # rt6_fill_node
 check_hide hostroute6      "ip -6 route show table all"   "2001:4860" # rt6_fill_node public host-route
 check_hide policy_rule     "ip rule show"                 "199"    # fib_nl_fill_rule
+check_hide sysfs_stat      "test -e /sys/class/net/vpn0 && echo vpn0" "vpn0"
+check_hide sysfs_readdir   "ls /sys/class/net"             "vpn0"
+check_hide sysfs_open      "cat /sys/class/net/vpn0/mtu && echo vpn0" "vpn0"
+check_hide proc_sys_stat   "test -e /proc/sys/net/ipv4/conf/vpn0 && echo vpn0" "vpn0"
+check_hide proc_sys_readdir "ls /proc/sys/net/ipv4/conf"   "vpn0"
+
+_filesystem_hits=$(sed -n '/^0x2710 /s/.* 0x1b:0x\([0-9a-f][0-9a-f]*\).*/\1/p' \
+	/proc/vpnhide_ctl | head -1)
+case "$_filesystem_hits" in
+"" | 0)
+	echo "RESULT filesystem_stats=FAIL (hook 0x1b missing or zero)"
+	FAIL=$((FAIL + 1))
+	;;
+*)
+	echo "RESULT filesystem_stats=PASS (hook 0x1b count=0x$_filesystem_hits)"
+	PASS=$((PASS + 1))
+	;;
+esac
+
 check_gai
 check_ifconf                                                       # sock_ioctl size/tail
 check_socket_bind                                                  # interface socket binding
@@ -344,6 +367,8 @@ check_keep_exact keep_siocgifconf     "ifconfig -a"             "^eth0"
 check_keep_exact keep_dev_ioctl       "ifconfig eth0"           "^eth0"
 check_keep keep_netlink_route4  "ip route show table all" "dev eth0"
 check_keep_exact keep_policy_rule     "ip rule show"            "lookup main"
+check_keep_exact keep_sysfs_readdir   "ls /sys/class/net"       "eth0"
+check_keep_exact keep_proc_sys_readdir "ls /proc/sys/net/ipv4/conf" "eth0"
 
 # Root module managers replace or remove the backend across a reboot. Keep the
 # entry-kprobe replacement text resident for that whole lifetime: ordinary

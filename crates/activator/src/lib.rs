@@ -105,6 +105,14 @@ pub fn read_canonical() -> Result<String> {
     }
 }
 
+/// Read one reboot-gated kernel feature without waiting for PackageManager.
+/// Boot loaders query features before loading their backend, so disabled
+/// features never register their probes at all.
+pub fn kernel_boot_feature_enabled(feature: &str) -> Result<bool> {
+    let config = parse_canonical(&read_canonical()?)?;
+    Ok(config.settings.kernel_boot_features.contains(feature))
+}
+
 pub fn activate_kmod() -> Result<()> {
     activate_kmod_with_pm_wait(PmReadyWait::Bounded(PM_READY_ATTEMPTS))
 }
@@ -115,7 +123,7 @@ pub fn activate_kmod_boot() -> Result<()> {
 }
 
 fn activate_kmod_with_pm_wait(wait: PmReadyWait) -> Result<()> {
-    let wire = project_native_with_pm_wait(&read_canonical()?, NativeHookFamily::Kernel, wait)?;
+    let wire = project_native_with_pm_wait(&read_canonical()?, NativeHookFamily::Kmod, wait)?;
     // /proc/vpnhide_ctl replaces the entire config per write(), so keep this
     // bounded to MAX_NATIVE_TARGETS and deliver one complete snapshot.
     fs::write(KMOD_CTL, wire)?;
@@ -241,7 +249,7 @@ fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Resu
         }
         return Ok(KpmBootOutcome::UnsupportedKernel);
     }
-    let wire = project_native_with_pm_wait(&read_canonical()?, NativeHookFamily::Kernel, wait)?;
+    let wire = project_native_with_pm_wait(&read_canonical()?, NativeHookFamily::Kpm, wait)?;
     // Re-check after the (possibly long) PackageManager wait: the .ko may have
     // been loaded meanwhile, in which case we must not configure the KPM.
     if skip_kpm_for_kmod_conflict(conflict_is_error)? {

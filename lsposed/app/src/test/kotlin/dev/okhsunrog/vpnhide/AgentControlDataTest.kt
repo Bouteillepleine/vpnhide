@@ -32,8 +32,8 @@ class AgentControlDataTest {
     @Test
     fun `native hook family accepts backend aliases`() {
         assertEquals(NativeHookFamily.Kernel, parseNativeHookFamily("kernel"))
-        assertEquals(NativeHookFamily.Kernel, parseNativeHookFamily("kmod"))
-        assertEquals(NativeHookFamily.Kernel, parseNativeHookFamily("kpm"))
+        assertEquals(NativeHookFamily.Kmod, parseNativeHookFamily("kmod"))
+        assertEquals(NativeHookFamily.Kpm, parseNativeHookFamily("kpm"))
         assertEquals(NativeHookFamily.Zygisk, parseNativeHookFamily("zygisk"))
     }
 

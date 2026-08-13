@@ -235,6 +235,7 @@ fun SettingsScreen(
 
             UpdatesSettingsSection()
             AutoHideSettingsSection(onOpenHiddenApps = { hiddenAppsOpen = true })
+            FilesystemHidingSettingsSection()
             DiagnosticsSettingsSection(onOpen = { diagnosticsOpen = true })
             DebugToolsSettingsSection(selfNeedsRestart = selfNeedsRestart)
             ConfigBackupSection()
@@ -1189,8 +1190,7 @@ private fun writeRemoveUnavailableConfiguredApps(
         ).exitCode
 }
 
-// Settings headers are the non-bold, indented variant; delegate to the shared
-// component so the Text rendering isn't duplicated per screen.
+// Settings headers use the shared non-bold, indented variant.
 @Composable
 private fun SettingsSectionHeader(text: String) {
     SectionHeader(

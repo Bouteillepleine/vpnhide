@@ -199,7 +199,7 @@ su -c /data/adb/modules/vpnhide_ports/activator
 | 17 | `/proc/net/udp`, `udp6` | блок. | | | | |
 | 18 | `/proc/net/dev` | блок. | | | | |
 | 19 | `/proc/net/fib_trie` | блок. | | | | |
-| 20 | `/sys/class/net/tun0/` | блок. | | | | |
+| 20 | `/sys/class/net/tun0/` и `/proc/sys/net/*/{conf,neigh}/tun0` | блок. | опц. | | | |
 | 21 | `NetworkCapabilities` (hasTransport, NOT_VPN, transportInfo) | | | | | x |
 | 22 | `NetworkInfo` (getType, getTypeName) | | | | | x |
 | 23 | `ConnectivityManager.getActiveNetwork()` | | | | | x |
@@ -209,9 +209,13 @@ su -c /data/adb/modules/vpnhide_ports/activator
 | 27 | `NetworkInterface.getNetworkInterfaces()` | | x | x | x | |
 | 28 | `/proc/net/route` через Java `FileInputStream` | блок. | x | x | x | |
 
-**блок.** = на сток-enforcing сборках (Android 10+) SELinux обычно запрещает обычным приложениям доступ к этому файлу `/proc/net/*` / `/sys`. Но политика SELinux настроена **по-разному на разных устройствах и прошивках** (OEM- и кастомные ROM, `permissive`-сборки), поэтому слои vpnhide всё равно фильтруют эти пути и не полагаются на SELinux.
+**блок.** = на сток-enforcing сборках (Android 10+) SELinux обычно запрещает обычным приложениям доступ к этому файлу `/proc/net/*` / `/sys`. Но политика SELinux настроена **по-разному на разных устройствах и прошивках** (OEM- и кастомные ROM, `permissive`-сборки), поэтому защитой vpnhide следует считать только явно указанное в таблице покрытие.
 
 **libc** = best-effort покрытие Zygisk: прямой системный вызов обходит inline-хук.
+
+**опц.** = скрытие файловых путей в `.ko` по умолчанию выключено. Включите его
+в настройках и перезагрузите устройство; в выключенном состоянии глобальные
+VFS-хуки вообще не устанавливаются.
 
 Важно: `ioctl` и netlink-дампы доступны обычному приложению без помощи SELinux; на Linux 5.7+ это относится и к первой привязке сокета к интерфейсу. Именно через netlink детекторы вроде RKNHardering обходят блокировку `/proc/net/route` (см. [issue #86](https://github.com/okhsunrog/vpnhide/issues/86)). Kernel-level варианты (kmod/KPM) закрывают отмеченные в таблице нативные пути без следа в процессе. Zygisk закрывает только вызовы, проходящие через libc; прямой raw syscall обходит его хуки. На более старых ядрах привязку непривилегированного сокета отклоняет само ядро. Остальное либо часто блокируется SELinux на стоке (но это зависит от устройства), либо идёт через Java API и покрывается LSPosed.
 

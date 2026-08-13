@@ -168,6 +168,33 @@ fn native_projection_drops_platform_aids_but_keeps_preinstalled_apps() {
 }
 
 #[test]
+fn kmod_projection_includes_the_optional_filesystem_hook() {
+    let cfg = parse_canonical(
+        r#"{
+          "version": 1,
+          "settings": { "kernelBootFeatures": ["filesystem_iface_paths"] },
+          "apps": { "com.example.full": { "native": true } }
+        }"#,
+    )
+    .unwrap();
+    let resolver = parse_pm_packages("package:com.example.full uid:10123\n");
+
+    assert!(
+        cfg.settings
+            .kernel_boot_features
+            .contains(KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS)
+    );
+    assert_eq!(
+        project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Kmod),
+        "vpnhide 2 config\ndebug 0\ntargets a0003ff 278b\nend 1\n",
+    );
+    assert_eq!(
+        project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Kpm),
+        "vpnhide 2 config\ndebug 0\ntargets 20003ff 278b\nend 1\n",
+    );
+}
+
+#[test]
 fn native_projection_ignores_non_kernel_hook_names() {
     let cfg = parse_canonical(
         r#"{

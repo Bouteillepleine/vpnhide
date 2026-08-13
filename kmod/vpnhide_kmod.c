@@ -41,6 +41,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/kernel.h>
 #include <linux/version.h>
 #include <linux/kprobes.h>
@@ -53,6 +54,10 @@
 #include <linux/uaccess.h>
 #include <linux/seq_file.h>
 #include <linux/proc_fs.h>
+#include <linux/fs.h>
+#include <linux/namei.h>
+#include <linux/file.h>
+#include <linux/list.h>
 #include <linux/netdevice.h>
 #include <linux/rtnetlink.h>
 #include <linux/skbuff.h>
@@ -99,6 +104,10 @@
 /* ------------------------------------------------------------------ */
 
 static bool debug_enabled;
+static bool filesystem_hiding;
+module_param(filesystem_hiding, bool, 0400);
+MODULE_PARM_DESC(filesystem_hiding,
+		 "install optional sysfs/proc-sys interface concealment hooks");
 
 /*
  * `debug_enabled` is a single bool, set from the `debug` line of a config
@@ -221,7 +230,7 @@ static bool hook_active(enum vpnhide_hook_id hook_id)
 
 struct stats_row {
 	uid_t uid;
-	u64 counts[VPNHIDE_KERNEL_HOOK_COUNT];
+	u64 counts[VPNHIDE_KMOD_STATS_HOOK_COUNT];
 };
 
 static struct stats_row stats_rows[MAX_TARGET_UIDS];
@@ -277,7 +286,7 @@ static void record_hook_hit(enum vpnhide_hook_id hook_id)
 	unsigned long flags;
 	int hook_slot;
 
-	hook_slot = vpnhide_kernel_hook_slot(hook_id);
+	hook_slot = vpnhide_kmod_stats_hook_slot(hook_id);
 	if (hook_slot < 0)
 		return;
 
@@ -295,6 +304,15 @@ static void record_hook_hit(enum vpnhide_hook_id hook_id)
 
 /* Forward decl: the probe registration table drives the `status` hooks mask. */
 static u32 installed_hook_mask(void);
+
+static u32 expected_hook_mask(void)
+{
+	u32 mask = VPNHIDE_KERNEL_HOOK_MASK;
+
+	if (READ_ONCE(filesystem_hiding))
+		mask |= vpnhide_hook_bit(VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS);
+	return mask;
+}
 
 static ssize_t ctl_write(struct file *file, const char __user *ubuf,
 			 size_t count, loff_t *ppos)
@@ -340,15 +358,16 @@ static ssize_t ctl_write(struct file *file, const char __user *ubuf,
 
 	spin_lock(&targets_lock);
 	{
+		const u32 owned_mask = VPNHIDE_KERNEL_HOOK_MASK |
+				       VPNHIDE_KMOD_HOOK_MASK;
 		u32 mask;
 		int i;
 
-		default_mask &= VPNHIDE_KERNEL_HOOK_MASK;
+		default_mask &= owned_mask;
 		mask = default_mask;
 		for (i = 0; i < n; i++) {
 			target_uids[i] = newt[i].uid;
-			target_masks[i] = newt[i].hookmask &
-					  VPNHIDE_KERNEL_HOOK_MASK;
+			target_masks[i] = newt[i].hookmask & owned_mask;
 			mask |= target_masks[i];
 		}
 		nr_targets = n;
@@ -391,7 +410,8 @@ static int ctl_seq_show(struct seq_file *m, void *v)
 		seq_puts(m, VPNHIDE_READ_BANNER);
 	} else if (item == 1) {
 		u32 hooks = installed_hook_mask();
-		u32 error = hooks == VPNHIDE_KERNEL_HOOK_MASK ?
+		u32 expected_hooks = expected_hook_mask();
+		u32 error = (hooks & expected_hooks) == expected_hooks ?
 				    VPNHIDE_ERR_OK :
 				    VPNHIDE_ERR_PARTIAL_HOOKS;
 
@@ -416,11 +436,11 @@ static int ctl_seq_show(struct seq_file *m, void *v)
 		spin_unlock_irqrestore(&stats_lock, flags);
 
 		seq_printf(m, "0x%x", row.uid);
-		for (hook = 0; hook < VPNHIDE_KERNEL_HOOK_COUNT; hook++) {
+		for (hook = 0; hook < VPNHIDE_KMOD_STATS_HOOK_COUNT; hook++) {
 			if (!row.counts[hook])
 				continue;
 			seq_printf(m, " 0x%x:0x%llx",
-				   vpnhide_kernel_hook_id(hook),
+				   vpnhide_kmod_stats_hook_id(hook),
 				   row.counts[hook]);
 		}
 		seq_putc(m, '\n');
@@ -807,6 +827,432 @@ fail:
 	pr_warn(MODNAME ": redirect kprobe(%s) failed: %d\n",
 		socket_bind_kprobe_hooks[i].name, ret);
 	rollback_socket_bind_hooks();
+	return ret;
+}
+
+/* ================================================================== */
+/*  Optional filesystem path concealment (.ko only)                   */
+/*                                                                    */
+/*  These hooks sit on globally hot VFS paths, so they are installed  */
+/*  only when filesystem_hiding=1 was selected before insmod. The     */
+/*  target check remains per UID/per hook. Matching uses resolved     */
+/*  dentries rather than userspace pathname strings, which also       */
+/*  covers relative openat calls, symlink following, and bind mounts. */
+/* ================================================================== */
+
+struct open_flags;
+
+typedef int (*filename_lookup_fn)(int dfd, struct filename *name,
+				  unsigned int flags, struct path *path,
+				  struct path *root);
+typedef struct file *(*do_filp_open_fn)(int dfd, struct filename *name,
+					const struct open_flags *op);
+typedef int (*vfs_getattr_fn)(const struct path *path, struct kstat *stat,
+			      u32 request_mask, unsigned int query_flags);
+typedef int (*iterate_dir_fn)(struct file *file, struct dir_context *ctx);
+
+static filename_lookup_fn original_filename_lookup;
+static do_filp_open_fn original_do_filp_open;
+static vfs_getattr_fn original_vfs_getattr;
+static iterate_dir_fn original_iterate_dir;
+
+static bool qstr_equals(const struct qstr *name, const char *literal)
+{
+	size_t len = strlen(literal);
+
+	return name && name->len == len && !memcmp(name->name, literal, len);
+}
+
+static bool qstr_is_vpn_iface(const struct qstr *name)
+{
+	char iface[IFNAMSIZ];
+
+	if (!name || !name->len || name->len >= sizeof(iface))
+		return false;
+	memcpy(iface, name->name, name->len);
+	iface[name->len] = '\0';
+	return is_vpn_ifname(iface);
+}
+
+static bool dentry_is_proc_iface_path(struct dentry *vpn)
+{
+	struct dentry *kind, *family, *net, *sys;
+
+	kind = READ_ONCE(vpn->d_parent);
+	if (!kind || (!qstr_equals(&kind->d_name, "conf") &&
+		      !qstr_equals(&kind->d_name, "neigh")))
+		return false;
+	family = READ_ONCE(kind->d_parent);
+	if (!family || (!qstr_equals(&family->d_name, "ipv4") &&
+			!qstr_equals(&family->d_name, "ipv6")))
+		return false;
+	net = READ_ONCE(family->d_parent);
+	if (!net || !qstr_equals(&net->d_name, "net"))
+		return false;
+	sys = READ_ONCE(net->d_parent);
+	return sys && qstr_equals(&sys->d_name, "sys");
+}
+
+static bool dentry_is_hidden_iface_path(const struct dentry *dentry)
+{
+	const struct file_system_type *type;
+	struct dentry *cursor;
+	int depth;
+
+	if (!dentry || !dentry->d_sb || !dentry->d_sb->s_type)
+		return false;
+	type = dentry->d_sb->s_type;
+
+	rcu_read_lock();
+	cursor = (struct dentry *)dentry;
+	for (depth = 0; cursor && depth < 16; depth++) {
+		struct dentry *parent;
+
+		if (!qstr_is_vpn_iface(&cursor->d_name))
+			goto next;
+		parent = READ_ONCE(cursor->d_parent);
+		if (!strcmp(type->name, "sysfs") && parent &&
+		    qstr_equals(&parent->d_name, "net")) {
+			rcu_read_unlock();
+			return true;
+		}
+		if (!strcmp(type->name, "proc") &&
+		    dentry_is_proc_iface_path(cursor)) {
+			rcu_read_unlock();
+			return true;
+		}
+next:
+		parent = READ_ONCE(cursor->d_parent);
+		if (!parent || parent == cursor)
+			break;
+		cursor = parent;
+	}
+	rcu_read_unlock();
+	return false;
+}
+
+static bool dentry_is_iface_listing_dir(const struct dentry *dentry)
+{
+	const struct file_system_type *type;
+	struct dentry *family, *net, *sys;
+
+	if (!dentry || !dentry->d_sb || !dentry->d_sb->s_type)
+		return false;
+	type = dentry->d_sb->s_type;
+
+	rcu_read_lock();
+	if (!strcmp(type->name, "sysfs") &&
+	    qstr_equals(&dentry->d_name, "net")) {
+		rcu_read_unlock();
+		return true;
+	}
+	if (strcmp(type->name, "proc") ||
+	    (!qstr_equals(&dentry->d_name, "conf") &&
+	     !qstr_equals(&dentry->d_name, "neigh")))
+		goto no;
+	family = READ_ONCE(dentry->d_parent);
+	if (!family || (!qstr_equals(&family->d_name, "ipv4") &&
+			!qstr_equals(&family->d_name, "ipv6")))
+		goto no;
+	net = READ_ONCE(family->d_parent);
+	if (!net || !qstr_equals(&net->d_name, "net"))
+		goto no;
+	sys = READ_ONCE(net->d_parent);
+	if (sys && qstr_equals(&sys->d_name, "sys")) {
+		rcu_read_unlock();
+		return true;
+	}
+no:
+	rcu_read_unlock();
+	return false;
+}
+
+static bool filesystem_filter_active(void)
+{
+	return READ_ONCE(filesystem_hiding) &&
+	       hook_active(VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS);
+}
+
+static noinline __nocfi int call_original_filename_lookup(int dfd,
+							  struct filename *name,
+							  unsigned int flags,
+							  struct path *path,
+							  struct path *root)
+{
+	int ret = original_filename_lookup(dfd, name, flags, path, root);
+
+	barrier();
+	return ret;
+}
+
+static noinline int vpnhide_filename_lookup(int dfd, struct filename *name,
+					    unsigned int flags,
+					    struct path *path,
+					    struct path *root)
+{
+	int ret = call_original_filename_lookup(dfd, name, flags, path, root);
+
+	if (!ret && filesystem_filter_active() && path &&
+	    dentry_is_hidden_iface_path(path->dentry)) {
+		path_put(path);
+		path->mnt = NULL;
+		path->dentry = NULL;
+		record_hook_hit(VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS);
+		return -ENOENT;
+	}
+	return ret;
+}
+
+static noinline __nocfi struct file *
+call_original_do_filp_open(int dfd, struct filename *name,
+			   const struct open_flags *op)
+{
+	struct file *file = original_do_filp_open(dfd, name, op);
+
+	barrier();
+	return file;
+}
+
+static noinline struct file *vpnhide_do_filp_open(int dfd,
+						  struct filename *name,
+						  const struct open_flags *op)
+{
+	struct file *file = call_original_do_filp_open(dfd, name, op);
+
+	if (!IS_ERR(file) && filesystem_filter_active() &&
+	    dentry_is_hidden_iface_path(file->f_path.dentry)) {
+		fput(file);
+		record_hook_hit(VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS);
+		return ERR_PTR(-ENOENT);
+	}
+	return file;
+}
+
+static noinline __nocfi int call_original_vfs_getattr(const struct path *path,
+						      struct kstat *stat,
+						      u32 request_mask,
+						      unsigned int query_flags)
+{
+	int ret = original_vfs_getattr(path, stat, request_mask, query_flags);
+
+	barrier();
+	return ret;
+}
+
+static noinline int vpnhide_vfs_getattr(const struct path *path,
+					struct kstat *stat, u32 request_mask,
+					unsigned int query_flags)
+{
+	int ret = call_original_vfs_getattr(path, stat, request_mask,
+					    query_flags);
+
+	if (!ret && filesystem_filter_active() && path &&
+	    dentry_is_hidden_iface_path(path->dentry)) {
+		record_hook_hit(VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS);
+		return -ENOENT;
+	}
+	return ret;
+}
+
+struct readdir_filter_state {
+	struct list_head node;
+	struct dir_context *ctx;
+	filldir_t original_actor;
+};
+
+static LIST_HEAD(readdir_filter_states);
+static DEFINE_SPINLOCK(readdir_filter_lock);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+static bool
+#define VPNHIDE_FILLDIR_CONTINUE true
+#else
+static int
+#define VPNHIDE_FILLDIR_CONTINUE 0
+#endif
+vpnhide_filldir(struct dir_context *ctx, const char *name, int namelen,
+		loff_t offset, u64 ino, unsigned int d_type)
+{
+	struct readdir_filter_state *state;
+	filldir_t actor = NULL;
+	char iface[IFNAMSIZ];
+	unsigned long irqflags;
+
+	spin_lock_irqsave(&readdir_filter_lock, irqflags);
+	list_for_each_entry(state, &readdir_filter_states, node) {
+		if (state->ctx == ctx) {
+			actor = state->original_actor;
+			break;
+		}
+	}
+	spin_unlock_irqrestore(&readdir_filter_lock, irqflags);
+
+	if (namelen > 0 && namelen < sizeof(iface)) {
+		memcpy(iface, name, namelen);
+		iface[namelen] = '\0';
+		if (is_vpn_ifname(iface)) {
+			record_hook_hit(VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS);
+			return VPNHIDE_FILLDIR_CONTINUE;
+		}
+	}
+	return actor ? actor(ctx, name, namelen, offset, ino, d_type) :
+		       VPNHIDE_FILLDIR_CONTINUE;
+}
+
+static noinline __nocfi int call_original_iterate_dir(struct file *file,
+						      struct dir_context *ctx)
+{
+	int ret = original_iterate_dir(file, ctx);
+
+	barrier();
+	return ret;
+}
+
+static noinline int vpnhide_iterate_dir(struct file *file,
+					struct dir_context *ctx)
+{
+	struct readdir_filter_state *state;
+	unsigned long irqflags;
+	int ret;
+
+	if (!filesystem_filter_active() || !file || !ctx ||
+	    !dentry_is_iface_listing_dir(file->f_path.dentry))
+		return call_original_iterate_dir(file, ctx);
+
+	state = kmalloc(sizeof(*state), GFP_KERNEL);
+	if (!state)
+		return call_original_iterate_dir(file, ctx);
+	state->ctx = ctx;
+	state->original_actor = READ_ONCE(ctx->actor);
+	spin_lock_irqsave(&readdir_filter_lock, irqflags);
+	list_add(&state->node, &readdir_filter_states);
+	spin_unlock_irqrestore(&readdir_filter_lock, irqflags);
+	WRITE_ONCE(ctx->actor, vpnhide_filldir);
+
+	ret = call_original_iterate_dir(file, ctx);
+
+	WRITE_ONCE(ctx->actor, state->original_actor);
+	spin_lock_irqsave(&readdir_filter_lock, irqflags);
+	list_del(&state->node);
+	spin_unlock_irqrestore(&readdir_filter_lock, irqflags);
+	kfree(state);
+	return ret;
+}
+
+struct filesystem_kprobe_hook {
+	const char *name;
+	unsigned long replacement;
+	struct kprobe kp;
+	bool registered;
+};
+
+static bool filesystem_hooks_ready;
+
+static int filesystem_kprobe_pre(struct kprobe *kp, struct pt_regs *regs)
+{
+	struct filesystem_kprobe_hook *hook =
+		container_of(kp, struct filesystem_kprobe_hook, kp);
+
+	if (!READ_ONCE(filesystem_hooks_ready) ||
+	    within_module(regs->regs[30], THIS_MODULE))
+		return 0;
+	instruction_pointer_set(regs, hook->replacement);
+	return 1;
+}
+
+static void filesystem_kprobe_post(struct kprobe *kp, struct pt_regs *regs,
+				   unsigned long flags)
+{
+	(void)kp;
+	(void)regs;
+	(void)flags;
+}
+
+static struct filesystem_kprobe_hook filesystem_kprobe_hooks[] = {
+	{
+		.name = "filename_lookup",
+		.replacement = (unsigned long)vpnhide_filename_lookup,
+		.kp = { .symbol_name = "filename_lookup",
+			.pre_handler = filesystem_kprobe_pre,
+			.post_handler = filesystem_kprobe_post },
+	},
+	{
+		.name = "do_filp_open",
+		.replacement = (unsigned long)vpnhide_do_filp_open,
+		.kp = { .symbol_name = "do_filp_open",
+			.pre_handler = filesystem_kprobe_pre,
+			.post_handler = filesystem_kprobe_post },
+	},
+	{
+		.name = "vfs_getattr",
+		.replacement = (unsigned long)vpnhide_vfs_getattr,
+		.kp = { .symbol_name = "vfs_getattr",
+			.pre_handler = filesystem_kprobe_pre,
+			.post_handler = filesystem_kprobe_post },
+	},
+	{
+		.name = "iterate_dir",
+		.replacement = (unsigned long)vpnhide_iterate_dir,
+		.kp = { .symbol_name = "iterate_dir",
+			.pre_handler = filesystem_kprobe_pre,
+			.post_handler = filesystem_kprobe_post },
+	},
+};
+
+static bool filesystem_hooks_registered;
+
+static void rollback_filesystem_hooks(void)
+{
+	int i;
+
+	WRITE_ONCE(filesystem_hooks_ready, false);
+	for (i = ARRAY_SIZE(filesystem_kprobe_hooks) - 1; i >= 0; i--) {
+		if (!filesystem_kprobe_hooks[i].registered)
+			continue;
+		unregister_kprobe(&filesystem_kprobe_hooks[i].kp);
+		filesystem_kprobe_hooks[i].registered = false;
+	}
+	filesystem_hooks_registered = false;
+}
+
+static int register_filesystem_hooks(void)
+{
+	int i, ret;
+
+	for (i = 0; i < ARRAY_SIZE(filesystem_kprobe_hooks); i++) {
+		struct filesystem_kprobe_hook *hook =
+			&filesystem_kprobe_hooks[i];
+
+		ret = register_kprobe(&hook->kp);
+		if (ret)
+			goto fail;
+		hook->registered = true;
+		switch (i) {
+		case 0:
+			original_filename_lookup =
+				(filename_lookup_fn)hook->kp.addr;
+			break;
+		case 1:
+			original_do_filp_open = (do_filp_open_fn)hook->kp.addr;
+			break;
+		case 2:
+			original_vfs_getattr = (vfs_getattr_fn)hook->kp.addr;
+			break;
+		case 3:
+			original_iterate_dir = (iterate_dir_fn)hook->kp.addr;
+			break;
+		}
+		pr_info(MODNAME ": VFS redirect kprobe(%s) registered\n",
+			hook->name);
+	}
+	WRITE_ONCE(filesystem_hooks_ready, true);
+	filesystem_hooks_registered = true;
+	return 0;
+
+fail:
+	pr_warn(MODNAME ": VFS redirect kprobe(%s) failed: %d\n",
+		filesystem_kprobe_hooks[i].name, ret);
+	rollback_filesystem_hooks();
 	return ret;
 }
 
@@ -1852,6 +2298,8 @@ static u32 installed_hook_mask(void)
 			mask |= vpnhide_hook_bit(probes[i].hook_id);
 	if (socket_bind_hooks_registered)
 		mask |= vpnhide_hook_bit(VPNHIDE_HOOK_SOCKET_BIND_INTERFACE);
+	if (filesystem_hooks_registered)
+		mask |= vpnhide_hook_bit(VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS);
 	return mask;
 }
 
@@ -1899,9 +2347,12 @@ static int __init vpnhide_init(void)
 	 * after module text becomes reachable outside the kprobe handler. The module
 	 * has no exit function and remains resident until reboot. */
 	register_socket_bind_hooks();
+	if (READ_ONCE(filesystem_hiding))
+		register_filesystem_hooks();
 
 	pr_info(MODNAME
-		": loaded — write a config snapshot to /proc/vpnhide_ctl\n");
+		": loaded — filesystem_hiding=%d; write a config snapshot to /proc/vpnhide_ctl\n",
+		filesystem_hiding ? 1 : 0);
 	return 0;
 }
 

@@ -1,5 +1,6 @@
 package dev.okhsunrog.vpnhide
 
+import dev.okhsunrog.vpnhide.generated.HookIds
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -76,6 +77,34 @@ class LayerStatusTest {
         val layer = summarizeNativeLayer(kmod(installed(active = true)), outcomes)
         assertEquals(LayerStatus.Active(hidden = 0, leaks = 1), layer)
         assertEquals(Verdict.Broken, (layer as LayerStatus.Active).verdict)
+    }
+
+    @Test
+    fun `optional kmod filesystem vectors are owned only when their hook is installed`() {
+        val outcomes = mapOf("sys_class_net" to CheckOutcome.Leak)
+        val backend = kmod(installed(active = true))
+
+        assertEquals(
+            LayerStatus.Active(hidden = 0, leaks = 0),
+            summarizeNativeLayer(backend, outcomes),
+        )
+        assertEquals(1, unownedNativeLeaks(backend, outcomes))
+        assertEquals(
+            LayerStatus.Active(hidden = 0, leaks = 1),
+            summarizeNativeLayer(
+                backend,
+                outcomes,
+                installedKmodHooks = setOf(HookIds.Hook.FILESYSTEM_IFACE_PATHS),
+            ),
+        )
+        assertEquals(
+            0,
+            unownedNativeLeaks(
+                backend,
+                outcomes,
+                installedKmodHooks = setOf(HookIds.Hook.FILESYSTEM_IFACE_PATHS),
+            ),
+        )
     }
 
     @Test

@@ -107,8 +107,9 @@ internal fun buildDiagnosticReport(
     backend: DisplayNativeBackend,
     lsposedActive: Boolean,
     complete: Boolean,
+    installedKmodHooks: Set<HookIds.Hook> = emptySet(),
 ): DiagnosticReport {
-    val nativeChecks = nativeDiagnosticChecks(results, backend)
+    val nativeChecks = nativeDiagnosticChecks(results, backend, installedKmodHooks)
     // The per-check outcome is the single source of truth; the by-id map the layer
     // summary needs is derived here (owned spec checks only), not stored a second
     // time on CheckResults.
@@ -117,7 +118,8 @@ internal fun buildDiagnosticReport(
         if (results == null) {
             0
         } else {
-            unownedNativeLeaks(backend, nativeOutcomes) + results.nativeExtra.count { it.outcome is CheckOutcome.Leak }
+            unownedNativeLeaks(backend, nativeOutcomes, installedKmodHooks) +
+                results.nativeExtra.count { it.outcome is CheckOutcome.Leak }
         }
     return DiagnosticReport(
         gate = gate,
@@ -125,7 +127,7 @@ internal fun buildDiagnosticReport(
             LayerReport(
                 layer = CheckLayer.NATIVE,
                 backend = backend.id,
-                status = summarizeNativeLayer(backend, nativeOutcomes),
+                status = summarizeNativeLayer(backend, nativeOutcomes, installedKmodHooks),
                 unownedLeaks = unowned,
                 checks = nativeChecks,
             ),
@@ -144,9 +146,10 @@ internal fun buildDiagnosticReport(
 private fun nativeDiagnosticChecks(
     results: CheckResults?,
     backend: DisplayNativeBackend,
+    installedKmodHooks: Set<HookIds.Hook>,
 ): List<DiagnosticCheck> {
     if (results == null) return emptyList()
-    val ownedHooks = ownedNativeHooks(backend.id)
+    val ownedHooks = ownedNativeHooks(backend.id, installedKmodHooks)
     // native and nativeExtra are built in NATIVE_CHECKS order, so a positional zip
     // is stable by construction — the spec carries the stable id + hook coverage,
     // the result carries the localized label, outcome, and root ground-truth detail.

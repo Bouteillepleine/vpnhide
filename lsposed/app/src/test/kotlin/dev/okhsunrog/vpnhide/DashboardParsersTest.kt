@@ -56,6 +56,9 @@ class DashboardParsersTest {
             uname_r=5.10.0-android13
             gki_variant=android13-5.10
             kretprobes=y
+            filesystem_hiding=1
+            filesystem_config_exit=2
+            filesystem_config_error=invalid canonical config
             insmod_exit=0
             loaded=1
             """.trimIndent()
@@ -65,6 +68,9 @@ class DashboardParsersTest {
         assertEquals("android13-5.10", status?.gkiVariant)
         assertEquals(0, status?.insmodExit)
         assertEquals(true, status?.loaded)
+        assertEquals(true, status?.filesystemHiding)
+        assertEquals(2, status?.filesystemConfigExit)
+        assertEquals("invalid canonical config", status?.filesystemConfigError)
         assertEquals("dmesg line", status?.dmesgTail)
         assertEquals(true, status?.freshForCurrentBoot)
     }
