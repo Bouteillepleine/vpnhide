@@ -97,6 +97,7 @@ internal object HookIds {
     // Hooks owned by each backend: apply `mask and own`.
     const val KERNEL_HOOK_MASK = 0x20003ff
     const val KMOD_HOOK_MASK = 0x8000000
+    const val KPM_HOOK_MASK = 0x8000000
     const val ZYGISK_HOOK_MASK = 0x5fc0000
     const val LSPOSED_HOOK_MASK = 0x3fc00
 

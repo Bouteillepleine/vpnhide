@@ -145,6 +145,7 @@ pub const HOOK_COUNT: u32 = 28;
 /// Hooks owned by each backend: apply `mask & own`.
 pub const KERNEL_HOOK_MASK: u32 = 0x20003ff;
 pub const KMOD_HOOK_MASK: u32 = 0x8000000;
+pub const KPM_HOOK_MASK: u32 = 0x8000000;
 pub const ZYGISK_HOOK_MASK: u32 = 0x5fc0000;
 pub const LSPOSED_HOOK_MASK: u32 = 0x3fc00;
 

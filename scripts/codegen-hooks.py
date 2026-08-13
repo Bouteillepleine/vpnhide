@@ -53,7 +53,7 @@ OUT_LSP_KT = lsposed_generated_kt("HookIds.kt")
 
 GENERATED_HEADER_LINE = generated_header("data/hooks.toml", "uv run scripts/codegen-hooks.py")
 
-KNOWN_BACKENDS = ("kernel", "kmod", "zygisk", "lsposed")
+KNOWN_BACKENDS = ("kernel", "kmod", "kpm", "zygisk", "lsposed")
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +65,18 @@ class Hook:
     def __init__(self, raw: dict[str, Any]) -> None:
         self.id: int = raw["id"]
         self.name: str = raw["name"]
-        self.backend: str = raw["backend"]
+        backend = raw.get("backend")
+        backends = raw.get("backends")
+        if (backend is None) == (backends is None):
+            sys.exit(
+                f"error: hook {self.name!r} must define exactly one of "
+                "'backend' or 'backends'"
+            )
+        self.backends: tuple[str, ...] = (
+            (backend,) if backend is not None else tuple(backends)
+        )
+        if not self.backends or len(set(self.backends)) != len(self.backends):
+            sys.exit(f"error: hook {self.name!r} has invalid backends {self.backends!r}")
         self.note: str = raw.get("note", "")
 
 
@@ -100,15 +111,16 @@ def load() -> tuple[list[Hook], list[Err], list[Backend]]:
         if len(set(names)) != len(names):
             sys.exit(f"error: duplicate {label} name in {names}")
     for h in hooks:
-        if h.backend not in KNOWN_BACKENDS:
-            sys.exit(f"error: hook {h.name!r} has unknown backend {h.backend!r}")
+        unknown = set(h.backends) - set(KNOWN_BACKENDS)
+        if unknown:
+            sys.exit(f"error: hook {h.name!r} has unknown backends {sorted(unknown)!r}")
     return hooks, errs, backends
 
 
 def backend_mask(hooks: list[Hook], backend: str) -> int:
     m = 0
     for h in hooks:
-        if h.backend == backend:
+        if backend in h.backends:
             m |= 1 << h.id
     return m
 
@@ -185,19 +197,26 @@ def emit_kmod(hooks: list[Hook], errs: list[Err], backends: list[Backend]) -> st
     for b in KNOWN_BACKENDS:
         L.append(f"#define VPNHIDE_{upper(b)}_HOOK_MASK 0x{backend_mask(hooks, b):x}u")
     L.append("")
-    kernel_hooks = [h for h in hooks if h.backend == "kernel"]
+    kernel_hooks = [h for h in hooks if "kernel" in h.backends]
     append_dense_hook_mapping(
         L,
         "kernel",
         kernel_hooks,
         "Dense stats slots shared by the .ko and KPM kernel hooks.",
     )
-    kmod_hooks = [h for h in hooks if h.backend in ("kernel", "kmod")]
+    kmod_hooks = [h for h in hooks if set(h.backends) & {"kernel", "kmod"}]
     append_dense_hook_mapping(
         L,
         "kmod_stats",
         kmod_hooks,
         "Dense stats slots for every hook the .ko can install.",
+    )
+    kpm_hooks = [h for h in hooks if set(h.backends) & {"kernel", "kpm"}]
+    append_dense_hook_mapping(
+        L,
+        "kpm_stats",
+        kpm_hooks,
+        "Dense stats slots for every hook the KPM can install.",
     )
     L.append("/* status error codes (protocol §5.1). */")
     ewidth = max(len(f"VPNHIDE_ERR_{upper(e.name)}") for e in errs)

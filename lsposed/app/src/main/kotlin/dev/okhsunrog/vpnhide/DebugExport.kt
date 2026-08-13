@@ -135,7 +135,12 @@ private suspend fun buildExportDiagnosticReport(
                 shellSnapshot.sections["current_boot_id"].orEmpty(),
             ),
         complete = true,
-        installedKmodHooks = installedHooks(shellSnapshot.sections["kmod_state"].orEmpty()),
+        installedOptionalHooks =
+            when (detectNativeBackendStates(shellSnapshot.sections).activeId) {
+                NativeBackendId.Kmod -> installedHooks(shellSnapshot.sections["kmod_state"].orEmpty())
+                NativeBackendId.Kpm -> installedHooks(shellSnapshot.sections["kpm_state"].orEmpty())
+                else -> emptySet()
+            },
     )
 
 // ── Debug-zip section builders (each produces one file in the export) ─────

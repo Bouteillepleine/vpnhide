@@ -29,6 +29,7 @@ internal fun hooksInMask(mask: Long): Set<HookIds.Hook> = HookIds.Hook.entries.f
  */
 internal val KERNEL_HOOKS: Set<HookIds.Hook> = hooksInMask(HookIds.KERNEL_HOOK_MASK.toLong())
 internal val KMOD_HOOKS: Set<HookIds.Hook> = hooksInMask(HookIds.KMOD_HOOK_MASK.toLong())
+internal val KPM_HOOKS: Set<HookIds.Hook> = hooksInMask(HookIds.KPM_HOOK_MASK.toLong())
 internal val ZYGISK_HOOKS: Set<HookIds.Hook> = hooksInMask(HookIds.ZYGISK_HOOK_MASK.toLong())
 internal val LSPOSED_HOOKS: Set<HookIds.Hook> = hooksInMask(HookIds.LSPOSED_HOOK_MASK.toLong())
 
@@ -36,7 +37,7 @@ internal val LSPOSED_HOOKS: Set<HookIds.Hook> = hooksInMask(HookIds.LSPOSED_HOOK
 internal fun ownedHooks(backend: HookIds.Backend): Set<HookIds.Hook> =
     when (backend) {
         HookIds.Backend.KMOD -> KERNEL_HOOKS + KMOD_HOOKS
-        HookIds.Backend.KPM -> KERNEL_HOOKS
+        HookIds.Backend.KPM -> KERNEL_HOOKS + KPM_HOOKS
         HookIds.Backend.ZYGISK -> ZYGISK_HOOKS
         HookIds.Backend.LSPOSED -> LSPOSED_HOOKS
     }
@@ -49,18 +50,22 @@ internal fun ownedHooks(backend: HookIds.Backend): Set<HookIds.Hook> =
  */
 internal fun ownedNativeHooks(
     id: NativeBackendId?,
-    installedKmodHooks: Set<HookIds.Hook> = emptySet(),
+    installedOptionalHooks: Set<HookIds.Hook> = emptySet(),
 ): Set<HookIds.Hook> =
     when (id) {
         NativeBackendId.Kmod -> {
-            KERNEL_HOOKS + installedKmodHooks.intersect(KMOD_HOOKS)
+            KERNEL_HOOKS + installedOptionalHooks.intersect(KMOD_HOOKS)
+        }
+
+        NativeBackendId.Kpm -> {
+            KERNEL_HOOKS + installedOptionalHooks.intersect(KPM_HOOKS)
         }
 
         NativeBackendId.Zygisk -> {
             ZYGISK_HOOKS
         }
 
-        NativeBackendId.Kpm, null -> {
+        null -> {
             KERNEL_HOOKS
         }
     }
@@ -68,7 +73,7 @@ internal fun ownedNativeHooks(
 /** Decode a backend's installed-hook wire mask into the typed registry set. */
 internal fun installedHooks(statusRaw: String): Set<HookIds.Hook> = parseProtocolStatusBlock(statusRaw)?.hooks?.let(::hooksInMask).orEmpty()
 
-/** Hooks expected in a live status snapshot. Kmod-only hooks are optional and
+/** Hooks expected in a live status snapshot. Backend-specific hooks are optional and
  * become part of the expectation only when that boot actually installed them. */
 internal fun expectedInstalledHooks(
     backend: HookIds.Backend,
@@ -76,6 +81,7 @@ internal fun expectedInstalledHooks(
 ): Set<HookIds.Hook> =
     when (backend) {
         HookIds.Backend.KMOD -> KERNEL_HOOKS + installed.intersect(KMOD_HOOKS)
+        HookIds.Backend.KPM -> KERNEL_HOOKS + installed.intersect(KPM_HOOKS)
         else -> ownedHooks(backend)
     }
 
