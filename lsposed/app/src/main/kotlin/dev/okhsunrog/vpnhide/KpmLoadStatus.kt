@@ -12,7 +12,6 @@ internal enum class KpmFailureReason {
     Ok,
     ConflictingBackend,
     MissingKpm,
-    MissingActivator,
     AwaitingSuperkey,
     UnsupportedKernel,
     ActivationFailed,
@@ -61,7 +60,6 @@ internal fun parseKpmLoadStatus(raw: String): KpmLoadStatus {
                 "ok" -> KpmFailureReason.Ok
                 "conflicting_backend" -> KpmFailureReason.ConflictingBackend
                 "missing_kpm" -> KpmFailureReason.MissingKpm
-                "missing_activator" -> KpmFailureReason.MissingActivator
                 "awaiting_superkey" -> KpmFailureReason.AwaitingSuperkey
                 "unsupported_kernel" -> KpmFailureReason.UnsupportedKernel
                 "activation_failed" -> KpmFailureReason.ActivationFailed

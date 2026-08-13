@@ -99,6 +99,11 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 - `uninstall.sh`: thin entrypoint; the activator removes `vpnhide_out`,
   `vpnhide_out6`, and portshide diagnostics.
 
+For all four module directories, the app checks the `activator` file itself in
+the shared root snapshot. An enabled installation with a missing or
+non-executable activator is a bundle-integrity failure even when an old runtime
+status file still exists.
+
 ---
 
 ## 3. Persistent `/data/adb` State

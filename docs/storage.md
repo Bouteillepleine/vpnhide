@@ -288,6 +288,15 @@ zygisk/                     # cdylib — the injected .so. deps: protocol (+ sha
   `--user all` aggregation. If any user scan fails, activation stops before
   replacing runtime state with a partial target set. Then it reads the
   canonical and writes its channel.
+- **Bundle integrity:** the app's batched root snapshot checks each installed
+  module's `activator` directly and distinguishes an absent file from a
+  non-executable one. Enabled modules with either failure are marked broken on
+  the Dashboard. Save selects the first installed, enabled native backend in
+  the normal `kmod > KPM > Zygisk` order and fails if that backend's activator
+  is unusable; it never silently falls through to another backend.
+  KPM remediation means installing the complete `vpnhide-kpm.zip` through the
+  root manager's Modules screen, not extracting or loading the inner
+  `vpnhide.kpm` payload by itself.
 - **KPM load preflight:** the KPM activator parses only the leading numeric
   `major.minor` from `uname -r`; patchlevels and Android/vendor suffixes do not
   affect the offset-table family. It refuses an unknown or unsupported family

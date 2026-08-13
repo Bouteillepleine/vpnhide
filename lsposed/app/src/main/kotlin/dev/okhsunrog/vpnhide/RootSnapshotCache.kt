@@ -35,6 +35,14 @@ internal val REQUIRED_ROOT_SNAPSHOT_SECTIONS =
         "kmod_module_dir",
         "zygisk_module_dir",
         "kpm_module_dir",
+        "kmod_activator_state",
+        "kpm_activator_state",
+        "zygisk_activator_state",
+        "ports_activator_state",
+        "kmod_disabled",
+        "kpm_disabled",
+        "zygisk_disabled",
+        "ports_disabled",
         "canonical_config",
         "kpm_load_status",
         "ports_load_status",
@@ -187,6 +195,15 @@ internal fun buildRootShellSnapshotCommand(
       eval "${'$'}*" 2>/dev/null || true
       echo "$ROOT_SNAPSHOT_END_PREFIX${'$'}NAME"
     }
+    activator_state() {
+      if [ -x "${'$'}1" ]; then
+        echo executable
+      elif [ -e "${'$'}1" ]; then
+        echo not_executable
+      else
+        echo missing
+      fi
+    }
     now_ms() {
       if [ -n "${'$'}{EPOCHREALTIME:-}" ]; then
         SEC="${'$'}{EPOCHREALTIME%.*}"
@@ -222,6 +239,14 @@ internal fun buildRootShellSnapshotCommand(
       emit_eval kmod_module_dir '[ -d $KMOD_MODULE_DIR ] && echo 1 || echo 0'
       emit_eval zygisk_module_dir '[ -d $ZYGISK_MODULE_DIR ] && echo 1 || echo 0'
       emit_eval kpm_module_dir '[ -d $KPM_MODULE_DIR ] && echo 1 || echo 0'
+      emit_eval kmod_activator_state 'activator_state $KMOD_ACTIVATOR'
+      emit_eval kpm_activator_state 'activator_state $KPM_ACTIVATOR'
+      emit_eval zygisk_activator_state 'activator_state $ZYGISK_ACTIVATOR'
+      emit_eval ports_activator_state 'activator_state $PORTS_ACTIVATOR'
+      emit_eval kmod_disabled '[ -f $KMOD_MODULE_DIR/disable ] && echo 1 || echo 0'
+      emit_eval kpm_disabled '[ -f $KPM_MODULE_DIR/disable ] && echo 1 || echo 0'
+      emit_eval zygisk_disabled '[ -f $ZYGISK_MODULE_DIR/disable ] && echo 1 || echo 0'
+      emit_eval ports_disabled '[ -f $PORTS_MODULE_DIR/disable ] && echo 1 || echo 0'
       phase_end
     }
     phase_target_files() {
@@ -292,7 +317,6 @@ internal fun buildRootShellSnapshotCommand(
         ip6tables -C OUTPUT -j vpnhide_out6 >/dev/null 2>&1 &&
         echo 1 || echo 0
       '
-      emit_eval ports_disabled '[ -f $PORTS_MODULE_DIR/disable ] && echo 1 || echo 0'
       phase_end
     }
     phase_lsposed_framework() {

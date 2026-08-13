@@ -36,14 +36,6 @@ class ClassifyKpmProblemTest {
     }
 
     @Test
-    fun `missing activator binary is a named diagnosis with a red card`() {
-        val status = "runtime=activator\nloaded=0\nboot_id=boot-1\ndetail=activator missing at /data/adb/modules/vpnhide_kpm/activator\n"
-        val kind = classify(installed(active = false), status, "boot-1")
-        assertEquals(KpmProblemKind.ActivatorMissing("/data/adb/modules/vpnhide_kpm/activator"), kind)
-        assertEquals(ModuleBrokenReason.KpmActivatorMissing, kind?.reason)
-    }
-
-    @Test
     fun `generic activator failure surfaces the raw detail with no card color`() {
         val status = "runtime=activator\nloaded=0\nboot_id=boot-1\ndetail=rc=1 supercall failed: ENOENT\n"
         val kind = classify(installed(active = false), status, "boot-1")

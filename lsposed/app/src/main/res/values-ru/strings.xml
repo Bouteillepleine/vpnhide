@@ -104,7 +104,8 @@
     <string name="dashboard_kmod_broken_unknown_variant">Установлен, не загрузился</string>
     <string name="dashboard_kmod_broken_ambiguous">Установлен, не загрузился — попробуйте второй GKI-вариант</string>
     <string name="dashboard_kmod_broken_signature_enforced">Установлен, ядро отклоняет неподписанные модули</string>
-    <string name="dashboard_kpm_broken_activator_missing">Установлен, отсутствует активатор</string>
+    <string name="dashboard_module_broken_activator_missing">Установлен, отсутствует активатор</string>
+    <string name="dashboard_module_broken_activator_not_executable">Установлен, активатор не исполняемый</string>
     <string name="dashboard_active_targets">Активен · целей: %d</string>
     <string name="dashboard_reboot_needed">Требуется перезагрузка устройства</string>
     <string name="dashboard_hero_protected_title">VPN скрыт</string>
@@ -281,7 +282,10 @@
     <string name="dashboard_issue_native_conflict_kernel">Модуль ядра (.ko) и KPM установлены одновременно. Они перехватывают одни и те же функции ядра, и при одновременной работе устройство может полностью зависнуть. Оставьте только один — удалите либо модуль ядра, либо KPM.</string>
     <string name="dashboard_issue_native_conflict_deferred">Модуль ядра (.ko) и KPM установлены одновременно. KPM отключился при загрузке, чтобы не подвесить устройство, и сейчас бездействует. Оставьте только один — удалите KPM (или модуль ядра).</string>
     <string name="dashboard_issue_kpm_awaiting_superkey">KPM установлен, но не активен: APatch/FolkPatch не смог загрузить его через доверенный su-токен. Сохраните SuperKey в Настройки → Безопасность и перезагрузитесь для активации нативного скрытия.</string>
-    <string name="dashboard_issue_kpm_activator_missing">Модуль KPM повреждён: отсутствует бинарник активатора (%1$s). Переустановите vpnhide-kpm.zip из последнего релиза.</string>
+    <string name="dashboard_issue_module_activator_missing">Установка модуля %1$s повреждена: отсутствует активатор (%2$s). Переустановите ZIP модуля из последнего релиза.</string>
+    <string name="dashboard_issue_module_activator_not_executable">Установка модуля %1$s повреждена: активатор не является исполняемым файлом (%2$s). Переустановите ZIP модуля из последнего релиза.</string>
+    <string name="dashboard_issue_kpm_bundle_activator_missing">Установка модуля KPM повреждена: отсутствует активатор (%1$s). Установите полный vpnhide-kpm.zip как APM/Magisk-совместимый модуль через экран «Модули» вашего root-менеджера; не извлекайте и не загружайте внутренний файл vpnhide.kpm отдельно.</string>
+    <string name="dashboard_issue_kpm_bundle_activator_not_executable">Установка модуля KPM повреждена: активатор не является исполняемым файлом (%1$s). Установите полный vpnhide-kpm.zip как APM/Magisk-совместимый модуль через экран «Модули» вашего root-менеджера; не извлекайте и не загружайте внутренний файл vpnhide.kpm отдельно.</string>
     <string name="dashboard_issue_kpm_unsupported_kernel">KPM установлен, но не может загрузиться на ядре %1$s: для этого семейства ядра нет проверенной таблицы смещений. Используйте Zygisk.</string>
     <string name="dashboard_issue_kpm_standalone_install">Обнаружена неправильная установка KPM: KernelPatch загрузил отдельный файл vpnhide.kpm, но модуль vpnhide-kpm.zip не установлен. В одном файле .kpm нет активатора VPN Hide, загрузочных скриптов и доставки настроек, поэтому защита не будет работать правильно. Удалите или выгрузите отдельную запись «vpnhide» в APatch/KPatch-Next (если KPM был встроен в ядро, заново пропатчите boot-образ без него), установите целиком vpnhide-kpm.zip через экран «Модули» и перезагрузите устройство.</string>
     <string name="dashboard_issue_kpm_load_failed">KPM установлен, но не загрузился: %1$s. Чтобы приложить полный лог загрузки к отчёту об ошибке, нажмите Настройки → Отладка → Собрать отладочный лог, либо переустановите vpnhide-kpm.zip из последнего релиза.</string>
