@@ -126,7 +126,7 @@ Supported runtimes — pick whichever matches the device's root:
 
 Persistence: a one-shot runtime `sc_kpm_load` is **lost on reboot**. The
 vpnhide KPM module therefore ships `vpnhide.kpm` plus boot scripts: KPatch-Next
-loads through the vpnhide activator's `--load-only` path and its runtime
+loads through the vpnhide activator's `boot-load` phase and its runtime
 `kpatch` CLI, while APatch/FolkPatch defers to the service activator and uses
 the saved SuperKey or trusted `su` token when present. Before either load path
 invokes KernelPatch, the activator validates the leading `major.minor` family
@@ -159,6 +159,11 @@ rolls the group back, clears hook bit 27 from the installed mask, and produces
 `partial_hooks` telemetry while leaving the always-on KPM hooks available. The
 control-v2 `filesystem_iface_paths` bit remains the independent per-UID gate.
 Changing the boot feature therefore requires a reboot.
+
+The fixed-name shell lifecycle files contain no policy: they only `exec`
+`activator boot-load`, `boot-service`, or `uninstall`. The Rust activator owns
+the conflict checks, APatch deferral, status records, and cleanup, so outcomes
+stay typed instead of being encoded as shell exit-code branches.
 
 The headless QEMU harness has no ctl0 userspace client during early bring-up, so
 KPM init additionally accepts a control-v2 snapshot in the load-argument buffer

@@ -1,4 +1,3 @@
-use std::env;
 use std::error::Error;
 use std::fs;
 use std::io::{ErrorKind, Write};
@@ -90,10 +89,12 @@ enum PmReadyWait {
 }
 
 mod kpm;
+mod lifecycle;
 mod model;
 mod ports;
 
 use kpm::*;
+pub use lifecycle::*;
 pub use model::*;
 use ports::*;
 
@@ -108,7 +109,7 @@ pub fn read_canonical() -> Result<String> {
 /// Read one reboot-gated kernel feature without waiting for PackageManager.
 /// Boot loaders query features before loading their backend, so disabled
 /// features never register their probes at all.
-pub fn kernel_boot_feature_enabled(feature: &str) -> Result<bool> {
+pub(crate) fn kernel_boot_feature_enabled(feature: &str) -> Result<bool> {
     let config = parse_canonical(&read_canonical()?)?;
     Ok(config.settings.kernel_boot_features.contains(feature))
 }
@@ -117,7 +118,7 @@ pub fn activate_kmod() -> Result<()> {
     activate_kmod_with_pm_wait(PmReadyWait::Bounded(PM_READY_ATTEMPTS))
 }
 
-pub fn activate_kmod_boot() -> Result<()> {
+pub(crate) fn activate_kmod_boot() -> Result<()> {
     wait_for_path(KMOD_CTL);
     activate_kmod_with_pm_wait(PmReadyWait::Forever)
 }
@@ -134,7 +135,7 @@ pub fn activate_zygisk() -> Result<()> {
     activate_zygisk_with_pm_wait(PmReadyWait::Bounded(PM_READY_ATTEMPTS))
 }
 
-pub fn activate_zygisk_boot() -> Result<()> {
+pub(crate) fn activate_zygisk_boot() -> Result<()> {
     activate_zygisk_with_pm_wait(PmReadyWait::Forever)
 }
 
@@ -163,11 +164,11 @@ fn validate_zygisk_config_wire(wire: &str) -> Result<()> {
 /// Outcome of a KPM boot activation. A kmod conflict is a legitimate,
 /// non-error result (the KPM deliberately stands down — see docs/storage.md
 /// §4.3), so it must
-/// be distinguishable from a successful configure: the boot script reports
-/// each as a different `load_status`, and reporting a deferral as "configured"
-/// would lie to the diagnostics screen.
+/// be distinguishable from a successful configure: the lifecycle layer records
+/// each as a different typed `load_status`, and reporting a deferral as
+/// "configured" would lie to the diagnostics screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KpmBootOutcome {
+pub(crate) enum KpmBootOutcome {
     /// Wire snapshot was delivered to the KPM over ctl0.
     Configured,
     /// The .ko backend is present, so the KPM stood down without loading or
@@ -185,36 +186,70 @@ pub enum KpmBootOutcome {
     UnsupportedKernel,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct KpmBootReport {
+    pub(crate) outcome: KpmBootOutcome,
+    /// Exact boot-only loader choice used by this activation attempt. It is
+    /// absent when conflict/kernel preflight stopped before canonical parsing.
+    pub(crate) filesystem_hiding: Option<bool>,
+}
+
+impl KpmBootReport {
+    fn before_config(outcome: KpmBootOutcome) -> Self {
+        Self {
+            outcome,
+            filesystem_hiding: None,
+        }
+    }
+
+    fn with_feature(outcome: KpmBootOutcome, filesystem_hiding: bool) -> Self {
+        Self {
+            outcome,
+            filesystem_hiding: Some(filesystem_hiding),
+        }
+    }
+}
+
 pub fn activate_kpm() -> Result<()> {
     // App / manual path: a conflict is a hard error (conflict_is_error=true),
     // so this only ever returns Configured on success.
     activate_kpm_with_pm_wait(PmReadyWait::Bounded(PM_READY_ATTEMPTS), true).map(|_| ())
 }
 
-pub fn activate_kpm_boot() -> Result<KpmBootOutcome> {
+pub(crate) fn activate_kpm_boot() -> Result<KpmBootReport> {
     activate_kpm_with_pm_wait(PmReadyWait::Forever, false)
 }
 
 /// Load the KPM without waiting for PackageManager or delivering config.
-/// KPatch-Next calls this during post-fs-data; configuration still happens
+/// The early lifecycle phase calls this during post-fs-data; configuration happens
 /// later through `activate_kpm_boot` once package UIDs can be resolved.
-pub fn load_kpm_boot() -> Result<KpmBootOutcome> {
+pub(crate) fn load_kpm_boot() -> Result<KpmBootReport> {
     if skip_kpm_for_kmod_conflict(false)? {
-        return Ok(KpmBootOutcome::DeferredConflict);
+        return Ok(KpmBootReport::before_config(
+            KpmBootOutcome::DeferredConflict,
+        ));
     }
     if !running_kernel_supports_kpm()? {
-        return Ok(KpmBootOutcome::UnsupportedKernel);
+        return Ok(KpmBootReport::before_config(
+            KpmBootOutcome::UnsupportedKernel,
+        ));
     }
+    let filesystem_hiding =
+        kernel_boot_feature_enabled(KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS)?;
     let client = match KpmClient::detect_outcome()? {
         KpmClientDetection::Ready(client) => client,
         KpmClientDetection::AwaitingAuthentication(_) => {
-            return Ok(KpmBootOutcome::AwaitingAuthentication);
+            return Ok(KpmBootReport::with_feature(
+                KpmBootOutcome::AwaitingAuthentication,
+                filesystem_hiding,
+            ));
         }
     };
-    client.ensure_loaded(KpmLoadOptions {
-        filesystem_hiding: kernel_boot_feature_enabled(KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS)?,
-    })?;
-    Ok(KpmBootOutcome::Configured)
+    client.ensure_loaded(KpmLoadOptions { filesystem_hiding })?;
+    Ok(KpmBootReport::with_feature(
+        KpmBootOutcome::Configured,
+        filesystem_hiding,
+    ))
 }
 
 pub fn read_kpm_status() -> Result<String> {
@@ -238,9 +273,11 @@ fn read_kpm_payload(wire: &str) -> Result<String> {
     client.ctl0_read(wire)
 }
 
-fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Result<KpmBootOutcome> {
+fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Result<KpmBootReport> {
     if skip_kpm_for_kmod_conflict(conflict_is_error)? {
-        return Ok(KpmBootOutcome::DeferredConflict);
+        return Ok(KpmBootReport::before_config(
+            KpmBootOutcome::DeferredConflict,
+        ));
     }
     if !running_kernel_supports_kpm()? {
         if conflict_is_error {
@@ -250,7 +287,9 @@ fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Resu
             )
             .into());
         }
-        return Ok(KpmBootOutcome::UnsupportedKernel);
+        return Ok(KpmBootReport::before_config(
+            KpmBootOutcome::UnsupportedKernel,
+        ));
     }
     let canonical = read_canonical()?;
     let filesystem_hiding = parse_canonical(&canonical)?
@@ -261,18 +300,27 @@ fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Resu
     // Re-check after the (possibly long) PackageManager wait: the .ko may have
     // been loaded meanwhile, in which case we must not configure the KPM.
     if skip_kpm_for_kmod_conflict(conflict_is_error)? {
-        return Ok(KpmBootOutcome::DeferredConflict);
+        return Ok(KpmBootReport::with_feature(
+            KpmBootOutcome::DeferredConflict,
+            filesystem_hiding,
+        ));
     }
     let client = match KpmClient::detect_outcome()? {
         KpmClientDetection::Ready(client) => client,
         KpmClientDetection::AwaitingAuthentication(_) if !conflict_is_error => {
-            return Ok(KpmBootOutcome::AwaitingAuthentication);
+            return Ok(KpmBootReport::with_feature(
+                KpmBootOutcome::AwaitingAuthentication,
+                filesystem_hiding,
+            ));
         }
         KpmClientDetection::AwaitingAuthentication(detail) => return Err(detail.into()),
     };
     client.ensure_loaded(KpmLoadOptions { filesystem_hiding })?;
     client.ctl0_config(&wire)?;
-    Ok(KpmBootOutcome::Configured)
+    Ok(KpmBootReport::with_feature(
+        KpmBootOutcome::Configured,
+        filesystem_hiding,
+    ))
 }
 
 fn running_kernel_release() -> Result<String> {
@@ -333,7 +381,7 @@ pub fn activate_ports() -> Result<PortsActivationReport> {
     activate_ports_with_pm_wait(PmReadyWait::Bounded(PM_READY_ATTEMPTS))
 }
 
-pub fn activate_ports_boot() -> Result<PortsActivationReport> {
+pub(crate) fn activate_ports_boot() -> Result<PortsActivationReport> {
     activate_ports_with_pm_wait(PmReadyWait::Forever)
 }
 
@@ -366,21 +414,6 @@ pub fn activate_ports_recorded(boot_wait: bool) -> Result<()> {
             Err(err)
         }
     }
-}
-
-pub fn boot_wait_requested_from_env() -> Result<bool> {
-    let mut boot_wait = false;
-    for arg in env::args().skip(1) {
-        match arg.as_str() {
-            "--boot-wait" => boot_wait = true,
-            _ => {
-                return Err(
-                    format!("unknown argument {arg}; usage: activator [--boot-wait]").into(),
-                );
-            }
-        }
-    }
-    Ok(boot_wait)
 }
 
 fn has_native_targets(cfg: &CanonicalConfig, family: NativeHookFamily) -> bool {
@@ -447,11 +480,9 @@ fn pm_output_has_package(output: &str, package: &str) -> bool {
 /// True when the .ko backend is present and not disabled. This is the most
 /// complete of the project's "is the kmod here?" checks: it catches both an
 /// installed-and-enabled module directory *and* a live `/proc/vpnhide_ctl`
-/// (e.g. a manually-loaded .ko whose module dir is gone). The boot scripts
-/// keep a cheaper directory-only check as a fail-safe floor (it cannot error
-/// and is ordering-independent); this superset is the authoritative gate on
-/// the config-delivery path. See docs/storage.md §4.3.
-pub fn kmod_backend_present() -> bool {
+/// (e.g. a manually-loaded .ko whose module dir is gone). Both lifecycle phases
+/// use this authoritative, ordering-independent gate. See docs/storage.md §4.3.
+pub(crate) fn kmod_backend_present() -> bool {
     Path::new(KMOD_CTL).exists()
         || (Path::new(KMOD_MODULE_DIR).is_dir()
             && !Path::new(KMOD_MODULE_DIR).join("disable").exists())

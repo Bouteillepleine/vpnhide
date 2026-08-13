@@ -112,7 +112,7 @@ const APP_STATUS_FILE: &str = "/data/user/0/dev.okhsunrog.vpnhide/files/vpnhide_
 /// `vpnhide 2 config` payload (docs/protocol.md): the target UIDs this module
 /// hides for, plus the folded `debug` flag — the same wire format every
 /// backend speaks. Package→UID resolution is the producer's job (the app on
-/// Save, the boot script at boot). Read once per app launch via the module
+/// Save, the activator's boot-service phase at boot). Read once per app launch via the module
 /// dir-fd.
 const TARGETS_FILENAME: &str = "targets.txt";
 
