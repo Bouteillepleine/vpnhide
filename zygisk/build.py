@@ -53,10 +53,15 @@ def main() -> int:
     # rewriting it (a dirtied tree stamps artifacts "-dirty").
     subprocess.run(
         [
-            "cargo", "ndk",
-            "-t", "arm64-v8a",
-            "-t", "armeabi-v7a",
-            "build", "--release", "--locked",
+            "cargo",
+            "ndk",
+            "-t",
+            "arm64-v8a",
+            "-t",
+            "armeabi-v7a",
+            "build",
+            "--release",
+            "--locked",
         ],
         env=env,
         check=True,
@@ -71,12 +76,23 @@ def main() -> int:
     # One .so per ABI. NeoZygisk's loader picks the matching file for each
     # target process by its bitness, so both must ship in the module.
     so_by_abi = {
-        "arm64-v8a": script_dir / "target" / "aarch64-linux-android" / "release" / "libvpnhide_zygisk.so",
-        "armeabi-v7a": script_dir / "target" / "armv7-linux-androideabi" / "release" / "libvpnhide_zygisk.so",
+        "arm64-v8a": script_dir
+        / "target"
+        / "aarch64-linux-android"
+        / "release"
+        / "libvpnhide_zygisk.so",
+        "armeabi-v7a": script_dir
+        / "target"
+        / "armv7-linux-androideabi"
+        / "release"
+        / "libvpnhide_zygisk.so",
     }
     for abi, so_src in so_by_abi.items():
         if not so_src.exists():
-            print(f"error: expected {abi} .so at {so_src} after cargo ndk build, not found", file=sys.stderr)
+            print(
+                f"error: expected {abi} .so at {so_src} after cargo ndk build, not found",
+                file=sys.stderr,
+            )
             return 1
 
     # Assemble the module staging directory
