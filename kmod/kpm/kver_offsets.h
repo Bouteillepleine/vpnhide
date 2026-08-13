@@ -107,6 +107,29 @@ struct vpnhide_offsets {
 	unsigned int fib_rule_uid_end;
 };
 
+/* VFS object layouts used only by the optional filesystem hook group. Keep
+ * them separate from vpnhide_offsets so 6.1 and 6.6 can continue sharing the
+ * much larger network-layout table even though struct file diverged in 6.6. */
+struct vpnhide_vfs_offsets {
+	unsigned int file_f_path;
+	unsigned int path_dentry;
+};
+
+static const struct vpnhide_vfs_offsets vpnhide_vfs_off_through_6_1 = {
+	.file_f_path = 16,
+	.path_dentry = 8,
+};
+
+static const struct vpnhide_vfs_offsets vpnhide_vfs_off_6_6 = {
+	.file_f_path = 168,
+	.path_dentry = 8,
+};
+
+static const struct vpnhide_vfs_offsets vpnhide_vfs_off_6_12 = {
+	.file_f_path = 64,
+	.path_dentry = 8,
+};
+
 /*
  * GKI 6.1 (android14-6.1, derived from AOSP common source + QEMU-validated).
  * Also covers 6.6 (android15-6.6): every offset here is byte-identical on 6.6,
@@ -464,6 +487,18 @@ vpnhide_select_offsets(unsigned int kver)
 	if (VPNHIDE_KVER_FAMILY(kver, 4, 9))
 		return &vpnhide_off_4_9;
 	return 0; /* never guess a layout for an unvalidated minor family */
+}
+
+static inline const struct vpnhide_vfs_offsets *
+vpnhide_select_vfs_offsets(unsigned int kver)
+{
+	if (VPNHIDE_KVER_FAMILY(kver, 6, 12))
+		return &vpnhide_vfs_off_6_12;
+	if (VPNHIDE_KVER_FAMILY(kver, 6, 6))
+		return &vpnhide_vfs_off_6_6;
+	if (vpnhide_select_offsets(kver))
+		return &vpnhide_vfs_off_through_6_1;
+	return 0;
 }
 
 #endif /* VPNHIDE_KVER_OFFSETS_H */

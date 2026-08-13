@@ -161,7 +161,8 @@ fn validate_zygisk_config_wire(wire: &str) -> Result<()> {
 }
 
 /// Outcome of a KPM boot activation. A kmod conflict is a legitimate,
-/// non-error result (the KPM deliberately stands down — see §1.5), so it must
+/// non-error result (the KPM deliberately stands down — see docs/storage.md
+/// §4.3), so it must
 /// be distinguishable from a successful configure: the boot script reports
 /// each as a different `load_status`, and reporting a deferral as "configured"
 /// would lie to the diagnostics screen.
@@ -170,7 +171,7 @@ pub enum KpmBootOutcome {
     /// Wire snapshot was delivered to the KPM over ctl0.
     Configured,
     /// The .ko backend is present, so the KPM stood down without loading or
-    /// configuring (co-residence freezes the kernel — protocol §1.5).
+    /// configuring (co-residence freezes the kernel — docs/storage.md §4.3).
     DeferredConflict,
     /// APatch/FolkPatch is installed, but neither a saved superkey nor the
     /// trusted `su` supercall grant authenticated yet. Boot may legitimately
@@ -210,7 +211,9 @@ pub fn load_kpm_boot() -> Result<KpmBootOutcome> {
             return Ok(KpmBootOutcome::AwaitingAuthentication);
         }
     };
-    client.ensure_loaded()?;
+    client.ensure_loaded(KpmLoadOptions {
+        filesystem_hiding: kernel_boot_feature_enabled(KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS)?,
+    })?;
     Ok(KpmBootOutcome::Configured)
 }
 
@@ -249,7 +252,12 @@ fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Resu
         }
         return Ok(KpmBootOutcome::UnsupportedKernel);
     }
-    let wire = project_native_with_pm_wait(&read_canonical()?, NativeHookFamily::Kpm, wait)?;
+    let canonical = read_canonical()?;
+    let filesystem_hiding = parse_canonical(&canonical)?
+        .settings
+        .kernel_boot_features
+        .contains(KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS);
+    let wire = project_native_with_pm_wait(&canonical, NativeHookFamily::Kpm, wait)?;
     // Re-check after the (possibly long) PackageManager wait: the .ko may have
     // been loaded meanwhile, in which case we must not configure the KPM.
     if skip_kpm_for_kmod_conflict(conflict_is_error)? {
@@ -262,7 +270,7 @@ fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Resu
         }
         KpmClientDetection::AwaitingAuthentication(detail) => return Err(detail.into()),
     };
-    client.ensure_loaded()?;
+    client.ensure_loaded(KpmLoadOptions { filesystem_hiding })?;
     client.ctl0_config(&wire)?;
     Ok(KpmBootOutcome::Configured)
 }
@@ -442,7 +450,7 @@ fn pm_output_has_package(output: &str, package: &str) -> bool {
 /// (e.g. a manually-loaded .ko whose module dir is gone). The boot scripts
 /// keep a cheaper directory-only check as a fail-safe floor (it cannot error
 /// and is ordering-independent); this superset is the authoritative gate on
-/// the config-delivery path. See protocol §1.5.
+/// the config-delivery path. See docs/storage.md §4.3.
 pub fn kmod_backend_present() -> bool {
     Path::new(KMOD_CTL).exists()
         || (Path::new(KMOD_MODULE_DIR).is_dir()

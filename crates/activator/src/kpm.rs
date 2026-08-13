@@ -79,6 +79,34 @@ pub(crate) enum KpmClientDetection {
     AwaitingAuthentication(String),
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct KpmLoadOptions {
+    pub(crate) filesystem_hiding: bool,
+}
+
+impl KpmLoadOptions {
+    fn args(self) -> Option<&'static str> {
+        self.filesystem_hiding.then_some("filesystem_hiding=1")
+    }
+}
+
+#[cfg(test)]
+mod load_options_tests {
+    use super::KpmLoadOptions;
+
+    #[test]
+    fn filesystem_hiding_is_an_opt_in_load_argument() {
+        assert_eq!(KpmLoadOptions::default().args(), None);
+        assert_eq!(
+            KpmLoadOptions {
+                filesystem_hiding: true,
+            }
+            .args(),
+            Some("filesystem_hiding=1")
+        );
+    }
+}
+
 /// Cross-process serialization for this project's KPM ctl0 callers. The
 /// KernelPatch runtime stores ctl args in one module-owned buffer before
 /// dispatching the handler, so boot activation, app reconciliation, and stats
@@ -147,14 +175,14 @@ impl KpmClient {
         Ok(KpmClientDetection::Ready(Self::KpatchCli { path }))
     }
 
-    pub(crate) fn ensure_loaded(&self) -> Result<()> {
+    pub(crate) fn ensure_loaded(&self, options: KpmLoadOptions) -> Result<()> {
         if self.list_contains()? {
             return Ok(());
         }
         if !Path::new(KPM_MODULE_FILE).is_file() {
             return Err(format!("{KPM_MODULE_FILE} not found").into());
         }
-        self.load()?;
+        self.load(options)?;
         if self.list_contains()? {
             Ok(())
         } else {
@@ -172,11 +200,14 @@ impl KpmClient {
         }
     }
 
-    fn load(&self) -> Result<()> {
+    fn load(&self, options: KpmLoadOptions) -> Result<()> {
         match self {
             Self::KpatchCli { path } => {
                 let mut cmd = Command::new(path);
                 cmd.args(["kpm", "load", KPM_MODULE_FILE]);
+                if let Some(args) = options.args() {
+                    cmd.arg(args);
+                }
                 let out = cmd.output()?;
                 if out.status.success() {
                     Ok(())
@@ -187,13 +218,14 @@ impl KpmClient {
             Self::ApatchSupercall { key, style } => {
                 let path = CString::new(KPM_MODULE_FILE)?;
                 let key = CString::new(key.as_str())?;
+                let args = options.args().map(CString::new).transpose()?;
                 let rc = unsafe {
                     syscall(
                         APATCH_SUPERCALL_NR,
                         key.as_ptr(),
                         supercall_cmd(*style, SUPERCALL_KPM_LOAD),
                         path.as_ptr(),
-                        ptr::null::<c_char>(),
+                        args.as_ref().map_or(ptr::null(), |args| args.as_ptr()),
                         ptr::null_mut::<c_void>(),
                     )
                 };

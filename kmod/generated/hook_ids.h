@@ -43,6 +43,7 @@ static inline unsigned int vpnhide_hook_bit(enum vpnhide_hook_id id)
 /* Hooks owned by each backend: apply `mask & own`, ignore foreign bits. */
 #define VPNHIDE_KERNEL_HOOK_MASK 0x20003ffu
 #define VPNHIDE_KMOD_HOOK_MASK 0x8000000u
+#define VPNHIDE_KPM_HOOK_MASK 0x8000000u
 #define VPNHIDE_ZYGISK_HOOK_MASK 0x5fc0000u
 #define VPNHIDE_LSPOSED_HOOK_MASK 0x3fc00u
 
@@ -110,6 +111,48 @@ static inline int vpnhide_kmod_stats_hook_slot(enum vpnhide_hook_id id)
 }
 
 static inline enum vpnhide_hook_id vpnhide_kmod_stats_hook_id(unsigned int slot)
+{
+	switch (slot) {
+	case 0: return VPNHIDE_HOOK_FIB_ROUTE_SEQ_SHOW;
+	case 1: return VPNHIDE_HOOK_IPV6_ROUTE_SEQ_SHOW;
+	case 2: return VPNHIDE_HOOK_RTNL_FILL_IFINFO;
+	case 3: return VPNHIDE_HOOK_INET_FILL_IFADDR;
+	case 4: return VPNHIDE_HOOK_INET6_FILL_IFADDR;
+	case 5: return VPNHIDE_HOOK_DEV_IOCTL;
+	case 6: return VPNHIDE_HOOK_SOCK_IOCTL;
+	case 7: return VPNHIDE_HOOK_FIB_DUMP_INFO;
+	case 8: return VPNHIDE_HOOK_RT6_FILL_NODE;
+	case 9: return VPNHIDE_HOOK_FIB_NL_FILL_RULE;
+	case 10: return VPNHIDE_HOOK_SOCKET_BIND_INTERFACE;
+	case 11: return VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS;
+	default: return VPNHIDE_HOOK_COUNT;
+	}
+}
+
+/* Dense stats slots for every hook the KPM can install.
+   The wire keeps global hook ids; these helpers only compact the
+   backend's in-memory counters. */
+#define VPNHIDE_KPM_STATS_HOOK_COUNT 12
+static inline int vpnhide_kpm_stats_hook_slot(enum vpnhide_hook_id id)
+{
+	switch (id) {
+	case VPNHIDE_HOOK_FIB_ROUTE_SEQ_SHOW: return 0;
+	case VPNHIDE_HOOK_IPV6_ROUTE_SEQ_SHOW: return 1;
+	case VPNHIDE_HOOK_RTNL_FILL_IFINFO: return 2;
+	case VPNHIDE_HOOK_INET_FILL_IFADDR: return 3;
+	case VPNHIDE_HOOK_INET6_FILL_IFADDR: return 4;
+	case VPNHIDE_HOOK_DEV_IOCTL: return 5;
+	case VPNHIDE_HOOK_SOCK_IOCTL: return 6;
+	case VPNHIDE_HOOK_FIB_DUMP_INFO: return 7;
+	case VPNHIDE_HOOK_RT6_FILL_NODE: return 8;
+	case VPNHIDE_HOOK_FIB_NL_FILL_RULE: return 9;
+	case VPNHIDE_HOOK_SOCKET_BIND_INTERFACE: return 10;
+	case VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS: return 11;
+	default: return -1;
+	}
+}
+
+static inline enum vpnhide_hook_id vpnhide_kpm_stats_hook_id(unsigned int slot)
 {
 	switch (slot) {
 	case 0: return VPNHIDE_HOOK_FIB_ROUTE_SEQ_SHOW;

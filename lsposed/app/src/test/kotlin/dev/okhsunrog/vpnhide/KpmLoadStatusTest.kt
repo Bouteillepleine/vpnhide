@@ -16,6 +16,7 @@ class KpmLoadStatusTest {
                 uname_r=6.1.0-android
                 runtime=kpatch-next
                 loaded=0
+                filesystem_hiding=1
                 reason=unsupported_kernel
                 detail=unsupported kernel
                 """.trimIndent(),
@@ -26,6 +27,7 @@ class KpmLoadStatusTest {
         assertEquals("6.1.0-android", status.unameR)
         assertEquals(KpmRuntime.KpatchNext, status.runtime)
         assertEquals(false, status.loaded)
+        assertEquals(true, status.filesystemHiding)
         assertEquals(KpmFailureReason.UnsupportedKernel, status.reason)
         assertEquals("unsupported kernel", status.detail)
         assertTrue(status.isFreshFor("boot-1"))
@@ -37,6 +39,7 @@ class KpmLoadStatusTest {
 
         assertEquals(KpmRuntime.Unknown, status.runtime)
         assertEquals(null, status.loaded)
+        assertEquals(null, status.filesystemHiding)
         assertEquals(KpmFailureReason.Unknown, status.reason)
         assertFalse(status.isFreshFor("boot-1"))
     }

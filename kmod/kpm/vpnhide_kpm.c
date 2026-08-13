@@ -10,8 +10,9 @@
  *
  * STATUS: builds (`make kpm`) and runs end-to-end under QEMU via the KPM
  * harness (../test/run-kpm.sh). CI boots representative images for every
- * offset table and checks all enumeration vectors; socket-bind denial adds a
- * state-level check that verifies the socket stayed unbound, not just errno.
+ * offset table and checks all enumeration and optional filesystem vectors;
+ * socket-bind denial adds a state-level check that verifies the socket stayed
+ * unbound, not just errno.
  * Runtime config/status/stats use KernelPatch's ctl0 supercall; the QEMU A/B
  * harness passes the same control-v2 snapshot as load args for headless
  * bring-up. Every per-kver
@@ -64,6 +65,7 @@ KPM_DESCRIPTION("Hide VPN interfaces from selected UIDs (KPM backend, beta)");
 /* ------------------------------------------------------------------ */
 
 static const struct vpnhide_offsets *off; /* selected per running kver */
+static const struct vpnhide_vfs_offsets *vfs_off;
 
 /* Live config (protocol §4.3). Each target carries a per-hook mask so the app
  * can enable hooks individually; a hook fires only if its bit is set for the
@@ -97,6 +99,10 @@ static int nr_targets;
  * and makes it the exception list. */
 static uint32_t default_hookmask;
 static uint32_t active_hook_mask;
+/* Locked at module load: these globally hot hooks cannot be added or removed by
+ * a later ctl0 config. The canonical kernelBootFeatures setting is projected
+ * into KPM load args by the activator. */
+static bool filesystem_hiding_requested;
 
 /*
  * First uid Android hands to an ordinary app; everything below is a system AID
@@ -120,7 +126,7 @@ static uint32_t last_error;
 /* Exact registrations owned by this KPM. Teardown must unwrap the same
  * compiler clone that install_hook resolved, and only after hook_wrap actually
  * succeeded; resolving names again during exit cannot guarantee either. */
-#define VPNHIDE_MAX_HOOK_REGISTRATIONS 12
+#define VPNHIDE_MAX_HOOK_REGISTRATIONS 16
 struct vpnhide_hook_registration {
 	void *function;
 	void *before;
@@ -130,14 +136,14 @@ static struct vpnhide_hook_registration
 	hook_registrations[VPNHIDE_MAX_HOOK_REGISTRATIONS];
 static unsigned int nr_hook_registrations;
 
-/* Native interception stats, cumulative since KPM load. Only the 11
- * kernel-owned hooks need storage; the global 27-id space also contains
- * LSPosed/Zygisk hooks that can never fire here. A zero UID is the empty-slot
+/* Native interception stats, cumulative since KPM load. The dense KPM mapping
+ * stores the shared kernel hooks plus its optional filesystem hook; the global
+ * id space also contains LSPosed/Zygisk hooks that can never fire here. A zero UID is the empty-slot
  * sentinel (system AIDs are unconditionally excluded), claimed atomically by
  * open addressing so concurrent first hits for one UID converge on one slot. */
 static uint32_t stats_uids[MAX_TARGET_UIDS];
 static unsigned long long stats_counts[MAX_TARGET_UIDS]
-				      [VPNHIDE_KERNEL_HOOK_COUNT];
+				      [VPNHIDE_KPM_STATS_HOOK_COUNT];
 /* KernelPatch and both userspace clients cap one ctl0 reply at 4096 bytes.
  * Stats are cursor-paged by UID; status remains a small single reply. */
 #define VPNHIDE_OUT_MAX 4096
@@ -150,6 +156,10 @@ static unsigned long (*_copy_to_user)(void *, const void *, unsigned long);
 static uint64_t (*_read_sanitised_ftr_reg)(uint32_t);
 static void (*_skb_trim)(void *, unsigned int);
 static int (*_netdev_get_name)(void *, char *, int);
+static char *(*_dentry_path_raw)(void *, char *, int);
+static int (*_vfs_statfs)(const void *, void *);
+static void (*_path_put)(const void *);
+static void (*_fput)(void *);
 
 /* Linux sys_reg(3, 0, 0, 7, 1); ID_AA64MMFR1_EL1.PAN is bits [23:20]. */
 #define VPNHIDE_SYS_ID_AA64MMFR1_EL1 0x180720u
@@ -327,7 +337,7 @@ static void record_hook_hit(enum vpnhide_hook_id hook_id)
 {
 	int hook_slot, uid_slot;
 
-	hook_slot = vpnhide_kernel_hook_slot(hook_id);
+	hook_slot = vpnhide_kpm_stats_hook_slot(hook_id);
 	if (hook_slot < 0)
 		return;
 	uid_slot = stats_slot_for_uid((uint32_t)current_uid());
@@ -363,7 +373,7 @@ static unsigned long format_stats_row(char *buf, unsigned long cap,
 	int hook, have_count = 0;
 
 	vpnhide_put_hex(&b, uid);
-	for (hook = 0; hook < VPNHIDE_KERNEL_HOOK_COUNT; hook++) {
+	for (hook = 0; hook < VPNHIDE_KPM_STATS_HOOK_COUNT; hook++) {
 		unsigned long long count = __atomic_load_n(
 			&stats_counts[uid_slot][hook], __ATOMIC_RELAXED);
 
@@ -371,7 +381,7 @@ static unsigned long format_stats_row(char *buf, unsigned long cap,
 			continue;
 		have_count = 1;
 		vpnhide_putc(&b, ' ');
-		vpnhide_put_hex(&b, vpnhide_kernel_hook_id(hook));
+		vpnhide_put_hex(&b, vpnhide_kpm_stats_hook_id(hook));
 		vpnhide_putc(&b, ':');
 		vpnhide_put_hex(&b, count);
 	}
@@ -1228,6 +1238,346 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
 	finish_skb_filter(fargs, VPNHIDE_HOOK_FIB_NL_FILL_RULE);
 }
 
+/* ================================================================== */
+/*  Optional filesystem path concealment                              */
+/*                                                                    */
+/*  Like the .ko backend, KPM evaluates the resolved dentry rather    */
+/*  than a userspace pathname, so relative openat, symlink traversal, */
+/*  and bind mounts cannot bypass it. dentry_path_raw owns the rename */
+/*  lock/RCU walk; vfs_statfs distinguishes sysfs/procfs without      */
+/*  duplicating unstable dentry/super_block layouts in this module.   */
+/* ================================================================== */
+
+#define VPNHIDE_ENOENT ((uint64_t)(-2))
+#define VPNHIDE_RESOLVED_PATH_MAX 512
+#define VPNHIDE_PROC_SUPER_MAGIC 0x9fa0UL
+#define VPNHIDE_SYSFS_MAGIC 0x62656572UL
+#define VPNHIDE_READDIR_MARKER 0x76706e6869646572ULL
+
+static void *file_path(void *file)
+{
+	return file ? (char *)file + vfs_off->file_f_path : 0;
+}
+
+static int string_equals(const char *left, const char *right)
+{
+	int i;
+
+	if (!left || !right)
+		return 0;
+	for (i = 0; left[i] && right[i]; i++)
+		if (left[i] != right[i])
+			return 0;
+	return left[i] == right[i];
+}
+
+static const char *string_after_prefix(const char *value, const char *prefix)
+{
+	int i;
+
+	if (!value || !prefix)
+		return 0;
+	for (i = 0; prefix[i]; i++)
+		if (value[i] != prefix[i])
+			return 0;
+	return value + i;
+}
+
+static int segment_equals(const char *segment, unsigned int len,
+			  const char *literal)
+{
+	unsigned int i;
+
+	for (i = 0; i < len && literal[i]; i++)
+		if (segment[i] != literal[i])
+			return 0;
+	return i == len && literal[i] == '\0';
+}
+
+static int vpn_segment(const char *segment)
+{
+	char iface[VPNHIDE_IFNAMSIZ];
+	unsigned int len = 0;
+
+	if (!segment)
+		return 0;
+	while (segment[len] && segment[len] != '/') {
+		if (len + 1 >= sizeof(iface))
+			return 0;
+		iface[len] = segment[len];
+		len++;
+	}
+	if (!len)
+		return 0;
+	iface[len] = '\0';
+	return iface_is_vpn(iface);
+}
+
+static int sysfs_iface_path(const char *path)
+{
+	const char *segment = path;
+	const char *previous = 0;
+	unsigned int previous_len = 0;
+
+	if (!path || *path != '/')
+		return 0;
+	while (*segment) {
+		const char *end;
+
+		while (*segment == '/')
+			segment++;
+		if (!*segment)
+			break;
+		end = segment;
+		while (*end && *end != '/')
+			end++;
+		if (previous && segment_equals(previous, previous_len, "net") &&
+		    vpn_segment(segment))
+			return 1;
+		previous = segment;
+		previous_len = (unsigned int)(end - segment);
+		segment = end;
+	}
+	return 0;
+}
+
+static int proc_iface_path(const char *path)
+{
+	static const char *const prefixes[] = {
+		"/sys/net/ipv4/conf/",
+		"/sys/net/ipv4/neigh/",
+		"/sys/net/ipv6/conf/",
+		"/sys/net/ipv6/neigh/",
+	};
+	unsigned int i;
+
+	for (i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+		const char *iface = string_after_prefix(path, prefixes[i]);
+
+		if (iface && vpn_segment(iface))
+			return 1;
+	}
+	return 0;
+}
+
+static int proc_iface_listing(const char *path)
+{
+	return string_equals(path, "/sys/net/ipv4/conf") ||
+	       string_equals(path, "/sys/net/ipv4/neigh") ||
+	       string_equals(path, "/sys/net/ipv6/conf") ||
+	       string_equals(path, "/sys/net/ipv6/neigh");
+}
+
+static int sysfs_iface_listing(const char *path)
+{
+	const char *last = path;
+	const char *cursor;
+
+	if (!path || *path != '/')
+		return 0;
+	for (cursor = path; *cursor; cursor++)
+		if (*cursor == '/' && cursor[1])
+			last = cursor + 1;
+	return string_equals(last, "net");
+}
+
+static int error_pointer(const void *pointer)
+{
+	return (unsigned long)pointer >= (unsigned long)-4095;
+}
+
+static const char *resolved_dentry_path(const void *path, char *buf, int buflen)
+{
+	void *dentry;
+	char *resolved;
+
+	if (!path || !_dentry_path_raw)
+		return 0;
+	dentry = *(void **)((char *)path + vfs_off->path_dentry);
+	if (!dentry)
+		return 0;
+	resolved = _dentry_path_raw(dentry, buf, buflen);
+	return !resolved || error_pointer(resolved) ? 0 : resolved;
+}
+
+static unsigned long path_filesystem_magic(const void *path)
+{
+	/* struct kstatfs.f_type is its first long on every supported arm64 ABI.
+	 * Keep ample opaque storage for the helper without importing kernel headers. */
+	unsigned long statfs_words[32] = { 0 };
+
+	if (!_vfs_statfs || _vfs_statfs(path, statfs_words) != 0)
+		return 0;
+	return statfs_words[0];
+}
+
+static int hidden_iface_path(const void *path)
+{
+	char buf[VPNHIDE_RESOLVED_PATH_MAX];
+	const char *resolved = resolved_dentry_path(path, buf, sizeof(buf));
+
+	if (!resolved)
+		return 0;
+	if (sysfs_iface_path(resolved))
+		return path_filesystem_magic(path) == VPNHIDE_SYSFS_MAGIC;
+	if (proc_iface_path(resolved))
+		return path_filesystem_magic(path) == VPNHIDE_PROC_SUPER_MAGIC;
+	return 0;
+}
+
+static int iface_listing_path(const void *path)
+{
+	char buf[VPNHIDE_RESOLVED_PATH_MAX];
+	const char *resolved = resolved_dentry_path(path, buf, sizeof(buf));
+
+	if (!resolved)
+		return 0;
+	if (sysfs_iface_listing(resolved))
+		return path_filesystem_magic(path) == VPNHIDE_SYSFS_MAGIC;
+	if (proc_iface_listing(resolved))
+		return path_filesystem_magic(path) == VPNHIDE_PROC_SUPER_MAGIC;
+	return 0;
+}
+
+static int filesystem_filter_active(void)
+{
+	return filesystem_hiding_requested &&
+	       hook_active(VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS);
+}
+
+static void filename_lookup_after(hook_fargs5_t *fargs, void *udata)
+{
+	void *path = (void *)fargs->arg3;
+
+	if ((long)fargs->ret != 0 || !filesystem_filter_active() ||
+	    !hidden_iface_path(path))
+		return;
+	_path_put(path);
+	*(uint64_t *)path = 0;
+	*(uint64_t *)((char *)path + vfs_off->path_dentry) = 0;
+	fargs->ret = VPNHIDE_ENOENT;
+	record_hook_hit(VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS);
+}
+
+static void do_filp_open_after(hook_fargs3_t *fargs, void *udata)
+{
+	void *file = (void *)fargs->ret;
+
+	if (!file || error_pointer(file) || !filesystem_filter_active() ||
+	    !hidden_iface_path(file_path(file)))
+		return;
+	_fput(file);
+	fargs->ret = VPNHIDE_ENOENT;
+	record_hook_hit(VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS);
+}
+
+static void vfs_getattr_after(hook_fargs4_t *fargs, void *udata)
+{
+	if ((long)fargs->ret != 0 || !filesystem_filter_active() ||
+	    !hidden_iface_path((void *)fargs->arg0))
+		return;
+	fargs->ret = VPNHIDE_ENOENT;
+	record_hook_hit(VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS);
+}
+
+struct vpnhide_readdir_context {
+	void *actor;
+	long long pos;
+	void *original_context;
+	void *original_actor;
+};
+
+static int filter_dirent_name(const char *name, int namelen)
+{
+	char iface[VPNHIDE_IFNAMSIZ];
+	int i;
+
+	if (!name || namelen <= 0 || namelen >= (int)sizeof(iface))
+		return 0;
+	for (i = 0; i < namelen; i++)
+		iface[i] = name[i];
+	iface[namelen] = '\0';
+	return iface_is_vpn(iface);
+}
+
+static int vpnhide_filldir_int(struct vpnhide_readdir_context *ctx,
+			       const char *name, int namelen, long long offset,
+			       uint64_t ino, unsigned int d_type)
+{
+	typedef int (*actor_fn)(void *, const char *, int, long long, uint64_t,
+				unsigned int);
+	long long *original_pos;
+	int result;
+
+	if (filter_dirent_name(name, namelen)) {
+		record_hook_hit(VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS);
+		return 0;
+	}
+	original_pos =
+		(long long *)((char *)ctx->original_context + sizeof(void *));
+	*original_pos = ctx->pos;
+	result = ((actor_fn)ctx->original_actor)(ctx->original_context, name,
+						 namelen, offset, ino, d_type);
+	ctx->pos = *original_pos;
+	return result;
+}
+
+static bool vpnhide_filldir_bool(struct vpnhide_readdir_context *ctx,
+				 const char *name, int namelen,
+				 long long offset, uint64_t ino,
+				 unsigned int d_type)
+{
+	typedef bool (*actor_fn)(void *, const char *, int, long long, uint64_t,
+				 unsigned int);
+	long long *original_pos;
+	bool result;
+
+	if (filter_dirent_name(name, namelen)) {
+		record_hook_hit(VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS);
+		return true;
+	}
+	original_pos =
+		(long long *)((char *)ctx->original_context + sizeof(void *));
+	*original_pos = ctx->pos;
+	result = ((actor_fn)ctx->original_actor)(ctx->original_context, name,
+						 namelen, offset, ino, d_type);
+	ctx->pos = *original_pos;
+	return result;
+}
+
+static void iterate_dir_before(hook_fargs2_t *fargs, void *udata)
+{
+	struct vpnhide_readdir_context *wrapper =
+		(struct vpnhide_readdir_context *)&fargs->local;
+	void *context = (void *)fargs->arg1;
+
+	fargs->local.data4 = 0;
+	if (!context || !*(void **)context || !filesystem_filter_active() ||
+	    !iface_listing_path(file_path((void *)fargs->arg0)))
+		return;
+	wrapper->actor = (unsigned int)kver >= VPNHIDE_KVER(6, 1, 0) ?
+				 (void *)vpnhide_filldir_bool :
+				 (void *)vpnhide_filldir_int;
+	wrapper->pos = *(long long *)((char *)context + sizeof(void *));
+	wrapper->original_context = context;
+	wrapper->original_actor = *(void **)context;
+	fargs->local.data4 = VPNHIDE_READDIR_MARKER;
+	fargs->arg1 = (uint64_t)wrapper;
+}
+
+static void iterate_dir_after(hook_fargs2_t *fargs, void *udata)
+{
+	struct vpnhide_readdir_context *wrapper =
+		(struct vpnhide_readdir_context *)&fargs->local;
+
+	if (fargs->local.data4 != VPNHIDE_READDIR_MARKER ||
+	    !wrapper->original_context)
+		return;
+	*(long long *)((char *)wrapper->original_context + sizeof(void *)) =
+		wrapper->pos;
+	fargs->arg1 = (uint64_t)wrapper->original_context;
+}
+
 /*
  * HOOK COVERAGE — parity with vpnhide_kmod.c (the .ko). CI exercises these
  * paths in booted QEMU images for 4.9, 4.14, 4.19, 5.4, 5.10, 5.15, 6.1,
@@ -1260,6 +1610,8 @@ static void fib_rule_after(hook_fargs8_t *fargs, void *udata)
  *   fib_nl_fill_rule       RTM_GETRULE            ✓ (fib_rule iif/oif/uid)
  *   socket_bind_interface SO_BINDTODEVICE/index  ✓ (pre-mutation ENODEV;
  *                                                   state-aware raw-syscall test)
+ *   filesystem_iface_paths sysfs/proc-sys VFS    ✓ (optional boot-time group;
+ *                                                   lookup/open/stat/readdir)
  *   ( rt_fill_info — intentionally NOT hooked; unstable arg->reg ABI )
  *
  * Both host-route predicates (v4 + v6) and their address/iface logic are
@@ -1422,6 +1774,20 @@ static int resolve_symbols(void)
 	return 0;
 }
 
+static int resolve_filesystem_symbols(void)
+{
+	_dentry_path_raw = (void *)kallsyms_lookup_name("dentry_path_raw");
+	_vfs_statfs = (void *)kallsyms_lookup_name("vfs_statfs");
+	_path_put = (void *)kallsyms_lookup_name("path_put");
+	_fput = (void *)kallsyms_lookup_name("fput");
+	if (_dentry_path_raw && _vfs_statfs && _path_put && _fput)
+		return 0;
+	logki(MODNAME
+	      ": filesystem helpers unavailable (dentry_path_raw=%p vfs_statfs=%p path_put=%p fput=%p)\n",
+	      _dentry_path_raw, _vfs_statfs, _path_put, _fput);
+	return -1;
+}
+
 /* Parse and atomically apply the one supported config representation. Both the
  * runtime ctl0 path and the QEMU harness's optional load args use the frozen
  * control-v2 wire, so they cannot drift into separate parsers or semantics. */
@@ -1448,12 +1814,14 @@ static int apply_config(const char *wire, unsigned long wire_len)
 				 __ATOMIC_RELAXED);
 		__atomic_store_n(&target_masks[i],
 				 config_staging[i].hookmask &
-					 VPNHIDE_KERNEL_HOOK_MASK,
+					 (VPNHIDE_KERNEL_HOOK_MASK |
+					  VPNHIDE_KPM_HOOK_MASK),
 				 __ATOMIC_RELAXED);
 	}
 	__atomic_store_n(&nr_targets, n, __ATOMIC_RELAXED);
 	__atomic_store_n(&default_hookmask,
-			 default_mask & VPNHIDE_KERNEL_HOOK_MASK,
+			 default_mask & (VPNHIDE_KERNEL_HOOK_MASK |
+					 VPNHIDE_KPM_HOOK_MASK),
 			 __ATOMIC_RELAXED);
 	__atomic_store_n(&active_hook_mask, compute_active_hook_mask(n),
 			 __ATOMIC_RELAXED);
@@ -1486,6 +1854,43 @@ static int install_hook(const char *name, int argno, void *before, void *after,
 	return 0;
 }
 
+static void rollback_hook_registrations(unsigned int keep)
+{
+	while (nr_hook_registrations > keep) {
+		struct vpnhide_hook_registration *registration =
+			&hook_registrations[--nr_hook_registrations];
+
+		hook_unwrap(registration->function, registration->before,
+			    registration->after);
+	}
+}
+
+static int install_filesystem_hooks(void)
+{
+	unsigned int registration_start = nr_hook_registrations;
+	int getattr_argno = (unsigned int)kver < VPNHIDE_KVER(4, 11, 0) ? 2 : 4;
+
+	if (resolve_filesystem_symbols() != 0)
+		return 0;
+	if (!install_hook("filename_lookup", 5, 0,
+			  (void *)filename_lookup_after,
+			  VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS) ||
+	    !install_hook("do_filp_open", 3, 0, (void *)do_filp_open_after,
+			  VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS) ||
+	    !install_hook("vfs_getattr", getattr_argno, 0,
+			  (void *)vfs_getattr_after,
+			  VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS) ||
+	    !install_hook("iterate_dir", 2, (void *)iterate_dir_before,
+			  (void *)iterate_dir_after,
+			  VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS)) {
+		rollback_hook_registrations(registration_start);
+		installed_hooks &=
+			~vpnhide_hook_bit(VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS);
+		return 0;
+	}
+	return 1;
+}
+
 static long vpnhide_kpm_init(const char *args, const char *event,
 			     void *__user reserved)
 {
@@ -1505,11 +1910,17 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 	__atomic_store_n(&default_hookmask, 0, __ATOMIC_RELAXED);
 	__atomic_store_n(&active_hook_mask, 0, __ATOMIC_RELAXED);
 	__atomic_store_n(&debug_enabled, false, __ATOMIC_RELAXED);
+	filesystem_hiding_requested = false;
+	_dentry_path_raw = 0;
+	_vfs_statfs = 0;
+	_path_put = 0;
+	_fput = 0;
 
 	/* `kver` is KernelPatch's running-kernel version (common.h), encoded
 	 * the same way as VPNHIDE_KVER. NULL table = unsupported → bail. */
 	off = vpnhide_select_offsets((unsigned int)kver);
-	if (!off) {
+	vfs_off = vpnhide_select_vfs_offsets((unsigned int)kver);
+	if (!off || !vfs_off) {
 		logki(MODNAME
 		      ": unsupported kernel version — refusing to install\n");
 		return -1; /* never guess offsets */
@@ -1519,15 +1930,25 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 		return -1;
 	}
 
-	/* The headless QEMU harness may supply an initial snapshot through load
-	 * args. It is the same control-v2 payload as ctl0, not a second legacy UID
-	 * grammar. Production activation normally applies it through ctl0. */
+	/* Production passes the same boot-only switch as the .ko module parameter.
+	 * The headless QEMU harness may instead supply its initial control-v2
+	 * snapshot through load args; presence of the KPM-owned optional bit in that
+	 * snapshot requests the same hook group. Runtime target config still uses
+	 * ctl0 and cannot add or remove globally installed hooks. */
 	if (args && args[0]) {
-		while (args[args_len])
-			args_len++;
-		if (apply_config(args, args_len) != 0) {
-			logki(MODNAME ": invalid initial config snapshot\n");
-			return -1;
+		if (string_equals(args, "filesystem_hiding=1")) {
+			filesystem_hiding_requested = true;
+		} else if (!string_equals(args, "filesystem_hiding=0")) {
+			while (args[args_len])
+				args_len++;
+			if (apply_config(args, args_len) != 0) {
+				logki(MODNAME ": invalid KPM load arguments\n");
+				return -1;
+			}
+			filesystem_hiding_requested =
+				(__atomic_load_n(&active_hook_mask,
+						 __ATOMIC_RELAXED) &
+				 VPNHIDE_KPM_HOOK_MASK) != 0;
 		}
 	}
 
@@ -1610,16 +2031,23 @@ static long vpnhide_kpm_init(const char *args, const char *event,
 			installed_hooks &= ~vpnhide_hook_bit(
 				VPNHIDE_HOOK_SOCKET_BIND_INTERFACE);
 	}
+	if (filesystem_hiding_requested && !install_filesystem_hooks())
+		logki(MODNAME
+		      ": optional filesystem hook group failed atomically\n");
 
-	/* Healthy iff every kernel-owned hook installed; otherwise honestly
+	/* Healthy iff every requested hook installed; otherwise honestly
 	 * report partial — the `hooks` mask carries which ones (§5.1). A kver
 	 * with an incomplete offset table lands here by design. */
-	last_error = (installed_hooks == VPNHIDE_KERNEL_HOOK_MASK) ?
-			     VPNHIDE_ERR_OK :
-			     VPNHIDE_ERR_PARTIAL_HOOKS;
+	last_error =
+		(installed_hooks ==
+		 (VPNHIDE_KERNEL_HOOK_MASK |
+		  (filesystem_hiding_requested ? VPNHIDE_KPM_HOOK_MASK : 0))) ?
+			VPNHIDE_ERR_OK :
+			VPNHIDE_ERR_PARTIAL_HOOKS;
 
-	logki(MODNAME ": KPM hooks installed (mask=0x%x err=%u)\n",
-	      installed_hooks, last_error);
+	logki(MODNAME
+	      ": KPM hooks installed (mask=0x%x filesystem_hiding=%d err=%u)\n",
+	      installed_hooks, filesystem_hiding_requested ? 1 : 0, last_error);
 	return 0;
 }
 
@@ -1701,13 +2129,7 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 
 static long vpnhide_kpm_exit(void *__user reserved)
 {
-	while (nr_hook_registrations > 0) {
-		struct vpnhide_hook_registration *registration =
-			&hook_registrations[--nr_hook_registrations];
-
-		hook_unwrap(registration->function, registration->before,
-			    registration->after);
-	}
+	rollback_hook_registrations(0);
 	installed_hooks = 0;
 
 	logki(MODNAME ": KPM unloaded\n");

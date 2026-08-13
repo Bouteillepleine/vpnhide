@@ -3,9 +3,9 @@
 # apps start), and records load_status so the app can explain *why* the module
 # didn't come up without guessing. Targets are applied later, in service.sh,
 # once PackageManager is up (mirrors the .ko: post-fs-data loads, service
-# resolves UIDs). See docs/protocol.md §7.4.
+# resolves UIDs). See docs/state.md §10.
 #
-# Runtime split (protocol §7.4):
+# Runtime split (docs/state.md §10):
 #   - KPatch-Next (Magisk / KSU), keyless (d05): the activator validates the
 #     running kernel and loads here, without waiting for PackageManager.
 #   - APatch/FolkPatch: post-fs-data records a deferred status; service.sh
@@ -13,7 +13,7 @@
 #     with a saved /data/adb/vpnhide/superkey or the runtime's trusted `su`
 #     supercall grant.
 #
-# Single-active guard (protocol §1.5): if the .ko backend is installed, do NOT
+# Single-active guard (docs/storage.md §4.3): if .ko is installed, do NOT
 # load the KPM. They wrap the same kernel functions and co-residence freezes
 # the kernel. The guard is layered in userspace, fail-safe at every step:
 #   1. here (post-fs-data): defer before loading the .kpm at all;
@@ -32,6 +32,7 @@ KPM="$MODDIR/vpnhide.kpm"
 ACTIVATOR="$MODDIR/activator"
 STATUS_DIR="/data/adb/vpnhide_kpm"
 STATUS_FILE="$STATUS_DIR/load_status"
+FILESYSTEM_HIDING=""
 
 mkdir -p "$STATUS_DIR"
 
@@ -48,13 +49,14 @@ write_status() {
         printf 'uname_r=%s\n' "$(uname -r 2>/dev/null)"
         printf 'runtime=%s\n' "$1"
         printf 'loaded=%s\n' "$2"
+        printf 'filesystem_hiding=%s\n' "$FILESYSTEM_HIDING"
         printf 'reason=%s\n' "$3"
         printf 'detail=%s\n' "$(sanitize "$4")"
     } > "$STATUS_FILE.tmp" && mv "$STATUS_FILE.tmp" "$STATUS_FILE"
     chmod 0644 "$STATUS_FILE" 2>/dev/null
 }
 
-# --- single-active guard (§1.5): defer to the .ko if it's installed+enabled --
+# --- single-active guard (docs/storage.md §4.3): defer to .ko if enabled ---
 if [ -d /data/adb/modules/vpnhide_kmod ] && \
    [ ! -f /data/adb/modules/vpnhide_kmod/disable ]; then
     log -t vpnhide "kpm: .ko backend present — not loading KPM (single-active)"
@@ -71,6 +73,14 @@ if [ ! -x "$ACTIVATOR" ]; then
     write_status activator 0 missing_activator "activator missing at $ACTIVATOR"
     exit 1
 fi
+
+"$ACTIVATOR" boot-feature-enabled filesystem_iface_paths >/dev/null 2>&1
+feature_rc=$?
+case "$feature_rc" in
+    0) FILESYSTEM_HIDING=1 ;;
+    1) FILESYSTEM_HIDING=0 ;;
+    *) FILESYSTEM_HIDING="" ;;
+esac
 
 # --- APatch/FolkPatch: service activator owns load/config -------------------
 if [ -d /data/adb/ap ]; then

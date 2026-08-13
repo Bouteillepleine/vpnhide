@@ -240,10 +240,10 @@ vpnhide_compact_seq_lines(char *buf, unsigned long start, unsigned long count,
 /*  the C side of that parity — keep it byte-faithful to the spec, and pin */
 /*  every change with a vector in shared/protocol_vectors.tsv.            */
 /*                                                                        */
-/*  Roles (protocol §1.4): a kernel backend PARSES config and EMITS       */
+/*  Roles (protocol §1.3): a kernel backend PARSES config and EMITS       */
 /*  stats/status. So C implements vpnhide_parse_config + vpnhide_format_* */
-/*  only; the app side (parse stats/status, serialise config) lives in    */
-/*  Kotlin. peek_kind + clamp_to_line serve the KPM ctl0 transport (§7).  */
+/*  only; Rust activators serialise config and the Kotlin app parses      */
+/*  telemetry. peek_kind + clamp_to_line serve KPM ctl0 transport (§7).   */
 /* ====================================================================== */
 
 /*

@@ -27,6 +27,23 @@ class HookDiagnosticsTest {
     }
 
     @Test
+    fun `disabled optional kpm hooks are not reported as missing`() {
+        assertEquals(
+            KERNEL_HOOKS,
+            expectedInstalledHooks(HookIds.Backend.KPM, installed = KERNEL_HOOKS),
+        )
+    }
+
+    @Test
+    fun `installed optional kpm hooks are preserved as a typed set`() {
+        val filesystemHook = HookIds.Hook.FILESYSTEM_IFACE_PATHS
+        assertEquals(
+            KERNEL_HOOKS + filesystemHook,
+            expectedInstalledHooks(HookIds.Backend.KPM, KERNEL_HOOKS + filesystemHook),
+        )
+    }
+
+    @Test
     fun `no baseline captured yields n a`() {
         // A baseline that was never captured must read n/a — but this is driven by
         // an explicit hasBaseline flag, NOT by the baseline map being empty (a

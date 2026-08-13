@@ -94,7 +94,7 @@ class LayerStatusTest {
             summarizeNativeLayer(
                 backend,
                 outcomes,
-                installedKmodHooks = setOf(HookIds.Hook.FILESYSTEM_IFACE_PATHS),
+                installedOptionalHooks = setOf(HookIds.Hook.FILESYSTEM_IFACE_PATHS),
             ),
         )
         assertEquals(
@@ -102,7 +102,7 @@ class LayerStatusTest {
             unownedNativeLeaks(
                 backend,
                 outcomes,
-                installedKmodHooks = setOf(HookIds.Hook.FILESYSTEM_IFACE_PATHS),
+                installedOptionalHooks = setOf(HookIds.Hook.FILESYSTEM_IFACE_PATHS),
             ),
         )
     }

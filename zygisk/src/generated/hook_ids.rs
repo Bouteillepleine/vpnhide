@@ -145,6 +145,7 @@ pub const HOOK_COUNT: u32 = 28;
 /// Hooks owned by each backend: apply `mask & own`.
 pub const KERNEL_HOOK_MASK: u32 = 0x20003ff;
 pub const KMOD_HOOK_MASK: u32 = 0x8000000;
+pub const KPM_HOOK_MASK: u32 = 0x8000000;
 pub const ZYGISK_HOOK_MASK: u32 = 0x5fc0000;
 pub const LSPOSED_HOOK_MASK: u32 = 0x3fc00;
 
@@ -156,7 +157,7 @@ pub enum StatusError {
     Ok = 0,
     /// no offset table for the running kernel — refused, no hooks
     UnsupportedKver = 1,
-    /// the other kernel backend (.ko<->KPM) is loaded — refused (protocol §1.2)
+    /// the other kernel backend (.ko<->KPM) is loaded — refused (docs/storage.md §4.3)
     ConflictingBackend = 2,
     /// a required kallsyms symbol was missing — refused
     SymbolResolutionFailed = 3,

@@ -194,7 +194,7 @@ NT_LOG="$(boot_phase "" notarget)"
 # Both shell vectors and the state-aware bind probe use app uid 10000 (0x2710).
 # The harness passes the same control-v2 snapshot as runtime ctl0; load args are
 # only the transport needed before the in-VM userspace client is available.
-TARGET_CONFIG=$'vpnhide 2 config\ndebug 0\ntargets 20003ff 2710\nend 1\n'
+TARGET_CONFIG=$'vpnhide 2 config\ndebug 0\ntargets a0003ff 2710\nend 1\n'
 TG_LOG="$(boot_phase "$TARGET_CONFIG" target)"
 
 vec_count() { grep -oE "VEC $1=[0-9]+" "$2" | head -1 | grep -oE '[0-9]+$' || echo "-1"; }
@@ -203,7 +203,7 @@ panic_count() { grep -oE 'PANIC=[0-9]+' "$1" | head -1 | grep -oE '[0-9]+$' || e
 kpmload() { grep -q 'KPMLOAD=ok' "$1" && echo ok || echo FAIL; }
 keep_mode() {
 	case "$1" in
-		keep_proc_route_v4|keep_getifaddrs|keep_siocgifconf|keep_dev_ioctl|keep_policy_rule)
+		keep_proc_route_v4|keep_getifaddrs|keep_siocgifconf|keep_dev_ioctl|keep_policy_rule|keep_sysfs_readdir|keep_proc_sys_readdir)
 			echo exact
 			;;
 		*)
@@ -347,7 +347,7 @@ else
 	fi
 fi
 
-for vec in proc_route_v4 getifaddrs proc_route_v6 siocgifconf dev_ioctl netlink_route4 hostroute4 netlink_route6 hostroute6 policy_rule gai_getifaddrs; do
+for vec in proc_route_v4 getifaddrs proc_route_v6 siocgifconf dev_ioctl netlink_route4 hostroute4 netlink_route6 hostroute6 policy_rule sysfs_stat sysfs_open sysfs_readdir proc_sys_stat proc_sys_readdir gai_getifaddrs; do
 	# The gai_getifaddrs vector only exists when the bionic probe is available
 	# (baked VPNHIDE_GAI_BIN, or built from an NDK on this host). If neither is
 	# present the probe can't run, so skip the vector instead of failing it.
@@ -368,7 +368,7 @@ for vec in proc_route_v4 getifaddrs proc_route_v6 siocgifconf dev_ioctl netlink_
 	fi
 done
 
-for vec in keep_proc_route_v4 keep_getifaddrs keep_siocgifconf keep_dev_ioctl keep_netlink_route4 keep_policy_rule keep_gai_getifaddrs; do
+for vec in keep_proc_route_v4 keep_getifaddrs keep_siocgifconf keep_dev_ioctl keep_netlink_route4 keep_policy_rule keep_sysfs_readdir keep_proc_sys_readdir keep_gai_getifaddrs; do
 	if [ "$vec" = keep_gai_getifaddrs ] && [ -z "$GAI" ]; then
 		echo "RESULT $vec=SKIP (no bionic getifaddrs probe available)"; SKIP=$((SKIP+1)); continue
 	fi

@@ -106,8 +106,8 @@ results. A `null` answer (no root) does not block.
 - **SELinux can carry part of "protection", and it is invisible without the
   differential.** `/proc/net/if_inet6` and `/proc/net/dev` still have no kernel
   backend hook. `/sys/class/net` and the per-interface `/proc/sys/net` trees are
-  covered only when the optional `.ko` filesystem feature was enabled before
-  reboot; KPM does not claim them. When SELinux denies a path first, the
+  covered only when the optional kernel filesystem feature was enabled before
+  reboot. When SELinux denies a path first, the
   differential attributes that result to SELinux rather than overstating backend
   coverage. This is also why permissive devices need an explicit warning.
 - **The VPN lives in protected sockets + per-UID policy tables, not the main route
@@ -127,7 +127,8 @@ results. A `null` answer (no root) does not block.
 
 ## 7. Native check → owning hook (KPM/kmod), verified on Pixel 4a
 
-The kernel backend's 11 logical hooks map to the diagnostic checks below; the "gaps" rows are
+The kernel backend's 11 always-on hooks plus its optional filesystem hook map
+to the diagnostic checks below; the "gaps" rows are
 SELinux/zygisk territory by design, not bugs. Full hiding matrix in
 [detection-vectors.md](detection-vectors.md).
 
@@ -142,8 +143,8 @@ SELinux/zygisk territory by design, not bugs. Full hiding matrix in
 | `proc_ipv6_route` | `/proc/net/ipv6_route` | `ipv6_route_seq_show` | |
 | `proc_if_inet6` | `/proc/net/if_inet6` | **(none)** | no kernel seq_show hook — zygisk `openat` or SELinux only |
 | `proc_dev` | `/proc/net/dev` | **(none)** | zygisk `openat` or SELinux only |
-| `sys_class_net` | `/sys/class/net` | `filesystem_iface_paths` (`.ko`, optional) | reboot-gated; otherwise SELinux only |
-| `proc_sys_net` | `/proc/sys/net/*/{conf,neigh}` | `filesystem_iface_paths` (`.ko`, optional) | reboot-gated; otherwise SELinux only |
+| `sys_class_net` | `/sys/class/net` | `filesystem_iface_paths` (`.ko`/KPM, optional) | reboot-gated; otherwise SELinux only |
+| `proc_sys_net` | `/proc/sys/net/*/{conf,neigh}` | `filesystem_iface_paths` (`.ko`/KPM, optional) | reboot-gated; otherwise SELinux only |
 
 `socket_bind_interface` intentionally has no app-process root-differential row
 yet. An honest test needs the hidden interface name/index from the root view,

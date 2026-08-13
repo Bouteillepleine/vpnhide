@@ -3,7 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Deserialize;
 use vpnhide_protocol::Target;
 use vpnhide_protocol::format_config;
-use vpnhide_protocol::hook_ids::{Hook, KERNEL_HOOK_MASK, KMOD_HOOK_MASK, ZYGISK_HOOK_MASK};
+use vpnhide_protocol::hook_ids::{
+    Hook, KERNEL_HOOK_MASK, KMOD_HOOK_MASK, KPM_HOOK_MASK, ZYGISK_HOOK_MASK,
+};
 
 use crate::ports::build_ports_ruleset;
 use crate::{
@@ -150,7 +152,7 @@ impl NativeHookFamily {
     fn full_set(self) -> HookSet {
         match self {
             NativeHookFamily::Kmod => HookSet::from_bits(KERNEL_HOOK_MASK | KMOD_HOOK_MASK),
-            NativeHookFamily::Kpm => HookSet::from_bits(KERNEL_HOOK_MASK),
+            NativeHookFamily::Kpm => HookSet::from_bits(KERNEL_HOOK_MASK | KPM_HOOK_MASK),
             NativeHookFamily::Zygisk => HookSet::from_bits(ZYGISK_HOOK_MASK),
         }
     }

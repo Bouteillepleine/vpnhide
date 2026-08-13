@@ -104,7 +104,7 @@ internal fun FilesystemHidingSettingsSection() {
             subtitle = filesystemHidingStatusText(runtimeState),
             icon = Icons.Default.VisibilityOff,
             checked = enabled,
-            enabled = targets != null && !saving && (runtimeState.kmodInstalled || enabled),
+            enabled = targets != null && !saving && (runtimeState.kernelBackendInstalled || enabled),
             onCheckedChange = { value ->
                 if (value) confirmationOpen = true else persist(false)
             },

@@ -106,7 +106,7 @@ fn projects_native_roles_to_wire() {
         "vpnhide 2 config\n\
          debug 1\n\
          targets 40 27fa\n\
-         targets 20003ff 278b f69cb\n\
+         targets a0003ff 278b f69cb\n\
          end 3\n",
     );
 }
@@ -132,7 +132,7 @@ fn native_projection_targets_only_the_main_profile_copy_of_vpnhide() {
         project_native_with_resolver(&cfg, &resolver),
         "vpnhide 2 config\n\
          debug 0\n\
-         targets 20003ff 278b 27fa f6a3a\n\
+         targets a0003ff 278b 27fa f6a3a\n\
          end 3\n",
     );
 }
@@ -162,7 +162,7 @@ fn native_projection_drops_platform_aids_but_keeps_preinstalled_apps() {
         project_native_with_resolver(&cfg, &resolver),
         "vpnhide 2 config\n\
          debug 0\n\
-         targets 20003ff 27fa f6a3a\n\
+         targets a0003ff 27fa f6a3a\n\
          end 2\n",
     );
 }
@@ -190,7 +190,7 @@ fn kmod_projection_includes_the_optional_filesystem_hook() {
     );
     assert_eq!(
         project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Kpm),
-        "vpnhide 2 config\ndebug 0\ntargets 20003ff 278b\nend 1\n",
+        "vpnhide 2 config\ndebug 0\ntargets a0003ff 278b\nend 1\n",
     );
 }
 
@@ -368,7 +368,7 @@ fn parses_per_hook_java_selection_without_breaking_native() {
         project_native_with_resolver(&cfg, &resolver),
         "vpnhide 2 config\n\
          debug 0\n\
-         targets 20003ff 278b 278c\n\
+         targets a0003ff 278b 278c\n\
          end 2\n",
     );
 }

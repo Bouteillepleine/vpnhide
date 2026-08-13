@@ -71,7 +71,7 @@ single-record sizes from the real formatter, for 5-digit uids:
 | 2 hooks, counts < 256 | 25 | 160 |
 | 4 hooks, counts < 65k | 51 | 79 |
 | 8 hooks, counts ~1e6 | 103 | 39 |
-| all 11 kernel hooks, saturated u64 | 261 | 15 |
+| all 12 KPM hooks, saturated u64 | ~285 | ~14 |
 
 The two backends are not in the same position:
 
@@ -81,11 +81,11 @@ The two backends are not in the same position:
 - **kmod** — `/proc/vpnhide_ctl` is a real `seq_operations` stream with one UID
   per record. There is no whole-output buffer or formatter ceiling.
 
-KPM keeps no serialisation snapshot. Its live table stores only the 11
-kernel-owned hook counters rather than the 27-id global registry, and a zero UID
+KPM keeps no serialisation snapshot. Its live table stores only the 11 shared
+kernel hook counters plus its optional filesystem hook rather than the 28-id global registry, and a zero UID
 is the hash-table empty sentinel, so no separate `stats_used` array is needed.
 At the current 160-target cap, including the static config parse scratch, the
-resulting `.bss` is **18004 B**. That is still below the **23120 B** used by the
+resulting `.bss` is **19080 B**. That is still below the **23120 B** used by the
 old 64-target layout before compact storage and cursor output.
 
 ## Raising a ceiling — options and cost
@@ -94,8 +94,8 @@ Ordered by cost. None of these are scheduled; this is the menu.
 
 ### Control
 
-1. **The shipped cap is 160.** Compact 11-hook stats storage and cursor output
-   keep KPM `.bss` at 18004 B, and config parsing uses serialized static scratch
+1. **The shipped cap is 160.** Compact 12-hook stats storage and cursor output
+   keep KPM `.bss` at 19080 B, and config parsing uses serialized static scratch
    rather than growing the KPM stack. A typical one-mask, five-digit-UID wire is
    848 B and fits the KPM transport; maximum-width UIDs or many distinct masks
    may hit the independent byte limit sooner. The activator validates the exact

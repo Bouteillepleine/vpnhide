@@ -104,8 +104,8 @@ internal enum class FlashableModuleKind { Kmod, Kpm, Zygisk, Ports }
 internal enum class MultiNativeSeverity { None, Warning, Error }
 
 /**
- * Severity of having more than one native backend active at runtime (protocol
- * §1.5). The .ko + KPM pair is an ERROR because they wrap the same kernel
+ * Severity of having more than one native backend active at runtime
+ * (docs/storage.md §4.3). The .ko + KPM pair is an ERROR because they wrap the same kernel
  * functions and co-residence can hard-freeze the kernel; any other active
  * overlap is a WARNING (merely redundant — the backstops pick one).
  */
@@ -125,7 +125,7 @@ internal fun classifyMultiNative(
 /**
  * True when the KPM boot script recorded that it deliberately stood down this
  * boot because the .ko backend is present (`load_status` runtime=conflict for
- * the current boot_id — see protocol §1.5 and kmod/kpm/module/post-fs-data.sh).
+ * the current boot_id — see docs/storage.md §4.3 and kmod/kpm/module/post-fs-data.sh).
  *
  * This is the only reliable way to surface the .ko+KPM co-installation: the
  * [classifyMultiNative] Error needs *both* backends active, but two active
@@ -142,7 +142,7 @@ internal fun kpmDeferredForConflict(
  * True when the KPM boot script stood down this boot because it runs under
  * APatch/FolkPatch and has no usable saved SuperKey or trusted `su` token
  * (`runtime=apatch, loaded=0, detail=awaiting_superkey` for the current
- * boot_id — see kmod/kpm/module/service.sh and protocol §1.5).
+ * boot_id — see kmod/kpm/module/service.sh and docs/storage.md §4.3).
  *
  * Distinct from [kpmDeferredForConflict] (that writes `runtime=conflict`): here the
  * module is installed and healthy but dormant, waiting for an APatch SuperKey
@@ -1626,7 +1626,12 @@ internal suspend fun loadDashboardState(
     // differential and so aren't in nativeOutcomes. Set during the protection
     // computation, surfaced via the hero warning so a leak there is never invisible.
     var unownedNativeLeakCount = 0
-    val installedKmodHooks = installedHooks(shellSnapshot["kmod_state"].orEmpty())
+    val installedOptionalHooks =
+        when (nativeBackend.id) {
+            NativeBackendId.Kmod -> installedHooks(shellSnapshot["kmod_state"].orEmpty())
+            NativeBackendId.Kpm -> installedHooks(shellSnapshot["kpm_state"].orEmpty())
+            else -> emptySet()
+        }
     // Single source of truth: the cache does all the gating (VPN off / needs-restart /
     // self-not-routed) through the one fold. awaitTerminal returns the terminal state
     // itself, so the reason for "no results" (blocked gate vs a failed run) is carried
@@ -1649,7 +1654,7 @@ internal suspend fun loadDashboardState(
                         backend = nativeBackend,
                         lsposedActive = lsposed is LsposedState.Active,
                         complete = true,
-                        installedKmodHooks = installedKmodHooks,
+                        installedOptionalHooks = installedOptionalHooks,
                     )
                 unownedNativeLeakCount = report.native.unownedLeaks
                 ProtectionCheck.Checked(report.native.status, report.java.status)

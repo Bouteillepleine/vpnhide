@@ -94,6 +94,13 @@ echo "VEC hostroute6=$(run_as_target "ip -6 route show table all 2>/dev/null | g
 echo "VEC netlink_route6=$(run_as_target 'ip -6 route show table all 2>/dev/null | grep -c vpn0')"  # rt6_fill_node
 echo "VEC policy_rule=$(run_as_target 'ip rule show 2>/dev/null | grep -c 199')"                    # fib_nl_fill_rule
 echo "VEC keep_policy_rule=$(run_as_target "ip rule show 2>/dev/null | grep -c 'lookup main'")"
+echo "VEC sysfs_stat=$(run_as_target 'test -e /sys/class/net/vpn0 && echo vpn0' | grep -c vpn0)"
+echo "VEC sysfs_open=$(run_as_target 'cat /sys/class/net/vpn0/mtu 2>/dev/null && echo vpn0' | grep -c vpn0)"
+echo "VEC sysfs_readdir=$(run_as_target 'ls /sys/class/net 2>/dev/null' | grep -c vpn0)"
+echo "VEC keep_sysfs_readdir=$(run_as_target 'ls /sys/class/net 2>/dev/null' | grep -c eth0)"
+echo "VEC proc_sys_stat=$(run_as_target 'test -e /proc/sys/net/ipv4/conf/vpn0 && echo vpn0' | grep -c vpn0)"
+echo "VEC proc_sys_readdir=$(run_as_target 'ls /proc/sys/net/ipv4/conf 2>/dev/null' | grep -c vpn0)"
+echo "VEC keep_proc_sys_readdir=$(run_as_target 'ls /proc/sys/net/ipv4/conf 2>/dev/null' | grep -c eth0)"
 # Native getifaddrs() (RTM_GETLINK+RTM_GETADDR) — isolates inet*_fill_ifaddr.
 if [ -x /gai ]; then
 	GAI_OUT=$(run_as_target /gai 2>/dev/null)

@@ -28,8 +28,24 @@ All filtering is **per-UID**: only processes whose UID is a `target` in the conf
 The VFS row is additionally **reboot-gated and disabled by default**. Enable
 **Settings → Experimental protection → Hide VPN filesystem paths** and reboot.
 When disabled, those four probes are not registered, so the default boot pays
-no VFS hot-path trampoline cost. The setting is `.ko`-only; KPM does not claim
-this coverage.
+no VFS hot-path trampoline cost. The same canonical setting also controls the
+equivalent optional KPM hooks.
+
+### Optional filesystem hook loader contract
+
+`filesystem_hiding` is a read-only boolean module parameter consumed only by
+`insmod`; it is not a control-v2 field. The shipped `post-fs-data.sh` asks the
+activator whether canonical boot feature `filesystem_iface_paths` is enabled and
+passes `filesystem_hiding=1` or `filesystem_hiding=0` accordingly. Omitting the
+parameter has the same disabled behavior as `0`.
+
+When enabled, module init registers `filename_lookup`, `do_filp_open`,
+`vfs_getattr`, and `iterate_dir` as one optional group. A registration failure
+rolls the whole group back; telemetry then omits hook bit 27 and reports a
+partial install. The control-v2 target mask remains a separate per-UID gate:
+loading the group does not hide paths for targets whose mask omits
+`filesystem_iface_paths`. Because the parameter is init-only and the module is
+not unloadable, changing it requires a reboot.
 
 ## Why kernel-level?
 
@@ -68,9 +84,13 @@ or remove it through the root module manager and reboot to apply that change;
 ordinary `rmmod` is not supported.
 
 On boot:
+
 - `post-fs-data.sh` reads the reboot-gated filesystem setting through the
-  activator, then runs `insmod` with the corresponding module parameter
-- `service.sh` runs the Rust activator, which reads `/data/system/vpnhide_config.json`, enumerates Android users, resolves package names for each user separately, and emits a `vpnhide 2 config` snapshot (docs/protocol.md) to `/proc/vpnhide_ctl`
+  activator, then runs `insmod` with the corresponding module parameter.
+- `service.sh` runs the Rust activator, which reads
+  `/data/system/vpnhide_config.json`, enumerates Android users, resolves package
+  names for each user separately, and emits a `vpnhide 2 config` snapshot
+  ([protocol](../docs/protocol.md)) to `/proc/vpnhide_ctl`.
 
 ### Target management
 
@@ -88,9 +108,10 @@ adb shell su -c '/data/adb/modules/vpnhide_kmod/activator'
 adb shell su -c 'printf "vpnhide 2 config\ndebug 0\ntargets a0003ff 28b7\nend 1\n" > /proc/vpnhide_ctl'
 ```
 
-The app writes to **two layers** simultaneously:
-1. `/data/system/vpnhide_config.json` -- persistent package-keyed roles (survives module updates and reboots)
-2. runtime channels derived from it -- `/proc/vpnhide_ctl` for the kernel module, direct canonical self-read for the [lsposed](../lsposed/) module's system_server hooks
+The app first writes `/data/system/vpnhide_config.json`, the persistent
+package-keyed desired state, and then invokes the selected native activator. The
+kmod activator derives `/proc/vpnhide_ctl` from that JSON; LSPosed independently
+reads the canonical JSON from `system_server`.
 
 ## Combined use with system_server hooks
 

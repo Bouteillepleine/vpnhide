@@ -1,12 +1,13 @@
 use std::{env, process};
 
 use vpnhide_activator::{
-    KpmBootOutcome, Result, activate_kpm, activate_kpm_boot, load_kpm_boot, read_kpm_state,
-    read_kpm_stats, read_kpm_status,
+    KpmBootOutcome, Result, activate_kpm, activate_kpm_boot, kernel_boot_feature_enabled,
+    load_kpm_boot, read_kpm_state, read_kpm_stats, read_kpm_status,
 };
 
 /// Exit code returned from `--boot-wait` when the KPM stood down because the
-/// .ko backend is present (protocol §1.5). Distinct from 0 (configured) and 1
+/// .ko backend is present (docs/storage.md §4.3). Distinct from 0 (configured)
+/// and 1
 /// (error) so service.sh can record a truthful `conflict` load_status instead
 /// of falsely reporting the KPM as configured.
 const EXIT_DEFERRED_CONFLICT: i32 = 3;
@@ -32,6 +33,9 @@ fn run() -> Result<i32> {
         [] => activate_kpm().map(|()| 0),
         [arg] if arg == "--boot-wait" => Ok(boot_exit_code(activate_kpm_boot()?)),
         [arg] if arg == "--load-only" => Ok(boot_exit_code(load_kpm_boot()?)),
+        [command, feature] if command == "boot-feature-enabled" => {
+            Ok(if kernel_boot_feature_enabled(feature)? { 0 } else { 1 })
+        }
         [arg] if arg == "status" => {
             print!("{}", read_kpm_status()?);
             Ok(0)
@@ -44,7 +48,10 @@ fn run() -> Result<i32> {
             print!("{}", read_kpm_state()?);
             Ok(0)
         }
-        _ => Err("usage: activator [--boot-wait|--load-only|status|stats|state]".into()),
+        _ => Err(
+            "usage: activator [--boot-wait|--load-only|boot-feature-enabled <name>|status|stats|state]"
+                .into(),
+        ),
     }
 }
 

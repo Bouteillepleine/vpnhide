@@ -216,7 +216,7 @@ fun DashboardScreen(
         // Module status cards — one grouped block (byIndex corners).
         SectionHeader(stringResource(R.string.dashboard_modules))
         Spacer(Modifier.height(8.dp))
-        // Java, the one active native backend (§1.5), and the separate ports feature.
+        // Java, one native backend (docs/storage.md §4.3), and the separate ports feature.
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
             JavaBackendCard(loadedState.lsposed, index = 0, count = 3)
             NativeBackendCard(loadedState.nativeBackend, loadedState.nativeTargetCount, selfNeedsRestart, index = 1, count = 3)
