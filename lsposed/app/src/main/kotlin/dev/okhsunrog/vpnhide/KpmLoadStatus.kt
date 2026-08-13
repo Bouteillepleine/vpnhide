@@ -26,11 +26,19 @@ internal data class KpmLoadStatus(
     val unameR: String?,
     val runtime: KpmRuntime,
     val loaded: Boolean?,
+    val filesystemHiding: Boolean?,
     val reason: KpmFailureReason,
     val detail: String?,
 ) {
     fun isFreshFor(currentBootId: String): Boolean = !bootId.isNullOrEmpty() && bootId == currentBootId.trim()
 }
+
+private fun Map<String, String>.optionalBoolean(key: String): Boolean? =
+    when (this[key]?.trim()) {
+        "1" -> true
+        "0" -> false
+        else -> null
+    }
 
 internal fun parseKpmLoadStatus(raw: String): KpmLoadStatus {
     val values = parseKeyValueLines(raw)
@@ -46,12 +54,8 @@ internal fun parseKpmLoadStatus(raw: String): KpmLoadStatus {
                 "conflict" -> KpmRuntime.Conflict
                 else -> KpmRuntime.Unknown
             },
-        loaded =
-            when (values["loaded"]?.trim()) {
-                "1" -> true
-                "0" -> false
-                else -> null
-            },
+        loaded = values.optionalBoolean("loaded"),
+        filesystemHiding = values.optionalBoolean("filesystem_hiding"),
         reason =
             when (values["reason"]?.trim()) {
                 "ok" -> KpmFailureReason.Ok

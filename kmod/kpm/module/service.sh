@@ -7,6 +7,7 @@ ACTIVATOR="$MODDIR/activator"
 KPM="$MODDIR/vpnhide.kpm"
 STATUS_DIR="/data/adb/vpnhide_kpm"
 STATUS_FILE="$STATUS_DIR/load_status"
+FILESYSTEM_HIDING=""
 
 sanitize() {
     printf '%s' "$1" | tr '\n' ' ' | cut -c 1-240
@@ -20,10 +21,32 @@ write_status() {
         printf 'uname_r=%s\n' "$(uname -r 2>/dev/null)"
         printf 'runtime=%s\n' "$1"
         printf 'loaded=%s\n' "$2"
+        printf 'filesystem_hiding=%s\n' "$FILESYSTEM_HIDING"
         printf 'reason=%s\n' "$3"
         printf 'detail=%s\n' "$(sanitize "$4")"
     } > "$STATUS_FILE.tmp" && mv "$STATUS_FILE.tmp" "$STATUS_FILE"
     chmod 0644 "$STATUS_FILE" 2>/dev/null
+}
+
+filesystem_hiding_for_load() {
+    current_boot_id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
+    status_boot_id="$(sed -n 's/^boot_id=//p' "$STATUS_FILE" 2>/dev/null | head -n 1)"
+    status_loaded="$(sed -n 's/^loaded=//p' "$STATUS_FILE" 2>/dev/null | head -n 1)"
+    status_feature="$(sed -n 's/^filesystem_hiding=//p' "$STATUS_FILE" 2>/dev/null | head -n 1)"
+    if [ "$status_boot_id" = "$current_boot_id" ] && [ "$status_loaded" = 1 ]; then
+        case "$status_feature" in
+            0|1)
+                printf '%s' "$status_feature"
+                return
+                ;;
+        esac
+    fi
+
+    "$ACTIVATOR" boot-feature-enabled filesystem_iface_paths >/dev/null 2>&1
+    case "$?" in
+        0) printf '1' ;;
+        1) printf '0' ;;
+    esac
 }
 
 apply_at_boot() {
@@ -47,6 +70,8 @@ apply_at_boot() {
         write_status activator 0 missing_kpm "vpnhide.kpm missing at $KPM"
         return 1
     fi
+
+    FILESYSTEM_HIDING="$(filesystem_hiding_for_load)"
 
     out="$("$ACTIVATOR" --boot-wait 2>&1)"
     rc=$?

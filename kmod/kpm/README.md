@@ -144,6 +144,14 @@ this is independent of KPatch-Next's generic `package_config` →
 config and pushes the same text wire through APatch/FolkPatch direct supercalls
 or KPatch-Next `kpatch kpm ctl0`.
 
+Optional boot features are intentionally outside that runtime wire. When the
+canonical `settings.kernelBootFeatures` set contains `filesystem_iface_paths`,
+the activator loads the KPM with `filesystem_hiding=1`. That atomically adds the
+four global VFS hooks (`filename_lookup`, `do_filp_open`, `vfs_getattr`, and
+`iterate_dir`); without the argument none of those hot-path hooks is installed.
+Changing the setting therefore takes effect after reboot, just like the `.ko`
+module parameter.
+
 ## Safety — read before testing on a device
 
 Inline hooks have **no kprobe safety net**: a wrong field offset in
@@ -162,10 +170,11 @@ offset table but can still fail to register a probe. Therefore:
 
 ## Validation and support boundary
 
-The KPM implements the same 11 logical kernel hooks as the `.ko`, including
-pre-mutation denial of `SO_BINDTODEVICE` and `SO_BINDTOIFINDEX`. The bind probe
-checks socket state from another UID so an errno-only override cannot pass.
-Shared host tests cover the filtering and wire-format logic.
+The KPM implements the same 11 always-on logical kernel hooks as the `.ko`,
+including pre-mutation denial of `SO_BINDTODEVICE` and `SO_BINDTOIFINDEX`, plus
+the optional filesystem-path hook group. The bind probe checks socket state
+from another UID so an errno-only override cannot pass. Shared host tests cover
+the filtering and wire-format logic.
 
 CI builds one relocatable `.kpm`, embeds it with KernelPatch, and boots these
 reference images:
@@ -185,9 +194,10 @@ reference images:
 | android16-6.12 | Android DDK GKI |
 
 For each image, the harness runs target/non-target A/B checks for interface,
-address, route, policy-rule, ioctl, and socket-bind behavior and checks for a
-kernel panic. The field offsets in `kver_offsets.h` come from the corresponding
-kernel sources and are accepted only after this harness passes.
+address, route, policy-rule, ioctl, socket-bind, and filesystem-path behavior
+and checks for a kernel panic. The field offsets in `kver_offsets.h` and the
+versioned `struct file::f_path` references come from the corresponding kernel
+sources and are accepted only after this harness passes.
 
 This matrix validates those reference kernel configurations under QEMU. Vendor
 trees can change structure layouts, compiler-generated symbols, configs, or CFI

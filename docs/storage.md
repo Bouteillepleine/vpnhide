@@ -139,11 +139,13 @@ The `rememberSuperkey` boolean lives here (it is a preference, not a secret). Th
 superkey itself does **not** (§6).
 
 `kernelBootFeatures` is the desired set of optional, reboot-gated kernel
-features. The current `filesystem_iface_paths` entry enables the `.ko` VFS
-probes. The kmod post-fs-data loader asks its Rust activator whether that entry
-is present before `insmod`; changing the list in the app therefore requires a
-reboot. When an entry is absent, its probes are never registered. Unknown names
-are preserved so newer versions can extend the list without a schema migration.
+features. The current `filesystem_iface_paths` entry enables the optional VFS
+hooks in either kernel backend. The `.ko` loader asks its Rust activator whether
+that entry is present before `insmod`; the KPM activator projects the same entry
+to the boot-time `filesystem_hiding=1` load argument. Changing the list in the
+app therefore requires a reboot. When an entry is absent, the hooks are never
+registered. Unknown names are preserved so newer versions can extend the list
+without a schema migration.
 
 Ports are intentionally controlled in the canonical JSON, not in the native text
 protocol. `"ports": true` with no `portPolicy` is the legacy/default behavior:
@@ -289,8 +291,9 @@ A common confusion (they are *not* the same):
 - **`status`: `hooks <mask>`** — per-backend, what is *actually installed*: did all
   the backend's hooks register this boot? It is capability/health, not per-target.
   Lets the app show "requested vs active" and detect a partial install
-  (`error = partial_hooks`). So `hooks 0x20003ff` in a status read means "all 11 kernel
-  hooks are installed in this backend", **not** "this target's hooks".
+  (`error = partial_hooks`). So `hooks 0x20003ff` in a status read means "all 11
+  shared kernel hooks are installed in this backend"; when filesystem hiding is
+  active, bit 27 is also present. This is **not** a target's hook selection.
 
 ### 5.2 Config and stats don't collide
 

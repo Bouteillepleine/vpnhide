@@ -210,7 +210,9 @@ pub fn load_kpm_boot() -> Result<KpmBootOutcome> {
             return Ok(KpmBootOutcome::AwaitingAuthentication);
         }
     };
-    client.ensure_loaded()?;
+    client.ensure_loaded(KpmLoadOptions {
+        filesystem_hiding: kernel_boot_feature_enabled(KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS)?,
+    })?;
     Ok(KpmBootOutcome::Configured)
 }
 
@@ -249,7 +251,12 @@ fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Resu
         }
         return Ok(KpmBootOutcome::UnsupportedKernel);
     }
-    let wire = project_native_with_pm_wait(&read_canonical()?, NativeHookFamily::Kpm, wait)?;
+    let canonical = read_canonical()?;
+    let filesystem_hiding = parse_canonical(&canonical)?
+        .settings
+        .kernel_boot_features
+        .contains(KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS);
+    let wire = project_native_with_pm_wait(&canonical, NativeHookFamily::Kpm, wait)?;
     // Re-check after the (possibly long) PackageManager wait: the .ko may have
     // been loaded meanwhile, in which case we must not configure the KPM.
     if skip_kpm_for_kmod_conflict(conflict_is_error)? {
@@ -262,7 +269,7 @@ fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Resu
         }
         KpmClientDetection::AwaitingAuthentication(detail) => return Err(detail.into()),
     };
-    client.ensure_loaded()?;
+    client.ensure_loaded(KpmLoadOptions { filesystem_hiding })?;
     client.ctl0_config(&wire)?;
     Ok(KpmBootOutcome::Configured)
 }

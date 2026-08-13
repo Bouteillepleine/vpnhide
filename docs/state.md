@@ -110,7 +110,7 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 
 | File | Format | Writer | Reader | Lifetime |
 |---|---|---|---|---|
-| `load_status` | `key=value`: timestamp, boot_id, uname_r, runtime, loaded, reason, detail | KPM `post-fs-data.sh` / `service.sh` | app dashboard | overwritten each boot |
+| `load_status` | `key=value`: timestamp, boot_id, uname_r, runtime, loaded, filesystem_hiding, reason, detail | KPM `post-fs-data.sh` / `service.sh` | app dashboard | overwritten each boot |
 | `ctl.lock` | empty advisory-lock inode, mode `0600` | KPM activator | KPM activators serialize ctl0 config/status/stats calls with `flock` | while the module is installed; removed on uninstall |
 
 ### `/data/adb/vpnhide_ports/`

@@ -439,13 +439,13 @@
     <string name="settings_experimental_protection">Experimental protection</string>
     <string name="settings_filesystem_hiding">Hide VPN filesystem paths</string>
     <string name="settings_filesystem_hiding_sub">Experimental and potentially expensive: this hook intercepts global filesystem lookup and directory-enumeration paths and may slow the device. No known real-world apps currently rely on this detection vector; standard Native protection should normally be sufficient. Leave it off unless you specifically need to test filesystem-path detection.</string>
-    <string name="settings_filesystem_hiding_unavailable">Requires the kmod kernel module.</string>
+    <string name="settings_filesystem_hiding_unavailable">Requires the kmod or KPM kernel backend.</string>
     <string name="settings_filesystem_hiding_disabled">Off — standard Native protection is recommended.</string>
     <string name="settings_filesystem_hiding_active">Active for selected Native targets.</string>
     <string name="settings_filesystem_hiding_pending_enable">Will be enabled after reboot.</string>
     <string name="settings_filesystem_hiding_pending_disable">Will be disabled after reboot.</string>
     <string name="settings_filesystem_hiding_boot_error">Could not read the boot setting: %1$s</string>
-    <string name="settings_filesystem_hiding_setup_error">kmod loaded, but the filesystem hooks failed to install. Check Diagnostics before rebooting again.</string>
+    <string name="settings_filesystem_hiding_setup_error">The kernel backend loaded, but the filesystem hooks failed to install. Check Diagnostics before rebooting again.</string>
     <string name="settings_filesystem_hiding_confirm_title">Enable experimental filesystem hooks?</string>
     <string name="settings_filesystem_hiding_confirm_body">These global VFS hooks may slow filesystem operations and are not currently needed for known real-world apps. Ordinary Native protection should normally be sufficient. Enable them only for explicit filesystem-path detection testing; a reboot is required.</string>
     <string name="settings_filesystem_hiding_enable">Enable anyway</string>

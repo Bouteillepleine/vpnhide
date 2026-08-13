@@ -15,10 +15,57 @@ class FilesystemHidingDataTest {
     }
 
     @Test
-    fun `feature is unavailable without kmod`() {
+    fun `feature is unavailable without a kernel backend`() {
         assertEquals(
             FilesystemHidingStatus.Unavailable,
             resolveFilesystemHidingState(desiredEnabled = false, sections = emptyMap()).status,
+        )
+    }
+
+    @Test
+    fun `KPM owns the same reboot gated feature`() {
+        assertEquals(
+            FilesystemHidingStatus.Active,
+            resolveFilesystemHidingState(
+                desiredEnabled = true,
+                sections = sections(hookInstalled = true, backend = HookIds.Backend.KPM),
+            ).status,
+        )
+        assertEquals(
+            FilesystemHidingStatus.PendingEnable,
+            resolveFilesystemHidingState(
+                desiredEnabled = true,
+                sections = sections(backend = HookIds.Backend.KPM),
+            ).status,
+        )
+    }
+
+    @Test
+    fun `active KPM status wins over an installed inactive kmod`() {
+        val sections =
+            sections(hookInstalled = true, backend = HookIds.Backend.KPM) +
+                ("kmod_module_dir" to "1")
+
+        assertEquals(
+            FilesystemHidingStatus.Active,
+            resolveFilesystemHidingState(desiredEnabled = true, sections = sections).status,
+        )
+    }
+
+    @Test
+    fun `KPM partial hook setup is reported as an error`() {
+        assertEquals(
+            FilesystemHidingStatus.HookSetupError,
+            resolveFilesystemHidingState(
+                desiredEnabled = true,
+                sections =
+                    sections(
+                        filesystemRequested = true,
+                        moduleLoaded = true,
+                        backend = HookIds.Backend.KPM,
+                        statusError = HookIds.StatusError.PARTIAL_HOOKS,
+                    ),
+            ).status,
         )
     }
 
@@ -85,6 +132,8 @@ class FilesystemHidingDataTest {
         moduleLoaded: Boolean = false,
         configExit: Int = if (filesystemRequested) 0 else 1,
         configError: String = "",
+        backend: HookIds.Backend = HookIds.Backend.KMOD,
+        statusError: HookIds.StatusError = HookIds.StatusError.OK,
     ): Map<String, String> {
         val hookMask =
             if (hookInstalled) {
@@ -96,12 +145,12 @@ class FilesystemHidingDataTest {
             Protocol.formatStatus(
                 Protocol.Status(
                     backend =
-                        HookIds.Backend.KMOD.id
+                        backend.id
                             .toLong(),
                     kver = 0,
                     hooks = hookMask,
                     error =
-                        HookIds.StatusError.OK.code
+                        statusError.code
                             .toLong(),
                 ),
             )
@@ -113,11 +162,12 @@ class FilesystemHidingDataTest {
             filesystem_config_error=$configError
             loaded=${if (moduleLoaded) 1 else 0}
             """.trimIndent()
+        val loadStatusKey = if (backend == HookIds.Backend.KPM) "kpm_load_status" else "kmod_load_status"
         return mapOf(
-            "kmod_module_dir" to "1",
-            "kmod_state" to status,
+            (if (backend == HookIds.Backend.KPM) "kpm_module_dir" else "kmod_module_dir") to "1",
+            (if (backend == HookIds.Backend.KPM) "kpm_state" else "kmod_state") to status,
             "current_boot_id" to "test-boot",
-            "kmod_load_status" to loadStatus,
+            loadStatusKey to loadStatus,
         )
     }
 }

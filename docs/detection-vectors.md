@@ -118,15 +118,15 @@ Legend: ✅ covered · ⚠️ partial / conditional · — not applicable to tha
 | `ioctl(SIOCGIF{FLAGS,MTU,INDEX,HWADDR,ADDR})` by name | native | ✅ `dev_ioctl` | ✅ `dev_ioctl` | ✅ pre-screen | — | |
 | netlink `RTM_GETLINK` dump | `recvmsg`/`recvfrom` of `RTM_NEWLINK` | ✅ `rtnl_fill_ifinfo` | ✅ `rtnl_fill_ifinfo` | ✅ filter by index | — | |
 | netlink `RTM_GETADDR` dump | `RTM_NEWADDR` | ✅ `inet*_fill_ifaddr` | ✅ `inet*_fill_ifaddr` | ✅ filter by index | — | |
-| `/sys/class/net/<iface>/*` | lookup/stat/open/readlink/readdir reveal iface nodes | ⚠️ optional reboot-gated VFS hooks | — | — | — | 🔒 usually denied |
-| `/proc/sys/net/{ipv4,ipv6}/{conf,neigh}/<iface>` | lookup/stat/open/readdir reveal per-iface sysctl dirs | ⚠️ optional reboot-gated VFS hooks | — | — | — | 🔒 usually denied |
+| `/sys/class/net/<iface>/*` | lookup/stat/open/readlink/readdir reveal iface nodes | ⚠️ optional reboot-gated VFS hooks | ⚠️ optional reboot-gated VFS hooks | — | — | 🔒 usually denied |
+| `/proc/sys/net/{ipv4,ipv6}/{conf,neigh}/<iface>` | lookup/stat/open/readlink/readdir reveal per-iface sysctl dirs | ⚠️ optional reboot-gated VFS hooks | ⚠️ optional reboot-gated VFS hooks | — | — | 🔒 usually denied |
 
 Notes: bionic's `getifaddrs` itself runs over netlink, so the kernel-backend
 `rtnl_fill_ifinfo` / `inet*_fill_ifaddr` hooks cover the Java and native paths
 at once. Zygisk additionally unlinks entries from the `getifaddrs` result list
 directly, so it works even if a future bionic stops using netlink.
 
-The `.ko` can additionally install four VFS entry redirects
+Both kernel backends can additionally install four VFS entry redirects
 (`filename_lookup`, `do_filp_open`, `vfs_getattr`, and `iterate_dir`) at boot.
 They recognize resolved sysfs/procfs dentries, not pathname strings, so relative
 `openat`, symlink-following, bind-mount, stat/access/readlink, open/fstat, and
@@ -134,7 +134,6 @@ directory-enumeration variants receive the same `ENOENT`/filtered view. This is
 disabled by default because the redirect points are global hot paths even
 though filtering remains per target UID. Enable **Hide VPN filesystem paths**
 in Settings and reboot; when disabled the probes are not registered at all.
-KPM deliberately does not claim this optional `.ko`-only coverage.
 
 **`SIOCGIFCONF` size-query subcase — closed in the `.ko`.** The classic two-step
 `SIOCGIFCONF` (first call with `ifc_req == NULL` to learn the buffer size, then a
@@ -314,9 +313,9 @@ detectors actually probe:
   yet; add hooks if it appears.
 - **Kernel-backend procfs gap:** no `if_inet6` / `tcp` / `tcp6` seq-file hooks
   in `.ko` or KPM (3C).
-- **Filesystem hiding is optional and `.ko`-only.** It must be selected before
-  reboot so the hot VFS probes are absent entirely on default boots. KPM and
-  Zygisk do not cover the sysfs/proc-sys interface-node vectors.
+- **Filesystem hiding is optional in both kernel backends.** It must be selected
+  before reboot so the hot VFS probes are absent entirely on default boots.
+  Zygisk does not cover the sysfs/proc-sys interface-node vectors.
 - **KPM SIOCGIFCONF size-query gap:** KPM compacts the returned ifreq array but
   does not yet reduce the `ifc_req == NULL` size query the `.ko` handles (3A).
 - **Single-lookup route** (`rt_fill_info`) is intentionally unhooked — no stable
@@ -337,7 +336,7 @@ detectors actually probe:
 | Layer | Entry points |
 |---|---|
 | kmod | `kmod/vpnhide_kmod.c` (10 kretprobes + socket-bind redirects + four optional VFS redirects); iface matcher `kmod/generated/iface_lists.h` |
-| KPM | `kmod/kpm/vpnhide_kpm.c` (KernelPatch inline hooks + ctl0); offsets in `kmod/kpm/kver_offsets.h` |
+| KPM | `kmod/kpm/vpnhide_kpm.c` (KernelPatch inline hooks + ctl0, including four optional VFS hooks); offsets in `kmod/kpm/kver_offsets.h` |
 | zygisk | `zygisk/src/hooks.rs` (ioctl/getifaddrs/openat/recv*); `zygisk/src/filter.rs` (procfs + netlink filters) |
 | lsposed | `lsposed/app/.../HookEntry.kt`, `PackageVisibilityHooks.kt`; iface matcher `.../generated/IfaceLists.kt` |
 | iface match rules | single source of truth `data/interfaces.toml` → `scripts/codegen-interfaces.py` renders all four targets (kmod/KPM C, zygisk Rust, lsposed native Rust, lsposed Kotlin) |

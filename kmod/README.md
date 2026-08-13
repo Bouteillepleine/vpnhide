@@ -28,8 +28,8 @@ All filtering is **per-UID**: only processes whose UID is a `target` in the conf
 The VFS row is additionally **reboot-gated and disabled by default**. Enable
 **Settings → Experimental protection → Hide VPN filesystem paths** and reboot.
 When disabled, those four probes are not registered, so the default boot pays
-no VFS hot-path trampoline cost. The setting is `.ko`-only; KPM does not claim
-this coverage.
+no VFS hot-path trampoline cost. The same canonical setting also controls the
+equivalent optional KPM hooks.
 
 ## Why kernel-level?
 

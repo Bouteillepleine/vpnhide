@@ -32,6 +32,7 @@ KPM="$MODDIR/vpnhide.kpm"
 ACTIVATOR="$MODDIR/activator"
 STATUS_DIR="/data/adb/vpnhide_kpm"
 STATUS_FILE="$STATUS_DIR/load_status"
+FILESYSTEM_HIDING=""
 
 mkdir -p "$STATUS_DIR"
 
@@ -48,6 +49,7 @@ write_status() {
         printf 'uname_r=%s\n' "$(uname -r 2>/dev/null)"
         printf 'runtime=%s\n' "$1"
         printf 'loaded=%s\n' "$2"
+        printf 'filesystem_hiding=%s\n' "$FILESYSTEM_HIDING"
         printf 'reason=%s\n' "$3"
         printf 'detail=%s\n' "$(sanitize "$4")"
     } > "$STATUS_FILE.tmp" && mv "$STATUS_FILE.tmp" "$STATUS_FILE"
@@ -71,6 +73,14 @@ if [ ! -x "$ACTIVATOR" ]; then
     write_status activator 0 missing_activator "activator missing at $ACTIVATOR"
     exit 1
 fi
+
+"$ACTIVATOR" boot-feature-enabled filesystem_iface_paths >/dev/null 2>&1
+feature_rc=$?
+case "$feature_rc" in
+    0) FILESYSTEM_HIDING=1 ;;
+    1) FILESYSTEM_HIDING=0 ;;
+    *) FILESYSTEM_HIDING="" ;;
+esac
 
 # --- APatch/FolkPatch: service activator owns load/config -------------------
 if [ -d /data/adb/ap ]; then

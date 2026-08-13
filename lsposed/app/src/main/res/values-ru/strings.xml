@@ -410,13 +410,13 @@
     <string name="settings_experimental_protection">Экспериментальная защита</string>
     <string name="settings_filesystem_hiding">Скрывать VPN-пути в файловой системе</string>
     <string name="settings_filesystem_hiding_sub">Экспериментальный и потенциально дорогой хук: он перехватывает глобальные операции поиска и перечисления в файловой системе и может замедлить устройство. Сейчас неизвестны реальные приложения, использующие этот вектор обнаружения; обычной Native-защиты, как правило, достаточно. Оставьте функцию выключенной, если вы специально не тестируете обнаружение по путям файловой системы.</string>
-    <string name="settings_filesystem_hiding_unavailable">Требуется модуль ядра kmod.</string>
+    <string name="settings_filesystem_hiding_unavailable">Требуется ядерный бэкенд kmod или KPM.</string>
     <string name="settings_filesystem_hiding_disabled">Выключено — рекомендуется обычная Native-защита.</string>
     <string name="settings_filesystem_hiding_active">Активно для выбранных Native-целей.</string>
     <string name="settings_filesystem_hiding_pending_enable">Включится после перезагрузки.</string>
     <string name="settings_filesystem_hiding_pending_disable">Выключится после перезагрузки.</string>
     <string name="settings_filesystem_hiding_boot_error">Не удалось прочитать настройку при загрузке: %1$s</string>
-    <string name="settings_filesystem_hiding_setup_error">kmod загружен, но хуки файловой системы не установились. Проверьте диагностику перед следующей перезагрузкой.</string>
+    <string name="settings_filesystem_hiding_setup_error">Ядерный бэкенд загружен, но хуки файловой системы не установились. Проверьте диагностику перед следующей перезагрузкой.</string>
     <string name="settings_filesystem_hiding_confirm_title">Включить экспериментальные хуки файловой системы?</string>
     <string name="settings_filesystem_hiding_confirm_body">Эти глобальные VFS-хуки могут замедлять операции с файловой системой и сейчас не нужны известным реальным приложениям. Обычной Native-защиты, как правило, достаточно. Включайте их только для целевого тестирования обнаружения по путям файловой системы; потребуется перезагрузка.</string>
     <string name="settings_filesystem_hiding_enable">Всё равно включить</string>
