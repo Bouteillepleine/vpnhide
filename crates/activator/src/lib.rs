@@ -114,6 +114,22 @@ pub(crate) fn kernel_boot_feature_enabled(feature: &str) -> Result<bool> {
     Ok(config.settings.kernel_boot_features.contains(feature))
 }
 
+/// Optional boot hardening is never a prerequisite for the baseline backend.
+/// A corrupt desired-state file therefore falls back to the disabled default;
+/// late-start config delivery still reports the parse error and refuses a
+/// partial snapshot.
+pub(crate) fn kernel_boot_feature_enabled_or_default(feature: &str) -> bool {
+    match kernel_boot_feature_enabled(feature) {
+        Ok(enabled) => enabled,
+        Err(err) => {
+            eprintln!(
+                "cannot read optional boot feature {feature}; loading with the safe default: {err}"
+            );
+            false
+        }
+    }
+}
+
 pub fn activate_kmod() -> Result<()> {
     activate_kmod_with_pm_wait(PmReadyWait::Bounded(PM_READY_ATTEMPTS))
 }
@@ -235,7 +251,7 @@ pub(crate) fn load_kpm_boot() -> Result<KpmBootReport> {
         ));
     }
     let filesystem_hiding =
-        kernel_boot_feature_enabled(KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS)?;
+        kernel_boot_feature_enabled_or_default(KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS);
     let client = match KpmClient::detect_outcome()? {
         KpmClientDetection::Ready(client) => client,
         KpmClientDetection::AwaitingAuthentication(_) => {

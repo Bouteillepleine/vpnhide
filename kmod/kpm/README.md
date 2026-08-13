@@ -153,6 +153,11 @@ disabled, the activator passes a null/absent argument; the explicit
 `filesystem_hiding=0` spelling is also accepted as disabled but is not emitted by
 the shipped loader.
 
+If canonical JSON cannot be parsed during the early boot-load phase, the
+optional feature fails closed to disabled and the baseline KPM still loads.
+Late-start config delivery reports the parse failure and refuses to apply a
+partial target snapshot.
+
 The argument requests four global hooks: `filename_lookup`, `do_filp_open`,
 `vfs_getattr`, and `iterate_dir`. They install as one optional group; any failure
 rolls the group back, clears hook bit 27 from the installed mask, and produces
@@ -160,10 +165,11 @@ rolls the group back, clears hook bit 27 from the installed mask, and produces
 control-v2 `filesystem_iface_paths` bit remains the independent per-UID gate.
 Changing the boot feature therefore requires a reboot.
 
-The fixed-name shell lifecycle files contain no policy: they only `exec`
-`activator boot-load`, `boot-service`, or `uninstall`. The Rust activator owns
-the conflict checks, APatch deferral, status records, and cleanup, so outcomes
-stay typed instead of being encoded as shell exit-code branches.
+The fixed-name shell lifecycle files contain no policy. Blocking hooks `exec`
+`activator boot-load` or `uninstall`; `service.sh` backgrounds `boot-service`
+and immediately returns to the root manager's sequential script runner. The
+Rust activator owns conflict checks, APatch deferral, status records, and
+cleanup, so outcomes stay typed instead of becoming shell exit-code branches.
 
 The headless QEMU harness has no ctl0 userspace client during early bring-up, so
 KPM init additionally accepts a control-v2 snapshot in the load-argument buffer

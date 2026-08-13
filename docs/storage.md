@@ -276,8 +276,10 @@ zygisk/                     # cdylib — the injected .so. deps: protocol (+ sha
   no detection, no runtime branching.
 - **The ports module ships `ports`**, which reads the same canonical JSON but applies
   iptables state instead of writing the native text protocol.
-- **When it runs:** root-manager lifecycle files are fixed-name, two-line shell
-  adapters that `exec` `activator boot-load`, `boot-service`, or `uninstall`.
+- **When it runs:** root-manager lifecycle files are fixed-name shell adapters.
+  Blocking `post-fs-data.sh` and uninstall hooks `exec` `boot-load` or
+  `uninstall`; every `service.sh` backgrounds `boot-service` and returns so one
+  module cannot starve the manager's sequential late-start script runner.
   Early `boot-load` does bounded backend loading only; it never waits for
   PackageManager or user unlock. Late-start `boot-service` may wait indefinitely
   for PackageManager readiness, while Save (`su <path>/activator`) keeps a bounded

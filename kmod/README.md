@@ -87,8 +87,8 @@ On boot:
 
 - `post-fs-data.sh` execs the Rust activator's bounded `boot-load` phase, which
   reads the reboot-gated setting, runs `insmod`, and writes load diagnostics.
-- `service.sh` execs the activator's non-blocking late-start `boot-service`
-  phase, which reads
+- `service.sh` starts the activator's late-start `boot-service` phase in the
+  background and immediately returns to the root manager. The activator reads
   `/data/system/vpnhide_config.json`, enumerates Android users, resolves package
   names for each user separately, and emits a `vpnhide 2 config` snapshot
   ([protocol](../docs/protocol.md)) to `/proc/vpnhide_ctl`.

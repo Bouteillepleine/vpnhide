@@ -90,9 +90,10 @@ su -c 'cat /data/adb/vpnhide_ports/load_status; cat /data/adb/vpnhide_ports/load
 
 ## Caveats
 
-- Rules are lost on reboot. `service.sh` execs the Rust `boot-service` phase;
-  the activator waits for `netd` to finish its setup first (checks `bw_OUTPUT`
-  readiness), restores the rules, and repeats once after 30 seconds.
+- Rules are lost on reboot. `service.sh` backgrounds the Rust `boot-service`
+  phase and immediately returns to the root manager; the activator waits for
+  `netd` to finish its setup first (checks `bw_OUTPUT` readiness), restores the
+  rules, and repeats once after 30 seconds.
 - Some Android versions rebuild `OUTPUT` on network state changes.
   Our rules in our own chain survive; only the `OUTPUT -j vpnhide_out`
   jump can be affected. Re-run the activator if needed; the VPN Hide

@@ -49,7 +49,8 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 
 - `module.prop`: module metadata, version, and stamped `gkiVariant=`.
 - `post-fs-data.sh`: thin root-manager entrypoint that execs `activator boot-load`.
-- `service.sh`: thin late-start entrypoint that execs `activator boot-service`.
+- `service.sh`: starts `activator boot-service` in the background and returns
+  immediately to the root manager's sequential script runner.
 - `uninstall.sh`: thin uninstall entrypoint that execs `activator uninstall`.
 - `activator`: Rust bin that reads canonical JSON, lists Android users and
   resolves packages with `pm list packages -U --user <id>` for each user,
@@ -62,7 +63,8 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 
 - `module.prop`: module metadata.
 - `post-fs-data.sh`: thin root-manager entrypoint that execs `activator boot-load`.
-- `service.sh`: thin late-start entrypoint that execs `activator boot-service`.
+- `service.sh`: starts `activator boot-service` in the background and returns
+  immediately to the root manager's sequential script runner.
 - `uninstall.sh`: thin uninstall entrypoint that execs `activator uninstall`.
 - `activator`: Rust bin that refuses to run when the `.ko` backend is present,
   refuses unsupported kernel families before invoking KernelPatch,
@@ -76,7 +78,8 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 
 - `module.prop`: module metadata.
 - `customize.sh`: install hook that applies module file permissions.
-- `service.sh`: thin late-start entrypoint that execs `activator boot-service`.
+- `service.sh`: starts `activator boot-service` in the background and returns
+  immediately to the root manager's sequential script runner.
 - `uninstall.sh`: thin entrypoint that execs `activator uninstall`; canonical
   config remains app-owned.
 - `activator`: Rust bin that writes the Zygisk runtime config.
@@ -88,7 +91,8 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 ### `/data/adb/modules/vpnhide_ports/`
 
 - `module.prop`: module metadata.
-- `service.sh`: thin late-start entrypoint that execs `activator boot-service`.
+- `service.sh`: starts `activator boot-service` in the background and returns
+  immediately to the root manager's sequential script runner.
 - `activator`: Rust bin that reads canonical JSON, derives `ports: true`
   packages, waits for netd, resolves UIDs, applies and later re-applies iptables
   rules, and records the latest apply status under `/data/adb/vpnhide_ports/`.
@@ -302,14 +306,14 @@ post-fs-data:
 
 service:
   kmod / KPM / Zygisk service.sh
-    -> exec that module's activator boot-service
+    -> start that module's activator boot-service in the background and return
     -> KPM activator rejects unsupported kernels before waiting for PackageManager
     -> activator waits for PackageManager to expose dev.okhsunrog.vpnhide
     -> kmod activator also waits for /proc/vpnhide_ctl
     -> KPM activator uses saved APatch SuperKey or trusted su token when present
     -> activator reads canonical JSON and writes exactly one native channel
   ports service.sh
-    -> exec ports activator boot-service
+    -> start ports activator boot-service in the background and return
     -> activator waits for netd baseline
     -> activator waits for PackageManager readiness and applies iptables from canonical JSON
     -> activator repeats the idempotent apply after 30 seconds

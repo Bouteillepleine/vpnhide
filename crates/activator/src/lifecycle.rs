@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Output, Stdio};
 use std::thread;
@@ -8,8 +8,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::{
     APATCH_DIR, KPM_CTL_LOCK, KpmBootOutcome, KpmBootReport, PORTS_CHAIN4, PORTS_CHAIN6,
     PORTS_STATUS_DIR, Result, activate_kmod_boot, activate_kpm_boot, activate_ports_recorded,
-    activate_zygisk_boot, kernel_boot_feature_enabled, kmod_backend_present, load_kpm_boot,
-    write_atomic,
+    activate_zygisk_boot, kernel_boot_feature_enabled, kernel_boot_feature_enabled_or_default,
+    kmod_backend_present, load_kpm_boot, write_atomic,
 };
 
 const KMOD_STATUS_DIR: &str = "/data/adb/vpnhide_kmod";
@@ -331,22 +331,10 @@ pub fn boot_load_kpm() -> Result<()> {
         return Err(detail.into());
     }
 
-    let filesystem_hiding = match kernel_boot_feature_enabled(FILESYSTEM_BOOT_FEATURE) {
-        Ok(enabled) => Some(enabled),
-        Err(err) => {
-            let detail = format!("cannot read {FILESYSTEM_BOOT_FEATURE}: {err}");
-            write_kpm_status(KpmLoadStatus {
-                runtime: KpmStatusRuntime::KpatchNext,
-                loaded: false,
-                filesystem_hiding: None,
-                reason: KpmStatusReason::LoadFailed,
-                detail: detail.clone(),
-            })?;
-            return Err(detail.into());
-        }
-    };
-
     if Path::new(APATCH_DIR).is_dir() {
+        let filesystem_hiding = Some(kernel_boot_feature_enabled_or_default(
+            FILESYSTEM_BOOT_FEATURE,
+        ));
         log_android(
             "vpnhide",
             "kpm: APatch/FolkPatch runtime — deferring load to service activator",
@@ -403,7 +391,7 @@ pub fn boot_load_kpm() -> Result<()> {
             write_kpm_status(KpmLoadStatus {
                 runtime: KpmStatusRuntime::KpatchNext,
                 loaded: false,
-                filesystem_hiding: reported_feature.or(filesystem_hiding),
+                filesystem_hiding: reported_feature,
                 reason: KpmStatusReason::UnsupportedKernel,
                 detail,
             })
@@ -414,7 +402,7 @@ pub fn boot_load_kpm() -> Result<()> {
             write_kpm_status(KpmLoadStatus {
                 runtime: KpmStatusRuntime::KpatchNext,
                 loaded: false,
-                filesystem_hiding,
+                filesystem_hiding: None,
                 reason: KpmStatusReason::LoadFailed,
                 detail: detail.clone(),
             })?;
@@ -747,14 +735,32 @@ pub(crate) fn output_with_timeout(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| std::io::Error::other("child stdout was not piped despite Stdio::piped"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| std::io::Error::other("child stderr was not piped despite Stdio::piped"))?;
+    // Drain both streams while the child runs. Waiting first can deadlock when
+    // a command fills either pipe buffer before it exits.
+    let stdout_reader = thread::spawn(move || read_all(stdout));
+    let stderr_reader = thread::spawn(move || read_all(stderr));
     let deadline = Instant::now() + timeout;
     loop {
-        if child.try_wait()?.is_some() {
-            return child.wait_with_output();
+        if let Some(status) = child.try_wait()? {
+            return Ok(Output {
+                status,
+                stdout: join_reader(stdout_reader)?,
+                stderr: join_reader(stderr_reader)?,
+            });
         }
         if Instant::now() >= deadline {
             child.kill()?;
             let _ = child.wait();
+            let _ = join_reader(stdout_reader);
+            let _ = join_reader(stderr_reader);
             return Err(std::io::Error::new(
                 ErrorKind::TimedOut,
                 "command timed out",
@@ -762,6 +768,18 @@ pub(crate) fn output_with_timeout(
         }
         thread::sleep(Duration::from_millis(25));
     }
+}
+
+fn read_all(mut reader: impl Read) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+fn join_reader(reader: thread::JoinHandle<std::io::Result<Vec<u8>>>) -> std::io::Result<Vec<u8>> {
+    reader
+        .join()
+        .map_err(|_| std::io::Error::other("child output reader panicked"))?
 }
 
 fn exit_code(status: &ExitStatus) -> i32 {
@@ -834,5 +852,30 @@ mod tests {
         assert!(status.contains("filesystem_hiding=1\n"));
         assert!(status.contains("reason=awaiting_superkey\n"));
         assert!(status.contains("detail=awaiting_superkey\n"));
+    }
+
+    #[test]
+    fn timed_command_drains_chatty_stdout_and_stderr() {
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            "head -c 131072 /dev/zero; head -c 131072 /dev/zero >&2",
+        ]);
+
+        let output = output_with_timeout(&mut command, Duration::from_secs(2)).unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout.len(), 131_072);
+        assert_eq!(output.stderr.len(), 131_072);
+    }
+
+    #[test]
+    fn timed_command_kills_a_stalled_child() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 1"]);
+
+        let error = output_with_timeout(&mut command, Duration::from_millis(10)).unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::TimedOut);
     }
 }
