@@ -144,13 +144,26 @@ this is independent of KPatch-Next's generic `package_config` →
 config and pushes the same text wire through APatch/FolkPatch direct supercalls
 or KPatch-Next `kpatch kpm ctl0`.
 
-Optional boot features are intentionally outside that runtime wire. When the
-canonical `settings.kernelBootFeatures` set contains `filesystem_iface_paths`,
-the activator loads the KPM with `filesystem_hiding=1`. That atomically adds the
-four global VFS hooks (`filename_lookup`, `do_filp_open`, `vfs_getattr`, and
-`iterate_dir`); without the argument none of those hot-path hooks is installed.
-Changing the setting therefore takes effect after reboot, just like the `.ko`
-module parameter.
+### Optional filesystem hook loader contract
+
+Optional boot features are outside control v2. When canonical
+`settings.kernelBootFeatures` contains `filesystem_iface_paths`, the production
+activator passes the exact KPM load argument `filesystem_hiding=1`. When it is
+disabled, the activator passes a null/absent argument; the explicit
+`filesystem_hiding=0` spelling is also accepted as disabled but is not emitted by
+the shipped loader.
+
+The argument requests four global hooks: `filename_lookup`, `do_filp_open`,
+`vfs_getattr`, and `iterate_dir`. They install as one optional group; any failure
+rolls the group back, clears hook bit 27 from the installed mask, and produces
+`partial_hooks` telemetry while leaving the always-on KPM hooks available. The
+control-v2 `filesystem_iface_paths` bit remains the independent per-UID gate.
+Changing the boot feature therefore requires a reboot.
+
+The headless QEMU harness has no ctl0 userspace client during early bring-up, so
+KPM init additionally accepts a control-v2 snapshot in the load-argument buffer
+as a test transport. Production activation never uses that form: it loads with
+the boot-only argument above, then sends targets over ctl0.
 
 ## Safety — read before testing on a device
 

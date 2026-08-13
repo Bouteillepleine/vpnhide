@@ -6,7 +6,8 @@ use vpnhide_activator::{
 };
 
 /// Exit code returned from `--boot-wait` when the KPM stood down because the
-/// .ko backend is present (protocol §1.5). Distinct from 0 (configured) and 1
+/// .ko backend is present (docs/storage.md §4.3). Distinct from 0 (configured)
+/// and 1
 /// (error) so service.sh can record a truthful `conflict` load_status instead
 /// of falsely reporting the KPM as configured.
 const EXIT_DEFERRED_CONFLICT: i32 = 3;

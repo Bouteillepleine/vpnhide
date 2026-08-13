@@ -239,7 +239,7 @@ note = "no offset table for the running kernel — refused, no hooks"
 [[error]]
 id = 2
 name = "conflicting_backend"
-note = "the other kernel backend (.ko<->KPM) is loaded — refused (protocol §1.2)"
+note = "the other kernel backend (.ko<->KPM) is loaded — refused (docs/storage.md §4.3)"
 
 [[error]]
 id = 3

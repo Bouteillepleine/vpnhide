@@ -3,9 +3,9 @@
 # apps start), and records load_status so the app can explain *why* the module
 # didn't come up without guessing. Targets are applied later, in service.sh,
 # once PackageManager is up (mirrors the .ko: post-fs-data loads, service
-# resolves UIDs). See docs/protocol.md §7.4.
+# resolves UIDs). See docs/state.md §10.
 #
-# Runtime split (protocol §7.4):
+# Runtime split (docs/state.md §10):
 #   - KPatch-Next (Magisk / KSU), keyless (d05): the activator validates the
 #     running kernel and loads here, without waiting for PackageManager.
 #   - APatch/FolkPatch: post-fs-data records a deferred status; service.sh
@@ -13,7 +13,7 @@
 #     with a saved /data/adb/vpnhide/superkey or the runtime's trusted `su`
 #     supercall grant.
 #
-# Single-active guard (protocol §1.5): if the .ko backend is installed, do NOT
+# Single-active guard (docs/storage.md §4.3): if .ko is installed, do NOT
 # load the KPM. They wrap the same kernel functions and co-residence freezes
 # the kernel. The guard is layered in userspace, fail-safe at every step:
 #   1. here (post-fs-data): defer before loading the .kpm at all;
@@ -56,7 +56,7 @@ write_status() {
     chmod 0644 "$STATUS_FILE" 2>/dev/null
 }
 
-# --- single-active guard (§1.5): defer to the .ko if it's installed+enabled --
+# --- single-active guard (docs/storage.md §4.3): defer to .ko if enabled ---
 if [ -d /data/adb/modules/vpnhide_kmod ] && \
    [ ! -f /data/adb/modules/vpnhide_kmod/disable ]; then
     log -t vpnhide "kpm: .ko backend present — not loading KPM (single-active)"

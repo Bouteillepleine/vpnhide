@@ -1,155 +1,79 @@
 # vpnhide — control & stats protocol
 
-Single source of truth for the wire format exchanged between the app and every
-backend (`.ko`, KPM, Zygisk, LSPosed), and for the architecture that carries it.
-This document is the **arbiter**: when two implementations disagree, this file
-decides who is wrong. Every implementation (C / Rust / Kotlin) and every test
-vector references it.
+Single source of truth for the runtime wire exchanged with the native backends
+(`.ko`, KPM, Zygisk) and for the telemetry wire emitted by `.ko`, KPM, and
+LSPosed. This document is the **arbiter** for those bytes: when two
+implementations disagree, this file decides who is wrong. Every implementation
+(C / Rust / Kotlin) and every test vector references it.
 
 Status: **two protocols** over one lexical core and one hook-id registry —
 `control` **v2** (the `config` payload) and `telemetry` **v1** (`stats` +
 `status`). Both frozen; all seven OPEN items (§10) are resolved. See §3 for why
 the split exists and what it costs to move either number.
-Key shape: one always-on Java (LSPosed) layer + exactly one active native
-backend, priority `kmod > KPM >
-Zygisk` (§1.5); three `kind`s — `config` (in), `stats` + `status` (out, §4.3);
-UID is the key on every channel incl. Zygisk; `u64` cumulative counters; `debug`
-folded into config; the `.ko` channel is one folded node `/proc/vpnhide_ctl`
-(write=config, read=status+stats); KPM uses the `kpm ctl0` supercall (§7).
+Key shape: three `kind`s — `config` (in), `stats` + `status` (out, §4.3); UID
+is the key on every control channel including Zygisk; `u64` cumulative counters;
+`debug` folded into config; the `.ko` channel is one folded node
+`/proc/vpnhide_ctl` (write=config, read=status+stats); KPM uses the `kpm ctl0`
+supercall (§7).
 Threat model: an **unprivileged** app — root-level detection is out of scope.
 
-> **Storage & activation live in [storage.md](storage.md).** This document is the
-> frozen **wire** spec (the bytes exchanged at runtime). The layer above it — a
-> single JSON canonical on disk, the activator that derives this wire for the
-> native backends, LSPosed reading the JSON directly (it does **not** consume this
-> wire), and the APatch superkey — is specified there, and supersedes the
-> storage-related statements in §1.3–§1.4, §6, and §7.4 below. The wire format
-> (§4–§5) is unchanged.
+Configuration storage, activation policy, boot-only features, and loader
+arguments are deliberately outside this protocol. Their authoritative documents
+are [storage.md](storage.md) and [state.md](state.md); backend loader ABIs are in
+[the `.ko` README](../kmod/README.md) and
+[the KPM README](../kmod/kpm/README.md).
 
 ---
 
-## 1. Architecture
+## 1. Scope and runtime bindings
 
-### 1.1 No hub — app is the orchestrator
+### 1.1 Contract boundary
 
-There is no resident root daemon. The app (Kotlin) is the only orchestrator: it
-serialises config snapshots into every channel via `su`, and reads stats back
-the same way. Each backend reads *its own* channel independently. There is no
-intermediary process between the app and the backends.
+This document defines four things:
 
-Rationale: the exchange is rare (per user action) and pull-based; a resident
-root process would add a named, enumerable component on a device where node
-visibility is deliberately minimised, and it would not remove the unavoidable
-in-`system_server` Kotlin reader anyway (see §3). A hub buys nothing here and
-costs stealth + lifecycle complexity.
+- the control-v2 and telemetry-v1 grammars;
+- the shared hook-id and error-code registries;
+- the backend profiles that select which records and hook bits each consumer
+  understands;
+- transport framing where it affects the bytes, notably KPM truncation and
+  stats pagination.
 
-### 1.2 State is per-backend; the protocol is shared
+It does **not** define the canonical JSON schema, package-to-UID projection,
+native-backend selection, boot order, APatch credential persistence, or the
+arguments used to load `.ko`/KPM artifacts. In particular,
+`settings.kernelBootFeatures` and the `filesystem_hiding=1` loader argument are
+not control-v2 records. See [storage.md](storage.md) for desired state and
+activation, and [state.md](state.md) for paths, lifetimes, and boot sequencing.
 
-Two orthogonal axes, kept separate:
+### 1.2 Runtime channels
 
-- **State is NOT unified.** Each backend owns its own channel/file. Backends do
-  not know about each other. One writer per file, atomic replace
-  (`tmp` + `rename`). This is what prevents races and torn reads, and keeps each
-  SELinux label scoped to a single reader domain. Merging state into one file
-  would mean multi-writer across three domains and one label that must satisfy
-  every reader — rejected.
-- **The protocol IS unified.** One grammar, one parser core per language, one
-  codegen'd hook registry. Format is not a shared resource, so unifying it
-  creates no races. This is the *only* axis we unify.
+The grammar is shared, but the transports and supported directions differ:
 
-**One kernel backend at a time.** The `.ko` and KPM are alternatives, not
-co-residents: they wrap the *same* kernel functions
-(`rtnl_fill_ifinfo`, `inet6_fill_ifaddr`, `fib_route_seq_show`, …), and running
-both at once hard-froze a device (kretprobe + KernelPatch inline hook on one
-symbol, deadlocking the netlink path on the first target enumeration — observed
-on a Pixel 8 Pro, 6.1). Every shipped KPM load/configuration path therefore
-checks for an installed or live `.ko` first and refuses with
-`conflicting_backend` (§5.1). The check is in the boot scripts and activator,
-not in either kernel backend: KPM deliberately exposes no stable `/proc` or
-module marker, and an in-kernel check during the unordered post-fs-data load
-window would itself be racy. Loading either artifact manually outside the
-shipped activation path bypasses this guard, is unsupported, and can freeze the
-device.
-
-### 1.3 Channels
-
-Every channel carries the **same text snapshot format** (§4). They differ only
-in transport and in which records they carry (profiles, §6).
-
-| Channel | Write transport | Read transport | Reader runs in |
+| Runtime | Control v2 in | Telemetry v1 out | Consumer/producer |
 |---|---|---|---|
-| app ↔ `.ko` | `echo > /proc/vpnhide_ctl` | `cat /proc/vpnhide_ctl` (seq_file) | kernel |
-| app ↔ KPM | supercall `ctl0` (`args`) | supercall `ctl0` (`out_msg`) | kernel |
-| app ↔ Zygisk | `targets.txt` via module dir-fd | n/a (stats via §7 if added) | Zygisk process (zygote-forked) |
-| app ↔ LSPosed | `/data/system/vpnhide_*` files | same files | `system_server` |
+| `.ko` | write `/proc/vpnhide_ctl` | read `/proc/vpnhide_ctl` (`seq_file`) | kernel |
+| KPM | `ctl0` `args` | `ctl0` `out_msg` | kernel |
+| Zygisk | module-dir `targets.txt` | none | forked app process |
+| LSPosed | none; reads canonical JSON directly | `/data/system/vpnhide_lsposed_state` | `system_server` |
 
-Channel-specific notes:
+The Zygisk module reads `targets.txt` through the privileged module-directory fd
+provided before app specialisation (`openat(dir_fd, "targets.txt", …)`). It
+reloads on the next process launch. KPM is the only request/response transport
+without a file or proc node; its binding is specified in §7. LSPosed participates
+only in telemetry v1: its configuration input belongs to the storage contract.
 
-- **Zygisk** reads through the root-privileged module-directory fd Zygisk hands
-  the module *before* app specialisation (`openat(dir_fd, "targets.txt", …)`),
-  which bypasses SELinux. Read on every app launch; edits picked up on next
-  force-stop + relaunch. No companion, no socket.
-- **LSPosed** has no privileged endpoint with the app. The only shared medium is
-  the filesystem: app writes via `su`, the hook in `system_server` watches via
-  `FileObserver` (inotify) and reloads. Files are `root:system`, mode `0640`,
-  label `system_data_file` — `system_server` reads via group `system`,
-  `untrusted_app` falls to "other" and gets EACCES.
-- **KPM** is the only true request/response channel (no file, no node) — see §5.
+### 1.3 Implementation ownership
 
-### 1.4 Where protocol code lives
-
-No hub ⇒ the serialiser lives in the app (Kotlin). Three languages total, by
-process:
-
-| Language | Process | Role in protocol |
+| Language | Component | Wire responsibility |
 |---|---|---|
-| C | kernel (`.ko` + KPM) | parse config; emit stats. Freestanding, `kmod/shared/vpnhide_logic.h`. |
-| Rust | Zygisk process | parse its config profile (`targets.txt`). |
-| Kotlin | app | **serialise** all config snapshots into every channel; **parse** stats readback. The "thick" end. |
-| Kotlin | `system_server` (LSPosed hook) | parse its config profile from its file. Not removable — cannot inject a `.so` into `system_server`. |
+| C | `.ko` + KPM | parse control config; emit telemetry. Freestanding core in `kmod/shared/vpnhide_logic.h`. |
+| Rust | `crates/protocol` + activators | format control snapshots, validate native telemetry, and implement KPM framing. |
+| Rust | Zygisk cdylib | parse its control profile from `targets.txt`. |
+| Kotlin | app | parse telemetry for dashboard, diagnostics, and statistics. |
+| Kotlin | LSPosed hook | emit telemetry-shaped status/stats from `system_server`; config comes from canonical JSON. |
 
-The UI itself originates *data* (package→UID via PackageManager, per-app hook
-selection) but the app is also the orchestrator, so wire serialisation lives in
-Kotlin here. Parser parity across C / Rust / Kotlin is held by golden vectors +
-differential testing (§8), not by shared code.
-
-### 1.5 Backend selection: one Java layer + exactly one active native
-
-Backends split into two layers that run *together*:
-
-- **Java layer — LSPosed, always active.** It hooks Java APIs inside
-  `system_server` (PackageManager, ConnectivityManager, …) — a vantage no native
-  backend has. It is orthogonal to the native layer and is never "the one of N".
-- **Native layer — exactly one of {`.ko` kmod, KPM, Zygisk} is active.** They
-  cover the same native surface (netlink / proc / libc), so running two is at
-  best redundant double-hiding and at worst fatal: the `.ko` (kretprobe) and KPM
-  (KernelPatch inline) wrap the *same* kernel functions and deadlocked a device
-  when both fired (§1.2). So the product runs one native backend, period.
-
-**Selection is by fixed priority `kmod > KPM > Zygisk`,** among the backends
-actually *loaded* (read from each backend's `status`, §4.3). The app:
-
-1. reads `status` from every native backend that is present;
-2. picks the highest-priority loaded one as **active**, writes it the real config
-   snapshot, and writes the others an **empty** snapshot (no targets ⇒ hooks
-   installed but idle);
-3. if more than one native backend is loaded, **warns the user** (a second loaded
-   backend is a misconfiguration to clean up, not a supported mode).
-
-Two backstops make this safe before the app's policy has run:
-
-- **Guarded KPM delivery.** The KPM boot scripts reject an enabled `.ko` module
-  before loading KPM. The activator repeats the check, including the live
-  `/proc/vpnhide_ctl` endpoint, before every KPM load/configuration attempt and
-  reports `conflicting_backend` (§5.1). Repeating it closes the interval between
-  early boot and config delivery without requiring either backend to discover
-  the other in kernel space.
-- **No self-activation of dangerous overlap.** Boot scripts may *load* a backend,
-  but the single-active decision is the app's; a loaded-but-unconfigured native
-  backend filters nothing.
-
-This does not contradict §1.1 (no hub) or §1.2 (per-backend state): selection is
-a read-only policy the app computes from `status`, not a shared runtime store.
+Parser parity across C, Rust, and Kotlin is held by golden vectors and
+differential testing (§8), not by shared runtime code.
 
 ---
 
@@ -164,10 +88,10 @@ These are *why* the format is what it is. Do not "simplify" against them.
 - **KPM delivery is a CLI that takes a string and returns a string.** A binary
   format would have to be hex/base64-wrapped through argv anyway. Text matches
   the transport.
-- **Debugging is by an LLM agent reading/writing raw** over `adb` (`cat`/`echo`).
-  The format must survive shell quoting (no `"`, `$`, backtick, `\` in payload)
-  and be self-describing enough to read without external context. This is why
-  keywords are words, not magic numbers.
+- **Debugging uses raw `adb` reads and writes** (`cat`/`echo`). The format must
+  survive shell quoting (no `"`, `$`, backtick, `\` in payload) and be
+  self-describing enough to read without external context. This is why keywords
+  are words, not magic numbers.
 - **Pull only.** Kernel aggregates per-(uid, hook) counters; userspace reads
   periodically. No push, no per-hit events on the hot path.
 
@@ -179,8 +103,8 @@ These are *why* the format is what it is. Do not "simplify" against them.
   replaces its state wholesale. There is no add/remove/clear. This makes state a
   pure function of the last write — it never depends on history, which removes
   the whole class of "partially-applied" / "stale leftover" bugs. It also matches
-  `echo > node` (truncating redirect) and `FileObserver` ("file changed",
-  inotify gives no deltas).
+  `echo > node` (truncating redirect) and atomic replacement of Zygisk's derived
+  `targets.txt` snapshot.
 - **Mandatory header gating.** A payload without a valid header (§4.2) is
   rejected *whole* — a stray `echo 'debug 0' > node` does not silently wipe
   state, it errors. "Valid full state, or a loud refusal, never silent-partial."
@@ -220,7 +144,7 @@ These are *why* the format is what it is. Do not "simplify" against them.
   line → reject that line.
 - **Line separator:** `\n` only. On read, a trailing `\r` (CRLF) is stripped. On
   write, never emit `\r`. A trailing `\n` at end of payload is optional on read
-  (but see §5 for its meaning under KPM truncation).
+  (but see §7.2 for its meaning under KPM truncation).
 - **Whitespace:** one or more spaces/tabs between tokens is a single separator.
   On write, emit exactly one space.
 - **Comments:** a line whose first non-whitespace character is `#` is ignored
@@ -290,7 +214,7 @@ end <count>
   have no PackageManager so they cannot key on package names, and Zygisk (which
   runs in the target's own process and could match either way) keys on `getuid()`
   for one grammar across all channels. The package→UID resolution is the
-  producer's job (app / boot script), the same for all backends.
+  producer's job (the activator), the same for all backends.
 - `end <count>` — **mandatory**. `count` is the total number of uid tokens the
   producer wrote. Missing, or not equal to what the reader counted ⇒ reject the
   payload whole. This is the truncation fuse: the KPM copies a config through a
@@ -344,9 +268,10 @@ error <code>
 
 `status` exists because a kernel backend can refuse or only partially install for
 reasons the app cannot otherwise see (no node, no logs unless `debug`). It turns
-those into a readable state instead of a silent no-op. The delivery layer uses
-the same error vocabulary for activation failures; in particular, the KPM boot
-status reports `conflicting_backend` when its guard detects the `.ko` (§1.2).
+those into a readable state instead of a silent no-op. Activation diagnostics use
+the same error vocabulary; in particular, a KPM loader can report
+`conflicting_backend` when it detects the `.ko`. The guard itself is an activation
+rule documented in [storage.md](storage.md#43-native-backend-selection-and-safety).
 
 ### 4.4 Numeric primitive
 
@@ -388,7 +313,7 @@ and both are special-cased to their keyword/line.
 
 ### 4.6 Example
 
-config (app → kernel):
+config (activator → backend):
 
 ```
 vpnhide 2 config
@@ -441,7 +366,9 @@ Current shared kernel hooks (`.ko` / KPM, 11): `fib_route_seq_show`,
 `ipv6_route_seq_show`, `rtnl_fill_ifinfo`, `inet_fill_ifaddr`,
 `inet6_fill_ifaddr`, `dev_ioctl`, `sock_ioctl`, `fib_dump_info`, `rt6_fill_node`,
 `fib_nl_fill_rule`, `socket_bind_interface`. Both kernel backends also own the
-optional, reboot-gated `filesystem_iface_paths` hook. Current LSPosed Java hooks (8):
+optional `filesystem_iface_paths` capability bit. Whether its global hook group
+is installed is outside control v2; see
+[storage.md](storage.md#22-optional-kernel-boot-features). Current LSPosed Java hooks (8):
 `lsposed_link_properties`,
 `lsposed_network_capabilities`, `lsposed_network_info`, `lsposed_network`,
 `lsposed_connectivity_result`, `lsposed_connectivity_callback`,
@@ -461,7 +388,7 @@ of:
 |---|---|---|
 | `0x0` | `ok` | healthy; every requested, owned hook installed |
 | `0x1` | `unsupported_kver` | no offset table for the running kernel — refused, no hooks |
-| `0x2` | `conflicting_backend` | KPM activation found the `.ko` installed or live and refused before loading/configuring KPM (§1.2) |
+| `0x2` | `conflicting_backend` | KPM activation found the `.ko` installed or live and refused before loading/configuring KPM |
 | `0x3` | `symbol_resolution_failed` | a required kallsyms symbol was missing — refused |
 | `0x4` | `partial_hooks` | installed, but some owned hooks did not resolve (see the `hooks` mask) |
 
@@ -473,10 +400,9 @@ the per-hook detail when `error = partial_hooks`.
 
 ## 6. Profiles
 
-One grammar, N profiles. A **profile** is the subset of records a channel
-carries, by hook ownership — not by "how many features we shipped". Because
-per-app hooks and stats come to **all** backends, every channel carries the full
-grammar; there is no "bare" profile.
+One grammar, N profiles. A **profile** is the subset of records and hook bits a
+consumer or producer supports. It is not a storage schema and does not imply
+that every runtime implements both protocol directions.
 
 The parser is **profile-agnostic**: the §4.5 "unknown keyword → skip" rule means
 one parser reads any channel and acts only on records it understands. Each
@@ -485,20 +411,18 @@ backend reads its own profile.
 | Channel | config records it acts on | emits stats? | emits status? |
 |---|---|---|---|
 | `.ko` / KPM | `debug`, `default`, `targets`, `end` (kernel-owned mask bits) | yes | yes (§4.3) |
-| Zygisk | `debug`, `targets`, `end`; its activator rejects a non-zero `default` because it cannot inject into every unlisted process | no, not yet (§7) | yes, via the app heartbeat |
-| LSPosed | — does **not** consume this wire; it reads the canonical JSON directly (see [storage.md](storage.md)) | yes | yes |
+| Zygisk | `debug`, `targets`, `end`; its activator rejects a non-zero `default` because it cannot inject into every unlisted process | no | no; its app heartbeat is not telemetry v1 |
+| LSPosed | — does **not** consume control v2; it reads canonical JSON directly | yes | yes |
 
-A backend ignores mask bits it does not own (`mask & own_hooks`), so the same
-`targets 3ff 27fa` record is valid on every channel and each backend takes its
-slice.
+A control consumer ignores mask bits it does not own (`mask & own_hooks`). The
+same global-mask payload can therefore be delivered to any native backend; each
+backend takes only its slice. Telemetry producers use the same global hook IDs,
+so the app can merge `.ko`/KPM and LSPosed counters without remapping them.
 
-**Active vs idle (§1.5).** The grammar is the same on every channel, but the app
-only writes a *real* config to the LSPosed channel and the **one active** native
-channel; the other native channels get an empty config (or none), so a
-loaded-but-not-selected native backend parses nothing to act on. Selection is the
-app's policy from `status`, not part of the wire format — a backend never knows
-whether it is "the active one"; it just applies whatever config it is given (and
-the empty config makes it idle).
+Native-backend selection is not encoded in the payload. A backend simply applies
+the control snapshot it receives. The app-side priority and the KPM/`.ko` safety
+guard are activation policy; see
+[storage.md](storage.md#43-native-backend-selection-and-safety).
 
 ---
 
@@ -513,8 +437,8 @@ static long vpnhide_kpm_ctl0(const char *args, char *__user out_msg, int outlen)
 
 The config parser is *already* shared with `.ko` (`apply_targets` →
 `vpnhide_parse_config` from `kmod/shared/`). KPM reuses the §4 format unchanged;
-only the transport differs and `out_msg`/`outlen` (currently `(void)`) become the
-read-back channel for `stats` and `status`.
+only the transport differs, with `out_msg`/`outlen` forming the read-back channel
+for `stats` and `status`.
 
 **Confirmed on-device (OPEN-5):** the KPatch-Next `kpatch` CLI **does forward
 `out_msg` to stdout** — a probe build that wrote a marker into `out_msg` and
@@ -622,18 +546,17 @@ kpatch kpm ctl0 vpnhide "vpnhide 1 status"
 ```
 
 **The userspace entry must match the running KernelPatch runtime.** The `.kpm`
-module itself is cross-version (it loaded and ran on both `c02` and `d05`), but
-the userspace ABI is **not** portable. The low 16-bit KPM command ids are the
-same (`load=0x1020`, `ctl0=0x1022`, `list=0x1031`), and both runtimes currently
-dispatch on those low bits, but the calling conventions differ:
+module itself is cross-version, but the userspace ABI is **not** portable. Both
+runtimes use low command id `ctl0=0x1022`, but their calling conventions differ:
 
 - **APatch:** syscall number `45`, arg0 is the real SuperKey, command word uses
   APatch's `0x1158` marker. APatch's public `apd` CLI manages APM ZIP modules
-  only; it does **not** expose `kpm load/ctl0`. APatch's own app controls KPMs
-  through native JNI `sc_kpm_*` calls, so the vpnhide activator does the same
-  directly. The activator probes `SUPERCALL_HELLO` before load/control, so a
-  missing KernelPatch runtime or stale SuperKey fails before a stray original
-  syscall can run.
+  only; it does **not** expose `kpm ctl0`. APatch's own app controls KPMs through
+  native JNI `sc_kpm_*` calls, so the vpnhide activator does the same directly.
+  The activator probes `SUPERCALL_HELLO` before control, so a
+  missing KernelPatch runtime or invalid credential fails before a stray
+  original syscall can run. Credential storage is specified in
+  [storage.md](storage.md#6-apatch-superkey).
 - **KPatch-Next:** syscall number `45`, arg0 is `NULL`, and the kernel side gates
   calls by root UID rather than a SuperKey. The activator issues no raw
   command-word marker here — it drives KPatch-Next through the runtime's own
@@ -646,29 +569,6 @@ Do not ship one generic `kpatch` binary for both runtimes.
 Caveats from CLI/shell delivery on KPatch-Next: shell-quote the payload (single
 quotes; the format contains no `'`). APatch does not pass the key through an
 external CLI argv; the activator calls the supercall from its own process.
-
-### 7.4 Distribution & boot integration
-
-The `.kpm` ships as a **thin flashable module** (Magisk/KSU format; APatch reads
-it too). The module delivers the binary and a boot script; the actual KPM-load
-mechanism is delegated to the activator and runtime. KPatch-Next is keyless;
-APatch can also activate at boot when the user has opted into persisting the
-SuperKey under `/data/adb/vpnhide/superkey` (root-only DE storage):
-
-- **KPatch-Next (Magisk / KSU), `d05`, keyless — the recommended path.** The boot
-  script does everything itself: detect the runtime, enforce single-active (skip
-  KPM if the `.ko` is loaded, §1.5), `kpatch kpm load vpnhide.kpm`, then apply the
-  persisted config snapshot via `kpatch kpm ctl0`. Fully automatic, no user
-  interaction. This is what we recommend users run.
-- **APatch, `c02`, SuperKey-required.** If the user enabled
-  `rememberSuperkey`, the app persists the key root-only at
-  `/data/adb/vpnhide/superkey`, and the boot activator loads/configures APatch
-  via direct supercalls after the `SUPERCALL_HELLO` probe. Without that saved
-  key, boot writes `awaiting_superkey`; activation resumes after the app supplies
-  the key.
-
-This keeps KPatch-Next fully automatic, while APatch is automatic only when the
-user explicitly stores the root-only SuperKey for boot.
 
 ---
 
@@ -735,34 +635,13 @@ Recorded so they are not re-litigated.
   a future low-rate kernel→userspace *event* channel if one is ever needed.
 - **Binary fixed-layout structs at the kernel boundary (ioctl)** — type-safe and
   a clean single source via `bindgen`, but loses catability (no `cat`/`echo` for
-  the agent debugger), and `MAX_*` arrays bake ceilings into the ABI: a new field
+  direct debugging), and `MAX_*` arrays bake ceilings into the ABI: a new field
   shifts layout and forces a synchronous rebuild across 7 KMIs. Fragile to
   evolution. (If binary is ever needed, prefer TLV over flat structs.)
 - **Per-op commands / deltas** (`set`/`add`/`del`/`clear`) — friendlier to
   `echo >>`, but reintroduces stateful, history-dependent application: an
   interrupted batch leaves a half-applied state not derivable from `cat`. Snapshot
   is a pure function of the last write. Rejected.
-- **A resident root hub / daemon** — reconsidered explicitly (and after reviewing
-  `vpnhide_next`, whose daemon is a narrow netlink poller justified by an IP-spoof
-  feature we do not have; its real "hub" is the kmod's `/dev` misc device, which
-  couples everything to the `.ko` being loaded — incompatible with "any one of N
-  native backends"). Re-rejected: a resident named root process is enumerable
-  (`ps`/`/proc`), exactly the fingerprint this project minimises; it adds
-  keep-alive/SELinux/IPC surface; and it does not remove the irreducible
-  in-`system_server` Kotlin reader. Its one real win — *live* reaction to events
-  without the app open — is not a requirement (targets change rarely; boot +
-  app-open re-resolution suffice), and its other wins (single code path, root
-  syscalls, coordinated single-active) are had by the app-as-orchestrator + a
-  thin boot script + the kernel guard (§1.5) with no resident process. Revisit
-  only if a feature needs a live event loop. The narrow KPM coordination it would
-  buy is already covered by the kernel guard.
-- **Unified single state file across backends** — multi-writer across three
-  SELinux domains, torn reads, one label for all readers. State stays
-  per-backend.
-- **Routing LSPosed/Java state through the kmod via ioctl** (a fork's approach) —
-  centralises state but couples LSPosed to the kmod being loaded and needs
-  `system_server` sepolicy for the device node. We keep backends autonomous.
-
 ---
 
 ## 10. Historical wire decisions
@@ -771,11 +650,11 @@ Recorded so they are not re-litigated.
   mandatory as a visual/parse anchor; control v2 forbids it to reclaim two
   bytes per number under the KPM transport ceiling. Neither protocol makes the
   prefix optional, so each value still has one spelling.
-- **OPEN-2 — agent self-description level. RESOLVED: positional-after-keyword.**
+- **OPEN-2 — self-description level. RESOLVED: positional-after-keyword.**
   Control v2 uses `targets <hookmask> <uid>...`: the keyword names the grouped
   record and fields remain positional. `key=value` buys marginal readability
-  for extra bytes and a second split; the keyword already self-describes for an
-  agent reading raw.
+  for extra bytes and a second split; the keyword is already readable in a raw
+  capture.
 - **OPEN-3 — stats counter type. RESOLVED: `u64` cumulative-since-load.** Reads
   are non-destructive (no reset-on-read race between two readers), it never
   wraps in practice, and deltas are the app's job — which suits the pull model
@@ -793,18 +672,18 @@ Recorded so they are not re-litigated.
 - **OPEN-5 — KPM userspace transport. RESOLVED (on-device).** KPatch-Next
   exposes `kpm ctl0 <name> <payload>` through its keyless `kpatch` CLI, and the
   CLI **does forward `out_msg` to stdout** — so no extra root binary is needed
-  for read-back there. APatch does not expose `kpm load/ctl0` through `apd`; the
-  activator calls the runtime-specific supercalls directly with the saved
-  SuperKey. The `.kpm` is cross-version, but the userspace transport is not.
+  for read-back there. APatch does not expose `kpm ctl0` through `apd`; the
+  activator calls the runtime-specific supercall directly. Authentication and
+  credential persistence belong to [storage.md](storage.md#6-apatch-superkey).
+  The `.kpm` is cross-version, but the userspace transport is not.
 - **OPEN-6 — `debug` placement. RESOLVED: folded into the config snapshot.**
-  `debug <flag>` is the one global (non-`target`) config record (§4.3). Today
-  each backend has its own `debug_logging` file (and the `.ko` a
-  `/proc/vpnhide_debug` node); folding it into the config snapshot removes those
-  per-backend files/nodes (less enumerable surface), makes it atomic with the
-  rest of config, and needs one parse instead of a second channel.
+  `debug <flag>` is the one global (non-`target`) config record (§4.3). Earlier
+  designs used per-backend `debug_logging` files and a `.ko`
+  `/proc/vpnhide_debug` node. Folding the flag into the snapshot removed those
+  extra channels, made debug atomic with the rest of config, and reduced parsing.
 - **OPEN-7 — self-documenting read. RESOLVED: yes, emit an in-band header.** The
   read side prepends a one-line `#` comment (`# vpnhide v1 — WRITE REPLACES ENTIRE
   STATE …`) before the current state. It is a comment line (ignored by parsers,
-  §4.1), so it costs nothing structurally and lets an agent learn the grammar +
-  the replace-whole semantics from a single `cat` (§2). All seven OPEN items are
+  §4.1), so it costs nothing structurally and exposes the grammar +
+  replace-whole semantics in a single `cat` (§2). All seven OPEN items are
   now resolved; `version 1` is frozen.

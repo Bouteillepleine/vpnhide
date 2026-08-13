@@ -22,12 +22,12 @@ Two formats, by function — not one format stretched over everything:
   trivially import/export-able. Read by the app (Kotlin), the LSPosed hook
   (Kotlin), and the Rust activators.
 - **Runtime IPC = the text protocol** ([protocol.md](protocol.md)): control v2
-  for config, telemetry v1 for stats/status, both frozen.
-  uid-keyed, hand-parsed, kernel-safe. The runtime *config* wire for the
-  **native** backends (kmod / KPM / Zygisk): config in, stats/status out. Its
-  text format is also reused for LSPosed's read-only state file (§3).
+  for config, telemetry v1 for stats/status, both frozen. It is uid-keyed,
+  hand-parsed, and kernel-safe. All native backends consume control v2; kmod and
+  KPM emit telemetry v1. LSPosed also emits telemetry-shaped status/stats (§3)
+  but reads desired state directly from JSON.
 - **The bridge = the activator** (Rust). It projects the JSON onto the wire for
-  whichever native backend is installed.
+  the selected native backend.
 
 Why split: the kernel consumer (KPM, freestanding C) cannot parse JSON (see
 protocol.md §9), and the injected Zygisk `.so` should not carry a JSON parser into
@@ -35,7 +35,7 @@ every app process. But the *storage* layer has no such constraint, and JSON buys
 one-file import/export and natural Kotlin/Rust structs. So JSON serves the high
 level (storage + the Java hook, where `org.json` is free), the text protocol serves
 the low level (kernel / injected native), and the activator translates between
-them. The "agent reads/writes raw over adb" property (protocol.md §2) is preserved:
+them. Direct raw debugging over `adb` (protocol.md §2) is preserved:
 the live kernel state is still `cat /proc/vpnhide_ctl` text, and JSON is itself
 readable text.
 
@@ -68,6 +68,8 @@ shared canonical file nor consume extra native target slots.
 - **Import / export = copy this one file.** It contains no device-specific secret,
   so it is safe to back up / move / share. (This is *why* the superkey is **not**
   stored here — §6.)
+
+### 2.1 Canonical JSON schema
 
 Shape (illustrative):
 
@@ -138,14 +140,38 @@ selection; the native wire carries the resolved `hookmask`.
 The `rememberSuperkey` boolean lives here (it is a preference, not a secret). The
 superkey itself does **not** (§6).
 
-`kernelBootFeatures` is the desired set of optional, reboot-gated kernel
-features. The current `filesystem_iface_paths` entry enables the optional VFS
-hooks in either kernel backend. The `.ko` loader asks its Rust activator whether
-that entry is present before `insmod`; the KPM activator projects the same entry
-to the boot-time `filesystem_hiding=1` load argument. Changing the list in the
-app therefore requires a reboot. When an entry is absent, the hooks are never
-registered. Unknown names are preserved so newer versions can extend the list
-without a schema migration.
+### 2.2 Optional kernel boot features
+
+`settings.kernelBootFeatures` is a canonical **desired-state field**, not a
+control-v2 record. It names expensive or experimental kernel capabilities that
+must be selected before a backend installs its global hooks. Unknown names are
+preserved so newer versions can extend the set without a schema migration.
+
+The current projection is:
+
+| Canonical feature | `.ko` loader ABI | KPM loader ABI |
+|---|---|---|
+| `filesystem_iface_paths` | `insmod vpnhide_kmod.ko filesystem_hiding=1` | load `vpnhide.kpm` with the exact argument `filesystem_hiding=1` |
+
+When the feature is absent, the shipped `.ko` loader passes
+`filesystem_hiding=0`; the KPM loader omits the argument. Either choice is made
+before hook installation, so changing the canonical set takes effect only after
+a reboot. Backend-specific parsing and failure behavior are documented in the
+[`.ko` README](../kmod/README.md#optional-filesystem-hook-loader-contract) and
+[KPM README](../kmod/kpm/README.md#optional-filesystem-hook-loader-contract).
+
+Filesystem hiding then has two independent gates:
+
+1. The boot feature installs the four global VFS interception points. With the
+   feature off, the backend reports no `filesystem_iface_paths` capability and
+   pays no VFS hot-path trampoline cost.
+2. Control v2 hook bit 27 selects target UIDs allowed to use that installed
+   capability. Installing the hooks alone does not hide anything for a UID whose
+   target mask omits the bit.
+
+The symbolic feature name and loader arguments belong to storage/activation;
+hook ID 27, its mask semantics, and its installed/status bit belong to the
+[wire protocol](protocol.md#5-hook-registry-global-id-space).
 
 Ports are intentionally controlled in the canonical JSON, not in the native text
 protocol. `"ports": true` with no `portPolicy` is the legacy/default behavior:
@@ -204,10 +230,11 @@ does not: the hook self-reads the canonical JSON and resolves UIDs in-process.
 
 ## 4. The activator and its backends (native + ports)
 
-The native backends are **mutually exclusive** — exactly one is installed (the app
-warns/errors and asks the user to remove the extra otherwise). So the activator
-never writes "all three": it writes the **one** channel of the one installed native
-backend.
+The native backends are designed to be **mutually exclusive**: the supported
+installation has exactly one of kmod, KPM, or Zygisk. The app warns or errors and
+asks the user to remove extras. A Save invokes only the highest-priority enabled
+native activator; boot scripts remain module-local, which is why extra installed
+modules must still be removed rather than treated as idle replicas.
 
 ### 4.1 The activator — a Rust workspace, thin bins
 
@@ -275,8 +302,32 @@ Why Zygisk needs a file in its module dir even though there is one canonical: th
 `.so`'s **only** privileged read handle per fork is the module-dir fd Zygisk hands
 it (§7). This is a *mechanism* constraint, not a format one — the activator simply
 derives the protocol config there. (Note: the protocol text — not JSON — keeps the
-injected `.so` free of a JSON parser, and carries the per-hook `hookmask` + `debug`
-+ the native stats the way a flat package list never could.)
+injected `.so` free of a JSON parser and carries the per-hook `hookmask` + `debug`
+that a flat package list could not express.)
+
+### 4.3 Native backend selection and safety
+
+The Java and native layers are orthogonal: LSPosed may run alongside one native
+backend, while the native backend is exactly one of `.ko`, KPM, or Zygisk. On
+Save, the app runs at most one installed and enabled native activator in fixed
+priority order `kmod > KPM > Zygisk`. It does not fan one snapshot out to every
+installed backend and does not use empty snapshots as a selection mechanism.
+Multiple installed native modules are a configuration issue that the dashboard
+asks the user to resolve; `.ko` plus KPM is elevated to an error because that
+overlap is unsafe.
+
+The `.ko` and KPM restriction is also a kernel safety boundary. They wrap the
+same kernel functions with different mechanisms (kretprobes versus KernelPatch
+inline hooks); co-residence has hard-frozen a device. Every shipped KPM load and
+configuration path therefore refuses when an enabled `.ko` module directory or
+live `/proc/vpnhide_ctl` is present and reports `conflicting_backend`. The check
+runs in boot scripts and again in the activator to close the early-boot race.
+Manual loading outside those paths bypasses the guard and is unsupported.
+
+There is no resident root coordinator. Save-time activation and each module's
+boot scripts perform the rare projection/apply operation, while every backend
+owns its own runtime channel. This avoids a persistent enumerable process and
+keeps channel permissions and lifetimes backend-specific.
 
 ---
 
@@ -328,8 +379,8 @@ single-writer / atomic-replace, and stats are never written back into it.
   `(uid, hook_id)` cells for hooks that actually hid or rewrote a result.
 - **Zygisk: deferred.** Its counters would live **per app process** with no shared
   aggregation point. A unix socket is out — it violates protocol.md §2 (pull-only,
-  no per-hit push) and needs a collector process (a rejected resident root daemon,
-  §1.1). Shared memory is the pull-compatible direction, but there is no clean way
+  no per-hit push) and needs a resident root collector, contrary to §4.3. Shared
+  memory is the pull-compatible direction, but there is no clean way
   to share *writable* memory across all injected app-domain processes without a
   daemon (the module-dir file isn't writable by `untrusted_app` under SELinux; a
   zygote-inherited memfd must be created in the zygote, where our code does not run).
@@ -431,23 +482,24 @@ optional.
 | `/data/system/vpnhide_config.json` | **the** canonical config (managed, exported) | persistent |
 | `/proc/vpnhide_ctl` | kmod runtime channel (node, not a file) | per-boot, in-kernel |
 | KPM ctl0 supercall | KPM runtime channel (supercall, no file) | per-boot, in-kernel |
-| `/data/adb/modules/vpnhide_zygisk/<cfg>` | Zygisk runtime channel (derived copy) | regenerated |
+| `/data/adb/modules/vpnhide_zygisk/targets.txt` | Zygisk runtime channel (derived copy) | regenerated |
 | `/data/system/vpnhide_lsposed_state` | LSPosed status + stats (hook → dashboard) | per-boot |
 | `/data/adb/vpnhide/superkey` | APatch superkey (optional, flag-gated) | persistent, root-only |
 
-## 9. Relationship to [protocol.md](protocol.md)
+## 9. Contract ownership
 
-protocol.md remains the frozen **control-v2 / telemetry-v1 wire** specification
-and is still the runtime IPC for the native backends. This document supersedes
-its statements about the *storage/activation layer*, specifically:
+Each concern has one authoritative home; cross-links provide context without
+redefining the other contracts:
 
-- **LSPosed does not consume the wire** — it reads the canonical JSON directly
-  (§3). protocol.md's "LSPosed parses its config profile from its file" / the
-  LSPosed rows in its channel + profile tables are superseded here.
-- **APatch/FolkPatch boot is configurable** when the superkey is persisted (§6)
-  or the runtime grants the trusted `su` token; without either, boot records
-  `awaiting_superkey` and activation resumes after the app supplies the key.
-- **The app does not hand-build per-channel configs** — the activator does
-  (§4). The serialiser is the Rust `protocol` crate, shared with the Zygisk `.so`.
+| Concern | Authoritative document |
+|---|---|
+| Canonical JSON schema and desired state | this document (§2) |
+| JSON projection, native selection, and activation policy | this document (§4) |
+| Persistent paths, diagnostic files, lifetimes, and boot sequence | [state.md](state.md) |
+| Control-v2 / telemetry-v1 bytes, registries, and runtime framing | [protocol.md](protocol.md) |
+| `.ko` module parameters and hook-install behavior | [kmod README](../kmod/README.md) |
+| KPM load arguments and KernelPatch runtime behavior | [KPM README](../kmod/kpm/README.md) |
 
-The wire format itself (protocol.md §4–§5) is unchanged.
+LSPosed reads canonical JSON directly (§3), while the Rust activator serialises
+control v2 for the selected native backend (§4). The app persists desired state
+and invokes that activator; it does not hand-build per-channel wire payloads.

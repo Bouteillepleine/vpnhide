@@ -1,6 +1,6 @@
 package dev.okhsunrog.vpnhide
 
-// The native layer is exactly one of these at runtime (protocol §1.5).
+// The native layer is exactly one of these at runtime (docs/storage.md §4.3).
 internal enum class NativeBackendId { Kmod, Kpm, Zygisk }
 
 internal data class NativeBackendStates(

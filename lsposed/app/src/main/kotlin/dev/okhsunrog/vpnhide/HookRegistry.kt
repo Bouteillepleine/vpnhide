@@ -25,7 +25,7 @@ internal fun hooksInMask(mask: Long): Set<HookIds.Hook> = HookIds.Hook.entries.f
 
 /**
  * Hooks each backend owns, derived **once** from the generated per-backend masks.
- * A backend acts only on the hooks it owns and ignores foreign bits (protocol §1.4).
+ * A backend acts only on the hooks it owns and ignores foreign bits (protocol §5).
  */
 internal val KERNEL_HOOKS: Set<HookIds.Hook> = hooksInMask(HookIds.KERNEL_HOOK_MASK.toLong())
 internal val KMOD_HOOKS: Set<HookIds.Hook> = hooksInMask(HookIds.KMOD_HOOK_MASK.toLong())

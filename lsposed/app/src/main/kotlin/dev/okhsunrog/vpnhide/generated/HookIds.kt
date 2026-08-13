@@ -111,7 +111,7 @@ internal object HookIds {
         // no offset table for the running kernel — refused, no hooks
         UNSUPPORTED_KVER(1),
 
-        // the other kernel backend (.ko<->KPM) is loaded — refused (protocol §1.2)
+        // the other kernel backend (.ko<->KPM) is loaded — refused (docs/storage.md §4.3)
         CONFLICTING_BACKEND(2),
 
         // a required kallsyms symbol was missing — refused

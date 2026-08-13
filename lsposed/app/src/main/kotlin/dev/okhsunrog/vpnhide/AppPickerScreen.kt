@@ -57,9 +57,9 @@ import kotlinx.coroutines.withContext
  * selection in one place, and one Save writes the complete hiding config. Roles:
  *
  *  - [java]      "J" — LSPosed (the Java layer)
- *  - [native]    "N" — the one active native backend (kmod / KPM / Zygisk, §1.5);
- *                       written to every installed native backend, only the
- *                       active one acts.
+ *  - [native]    "N" — the one active native backend (kmod / KPM / Zygisk,
+ *                       docs/storage.md §4.3);
+ *                       the app invokes one installed activator by priority.
  *  - [appHiding] "A" — observer of the hidden-package view (which packages get
  *                       hidden is auto-detected; see autoDetectHiddenPackages).
  *  - [ports]     "P" — localhost-port blocking observer.

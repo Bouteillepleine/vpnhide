@@ -42,7 +42,7 @@ from codegen_lib import (  # type: ignore[import-not-found]
 
 TOML_PATH = REPO_ROOT / "data" / "hooks.toml"
 
-# Targets are only the protocol participants (§1.4): the kernel backends (C),
+# Targets are only the protocol participants (§1.3): the kernel backends (C),
 # the Zygisk backend (Rust), and the app + system_server hook (Kotlin). NOT
 # lsposed/native — that Rust crate is the uniffi diagnostic-probe library; it
 # consumes iface_lists (VPN-name matching) but never the protocol/registry.

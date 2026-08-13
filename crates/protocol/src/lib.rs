@@ -6,7 +6,7 @@
 //! tests at the bottom run against this implementation (protocol §8 Layer 1).
 //! When the spec changes, change both sides and add a vector.
 //!
-//! Roles (§1.4): backends PARSE config and EMIT stats/status. The activator
+//! Roles (§1.3): backends PARSE config and EMIT stats/status. The activator
 //! also uses this crate to FORMAT config snapshots for native backends.
 
 use core::iter;

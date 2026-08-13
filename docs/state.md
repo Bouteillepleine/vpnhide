@@ -48,7 +48,9 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 ### `/data/adb/modules/vpnhide_kmod/`
 
 - `module.prop`: module metadata, version, and stamped `gkiVariant=`.
-- `post-fs-data.sh`: loads `vpnhide_kmod.ko`, writes load diagnostics.
+- `post-fs-data.sh`: reads the canonical boot-feature set through the activator,
+  loads `vpnhide_kmod.ko` with `filesystem_hiding=0|1`, and writes load
+  diagnostics.
 - `service.sh`: starts `activator --boot-wait` in the background.
 - `uninstall.sh`: removes kmod-specific persistent diagnostics.
 - `activator`: Rust bin that reads canonical JSON, lists Android users and
@@ -60,9 +62,11 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 ### `/data/adb/modules/vpnhide_kpm/`
 
 - `module.prop`: module metadata.
-- `post-fs-data.sh`: asks `activator --load-only` to validate the running
-  major.minor kernel family and load KPM automatically on keyless KPatch-Next;
-  on APatch/FolkPatch records a deferred status and leaves load/config to service.
+- `post-fs-data.sh`: reads the canonical boot-feature set, asks
+  `activator --load-only` to validate the running major.minor kernel family and
+  load KPM automatically on keyless KPatch-Next, passing
+  `filesystem_hiding=1` only when requested; on APatch/FolkPatch records a
+  deferred status and leaves load/config to service.
 - `service.sh`: starts `activator --boot-wait` in the background.
 - `uninstall.sh`: removes KPM-specific persistent status and the ctl0 lock.
 - `activator`: Rust bin that refuses to run when the `.ko` backend is present,
@@ -286,13 +290,17 @@ deleted after use.
 ```text
 post-fs-data:
   kmod post-fs-data
-    -> insmod vpnhide_kmod.ko
+    -> activator boot-feature-enabled filesystem_iface_paths
+    -> insmod vpnhide_kmod.ko filesystem_hiding=0|1
     -> write /data/adb/vpnhide_kmod/load_status and load_dmesg
   KPM post-fs-data
     -> refuse if .ko module is installed+enabled
-    -> keyless KPatch-Next: activator validates uname major.minor, then loads vpnhide.kpm
+    -> read filesystem_iface_paths from canonical JSON
+    -> keyless KPatch-Next: activator validates uname major.minor, then loads
+       vpnhide.kpm with filesystem_hiding=1 when enabled (no load arg otherwise)
     -> APatch/FolkPatch: defer to service activator; service tries saved key,
-       then trusted su token, else writes awaiting_superkey
+       then trusted su token, and uses the same optional KPM load arg; without
+       either credential it writes awaiting_superkey
 
 service:
   kmod / KPM / Zygisk service.sh

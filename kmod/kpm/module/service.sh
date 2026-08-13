@@ -50,7 +50,8 @@ filesystem_hiding_for_load() {
 }
 
 apply_at_boot() {
-    # Single-active guard (§1.5), checked before the APatch superkey branch so
+    # Single-active guard (docs/storage.md §4.3), checked before the APatch
+    # superkey branch so
     # a co-installed .ko isn't masked as `awaiting_superkey`. Cheap, fail-safe,
     # ordering-independent floor; the activator re-checks (a superset, incl. a
     # live /proc/vpnhide_ctl) below and exits 3 if it still sees the .ko.

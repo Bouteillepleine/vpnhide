@@ -17,7 +17,7 @@ set_perm "$MODPATH/service.sh" 0 0 0755
 set_perm "$MODPATH/vpnhide.kpm" 0 0 0644
 set_perm "$MODPATH/uninstall.sh" 0 0 0755
 
-# Single-active warning (protocol §1.5): the .ko and KPM wrap the SAME kernel
+# Single-active warning (docs/storage.md §4.3): .ko and KPM wrap the SAME kernel
 # functions; running both freezes the device. The boot loader refuses to load
 # the KPM while the .ko module is present AND enabled (post-fs-data.sh /
 # service.sh check the same `disable` flag), so warn here in exactly that case —
