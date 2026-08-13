@@ -17,7 +17,7 @@ is the key on every control channel including Zygisk; `u64` cumulative counters;
 supercall (§7).
 Threat model: an **unprivileged** app — root-level detection is out of scope.
 
-Configuration storage, activation policy, boot-only features, and loader
+Configuration storage, activation policy, optional features, and loader
 arguments are deliberately outside this protocol. Their authoritative documents
 are [storage.md](storage.md) and [state.md](state.md); backend loader ABIs are in
 [the `.ko` README](../kmod/README.md) and
@@ -365,17 +365,20 @@ is global; a backend only acts on its own bits.
 Current shared kernel hooks (`.ko` / KPM, 11): `fib_route_seq_show`,
 `ipv6_route_seq_show`, `rtnl_fill_ifinfo`, `inet_fill_ifaddr`,
 `inet6_fill_ifaddr`, `dev_ioctl`, `sock_ioctl`, `fib_dump_info`, `rt6_fill_node`,
-`fib_nl_fill_rule`, `socket_bind_interface`. Both kernel backends also own the
-optional `filesystem_iface_paths` capability bit. Whether its global hook group
-is installed is outside control v2; see
-[storage.md](storage.md#22-optional-kernel-boot-features). Current LSPosed Java hooks (8):
+`fib_nl_fill_rule`, `socket_bind_interface`. Both kernel backends and Zygisk
+also own the optional `filesystem_iface_paths` capability bit. For `.ko`/KPM,
+whether the global hook group is installed is outside control v2. For Zygisk,
+the activator includes the bit in a target mask only while the same canonical
+feature is enabled; the process-local libc group reports successful
+installation through the app heartbeat rather than telemetry v1. See
+[storage.md](storage.md#22-optional-features). Current LSPosed Java hooks (8):
 `lsposed_link_properties`,
 `lsposed_network_capabilities`, `lsposed_network_info`, `lsposed_network`,
 `lsposed_connectivity_result`, `lsposed_connectivity_callback`,
 `lsposed_connectivity_network`, `lsposed_package_visibility`. Current Zygisk
-libc hooks (8): `zygisk_ioctl`, `zygisk_getifaddrs`, `zygisk_openat`,
+libc hooks (9): `zygisk_ioctl`, `zygisk_getifaddrs`, `zygisk_openat`,
 `zygisk_recvmsg`, `zygisk_recv`, `zygisk_recvfrom`,
-`zygisk_recvfrom_chk`, `zygisk_setsockopt`.
+`zygisk_recvfrom_chk`, `zygisk_setsockopt`, `filesystem_iface_paths`.
 
 ### 5.1 Error codes (`status`)
 

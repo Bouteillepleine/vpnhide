@@ -50,7 +50,14 @@ internal fun FilesystemHidingSettingsSection() {
                 sections = rootSnapshot?.sections.orEmpty(),
             )
         }
-    val savedMessage = stringResource(R.string.settings_filesystem_hiding_saved)
+    val savedMessage =
+        stringResource(
+            if (runtimeState.backend == NativeBackendId.Zygisk) {
+                R.string.settings_filesystem_hiding_saved_zygisk
+            } else {
+                R.string.settings_filesystem_hiding_saved
+            },
+        )
     val failedMessage = stringResource(R.string.settings_filesystem_hiding_failed)
 
     fun persist(value: Boolean) {
@@ -70,7 +77,17 @@ internal fun FilesystemHidingSettingsSection() {
         AlertDialog(
             onDismissRequest = { if (!saving) confirmationOpen = false },
             title = { Text(stringResource(R.string.settings_filesystem_hiding_confirm_title)) },
-            text = { Text(stringResource(R.string.settings_filesystem_hiding_confirm_body)) },
+            text = {
+                Text(
+                    stringResource(
+                        if (runtimeState.backend == NativeBackendId.Zygisk) {
+                            R.string.settings_filesystem_hiding_confirm_body_zygisk
+                        } else {
+                            R.string.settings_filesystem_hiding_confirm_body
+                        },
+                    ),
+                )
+            },
             confirmButton = {
                 TextButton(
                     enabled = !saving,
@@ -104,7 +121,7 @@ internal fun FilesystemHidingSettingsSection() {
             subtitle = filesystemHidingStatusText(runtimeState),
             icon = Icons.Default.VisibilityOff,
             checked = enabled,
-            enabled = targets != null && !saving && (runtimeState.kernelBackendInstalled || enabled),
+            enabled = targets != null && !saving && (runtimeState.nativeBackendInstalled || enabled),
             onCheckedChange = { value ->
                 if (value) confirmationOpen = true else persist(false)
             },
@@ -141,11 +158,23 @@ private fun filesystemHidingStatusText(state: FilesystemHidingState): String =
         }
 
         FilesystemHidingStatus.PendingEnable -> {
-            stringResource(R.string.settings_filesystem_hiding_pending_enable)
+            stringResource(
+                if (state.backend == NativeBackendId.Zygisk) {
+                    R.string.settings_filesystem_hiding_pending_enable_zygisk
+                } else {
+                    R.string.settings_filesystem_hiding_pending_enable
+                },
+            )
         }
 
         FilesystemHidingStatus.PendingDisable -> {
-            stringResource(R.string.settings_filesystem_hiding_pending_disable)
+            stringResource(
+                if (state.backend == NativeBackendId.Zygisk) {
+                    R.string.settings_filesystem_hiding_pending_disable_zygisk
+                } else {
+                    R.string.settings_filesystem_hiding_pending_disable
+                },
+            )
         }
 
         FilesystemHidingStatus.BootConfigError -> {

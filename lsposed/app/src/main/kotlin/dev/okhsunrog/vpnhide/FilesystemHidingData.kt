@@ -14,41 +14,65 @@ internal enum class FilesystemHidingStatus {
 
 internal data class FilesystemHidingState(
     val status: FilesystemHidingStatus,
+    val backend: NativeBackendId? = null,
     val errorDetail: String? = null,
 ) {
-    val kernelBackendInstalled: Boolean
+    val nativeBackendInstalled: Boolean
         get() = status != FilesystemHidingStatus.Unavailable
 }
 
-private data class FilesystemKernelBackend(
+private data class FilesystemNativeBackend(
     val id: NativeBackendId,
     val statusRaw: String,
 )
 
-private fun filesystemKernelBackend(sections: Map<String, String>): FilesystemKernelBackend? {
+private fun filesystemNativeBackend(sections: Map<String, String>): FilesystemNativeBackend? {
     val kmodRaw = sections["kmod_state"].orEmpty()
     val kpmRaw = sections["kpm_state"].orEmpty()
+    val zygiskRaw = sections["zygisk_status"].orEmpty()
     val kmodStatus = parseProtocolStatusBlock(kmodRaw)
     val kpmStatus = parseProtocolStatusBlock(kpmRaw)
+    val zygiskActive =
+        parseKeyValueLines(zygiskRaw)["boot_id"] ==
+            sections["current_boot_id"].orEmpty().trim() &&
+            sections["current_boot_id"].orEmpty().isNotBlank()
     return when {
         kmodStatus?.backend ==
             HookIds.Backend.KMOD.id
-                .toLong() -> FilesystemKernelBackend(NativeBackendId.Kmod, kmodRaw)
+                .toLong() -> {
+            FilesystemNativeBackend(NativeBackendId.Kmod, kmodRaw)
+        }
 
         kpmStatus?.backend ==
             HookIds.Backend.KPM.id
-                .toLong() -> FilesystemKernelBackend(NativeBackendId.Kpm, kpmRaw)
+                .toLong() -> {
+            FilesystemNativeBackend(NativeBackendId.Kpm, kpmRaw)
+        }
 
-        sections["kmod_module_dir"]?.trim() == "1" -> FilesystemKernelBackend(NativeBackendId.Kmod, kmodRaw)
+        zygiskActive -> {
+            FilesystemNativeBackend(NativeBackendId.Zygisk, zygiskRaw)
+        }
 
-        sections["kpm_module_dir"]?.trim() == "1" -> FilesystemKernelBackend(NativeBackendId.Kpm, kpmRaw)
+        sections["kmod_module_dir"]?.trim() == "1" -> {
+            FilesystemNativeBackend(NativeBackendId.Kmod, kmodRaw)
+        }
 
-        else -> null
+        sections["kpm_module_dir"]?.trim() == "1" -> {
+            FilesystemNativeBackend(NativeBackendId.Kpm, kpmRaw)
+        }
+
+        sections["zygisk_module_dir"]?.trim() == "1" -> {
+            FilesystemNativeBackend(NativeBackendId.Zygisk, zygiskRaw)
+        }
+
+        else -> {
+            null
+        }
     }
 }
 
 private fun currentKmodLoadStatus(
-    backend: FilesystemKernelBackend,
+    backend: FilesystemNativeBackend,
     sections: Map<String, String>,
 ): KmodLoadStatus? =
     if (backend.id == NativeBackendId.Kmod) {
@@ -62,7 +86,7 @@ private fun currentKmodLoadStatus(
     }
 
 private fun filesystemHookSetupFailed(
-    backend: FilesystemKernelBackend,
+    backend: FilesystemNativeBackend,
     load: KmodLoadStatus?,
     sections: Map<String, String>,
 ): Boolean =
@@ -80,53 +104,131 @@ private fun filesystemHookSetupFailed(
         }
 
         NativeBackendId.Zygisk -> {
-            false
+            val status = currentZygiskHookStatus(backend.statusRaw, sections["current_boot_id"].orEmpty())
+            status != null &&
+                status.requested.hasHook(HookIds.Hook.FILESYSTEM_IFACE_PATHS) &&
+                !status.installed.hasHook(HookIds.Hook.FILESYSTEM_IFACE_PATHS) &&
+                status.filesystemError.isNotBlank()
+        }
+    }
+
+private data class ZygiskHookStatus(
+    val requested: Long,
+    val installed: Long,
+    val filesystemError: String,
+)
+
+private fun currentZygiskHookStatus(
+    raw: String,
+    currentBootId: String,
+): ZygiskHookStatus? {
+    val values = parseKeyValueLines(raw)
+    if (values["boot_id"] != currentBootId.trim() || currentBootId.isBlank()) return null
+    return ZygiskHookStatus(
+        requested = values["requested_hooks"]?.toLongOrNull(16) ?: 0,
+        installed = values["installed_hooks"]?.toLongOrNull(16) ?: 0,
+        filesystemError = values["filesystem_error"].orEmpty(),
+    )
+}
+
+internal fun installedZygiskOptionalHooks(
+    raw: String,
+    currentBootId: String,
+): Set<HookIds.Hook> =
+    currentZygiskHookStatus(raw, currentBootId)
+        ?.installed
+        ?.let(::hooksInMask)
+        ?.intersect(setOf(HookIds.Hook.FILESYSTEM_IFACE_PATHS))
+        .orEmpty()
+
+internal fun installedNativeOptionalHooks(
+    backend: NativeBackendId?,
+    sections: Map<String, String>,
+    currentBootId: String,
+): Set<HookIds.Hook> =
+    when (backend) {
+        NativeBackendId.Kmod -> {
+            installedHooks(sections["kmod_state"].orEmpty())
+        }
+
+        NativeBackendId.Kpm -> {
+            installedHooks(sections["kpm_state"].orEmpty())
+        }
+
+        NativeBackendId.Zygisk -> {
+            installedZygiskOptionalHooks(
+                sections["zygisk_status"].orEmpty(),
+                currentBootId,
+            )
+        }
+
+        null -> {
+            emptySet()
         }
     }
 
 /**
- * Compare the canonical next-boot choice with the hook set actually reported
- * by the running kernel backend. Boot diagnostics distinguish a newly changed
- * setting from a hook that was requested this boot but failed to install.
+ * Compare the canonical choice with the hook set actually reported by the
+ * active native backend. Kernel backends apply it at boot; Zygisk applies it
+ * per target-process launch and reports the installed subset in its heartbeat.
  */
 internal fun resolveFilesystemHidingState(
     desiredEnabled: Boolean,
     sections: Map<String, String>,
 ): FilesystemHidingState {
     val backend =
-        filesystemKernelBackend(sections)
+        filesystemNativeBackend(sections)
             ?: return FilesystemHidingState(FilesystemHidingStatus.Unavailable)
     val hookInstalled =
-        HookIds.Hook.FILESYSTEM_IFACE_PATHS in
-            installedHooks(backend.statusRaw)
+        when (backend.id) {
+            NativeBackendId.Kmod, NativeBackendId.Kpm -> {
+                HookIds.Hook.FILESYSTEM_IFACE_PATHS in installedHooks(backend.statusRaw)
+            }
+
+            NativeBackendId.Zygisk -> {
+                HookIds.Hook.FILESYSTEM_IFACE_PATHS in
+                    installedZygiskOptionalHooks(
+                        backend.statusRaw,
+                        sections["current_boot_id"].orEmpty(),
+                    )
+            }
+        }
     val load = currentKmodLoadStatus(backend, sections)
     val configExit = load?.filesystemConfigExit
     if (configExit != null && configExit != 0 && configExit != 1) {
         return FilesystemHidingState(
             status = FilesystemHidingStatus.BootConfigError,
+            backend = backend.id,
             errorDetail = load.filesystemConfigError ?: "exit=$configExit",
         )
     }
 
     return when {
         desiredEnabled && hookInstalled -> {
-            FilesystemHidingState(FilesystemHidingStatus.Active)
+            FilesystemHidingState(FilesystemHidingStatus.Active, backend.id)
         }
 
         !desiredEnabled && hookInstalled -> {
-            FilesystemHidingState(FilesystemHidingStatus.PendingDisable)
+            FilesystemHidingState(FilesystemHidingStatus.PendingDisable, backend.id)
         }
 
         desiredEnabled && filesystemHookSetupFailed(backend, load, sections) -> {
-            FilesystemHidingState(FilesystemHidingStatus.HookSetupError)
+            FilesystemHidingState(
+                FilesystemHidingStatus.HookSetupError,
+                backend.id,
+                currentZygiskHookStatus(
+                    backend.statusRaw,
+                    sections["current_boot_id"].orEmpty(),
+                )?.filesystemError,
+            )
         }
 
         desiredEnabled -> {
-            FilesystemHidingState(FilesystemHidingStatus.PendingEnable)
+            FilesystemHidingState(FilesystemHidingStatus.PendingEnable, backend.id)
         }
 
         else -> {
-            FilesystemHidingState(FilesystemHidingStatus.Disabled)
+            FilesystemHidingState(FilesystemHidingStatus.Disabled, backend.id)
         }
     }
 }

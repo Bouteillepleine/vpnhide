@@ -149,9 +149,9 @@ newer versions can extend the set without a schema migration.
 
 The current projection is:
 
-| Canonical feature | `.ko` loader ABI | KPM loader ABI |
-|---|---|---|
-| `filesystem_iface_paths` | `insmod vpnhide_kmod.ko filesystem_hiding=1` | load `vpnhide.kpm` with the exact argument `filesystem_hiding=1` |
+| Canonical feature | `.ko` loader ABI | KPM loader ABI | Zygisk projection |
+|---|---|---|---|
+| `filesystem_iface_paths` | `insmod vpnhide_kmod.ko filesystem_hiding=1` | load `vpnhide.kpm` with the exact argument `filesystem_hiding=1` | include hook bit 27 in each selected target's Zygisk mask |
 
 When the feature is absent, the shipped `.ko` loader passes
 `filesystem_hiding=0`; the KPM loader omits the argument. Either choice is made
@@ -159,8 +159,11 @@ before hook installation, so changing the canonical set takes effect only after
 a reboot. Backend-specific parsing and failure behavior are documented in the
 [`.ko` README](../kmod/README.md#optional-filesystem-hook-loader-contract) and
 [KPM README](../kmod/kpm/README.md#optional-filesystem-hook-loader-contract).
+For Zygisk, the activator instead projects the feature into each target's
+module-dir control snapshot. A force-stop and restart of the target process is
+enough to pick up the change; no reboot or loader argument is involved.
 
-Filesystem hiding then has two independent gates:
+Filesystem hiding has two independent gates on kernel backends:
 
 1. The boot feature installs the four global VFS interception points. With the
    feature off, the backend reports no `filesystem_iface_paths` capability and
@@ -168,6 +171,13 @@ Filesystem hiding then has two independent gates:
 2. Control v2 hook bit 27 selects target UIDs allowed to use that installed
    capability. Installing the hooks alone does not hide anything for a UID whose
    target mask omits the bit.
+
+Zygisk uses the same canonical feature and hook ID, but its first gate is an
+atomic group of process-local libc hooks installed during app specialization.
+The heartbeat records both the requested and successfully installed masks; if
+any filesystem symbol cannot be hooked, bit 27 is omitted from the installed
+mask while the ordinary Zygisk network hooks remain active. This is deliberately
+best-effort coverage rather than the kernel backends' resolved-dentry contract.
 
 The symbolic feature name and loader arguments belong to storage/activation;
 hook ID 27, its mask semantics, and its installed/status bit belong to the

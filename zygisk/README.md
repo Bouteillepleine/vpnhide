@@ -17,6 +17,15 @@ All hooks are inline on `libc.so` via ByteDance shadowhook:
 | `recvmsg` | Netlink `RTM_NEWADDR` / `RTM_NEWLINK` dump responses | Removes VPN interface entries from netlink messages. |
 | `recv` | Netlink `RTM_NEWADDR` / `RTM_NEWLINK` dump responses | Same as `recvmsg`; hooked separately because bionic's `recv()` tail-calls `recvfrom`. |
 | `recvfrom`, `__recvfrom_chk` | Direct/FORTIFY'd netlink reads | Same filtering for callers that bypass the plain `recv` symbol. |
+| `open*`, `stat`/`lstat`/`fstat`/`fstatat`, `access*`, `readlink*`, `readdir*` | `/sys/.../net/<iface>` and `/proc/sys/net/{ipv4,ipv6}/{conf,neigh}/<iface>` | Optional best-effort group: returns `ENOENT` for VPN paths and removes VPN entries from directory listings. |
+
+The filesystem group is controlled by the canonical
+`settings.optionalFeatures: ["filesystem_iface_paths"]` setting. The activator
+projects hook bit 27 only into selected Zygisk target masks, and a force-stop +
+restart is enough to apply a change. The group is installed atomically: if any
+required libc symbol cannot be hooked, its stubs are rolled back, bit 27 is
+omitted from the heartbeat's `installed_hooks`, and the ordinary network hooks
+continue working.
 
 ## Architecture
 
@@ -27,7 +36,7 @@ PLT hooks patch the caller library's procedure linkage table. At `post_app_speci
 ### Flow
 
 1. **`pre_app_specialize`** -- runs in the already-forked child, before the kernel drops it to the app's UID and SELinux context (still has zygote privileges at this point). Reads `args.nice_name`, checks against the module-dir `targets.txt` runtime wire generated from `/data/system/vpnhide_config.json` by the activator. Non-targeted apps get `DlCloseModuleLibrary` (zero cost after unload). See `src/lib.rs`'s top-level doc block for the full Zygisk lifecycle and why every Rust `static` is fresh per app launch.
-2. **`post_app_specialize`** -- on targeted processes only: `shadowhook_init`, install the selected inline hooks (`ioctl`, `getifaddrs`, `setsockopt`, `openat`, `recvmsg`, `recv`, `recvfrom`, `__recvfrom_chk`), then scrub maps. `recv` is hooked separately because bionic's `recv()` is `b recvfrom` (tail-call) — patching `recvfrom`'s prologue would break `recv`.
+2. **`post_app_specialize`** -- on targeted processes only: `shadowhook_init`, install the selected inline hooks (`ioctl`, `getifaddrs`, `setsockopt`, `openat`, `recvmsg`, `recv`, `recvfrom`, `__recvfrom_chk`, and the optional filesystem group), then scrub maps. `recv` is hooked separately because bionic's `recv()` is `b recvfrom` (tail-call) — patching `recvfrom`'s prologue would break `recv`.
 
 ### Thread-local guard
 
@@ -121,6 +130,11 @@ VPN interface prefixes: `tun`, `ppp`, `tap`, `wg`, `ipsec`, `xfrm`, `utun`, `l2t
 ## Known limitations
 
 - **Direct `svc #0` syscalls bypass the hook.** Apps issuing raw syscalls skip libc entirely, including the best-effort `setsockopt` protection. Use a kernel-level backend, [vpnhide-kmod](../kmod/) or [KPM](../kmod/kpm/), for these apps.
+- **Filesystem hiding is best-effort.** The optional group handles canonical
+  and relative libc paths, but raw `openat`/`getdents64` syscalls, unhooked libc
+  aliases, bind mounts, and paths reached through unrelated symlink aliases can
+  bypass it. The kernel backends classify resolved dentries and provide the
+  stronger contract.
 - **Socket binding is left native before Linux 5.7.** Those kernels reject an unprivileged `SO_BINDTODEVICE` before reading the name. Android common 5.4 backports `SO_BINDTOIFINDEX` with the same capability gate; 4.x lacks it. Filtering would introduce a distinguishable error instead of closing an oracle.
 - **arm64 only.** No 32-bit arm, no x86.
 - **`getifaddrs` hook leaks a few bytes per call.** Unlinked VPN entries in the ifaddrs linked list are intentionally leaked rather than tracked with a shadow allocator. Acceptable tradeoff -- `getifaddrs` is called infrequently.
@@ -130,6 +144,7 @@ VPN interface prefixes: `tun`, `ppp`, `tap`, `wg`, `ipsec`, `xfrm`, `utun`, `l2t
 
 - `src/lib.rs` -- module entry point, target gating, hook installer, maps scrubbing
 - `src/hooks.rs` -- hook replacements for ioctl, getifaddrs, setsockopt, openat, and the recv family
+- `src/filesystem.rs` -- optional best-effort libc filesystem path and directory filtering
 - `src/filter.rs` -- VPN interface name matching and proc/net content filters (unit tested)
 - `src/shadowhook.rs` -- minimal FFI to shadowhook
 - `build.rs` -- drives CMake on the shadowhook submodule

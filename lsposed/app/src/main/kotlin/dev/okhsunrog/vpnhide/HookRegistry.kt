@@ -62,7 +62,8 @@ internal fun ownedNativeHooks(
         }
 
         NativeBackendId.Zygisk -> {
-            ZYGISK_HOOKS
+            ZYGISK_HOOKS - HookIds.Hook.FILESYSTEM_IFACE_PATHS +
+                installedOptionalHooks.intersect(setOf(HookIds.Hook.FILESYSTEM_IFACE_PATHS))
         }
 
         null -> {

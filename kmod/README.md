@@ -35,7 +35,7 @@ equivalent optional KPM hooks.
 
 `filesystem_hiding` is a read-only boolean module parameter consumed only by
 `insmod`; it is not a control-v2 field. The shipped activator's `boot-load`
-command reads canonical boot feature `filesystem_iface_paths` and passes
+command reads canonical optional feature `filesystem_iface_paths` and passes
 `filesystem_hiding=1` or `filesystem_hiding=0` accordingly. Omitting the
 parameter has the same disabled behavior as `0`.
 

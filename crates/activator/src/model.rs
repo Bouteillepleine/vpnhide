@@ -177,6 +177,10 @@ impl HookSet {
         Self(self.0 | hook.bit())
     }
 
+    const fn without(self, hook: Hook) -> Self {
+        Self(self.0 & !hook.bit())
+    }
+
     const fn restricted_to(self, owner: Self) -> Self {
         Self(self.0 & owner.0)
     }
@@ -397,11 +401,26 @@ pub(crate) fn project_native_with_resolver_for_family(
     resolver: &PackageUidMap,
     family: NativeHookFamily,
 ) -> String {
+    let zygisk_filesystem_enabled = cfg
+        .settings
+        .optional_features
+        .contains(OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS);
     let mut by_uid = BTreeMap::<u32, HookSet>::new();
     for (pkg, app) in &cfg.apps {
-        let Some(hooks) = app.native.hooks(family) else {
+        let Some(mut hooks) = app.native.hooks(family) else {
             continue;
         };
+        // Kernel backends receive the per-app desired bit independently from
+        // whether their load-time hook group is present; their runtime status
+        // reports the installed capability. Zygisk has no separate loader ABI,
+        // so the optional feature gate is projected directly into each process
+        // mask and takes effect when that app next specializes.
+        if family == NativeHookFamily::Zygisk && !zygisk_filesystem_enabled {
+            hooks = hooks.without(Hook::FilesystemIfacePaths);
+            if hooks.is_empty() {
+                continue;
+            }
+        }
         // The APK is intentionally single-owner: only its main-profile copy
         // may manage the shared config. Keep its mandatory self target just as
         // singular here. An accidentally installed work/clone-profile copy is

@@ -507,7 +507,7 @@ private fun AppRow(
             selectedHooks = nativeHooks,
             roleEnabled = app.native,
             notice =
-                if (nativeHookFamily != NativeHookFamily.Zygisk && !filesystemHidingEnabled) {
+                if (!filesystemHidingEnabled) {
                     stringResource(R.string.native_hooks_filesystem_hiding_disabled)
                 } else {
                     null

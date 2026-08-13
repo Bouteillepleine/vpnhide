@@ -39,6 +39,7 @@ class StorageConfigTest {
                 "zygisk_recvfrom",
                 "zygisk_recvfrom_chk",
                 "zygisk_setsockopt",
+                "filesystem_iface_paths",
             ),
             ZygiskNativeHookEntries.map { it.hookName },
         )
