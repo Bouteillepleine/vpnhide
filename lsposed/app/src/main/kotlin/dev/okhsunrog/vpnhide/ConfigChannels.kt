@@ -10,20 +10,34 @@ import android.content.Context
 internal object ConfigChannels {
     /** Shell part running exactly one native activator by backend priority. */
     fun nativeActivatorCommand(): String =
-        "if [ -x $KMOD_ACTIVATOR ] && [ ! -f $KMOD_MODULE_DIR/disable ]; then $KMOD_ACTIVATOR 2>&1; " +
-            "elif [ -x $KPM_ACTIVATOR ] && [ ! -f $KPM_MODULE_DIR/disable ]; then $KPM_ACTIVATOR 2>&1; " +
-            "elif [ -x $ZYGISK_ACTIVATOR ] && [ ! -f $ZYGISK_MODULE_DIR/disable ]; then $ZYGISK_ACTIVATOR 2>&1; " +
-            "else true; fi"
+        "{ ${activatorShellHelper()}; " +
+            "if [ -f $KMOD_MODULE_DIR/module.prop ] && [ ! -f $KMOD_MODULE_DIR/disable ]; then " +
+            "run_activator $KMOD_ACTIVATOR kmod; " +
+            "elif [ -f $KPM_MODULE_DIR/module.prop ] && [ ! -f $KPM_MODULE_DIR/disable ]; then " +
+            "run_activator $KPM_ACTIVATOR KPM; " +
+            "elif [ -f $ZYGISK_MODULE_DIR/module.prop ] && [ ! -f $ZYGISK_MODULE_DIR/disable ]; then " +
+            "run_activator $ZYGISK_ACTIVATOR Zygisk; " +
+            "else true; fi; }"
 
     /** Shell part running the optional ports activator when its module is enabled. */
     fun portsActivatorCommand(): String =
-        "if [ -x $PORTS_ACTIVATOR ] && [ ! -f $PORTS_MODULE_DIR/disable ]; then $PORTS_ACTIVATOR 2>&1; else true; fi"
+        "{ ${activatorShellHelper()}; " +
+            "if [ -f $PORTS_MODULE_DIR/module.prop ] && [ ! -f $PORTS_MODULE_DIR/disable ]; then " +
+            "run_activator $PORTS_ACTIVATOR Ports; else true; fi; }"
 
     /**
      * Re-emit the runtime config for the current canonical config. Package→UID
      * resolution and wire formatting live in the activator, not in the app.
      */
     fun reconcileCommand(): String = nativeActivatorCommand()
+
+    /** Shared shell helper: selecting a module and validating its bundle are separate steps. */
+    fun activatorShellHelper(): String =
+        "run_activator() { " +
+            "ACTIVATOR_PATH=\"${'$'}1\"; MODULE_LABEL=\"${'$'}2\"; " +
+            "if [ -x \"${'$'}ACTIVATOR_PATH\" ]; then \"${'$'}ACTIVATOR_PATH\" 2>&1; " +
+            "else echo \"vpnhide: ${'$'}MODULE_LABEL activator missing or not executable at " +
+            "${'$'}ACTIVATOR_PATH\" >&2; return 1; fi; }"
 }
 
 /**

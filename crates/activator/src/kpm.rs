@@ -17,9 +17,10 @@ use vpnhide_apatch_abi::{
 use vpnhide_protocol::{KPM_ARGS_LEN, Kind, TELEMETRY_VERSION, parse_config, peek_kind};
 
 use crate::{
-    APATCH_DIR, APATCH_TRUSTED_SU_KEY, KPM_CTL_LOCK, KPM_MODULE_FILE, KPM_NAME,
-    KPM_TRUNCATION_MARKER, LOCK_EX, Result, SUPERCALL_HELLO, SUPERCALL_HELLO_MAGIC,
-    SUPERCALL_KPM_CONTROL, SUPERCALL_KPM_LIST, SUPERCALL_KPM_LOAD, SUPERKEY_FILE, flock, syscall,
+    APATCH_DIR, APATCH_TRUSTED_SU_KEY, CHILD_COMMAND_TIMEOUT, KPM_CTL_LOCK, KPM_MODULE_FILE,
+    KPM_NAME, KPM_TRUNCATION_MARKER, LOCK_EX, Result, SUPERCALL_HELLO, SUPERCALL_HELLO_MAGIC,
+    SUPERCALL_KPM_CONTROL, SUPERCALL_KPM_LIST, SUPERCALL_KPM_LOAD, SUPERKEY_FILE, flock,
+    output_with_timeout, syscall,
 };
 
 fn find_kpatch() -> Option<PathBuf> {
@@ -208,7 +209,7 @@ impl KpmClient {
                 if let Some(args) = options.args() {
                     cmd.arg(args);
                 }
-                let out = cmd.output()?;
+                let out = output_with_timeout(&mut cmd, CHILD_COMMAND_TIMEOUT)?;
                 if out.status.success() {
                     Ok(())
                 } else {
@@ -296,7 +297,7 @@ pub(crate) fn validate_kpm_config_wire(wire: &str) -> Result<()> {
 fn kpatch_kpm_list_contains(kpatch: &Path) -> Result<bool> {
     let mut cmd = Command::new(kpatch);
     cmd.args(["kpm", "list"]);
-    let out = cmd.output()?;
+    let out = output_with_timeout(&mut cmd, CHILD_COMMAND_TIMEOUT)?;
     if !out.status.success() {
         return Ok(false);
     }
@@ -307,7 +308,7 @@ fn kpatch_kpm_list_contains(kpatch: &Path) -> Result<bool> {
 fn kpatch_hello(kpatch: &Path) -> Result<()> {
     let mut cmd = Command::new(kpatch);
     cmd.arg("hello");
-    let out = cmd.output()?;
+    let out = output_with_timeout(&mut cmd, CHILD_COMMAND_TIMEOUT)?;
     if out.status.success() && !String::from_utf8_lossy(&out.stdout).trim().is_empty() {
         Ok(())
     } else {
@@ -322,7 +323,7 @@ fn kpatch_hello(kpatch: &Path) -> Result<()> {
 fn run_kpatch_kpm_ctl0_config(kpatch: &Path, wire: &str) -> Result<()> {
     let mut cmd = Command::new(kpatch);
     cmd.args(["kpm", "ctl0", KPM_NAME, wire]);
-    let out = cmd.output()?;
+    let out = output_with_timeout(&mut cmd, CHILD_COMMAND_TIMEOUT)?;
     if kpatch_ctl0_config_status_ok(out.status, wire) {
         Ok(())
     } else {
@@ -333,7 +334,7 @@ fn run_kpatch_kpm_ctl0_config(kpatch: &Path, wire: &str) -> Result<()> {
 fn run_kpatch_kpm_ctl0_read_raw(kpatch: &Path, wire: &str) -> Result<String> {
     let mut cmd = Command::new(kpatch);
     cmd.args(["kpm", "ctl0", KPM_NAME, wire]);
-    let out = cmd.output()?;
+    let out = output_with_timeout(&mut cmd, CHILD_COMMAND_TIMEOUT)?;
     // The kpatch CLI prints the reply to stdout (`fprintf(stdout, "%s", buf)`)
     // and exits with the supercall's return value — for a READ that is the reply
     // BYTE COUNT (e.g. 64), NOT 0. So a non-zero exit is the normal success case

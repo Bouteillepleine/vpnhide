@@ -48,29 +48,27 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 ### `/data/adb/modules/vpnhide_kmod/`
 
 - `module.prop`: module metadata, version, and stamped `gkiVariant=`.
-- `post-fs-data.sh`: reads the canonical boot-feature set through the activator,
-  loads `vpnhide_kmod.ko` with `filesystem_hiding=0|1`, and writes load
-  diagnostics.
-- `service.sh`: starts `activator --boot-wait` in the background.
-- `uninstall.sh`: removes kmod-specific persistent diagnostics.
+- `post-fs-data.sh`: thin root-manager entrypoint that execs `activator boot-load`.
+- `service.sh`: starts `activator boot-service` in the background and returns
+  immediately to the root manager's sequential script runner.
+- `uninstall.sh`: thin uninstall entrypoint that execs `activator uninstall`.
 - `activator`: Rust bin that reads canonical JSON, lists Android users and
   resolves packages with `pm list packages -U --user <id>` for each user,
-  formats text wire, waits for
-  `/proc/vpnhide_ctl` in boot mode, and writes `/proc/vpnhide_ctl`.
+  loads the `.ko` during `post-fs-data`, owns its typed load diagnostics,
+  waits for `/proc/vpnhide_ctl` during late-start, formats text wire, and writes
+  `/proc/vpnhide_ctl`.
 - `vpnhide_kmod.ko`: kernel module binary.
 
 ### `/data/adb/modules/vpnhide_kpm/`
 
 - `module.prop`: module metadata.
-- `post-fs-data.sh`: reads the canonical boot-feature set, asks
-  `activator --load-only` to validate the running major.minor kernel family and
-  load KPM automatically on keyless KPatch-Next, passing
-  `filesystem_hiding=1` only when requested; on APatch/FolkPatch records a
-  deferred status and leaves load/config to service.
-- `service.sh`: starts `activator --boot-wait` in the background.
-- `uninstall.sh`: removes KPM-specific persistent status and the ctl0 lock.
+- `post-fs-data.sh`: thin root-manager entrypoint that execs `activator boot-load`.
+- `service.sh`: starts `activator boot-service` in the background and returns
+  immediately to the root manager's sequential script runner.
+- `uninstall.sh`: thin uninstall entrypoint that execs `activator uninstall`.
 - `activator`: Rust bin that refuses to run when the `.ko` backend is present,
   refuses unsupported kernel families before invoking KernelPatch,
+  owns load/config status and preserves the actual boot-only feature choice,
   reads optional `/data/adb/vpnhide/superkey`, loads/configures KPM through
   APatch/FolkPatch direct supercalls or KPatch-Next `kpatch kpm load` +
   `kpatch kpm ctl0` (including the standalone KPatch-Next-Module CLI path).
@@ -80,8 +78,10 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 
 - `module.prop`: module metadata.
 - `customize.sh`: install hook that applies module file permissions.
-- `service.sh`: starts `activator --boot-wait` in the background.
-- `uninstall.sh`: leaves the app-owned canonical config intact.
+- `service.sh`: starts `activator boot-service` in the background and returns
+  immediately to the root manager's sequential script runner.
+- `uninstall.sh`: thin entrypoint that execs `activator uninstall`; canonical
+  config remains app-owned.
 - `activator`: Rust bin that writes the Zygisk runtime config.
 - `zygisk/arm64-v8a.so`: Rust cdylib injected into app processes.
 - `targets.txt`: runtime `vpnhide 2 config` text snapshot read through Zygisk's
@@ -91,13 +91,18 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 ### `/data/adb/modules/vpnhide_ports/`
 
 - `module.prop`: module metadata.
-- `service.sh`: background-waits for netd baseline iptables, then runs
-  `activator --boot-wait`, and repeats once after 30 seconds.
+- `service.sh`: starts `activator boot-service` in the background and returns
+  immediately to the root manager's sequential script runner.
 - `activator`: Rust bin that reads canonical JSON, derives `ports: true`
-  packages, resolves UIDs, applies iptables rules, and records the latest
-  apply status under `/data/adb/vpnhide_ports/`.
-- `uninstall.sh`: removes `vpnhide_out`, `vpnhide_out6`, and portshide
-  diagnostics.
+  packages, waits for netd, resolves UIDs, applies and later re-applies iptables
+  rules, and records the latest apply status under `/data/adb/vpnhide_ports/`.
+- `uninstall.sh`: thin entrypoint; the activator removes `vpnhide_out`,
+  `vpnhide_out6`, and portshide diagnostics.
+
+For all four module directories, the app checks the `activator` file itself in
+the shared root snapshot. An enabled installation with a missing or
+non-executable activator is a bundle-integrity failure even when an old runtime
+status file still exists.
 
 ---
 
@@ -107,22 +112,22 @@ module reinstall. They hold binaries and boot scripts, not user-managed config.
 
 | File | Format | Writer | Reader | Lifetime |
 |---|---|---|---|---|
-| `load_status` | `key=value`: timestamp, boot_id, uname_r, gki_variant, kmod_version, root_manager, kprobes, kretprobes, filesystem_hiding, filesystem_config_exit, filesystem_config_error, insmod_exit, loaded, insmod_stderr | `kmod/module/post-fs-data.sh` | app dashboard | overwritten each boot |
-| `load_dmesg` | filtered dmesg excerpt | `kmod/module/post-fs-data.sh` | app dashboard/debug export | overwritten each boot |
+| `load_status` | `key=value`: timestamp, boot_id, uname_r, gki_variant, kmod_version, root_manager, kprobes, kretprobes, filesystem_hiding, filesystem_config_exit, filesystem_config_error, insmod_exit, loaded, insmod_stderr | kmod activator | app dashboard | overwritten each boot |
+| `load_dmesg` | filtered dmesg excerpt | kmod activator | app dashboard/debug export | overwritten each boot |
 
 ### `/data/adb/vpnhide_kpm/`
 
 | File | Format | Writer | Reader | Lifetime |
 |---|---|---|---|---|
-| `load_status` | `key=value`: timestamp, boot_id, uname_r, runtime, loaded, filesystem_hiding, reason, detail | KPM `post-fs-data.sh` / `service.sh` | app dashboard | overwritten each boot |
+| `load_status` | `key=value`: timestamp, boot_id, uname_r, runtime, loaded, filesystem_hiding, reason, detail | KPM activator | app dashboard | overwritten each boot |
 | `ctl.lock` | empty advisory-lock inode, mode `0600` | KPM activator | KPM activators serialize ctl0 config/status/stats calls with `flock` | while the module is installed; removed on uninstall |
 
 ### `/data/adb/vpnhide_ports/`
 
 | File | Format | Writer | Reader | Lifetime |
 |---|---|---|---|---|
-| `load_status` | `key=value`: timestamp, boot_id, uname_r, runtime=ports, source, loaded, target_count, detail | ports activator; `portshide/module/service.sh` when the activator is missing or crashes | app dashboard/debug export | overwritten on every ports apply |
-| `load_log` | stdout/stderr excerpt from the latest ports apply | ports activator; `portshide/module/service.sh` failure fallback | debug export | overwritten on every ports apply |
+| `load_status` | `key=value`: timestamp, boot_id, uname_r, runtime=ports, source, loaded, target_count, detail | ports activator | app dashboard/debug export | overwritten on every ports apply |
+| `load_log` | stdout/stderr excerpt from the latest ports apply | ports activator | debug export | overwritten on every ports apply |
 
 ### `/data/adb/vpnhide/superkey`
 
@@ -290,12 +295,14 @@ deleted after use.
 ```text
 post-fs-data:
   kmod post-fs-data
-    -> activator boot-feature-enabled filesystem_iface_paths
-    -> insmod vpnhide_kmod.ko filesystem_hiding=0|1
-    -> write /data/adb/vpnhide_kmod/load_status and load_dmesg
+    -> exec activator boot-load
+    -> activator reads filesystem_iface_paths from canonical JSON
+    -> activator runs bounded insmod ... filesystem_hiding=0|1
+    -> activator writes /data/adb/vpnhide_kmod/load_status and load_dmesg
   KPM post-fs-data
-    -> refuse if .ko module is installed+enabled
-    -> read filesystem_iface_paths from canonical JSON
+    -> exec activator boot-load
+    -> activator refuses if .ko module is installed+enabled
+    -> activator reads filesystem_iface_paths from canonical JSON
     -> keyless KPatch-Next: activator validates uname major.minor, then loads
        vpnhide.kpm with filesystem_hiding=1 when enabled (no load arg otherwise)
     -> APatch/FolkPatch: defer to service activator; service tries saved key,
@@ -304,17 +311,17 @@ post-fs-data:
 
 service:
   kmod / KPM / Zygisk service.sh
-    -> start that module's activator with --boot-wait in the background
+    -> start that module's activator boot-service in the background and return
     -> KPM activator rejects unsupported kernels before waiting for PackageManager
     -> activator waits for PackageManager to expose dev.okhsunrog.vpnhide
     -> kmod activator also waits for /proc/vpnhide_ctl
     -> KPM activator uses saved APatch SuperKey or trusted su token when present
     -> activator reads canonical JSON and writes exactly one native channel
   ports service.sh
-    -> start background waiter
-    -> wait for netd baseline
-    -> run ports activator with --boot-wait
+    -> start ports activator boot-service in the background and return
+    -> activator waits for netd baseline
     -> activator waits for PackageManager readiness and applies iptables from canonical JSON
+    -> activator repeats the idempotent apply after 30 seconds
 
 system_server:
   HookEntry.handleLoadPackage

@@ -733,8 +733,7 @@ private data class InstalledVisual(
 
 /**
  * Status subtitle + colors for an installed flashable module. Shared by the
- * Ports card and the Native-backend card so the broken / active / inactive
- * logic lives in one place (keeps the cards in sync and CPD quiet).
+ * Ports and Native cards so broken / active / inactive rendering stays shared.
  */
 @Composable
 private fun installedVisual(
@@ -752,7 +751,8 @@ private fun installedVisual(
             ModuleBrokenReason.UnknownVariantInactive -> R.string.dashboard_kmod_broken_unknown_variant
             ModuleBrokenReason.AmbiguousLoadFailed -> R.string.dashboard_kmod_broken_ambiguous
             ModuleBrokenReason.SignatureEnforced -> R.string.dashboard_kmod_broken_signature_enforced
-            ModuleBrokenReason.KpmActivatorMissing -> R.string.dashboard_kpm_broken_activator_missing
+            ModuleBrokenReason.ActivatorMissing -> R.string.dashboard_module_broken_activator_missing
+            ModuleBrokenReason.ActivatorNotExecutable -> R.string.dashboard_module_broken_activator_not_executable
             null -> null
         }
     // Stamped GKI variant (kmod builds from v0.6.3+ only — see ModuleState.gkiVariant),

@@ -255,6 +255,7 @@ crates/
   activator/
     src/lib.rs              # shared core: JSON schema (serde), pkg→uid resolution
                             #   (`pm`), project_native(json) -> String
+    src/lifecycle.rs        # typed boot load/status/service/uninstall ownership
     src/bin/kmod.rs         #   project_native(json) → write("/proc/vpnhide_ctl")
     src/bin/kpm.rs          #   project_native(json) → APatch/FolkPatch supercall / KPatch-Next `kpatch`
     src/bin/zygisk.rs       #   project_native(json) → write_atomic(module_dir file)
@@ -275,19 +276,32 @@ zygisk/                     # cdylib — the injected .so. deps: protocol (+ sha
   no detection, no runtime branching.
 - **The ports module ships `ports`**, which reads the same canonical JSON but applies
   iptables state instead of writing the native text protocol.
-- **When it runs:** at boot from that module's `service.sh` as
-  `activator --boot-wait`, and on Save from the app (`su <path>/activator`).
-  Boot mode waits indefinitely for PackageManager readiness; Save mode keeps a
-  bounded wait so the UI cannot hang forever. It lists Android users first and
+- **When it runs:** root-manager lifecycle files are fixed-name shell adapters.
+  Blocking `post-fs-data.sh` and uninstall hooks `exec` `boot-load` or
+  `uninstall`; every `service.sh` backgrounds `boot-service` and returns so one
+  module cannot starve the manager's sequential late-start script runner.
+  Early `boot-load` does bounded backend loading only; it never waits for
+  PackageManager or user unlock. Late-start `boot-service` may wait indefinitely
+  for PackageManager readiness, while Save (`su <path>/activator`) keeps a bounded
+  wait so the UI cannot hang forever. It lists Android users first and
   resolves every user separately instead of relying on the OEM-dependent
   `--user all` aggregation. If any user scan fails, activation stops before
   replacing runtime state with a partial target set. Then it reads the
   canonical and writes its channel.
+- **Bundle integrity:** the app's batched root snapshot checks each installed
+  module's `activator` directly and distinguishes an absent file from a
+  non-executable one. Enabled modules with either failure are marked broken on
+  the Dashboard. Save selects the first installed, enabled native backend in
+  the normal `kmod > KPM > Zygisk` order and fails if that backend's activator
+  is unusable; it never silently falls through to another backend.
+  KPM remediation means installing the complete `vpnhide-kpm.zip` through the
+  root manager's Modules screen, not extracting or loading the inner
+  `vpnhide.kpm` payload by itself.
 - **KPM load preflight:** the KPM activator parses only the leading numeric
   `major.minor` from `uname -r`; patchlevels and Android/vendor suffixes do not
   affect the offset-table family. It refuses an unknown or unsupported family
   before invoking KernelPatch, and the KPM repeats the authoritative check in
-  kernel context. KPatch-Next uses `activator --load-only` during post-fs-data
+  kernel context. KPatch-Next uses `activator boot-load` during post-fs-data
   so this validation does not wait for PackageManager.
 
 ### 4.2 The native channels
@@ -321,7 +335,7 @@ same kernel functions with different mechanisms (kretprobes versus KernelPatch
 inline hooks); co-residence has hard-frozen a device. Every shipped KPM load and
 configuration path therefore refuses when an enabled `.ko` module directory or
 live `/proc/vpnhide_ctl` is present and reports `conflicting_backend`. The check
-runs in boot scripts and again in the activator to close the early-boot race.
+runs in both activator phases to close the early-boot race.
 Manual loading outside those paths bypasses the guard and is unsupported.
 
 There is no resident root coordinator. Save-time activation and each module's

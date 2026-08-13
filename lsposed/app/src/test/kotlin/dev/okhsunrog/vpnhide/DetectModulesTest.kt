@@ -112,6 +112,18 @@ class DetectModulesTest {
     }
 
     @Test
+    fun `ports apply problem does not duplicate a bundle integrity failure`() {
+        val ports =
+            ModuleState.Installed(
+                version = "0.6.3",
+                active = false,
+                brokenReason = ModuleBrokenReason.ActivatorMissing,
+            )
+
+        assertEquals(null, detectPortsApplyProblem(ports, 1, "", "boot-1", portsDisabled = false))
+    }
+
+    @Test
     fun `ports not installed when prop is absent`() {
         assertEquals(ModuleState.NotInstalled, detectPortsModule(mapOf("ports_chain" to "1")))
     }

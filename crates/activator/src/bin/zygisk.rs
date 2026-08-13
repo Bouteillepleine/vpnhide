@@ -1,22 +1,22 @@
 use std::process;
 
-use vpnhide_activator::{activate_zygisk, activate_zygisk_boot, boot_wait_requested_from_env};
+use vpnhide_activator::{Result, activate_zygisk, boot_service_zygisk, uninstall_zygisk};
 
 fn main() {
-    let boot_wait = match boot_wait_requested_from_env() {
-        Ok(value) => value,
-        Err(e) => {
-            eprintln!("vpnhide zygisk activator failed: {e}");
-            process::exit(2);
-        }
-    };
-    let result = if boot_wait {
-        activate_zygisk_boot()
-    } else {
-        activate_zygisk()
-    };
-    if let Err(e) = result {
+    if let Err(e) = run() {
         eprintln!("vpnhide zygisk activator failed: {e}");
         process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
+    match std::env::args().skip(1).collect::<Vec<_>>().as_slice() {
+        [] => activate_zygisk(),
+        [command] if command == "boot-service" => boot_service_zygisk(),
+        [command] if command == "uninstall" => {
+            uninstall_zygisk();
+            Ok(())
+        }
+        _ => Err("usage: activator [boot-service|uninstall]".into()),
     }
 }

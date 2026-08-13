@@ -1,8 +1,10 @@
 package dev.okhsunrog.vpnhide
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class CanonicalConfigRepositoryTest {
     @Test
@@ -40,8 +42,30 @@ class CanonicalConfigRepositoryTest {
     fun `native activator stderr is folded into save output`() {
         val command = ConfigChannels.nativeActivatorCommand()
 
-        assertTrue(command.contains("$KMOD_ACTIVATOR 2>&1"))
-        assertTrue(command.contains("$KPM_ACTIVATOR 2>&1"))
-        assertTrue(command.contains("$ZYGISK_ACTIVATOR 2>&1"))
+        assertTrue(command.contains("\"${'$'}ACTIVATOR_PATH\" 2>&1"))
+        assertTrue(command.contains("run_activator $KMOD_ACTIVATOR kmod"))
+        assertTrue(command.contains("run_activator $KPM_ACTIVATOR KPM"))
+        assertTrue(command.contains("run_activator $ZYGISK_ACTIVATOR Zygisk"))
+    }
+
+    @Test
+    fun `activation selects installed backend before validating its activator`() {
+        val command = ConfigChannels.nativeActivatorCommand()
+
+        assertTrue(command.contains("[ -f $KMOD_MODULE_DIR/module.prop ]"))
+        assertTrue(command.contains("run_activator $KMOD_ACTIVATOR kmod"))
+        assertTrue(command.indexOf("$KMOD_MODULE_DIR/module.prop") < command.indexOf("$KPM_MODULE_DIR/module.prop"))
+        assertTrue(command.contains("return 1"))
+    }
+
+    @Test
+    fun `activator shell helper fails for a corrupted bundle`() {
+        val missing = File(System.getProperty("java.io.tmpdir"), "vpnhide-missing-activator-${System.nanoTime()}")
+        val command = "${ConfigChannels.activatorShellHelper()}; run_activator ${missing.absolutePath} Test"
+        val process = ProcessBuilder("sh", "-c", command).start()
+        val stderr = process.errorStream.bufferedReader().readText()
+
+        assertEquals(1, process.waitFor())
+        assertTrue(stderr.contains("Test activator missing or not executable at ${missing.absolutePath}"))
     }
 }

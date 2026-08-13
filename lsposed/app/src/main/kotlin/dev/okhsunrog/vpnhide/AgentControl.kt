@@ -500,7 +500,7 @@ private fun runActivationCommand(changed: Boolean): AgentMutationResult {
             ConfigChannels.reconcileCommand(),
             ConfigChannels.portsActivatorCommand(),
         )
-    val (exit, output) = suExec(parts.joinToString(" ; "))
+    val (exit, output) = suExec(parts.joinToString(" && "))
     return CanonicalWriteResult(exit, output).toAgentMutationResult(changed)
 }
 

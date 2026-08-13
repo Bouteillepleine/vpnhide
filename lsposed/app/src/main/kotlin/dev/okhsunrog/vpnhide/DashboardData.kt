@@ -37,7 +37,8 @@ enum class ModuleBrokenReason {
     UnknownVariantInactive,
     AmbiguousLoadFailed,
     SignatureEnforced,
-    KpmActivatorMissing,
+    ActivatorMissing,
+    ActivatorNotExecutable,
 }
 
 /**
@@ -176,7 +177,7 @@ internal fun detectPortsApplyProblem(
     portsDisabled: Boolean,
 ): PortsApplyProblem? {
     val installed = ports as? ModuleState.Installed ?: return null
-    if (installed.active || targetCount == 0) return null
+    if (installed.active || installed.brokenReason != null || targetCount == 0) return null
     // A module the user turned off via their manager (a `disable` marker) is
     // inactive by design — the activator skips it for the same reason. Don't
     // nag "iptables rules are not active" for a deliberately disabled module.
@@ -1193,14 +1194,15 @@ internal suspend fun loadDashboardState(
         )
     val kmodRaw = rawNativeBackends.kmod
     val zygiskStatusRaw = shellSnapshot["zygisk_status"].orEmpty()
-    val zygisk = rawNativeBackends.zygisk
+    val zygiskRaw = rawNativeBackends.zygisk
     val kpmRaw = rawNativeBackends.kpm
     val standaloneKpm = standaloneKpmLoaded(kpmRaw, shellSnapshot["kpm_runtime_modules"].orEmpty())
-    val ports = detectPortsModule(shellSnapshot)
+    val portsRaw = detectPortsModule(shellSnapshot)
     val portsTargetCount = countPackages(targetsSnapshot.portsObservers)
     VpnHideLog.i(
         TAG,
-        "modules: kmodRaw=$kmodRaw kpmRaw=$kpmRaw standaloneKpm=$standaloneKpm zygisk=$zygisk ports=$ports",
+        "modules: kmodRaw=$kmodRaw kpmRaw=$kpmRaw standaloneKpm=$standaloneKpm " +
+            "zygiskRaw=$zygiskRaw portsRaw=$portsRaw",
     )
     StartupTrace.mark("dashboard_modules_done")
 
@@ -1219,35 +1221,48 @@ internal suspend fun loadDashboardState(
         )
     VpnHideLog.i(TAG, "kmodLoadStatus=$kmodLoadStatus")
 
-    // Single source of truth for "what's wrong with the installed kmod" —
-    // classifyKmodProblem (pure, unit-tested) decides the priority-ordered
-    // diagnosis; renderKmodProblem maps it to the localized banner text.
-    // [reason] colors the card, [text] is the banner — both derive from the
-    // one classification so they can't disagree.
+    // Integrity takes priority; one problem drives both card color and banner.
     val kmodProblem: ModuleProblem? =
-        classifyKmodProblem(kmodRaw, kernelRecommendation, kmodLoadStatus)
-            ?.let { renderKmodProblem(it, res) }
-    val kmod: ModuleState =
-        if (kmodRaw is ModuleState.Installed && kmodProblem?.reason != null) {
-            kmodRaw.copy(brokenReason = kmodProblem.reason)
-        } else {
-            kmodRaw
-        }
+        moduleIntegrityProblem(
+            kind = FlashableModuleKind.Kmod,
+            module = kmodRaw,
+            sections = shellSnapshot,
+            activatorPath = KMOD_ACTIVATOR,
+        )?.let { renderModuleIntegrityProblem(it, res) }
+            ?: classifyKmodProblem(kmodRaw, kernelRecommendation, kmodLoadStatus)
+                ?.let { renderKmodProblem(it, res) }
+    val kmod = kmodRaw.withBrokenReason(kmodProblem?.reason)
     VpnHideLog.i(TAG, "kmod (with brokenReason): $kmod")
 
-    // Same single-source-of-truth pattern as kmod above, for the KPM
-    // runtime=activator failure cases classifyKpmProblem diagnoses (the
-    // conflict / awaiting-superkey cases stay separate warnings below).
     val kpmProblem: ModuleProblem? =
-        classifyKpmProblem(kpmRaw, kpmLoadStatus, currentBootId)
-            ?.let { renderKpmProblem(it, res) }
-    val kpm: ModuleState =
-        if (kpmRaw is ModuleState.Installed && kpmProblem?.reason != null) {
-            kpmRaw.copy(brokenReason = kpmProblem.reason)
-        } else {
-            kpmRaw
-        }
+        moduleIntegrityProblem(
+            kind = FlashableModuleKind.Kpm,
+            module = kpmRaw,
+            sections = shellSnapshot,
+            activatorPath = KPM_ACTIVATOR,
+        )?.let { renderModuleIntegrityProblem(it, res) }
+            ?: classifyKpmProblem(kpmRaw, kpmLoadStatus, currentBootId)
+                ?.let { renderKpmProblem(it, res) }
+    val kpm = kpmRaw.withBrokenReason(kpmProblem?.reason)
     VpnHideLog.i(TAG, "kpm (with brokenReason): $kpm")
+
+    val zygiskProblem =
+        moduleIntegrityProblem(
+            kind = FlashableModuleKind.Zygisk,
+            module = zygiskRaw,
+            sections = shellSnapshot,
+            activatorPath = ZYGISK_ACTIVATOR,
+        )?.let { renderModuleIntegrityProblem(it, res) }
+    val zygisk = zygiskRaw.withBrokenReason(zygiskProblem?.reason)
+
+    val portsProblem =
+        moduleIntegrityProblem(
+            kind = FlashableModuleKind.Ports,
+            module = portsRaw,
+            sections = shellSnapshot,
+            activatorPath = PORTS_ACTIVATOR,
+        )?.let { renderModuleIntegrityProblem(it, res) }
+    val ports = portsRaw.withBrokenReason(portsProblem?.reason)
 
     // The one place all three backends are grouped together — every
     // "is anything installed / active" gate below reads from this instead of
@@ -1264,7 +1279,8 @@ internal suspend fun loadDashboardState(
     VpnHideLog.i(
         TAG,
         "nativeInstallRecommendation=$nativeInstallRecommendation " +
-            "(raw=$kernelRecommendation kmodProblem=$kmodProblem kpmProblem=$kpmProblem)",
+            "(raw=$kernelRecommendation kmodProblem=$kmodProblem kpmProblem=$kpmProblem " +
+            "zygiskProblem=$zygiskProblem portsProblem=$portsProblem)",
     )
     StartupTrace.mark("dashboard_kernel_done")
 
@@ -1605,15 +1621,13 @@ internal suspend fun loadDashboardState(
         warn(res.getString(R.string.dashboard_issue_self_multi_profile, selfUidCount))
     }
 
-    // ── Errors: kmod / KPM variant / load problems ──
-    // Each diagnosis (reason + banner text) was computed once above as
-    // `kmodProblem` / `kpmProblem`; emit their text here. Only one banner per
-    // backend fires, and its priority can't drift from the card color
-    // because both come from the same value. classifyKpmProblem only matches
-    // runtime=activator, so this can never double up with the
-    // conflict/awaiting-superkey warnings below.
+    // ── Errors: module integrity and backend load problems ──
+    // Each diagnosis (reason + banner text) was computed once above. Only one
+    // banner per module fires, and its priority can't drift from the card color.
     kmodProblem?.let { err(it.text, it.downloadArtifact) }
     kpmProblem?.let { err(it.text) }
+    zygiskProblem?.let { err(it.text) }
+    portsProblem?.let { err(it.text) }
 
     // ── Protection checks ──
     StartupTrace.mark("dashboard_protection_start")

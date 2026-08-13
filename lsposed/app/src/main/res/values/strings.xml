@@ -142,7 +142,8 @@
     <string name="dashboard_kmod_broken_unknown_variant">Installed, did not load</string>
     <string name="dashboard_kmod_broken_ambiguous">Installed, did not load — try the other GKI variant</string>
     <string name="dashboard_kmod_broken_signature_enforced">Installed, kernel rejects unsigned modules</string>
-    <string name="dashboard_kpm_broken_activator_missing">Installed, activator missing</string>
+    <string name="dashboard_module_broken_activator_missing">Installed, activator missing</string>
+    <string name="dashboard_module_broken_activator_not_executable">Installed, activator not executable</string>
     <string name="dashboard_active_targets">Active · %d target(s)</string>
     <string name="dashboard_reboot_needed">Device reboot needed</string>
     <string name="dashboard_hero_protected_title">VPN hidden</string>
@@ -310,7 +311,10 @@
     <string name="dashboard_issue_native_conflict_kernel">The kernel module (.ko) and the KPM are both installed. They hook the same kernel functions, and having both active can hard-freeze the device. Keep only one — uninstall either the kernel module or the KPM.</string>
     <string name="dashboard_issue_native_conflict_deferred">The kernel module (.ko) and the KPM are both installed. The KPM stood down at boot to avoid a freeze, so it isn\'t doing anything. Keep only one — uninstall the KPM (or the kernel module).</string>
     <string name="dashboard_issue_kpm_awaiting_superkey">The KPM is installed but inactive: APatch/FolkPatch could not load it with the trusted su token. Save your SuperKey in Settings → Security, then reboot to activate native hiding.</string>
-    <string name="dashboard_issue_kpm_activator_missing">KPM module is corrupted: the activator binary is missing (%1$s). Reinstall vpnhide-kpm.zip from the latest release.</string>
+    <string name="dashboard_issue_module_activator_missing">The %1$s module installation is corrupted: its activator is missing (%2$s). Reinstall the module ZIP from the latest release.</string>
+    <string name="dashboard_issue_module_activator_not_executable">The %1$s module installation is corrupted: its activator is not executable (%2$s). Reinstall the module ZIP from the latest release.</string>
+    <string name="dashboard_issue_kpm_bundle_activator_missing">The KPM module installation is corrupted: its activator is missing (%1$s). Install the complete vpnhide-kpm.zip as an APM/Magisk-compatible module through your root manager’s Modules screen; do not extract or load the inner vpnhide.kpm file by itself.</string>
+    <string name="dashboard_issue_kpm_bundle_activator_not_executable">The KPM module installation is corrupted: its activator is not executable (%1$s). Install the complete vpnhide-kpm.zip as an APM/Magisk-compatible module through your root manager’s Modules screen; do not extract or load the inner vpnhide.kpm file by itself.</string>
     <string name="dashboard_issue_kpm_unsupported_kernel">KPM is installed but cannot load on kernel %1$s because this kernel family has no validated offset table. Use the Zygisk backend instead.</string>
     <string name="dashboard_issue_kpm_standalone_install">Invalid KPM installation detected: KernelPatch loaded the standalone vpnhide.kpm file, but the vpnhide-kpm.zip module is not installed. The .kpm file alone has no VPN Hide activator, boot scripts, or configuration delivery, so protection will not work correctly. Remove or unload the standalone “vpnhide” entry in APatch/KPatch-Next (if it was embedded, repatch the boot image without it), install the complete vpnhide-kpm.zip from the Modules screen, then reboot.</string>
     <string name="dashboard_issue_kpm_load_failed">KPM installed but failed to load: %1$s. Use Settings → Debugging → Collect debug log to attach the full boot-time output to a bug report, or reinstall vpnhide-kpm.zip from the latest release.</string>

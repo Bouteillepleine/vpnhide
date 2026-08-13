@@ -9,15 +9,6 @@ internal sealed interface KpmProblemKind {
         override val reason get() = ModuleBrokenReason.UnsupportedKernel
     }
 
-    // The activator binary itself is missing from the module directory — a
-    // corrupted or partial KPM install (see kmod/kpm/module/service.sh).
-    // [path] is the path the boot script tried to exec.
-    data class ActivatorMissing(
-        val path: String,
-    ) : KpmProblemKind {
-        override val reason get() = ModuleBrokenReason.KpmActivatorMissing
-    }
-
     // Null reason mirrors kmod's raw LoadFailed fallback: an untriaged exit
     // isn't a confident enough diagnosis to paint the module card red.
     data class LoadFailed(
@@ -43,13 +34,7 @@ internal fun classifyKpmProblem(
     if (status.reason == KpmFailureReason.UnsupportedKernel) {
         return KpmProblemKind.UnsupportedKernel(status.unameR ?: "?")
     }
-    val detail = status.detail.orEmpty()
-    val missingPrefix = "activator missing at "
-    return if (status.reason == KpmFailureReason.MissingActivator || detail.startsWith(missingPrefix)) {
-        KpmProblemKind.ActivatorMissing(detail.removePrefix(missingPrefix))
-    } else {
-        KpmProblemKind.LoadFailed(detail)
-    }
+    return KpmProblemKind.LoadFailed(status.detail.orEmpty())
 }
 
 internal fun renderKpmProblem(
@@ -62,10 +47,6 @@ internal fun renderKpmProblem(
             when (kind) {
                 is KpmProblemKind.UnsupportedKernel -> {
                     res.getString(R.string.dashboard_issue_kpm_unsupported_kernel, kind.unameR)
-                }
-
-                is KpmProblemKind.ActivatorMissing -> {
-                    res.getString(R.string.dashboard_issue_kpm_activator_missing, kind.path)
                 }
 
                 is KpmProblemKind.LoadFailed -> {

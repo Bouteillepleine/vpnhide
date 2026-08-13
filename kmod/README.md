@@ -34,9 +34,9 @@ equivalent optional KPM hooks.
 ### Optional filesystem hook loader contract
 
 `filesystem_hiding` is a read-only boolean module parameter consumed only by
-`insmod`; it is not a control-v2 field. The shipped `post-fs-data.sh` asks the
-activator whether canonical boot feature `filesystem_iface_paths` is enabled and
-passes `filesystem_hiding=1` or `filesystem_hiding=0` accordingly. Omitting the
+`insmod`; it is not a control-v2 field. The shipped activator's `boot-load`
+command reads canonical boot feature `filesystem_iface_paths` and passes
+`filesystem_hiding=1` or `filesystem_hiding=0` accordingly. Omitting the
 parameter has the same disabled behavior as `0`.
 
 When enabled, module init registers `filename_lookup`, `do_filp_open`,
@@ -85,9 +85,10 @@ ordinary `rmmod` is not supported.
 
 On boot:
 
-- `post-fs-data.sh` reads the reboot-gated filesystem setting through the
-  activator, then runs `insmod` with the corresponding module parameter.
-- `service.sh` runs the Rust activator, which reads
+- `post-fs-data.sh` execs the Rust activator's bounded `boot-load` phase, which
+  reads the reboot-gated setting, runs `insmod`, and writes load diagnostics.
+- `service.sh` starts the activator's late-start `boot-service` phase in the
+  background and immediately returns to the root manager. The activator reads
   `/data/system/vpnhide_config.json`, enumerates Android users, resolves package
   names for each user separately, and emits a `vpnhide 2 config` snapshot
   ([protocol](../docs/protocol.md)) to `/proc/vpnhide_ctl`.
