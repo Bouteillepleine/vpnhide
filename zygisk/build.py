@@ -45,10 +45,19 @@ def main() -> int:
     env["ANDROID_NDK_HOME"] = android_ndk_home
     env["CARGO_TARGET_DIR"] = str(target_dir)
 
-    # Build the cdylib for arm64-v8a. --locked: fail if Cargo.lock drifted
-    # rather than rewriting it (a dirtied tree stamps artifacts "-dirty").
+    # Build the cdylib for both ABIs. arm64-v8a covers 64-bit app processes;
+    # armeabi-v7a is required to inject into 32-bit processes forked from
+    # zygote32 (still present on many devices, e.g. Samsung) — without it
+    # NeoZygisk logs "No such file or directory" and native mode is dead
+    # in those processes. --locked: fail if Cargo.lock drifted rather than
+    # rewriting it (a dirtied tree stamps artifacts "-dirty").
     subprocess.run(
-        ["cargo", "ndk", "-t", "arm64-v8a", "build", "--release", "--locked"],
+        [
+            "cargo", "ndk",
+            "-t", "arm64-v8a",
+            "-t", "armeabi-v7a",
+            "build", "--release", "--locked",
+        ],
         env=env,
         check=True,
     )
@@ -59,10 +68,16 @@ def main() -> int:
         target_dir=target_dir,
     )
 
-    so_src = script_dir / "target" / "aarch64-linux-android" / "release" / "libvpnhide_zygisk.so"
-    if not so_src.exists():
-        print(f"error: expected {so_src} after cargo ndk build, not found", file=sys.stderr)
-        return 1
+    # One .so per ABI. NeoZygisk's loader picks the matching file for each
+    # target process by its bitness, so both must ship in the module.
+    so_by_abi = {
+        "arm64-v8a": script_dir / "target" / "aarch64-linux-android" / "release" / "libvpnhide_zygisk.so",
+        "armeabi-v7a": script_dir / "target" / "armv7-linux-androideabi" / "release" / "libvpnhide_zygisk.so",
+    }
+    for abi, so_src in so_by_abi.items():
+        if not so_src.exists():
+            print(f"error: expected {abi} .so at {so_src} after cargo ndk build, not found", file=sys.stderr)
+            return 1
 
     # Assemble the module staging directory
     staging = script_dir / "target" / "module-staging"
@@ -70,7 +85,8 @@ def main() -> int:
         shutil.rmtree(staging)
     shutil.copytree(script_dir / "module", staging)
     (staging / "zygisk").mkdir(parents=True, exist_ok=True)
-    shutil.copy(so_src, staging / "zygisk" / "arm64-v8a.so")
+    for abi, so_src in so_by_abi.items():
+        shutil.copy(so_src, staging / "zygisk" / f"{abi}.so")
     shutil.copy(activator, staging / "activator")
     (staging / "activator").chmod(0o755)
 

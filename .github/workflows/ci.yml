@@ -152,8 +152,14 @@ jobs:
       # `--tests` so generated test modules are also linted
       # (catches `bool_assert_comparison`-style regressions in
       # codegen output).
+      # armv7 target for the 32-bit zygisk build. Baked into the CI image
+      # (see .github/docker/ci/Dockerfile), but added here too so a PR that
+      # introduces it is green before the post-merge image rebuild catches
+      # up — rustup is a no-op once the image already carries the target.
+      - name: rustup target add armv7 (zygisk 32-bit)
+        run: rustup target add armv7-linux-androideabi
       - name: clippy (zygisk)
-        run: cargo ndk -t arm64-v8a clippy -p vpnhide_zygisk --tests -- -D warnings
+        run: cargo ndk -t arm64-v8a -t armeabi-v7a clippy -p vpnhide_zygisk --tests -- -D warnings
       - name: clippy (lsposed native)
         run: cd lsposed/native && cargo ndk -t arm64-v8a clippy --tests -- -D warnings
       - name: cargo test (workspace)
@@ -554,6 +560,12 @@ jobs:
             zygisk/target
           key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
+
+      # armv7 target for the 32-bit zygisk .so. Baked into the CI image, but
+      # added here too so this PR is green before the post-merge image rebuild
+      # (ci-image.yml runs on push to main, not on PRs). No-op once present.
+      - name: rustup target add armv7 (zygisk 32-bit)
+        run: rustup target add armv7-linux-androideabi
 
       - name: Build module zip
         env:

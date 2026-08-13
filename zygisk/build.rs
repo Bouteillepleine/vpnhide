@@ -24,10 +24,20 @@ fn main() {
         // the Android cdylib; skip the whole native build step.
         return;
     }
-    assert!(
-        target.starts_with("aarch64"),
-        "vpnhide-zygisk currently only supports aarch64-linux-android (target={target})"
-    );
+    // Map the Rust target triple to the NDK's ANDROID_ABI name and the
+    // compiler-rt builtins arch suffix. Both 64-bit (arm64-v8a) and 32-bit
+    // (armeabi-v7a) are supported: shadowhook ships an inline-hook backend
+    // for each (arch/arm64 and arch/arm), selected via ${ARCH} in its
+    // CMakeLists, and the hook logic here is symbol-name based, so it's
+    // ABI-agnostic. 32-bit is needed to inject into 32-bit app processes
+    // (forked from zygote32) — otherwise NeoZygisk fails to load us there.
+    let (android_abi, builtins_arch) = if target.starts_with("aarch64") {
+        ("arm64-v8a", "aarch64")
+    } else if target.starts_with("armv7") || target.starts_with("thumbv7") {
+        ("armeabi-v7a", "arm")
+    } else {
+        panic!("vpnhide-zygisk supports arm64-v8a / armeabi-v7a only (target={target})");
+    };
 
     // cargo-ndk sets ANDROID_NDK_HOME before invoking us.
     let ndk = env::var("ANDROID_NDK_HOME")
@@ -55,7 +65,7 @@ fn main() {
     // pin the exact CMake target to build.
     let dst = cmake::Config::new(&shadowhook_src)
         .define("CMAKE_TOOLCHAIN_FILE", &toolchain_file)
-        .define("ANDROID_ABI", "arm64-v8a")
+        .define("ANDROID_ABI", android_abi)
         .define("ANDROID_PLATFORM", "android-24")
         .define("SHADOWHOOK_STATIC", "ON")
         .no_build_target(true)
@@ -83,19 +93,21 @@ fn main() {
     // dynamic linker rejects it at dlopen time:
     //   cannot locate symbol "__clear_cache" referenced by ...
     // Pull it from the NDK's compiler-rt builtins archive.
-    if let Some(builtins) = find_ndk_builtins(&ndk) {
+    if let Some(builtins) = find_ndk_builtins(&ndk, builtins_arch) {
         println!("cargo:rustc-link-arg={}", builtins.display());
     } else {
         println!(
-            "cargo:warning=libclang_rt.builtins-aarch64-android.a not found under {ndk}; \
+            "cargo:warning=libclang_rt.builtins-{builtins_arch}-android.a not found under {ndk}; \
              __clear_cache may be unresolved at dlopen time"
         );
     }
 }
 
-/// Locate `libclang_rt.builtins-aarch64-android.a` inside an NDK tree.
+/// Locate `libclang_rt.builtins-<arch>-android.a` inside an NDK tree, where
+/// `<arch>` is `aarch64` (arm64-v8a) or `arm` (armeabi-v7a).
 /// Typical layout: `<ndk>/toolchains/llvm/prebuilt/<host>/lib/clang/<ver>/lib/linux/…`.
-fn find_ndk_builtins(ndk: &str) -> Option<PathBuf> {
+fn find_ndk_builtins(ndk: &str, arch: &str) -> Option<PathBuf> {
+    let file_name = format!("libclang_rt.builtins-{arch}-android.a");
     let base = PathBuf::from(ndk).join("toolchains/llvm/prebuilt");
     for host in fs::read_dir(&base).ok()?.flatten() {
         let clang_dir = host.path().join("lib/clang");
@@ -103,9 +115,7 @@ fn find_ndk_builtins(ndk: &str) -> Option<PathBuf> {
             continue;
         };
         for v in versions.flatten() {
-            let candidate = v
-                .path()
-                .join("lib/linux/libclang_rt.builtins-aarch64-android.a");
+            let candidate = v.path().join("lib/linux").join(&file_name);
             if candidate.is_file() {
                 return Some(candidate);
             }
