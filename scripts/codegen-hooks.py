@@ -69,12 +69,9 @@ class Hook:
         backends = raw.get("backends")
         if (backend is None) == (backends is None):
             sys.exit(
-                f"error: hook {self.name!r} must define exactly one of "
-                "'backend' or 'backends'"
+                f"error: hook {self.name!r} must define exactly one of 'backend' or 'backends'"
             )
-        self.backends: tuple[str, ...] = (
-            (backend,) if backend is not None else tuple(backends)
-        )
+        self.backends: tuple[str, ...] = (backend,) if backend is not None else tuple(backends)
         if not self.backends or len(set(self.backends)) != len(self.backends):
             sys.exit(f"error: hook {self.name!r} has invalid backends {self.backends!r}")
         self.note: str = raw.get("note", "")
