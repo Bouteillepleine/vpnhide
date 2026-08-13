@@ -12,14 +12,26 @@ internal fun filesystemHidingDashboardMessage(
         FilesystemHidingStatus.PendingEnable -> {
             DashboardMessage(
                 DashboardMessageSeverity.WARNING,
-                res.getString(R.string.dashboard_issue_filesystem_hiding_pending_enable),
+                res.getString(
+                    if (state.backend == NativeBackendId.Zygisk) {
+                        R.string.dashboard_issue_filesystem_hiding_pending_enable_zygisk
+                    } else {
+                        R.string.dashboard_issue_filesystem_hiding_pending_enable
+                    },
+                ),
             )
         }
 
         FilesystemHidingStatus.PendingDisable -> {
             DashboardMessage(
                 DashboardMessageSeverity.WARNING,
-                res.getString(R.string.dashboard_issue_filesystem_hiding_pending_disable),
+                res.getString(
+                    if (state.backend == NativeBackendId.Zygisk) {
+                        R.string.dashboard_issue_filesystem_hiding_pending_disable_zygisk
+                    } else {
+                        R.string.dashboard_issue_filesystem_hiding_pending_disable
+                    },
+                ),
             )
         }
 

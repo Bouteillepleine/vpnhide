@@ -106,20 +106,20 @@ pub fn read_canonical() -> Result<String> {
     }
 }
 
-/// Read one reboot-gated kernel feature without waiting for PackageManager.
-/// Boot loaders query features before loading their backend, so disabled
-/// features never register their probes at all.
-pub(crate) fn kernel_boot_feature_enabled(feature: &str) -> Result<bool> {
+/// Read one optional feature without waiting for PackageManager. Kernel boot
+/// loaders query their relevant features before loading the backend, so a
+/// disabled load-time feature never registers its probes at all.
+pub(crate) fn optional_feature_enabled(feature: &str) -> Result<bool> {
     let config = parse_canonical(&read_canonical()?)?;
-    Ok(config.settings.kernel_boot_features.contains(feature))
+    Ok(config.settings.optional_features.contains(feature))
 }
 
 /// Optional boot hardening is never a prerequisite for the baseline backend.
 /// A corrupt desired-state file therefore falls back to the disabled default;
 /// late-start config delivery still reports the parse error and refuses a
 /// partial snapshot.
-pub(crate) fn kernel_boot_feature_enabled_or_default(feature: &str) -> bool {
-    match kernel_boot_feature_enabled(feature) {
+pub(crate) fn optional_feature_enabled_or_default(feature: &str) -> bool {
+    match optional_feature_enabled(feature) {
         Ok(enabled) => enabled,
         Err(err) => {
             eprintln!(
@@ -251,7 +251,7 @@ pub(crate) fn load_kpm_boot() -> Result<KpmBootReport> {
         ));
     }
     let filesystem_hiding =
-        kernel_boot_feature_enabled_or_default(KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS);
+        optional_feature_enabled_or_default(OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS);
     let client = match KpmClient::detect_outcome()? {
         KpmClientDetection::Ready(client) => client,
         KpmClientDetection::AwaitingAuthentication(_) => {
@@ -310,8 +310,8 @@ fn activate_kpm_with_pm_wait(wait: PmReadyWait, conflict_is_error: bool) -> Resu
     let canonical = read_canonical()?;
     let filesystem_hiding = parse_canonical(&canonical)?
         .settings
-        .kernel_boot_features
-        .contains(KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS);
+        .optional_features
+        .contains(OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS);
     let wire = project_native_with_pm_wait(&canonical, NativeHookFamily::Kpm, wait)?;
     // Re-check after the (possibly long) PackageManager wait: the .ko may have
     // been loaded meanwhile, in which case we must not configure the KPM.

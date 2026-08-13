@@ -6,7 +6,7 @@ use vpnhide_apatch_abi::{
     CommandStyle as ApatchCommandStyle, encode_command as supercall_cmd,
     parse_kernel_version_hint as parse_apatch_kernel_version_hint,
 };
-use vpnhide_protocol::hook_ids::ZYGISK_HOOK_MASK;
+use vpnhide_protocol::hook_ids::{Hook, ZYGISK_HOOK_MASK};
 use vpnhide_protocol::{KPM_ARGS_LEN, Target, format_config};
 
 #[test]
@@ -172,7 +172,7 @@ fn kmod_projection_includes_the_optional_filesystem_hook() {
     let cfg = parse_canonical(
         r#"{
           "version": 1,
-          "settings": { "kernelBootFeatures": ["filesystem_iface_paths"] },
+          "settings": { "optionalFeatures": ["filesystem_iface_paths"] },
           "apps": { "com.example.full": { "native": true } }
         }"#,
     )
@@ -181,8 +181,8 @@ fn kmod_projection_includes_the_optional_filesystem_hook() {
 
     assert!(
         cfg.settings
-            .kernel_boot_features
-            .contains(KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS)
+            .optional_features
+            .contains(OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS)
     );
     assert_eq!(
         project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Kmod),
@@ -192,6 +192,37 @@ fn kmod_projection_includes_the_optional_filesystem_hook() {
         project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Kpm),
         "vpnhide 2 config\ndebug 0\ntargets a0003ff 278b\nend 1\n",
     );
+}
+
+#[test]
+fn zygisk_projection_gates_filesystem_hook_on_the_optional_feature() {
+    let disabled = parse_canonical(
+        r#"{
+          "version": 1,
+          "apps": { "com.example.full": { "native": true } }
+        }"#,
+    )
+    .unwrap();
+    let enabled = parse_canonical(
+        r#"{
+          "version": 1,
+          "settings": { "optionalFeatures": ["filesystem_iface_paths"] },
+          "apps": { "com.example.full": { "native": true } }
+        }"#,
+    )
+    .unwrap();
+    let resolver = parse_pm_packages("package:com.example.full uid:10123\n");
+    let filesystem_bit = Hook::FilesystemIfacePaths.bit();
+
+    let disabled_wire =
+        project_native_with_resolver_for_family(&disabled, &resolver, NativeHookFamily::Zygisk);
+    let enabled_wire =
+        project_native_with_resolver_for_family(&enabled, &resolver, NativeHookFamily::Zygisk);
+    let disabled_config = vpnhide_protocol::parse_config(disabled_wire.as_bytes()).unwrap();
+    let enabled_config = vpnhide_protocol::parse_config(enabled_wire.as_bytes()).unwrap();
+
+    assert_eq!(disabled_config.targets[0].hookmask & filesystem_bit, 0);
+    assert_ne!(enabled_config.targets[0].hookmask & filesystem_bit, 0);
 }
 
 #[test]

@@ -24,7 +24,7 @@
 
 use core::cell::{Cell, RefCell};
 use core::ffi::{CStr, c_int, c_void};
-use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU32, Ordering};
 use core::{mem, ptr, slice};
 
 use libc::{SIOCGIFCONF, SIOCGIFNAME, ifreq};
@@ -34,6 +34,21 @@ use crate::filter::{
     filter_ipv6_route_buf, filter_netlink_dump, filter_route_buf, filter_tcp4_buf, filter_tcp6_buf,
     is_vpn_iface_bytes, is_vpn_iface_cstr,
 };
+use crate::generated::hook_ids::Hook;
+
+static ACTIVE_HOOKMASK: AtomicU32 = AtomicU32::new(0);
+
+pub(crate) fn set_active_hookmask(hookmask: u32) {
+    ACTIVE_HOOKMASK.store(hookmask, Ordering::Release);
+}
+
+pub(crate) fn filesystem_enabled() -> bool {
+    ACTIVE_HOOKMASK.load(Ordering::Acquire) & Hook::FilesystemIfacePaths.bit() != 0
+}
+
+fn proc_net_open_enabled() -> bool {
+    ACTIVE_HOOKMASK.load(Ordering::Acquire) & Hook::ZygiskOpenat.bit() != 0
+}
 
 /// `struct ifconf` from `<net/if.h>`. Not exported by the `libc` crate.
 #[repr(C)]
@@ -112,7 +127,20 @@ unsafe extern "C" {
 }
 
 #[inline(always)]
-fn set_errno(val: c_int) {
+pub(crate) fn get_errno() -> c_int {
+    #[cfg(target_os = "android")]
+    unsafe {
+        *__errno()
+    }
+
+    #[cfg(all(not(target_os = "android"), target_os = "linux"))]
+    unsafe {
+        *__errno_location()
+    }
+}
+
+#[inline(always)]
+pub(crate) fn set_errno(val: c_int) {
     #[cfg(target_os = "android")]
     unsafe {
         *__errno() = val;
@@ -922,9 +950,16 @@ pub unsafe extern "C" fn hooked_openat(
         return -1;
     };
 
-    if !pathname.is_null() {
-        let path = unsafe { CStr::from_ptr(pathname) };
-        let path_bytes = path.to_bytes();
+    if crate::filesystem::hidden_path(dirfd, pathname, false) {
+        set_errno(libc::ENOENT);
+        return -1;
+    }
+
+    if proc_net_open_enabled() && !pathname.is_null() {
+        let Some(path) = crate::filesystem::read_caller_path(pathname) else {
+            return unsafe { real(dirfd, pathname, flags, mode) };
+        };
+        let path_bytes = path.as_bytes();
 
         let matched = if path_bytes.first() == Some(&b'/') {
             match_abs_proc_net(path_bytes)

@@ -20,7 +20,7 @@ The single managed desired-state file.
 
 - Format: JSON object, `version: 1`, `debug: Boolean`, `apps: { package ->
   roles }`, `settings.rememberSuperkey: Boolean`,
-  `settings.kernelBootFeatures: [feature name]`,
+  `settings.optionalFeatures: [feature name]`,
   `settings.autoHideVpnServices: Boolean`, `settings.autoHideVpnName: Boolean`,
   `settings.autoHiddenPackages: [package]`.
 - Roles per package: `java`, `native` (`Boolean` or hook-name array),
@@ -252,7 +252,8 @@ the app when Vector is active.
 
 `/data/user/0/dev.okhsunrog.vpnhide/files/vpnhide_zygisk_active`
 
-- Format: `key=value`: `version`, `boot_id`, `pid`, `timestamp`.
+- Format: `key=value`: `version`, `boot_id`, `pid`, `timestamp`,
+  `requested_hooks`, `installed_hooks`, and optional `filesystem_error`.
 - Writer: Zygisk module when the current forked target process is the VPN Hide
   app. This is canonical/native self-targeting for the heartbeat, not LSPosed
   module scope.
@@ -333,7 +334,10 @@ zygote app fork:
   zygisk on_load
     -> read module-dir targets.txt text wire
   zygisk post_app_specialize
-    -> if target: install libc hooks
+    -> if target: install selected libc hooks; filesystem_iface_paths is
+       projected only when the canonical optional feature is enabled
+    -> install the optional filesystem aliases atomically; omit bit 27 from
+       installed_hooks on failure without disabling the base network hooks
     -> if target process is VPN Hide app: write filesDir/vpnhide_zygisk_active
 ```
 

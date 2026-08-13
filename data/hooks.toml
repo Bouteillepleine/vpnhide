@@ -189,14 +189,15 @@ name = "zygisk_setsockopt"
 backend = "zygisk"
 note = "libc setsockopt() best-effort socket-interface bind denial"
 
-# Optional VFS interception shared by both kernel backends. This is not part of
-# the required kernel mask because neither backend installs these hot-path hooks
-# unless the reboot-gated feature was requested before load.
+# Optional filesystem concealment shared by all native backends. The kernel
+# implementations use resolved-dentry VFS interception; Zygisk provides a
+# best-effort libc view. It is not part of the required kernel mask because the
+# kernel backends do not install their hot-path hooks unless requested at load.
 [[hook]]
 id = 27
 name = "filesystem_iface_paths"
-backends = ["kmod", "kpm"]
-note = "Optional reboot-gated sysfs/proc-sys VPN interface path concealment"
+backends = ["kmod", "kpm", "zygisk"]
+note = "Optional sysfs/proc-sys VPN interface path concealment"
 
 # --- backend ids (protocol §4.3 `status backend <id>`) ----------------------
 # Which backend answered a `status` read. Distinct from the hook `backend`

@@ -39,6 +39,7 @@ class StorageConfigTest {
                 "zygisk_recvfrom",
                 "zygisk_recvfrom_chk",
                 "zygisk_setsockopt",
+                "filesystem_iface_paths",
             ),
             ZygiskNativeHookEntries.map { it.hookName },
         )
@@ -64,7 +65,7 @@ class StorageConfigTest {
                       },
                       "settings": {
                         "rememberSuperkey": true,
-                        "kernelBootFeatures": ["filesystem_iface_paths", "future_feature"],
+                        "optionalFeatures": ["filesystem_iface_paths", "future_feature"],
                         "autoHideVpnServices": false,
                         "autoHideVpnName": true,
                         "autoHideExcludedPackages": ["com.vpn.false_positive"],
@@ -79,7 +80,7 @@ class StorageConfigTest {
         assertEquals(
             CanonicalSettings(
                 rememberSuperkey = true,
-                kernelBootFeatures = setOf("filesystem_iface_paths", "future_feature"),
+                optionalFeatures = setOf("filesystem_iface_paths", "future_feature"),
                 autoHideVpnServices = false,
                 autoHideVpnName = true,
                 autoHideExcludedPackages = setOf("com.vpn.false_positive"),

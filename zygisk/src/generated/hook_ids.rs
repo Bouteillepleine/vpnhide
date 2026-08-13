@@ -60,7 +60,7 @@ pub enum Hook {
     SocketBindInterface = 25,
     /// libc setsockopt() best-effort socket-interface bind denial
     ZygiskSetsockopt = 26,
-    /// Optional reboot-gated sysfs/proc-sys VPN interface path concealment
+    /// Optional sysfs/proc-sys VPN interface path concealment
     FilesystemIfacePaths = 27,
 }
 
@@ -146,7 +146,7 @@ pub const HOOK_COUNT: u32 = 28;
 pub const KERNEL_HOOK_MASK: u32 = 0x20003ff;
 pub const KMOD_HOOK_MASK: u32 = 0x8000000;
 pub const KPM_HOOK_MASK: u32 = 0x8000000;
-pub const ZYGISK_HOOK_MASK: u32 = 0x5fc0000;
+pub const ZYGISK_HOOK_MASK: u32 = 0xdfc0000;
 pub const LSPOSED_HOOK_MASK: u32 = 0x3fc00;
 
 /// status error codes (protocol §5.1).

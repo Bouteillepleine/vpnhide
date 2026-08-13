@@ -8,8 +8,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::{
     APATCH_DIR, KPM_CTL_LOCK, KpmBootOutcome, KpmBootReport, PORTS_CHAIN4, PORTS_CHAIN6,
     PORTS_STATUS_DIR, Result, activate_kmod_boot, activate_kpm_boot, activate_ports_recorded,
-    activate_zygisk_boot, kernel_boot_feature_enabled, kernel_boot_feature_enabled_or_default,
-    kmod_backend_present, load_kpm_boot, write_atomic,
+    activate_zygisk_boot, kmod_backend_present, load_kpm_boot, optional_feature_enabled,
+    optional_feature_enabled_or_default, write_atomic,
 };
 
 const KMOD_STATUS_DIR: &str = "/data/adb/vpnhide_kmod";
@@ -198,7 +198,7 @@ pub fn boot_load_kmod() -> Result<()> {
     let module_prop = read_module_properties(&module_dir.join("module.prop"));
     let (kprobes, kretprobes) = read_kprobe_config();
     let (filesystem_hiding, filesystem_config_exit, filesystem_config_error) =
-        match kernel_boot_feature_enabled(FILESYSTEM_BOOT_FEATURE) {
+        match optional_feature_enabled(FILESYSTEM_BOOT_FEATURE) {
             Ok(enabled) => (enabled, i32::from(!enabled), String::new()),
             Err(err) => (false, 2, err.to_string()),
         };
@@ -332,9 +332,7 @@ pub fn boot_load_kpm() -> Result<()> {
     }
 
     if Path::new(APATCH_DIR).is_dir() {
-        let filesystem_hiding = Some(kernel_boot_feature_enabled_or_default(
-            FILESYSTEM_BOOT_FEATURE,
-        ));
+        let filesystem_hiding = Some(optional_feature_enabled_or_default(FILESYSTEM_BOOT_FEATURE));
         log_android(
             "vpnhide",
             "kpm: APatch/FolkPatch runtime — deferring load to service activator",

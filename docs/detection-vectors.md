@@ -118,8 +118,8 @@ Legend: ✅ covered · ⚠️ partial / conditional · — not applicable to tha
 | `ioctl(SIOCGIF{FLAGS,MTU,INDEX,HWADDR,ADDR})` by name | native | ✅ `dev_ioctl` | ✅ `dev_ioctl` | ✅ pre-screen | — | |
 | netlink `RTM_GETLINK` dump | `recvmsg`/`recvfrom` of `RTM_NEWLINK` | ✅ `rtnl_fill_ifinfo` | ✅ `rtnl_fill_ifinfo` | ✅ filter by index | — | |
 | netlink `RTM_GETADDR` dump | `RTM_NEWADDR` | ✅ `inet*_fill_ifaddr` | ✅ `inet*_fill_ifaddr` | ✅ filter by index | — | |
-| `/sys/class/net/<iface>/*` | lookup/stat/open/readlink/readdir reveal iface nodes | ⚠️ optional reboot-gated VFS hooks | ⚠️ optional reboot-gated VFS hooks | — | — | 🔒 usually denied |
-| `/proc/sys/net/{ipv4,ipv6}/{conf,neigh}/<iface>` | lookup/stat/open/readlink/readdir reveal per-iface sysctl dirs | ⚠️ optional reboot-gated VFS hooks | ⚠️ optional reboot-gated VFS hooks | — | — | 🔒 usually denied |
+| `/sys/class/net/<iface>/*` | lookup/stat/open/readlink/readdir reveal iface nodes | ⚠️ optional reboot-gated VFS hooks | ⚠️ optional reboot-gated VFS hooks | ⚠️ optional best-effort libc hooks | — | 🔒 usually denied |
+| `/proc/sys/net/{ipv4,ipv6}/{conf,neigh}/<iface>` | lookup/stat/open/readlink/readdir reveal per-iface sysctl dirs | ⚠️ optional reboot-gated VFS hooks | ⚠️ optional reboot-gated VFS hooks | ⚠️ optional best-effort libc hooks | — | 🔒 usually denied |
 
 Notes: bionic's `getifaddrs` itself runs over netlink, so the kernel-backend
 `rtnl_fill_ifinfo` / `inet*_fill_ifaddr` hooks cover the Java and native paths
@@ -134,6 +134,15 @@ directory-enumeration variants receive the same `ENOENT`/filtered view. This is
 disabled by default because the redirect points are global hot paths even
 though filtering remains per target UID. Enable **Hide VPN filesystem paths**
 in Settings and reboot; when disabled the probes are not registered at all.
+
+Zygisk projects the same optional feature into hook bit 27 and installs an
+atomic process-local group for bionic `open*`, `stat`/`lstat`/`fstat`/`fstatat`,
+`access*`, `readlink*`, and `readdir*` entry points. It recognizes canonical absolute paths
+and relative `*at` paths resolved through the supplied directory fd, and takes
+effect when the target app is restarted. This intentionally does **not** claim
+the kernel contract: raw syscalls (including `getdents64`), unhooked libc
+aliases, bind mounts, and paths reached through unrelated symlink aliases can
+bypass it. Use `.ko` or KPM when those vectors matter.
 
 **`SIOCGIFCONF` size-query subcase — closed in the `.ko`.** The classic two-step
 `SIOCGIFCONF` (first call with `ifc_req == NULL` to learn the buffer size, then a

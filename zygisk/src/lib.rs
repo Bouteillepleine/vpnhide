@@ -73,6 +73,7 @@
 //! injects it into every forked app process; the `pre_app_specialize`
 //! filter ensures we only actually do work for targeted apps.
 
+mod filesystem;
 mod filter;
 mod generated;
 mod hooks;
@@ -98,11 +99,24 @@ use zygisk_api::api::v2::{AppSpecializeArgs, V2, ZygiskOption};
 use zygisk_api::jni::{JNIEnv, objects::JString};
 use zygisk_api::{ZygiskModule, register_companion, register_module};
 
+use crate::filesystem::{
+    hooked_access, hooked_faccessat, hooked_fstat, hooked_fstat64, hooked_fstatat,
+    hooked_fstatat64, hooked_lstat, hooked_lstat64, hooked_open, hooked_open_2, hooked_open64,
+    hooked_openat_2, hooked_openat64, hooked_readdir, hooked_readdir64, hooked_readlink,
+    hooked_readlink_chk, hooked_readlinkat, hooked_readlinkat_chk, hooked_stat, hooked_stat64,
+    set_real_access_ptr, set_real_faccessat_ptr, set_real_fstat_ptr, set_real_fstat64_ptr,
+    set_real_fstatat_ptr, set_real_fstatat64_ptr, set_real_lstat_ptr, set_real_lstat64_ptr,
+    set_real_open_2_ptr, set_real_open_ptr, set_real_open64_ptr, set_real_openat_2_ptr,
+    set_real_openat64_ptr, set_real_readdir_ptr, set_real_readdir64_ptr, set_real_readlink_chk_ptr,
+    set_real_readlink_ptr, set_real_readlinkat_chk_ptr, set_real_readlinkat_ptr, set_real_stat_ptr,
+    set_real_stat64_ptr,
+};
 use crate::hooks::{
     hooked_getifaddrs, hooked_ioctl, hooked_openat, hooked_recv, hooked_recvfrom,
-    hooked_recvfrom_chk, hooked_recvmsg, hooked_setsockopt, set_real_getifaddrs_ptr,
-    set_real_ioctl_ptr, set_real_openat_ptr, set_real_recv_ptr, set_real_recvfrom_chk_ptr,
-    set_real_recvfrom_ptr, set_real_recvmsg_ptr, set_real_setsockopt_ptr,
+    hooked_recvfrom_chk, hooked_recvmsg, hooked_setsockopt, set_active_hookmask,
+    set_real_getifaddrs_ptr, set_real_ioctl_ptr, set_real_openat_ptr, set_real_recv_ptr,
+    set_real_recvfrom_chk_ptr, set_real_recvfrom_ptr, set_real_recvmsg_ptr,
+    set_real_setsockopt_ptr,
 };
 
 const LOG_TAG: &str = "vpnhide-zygisk";
@@ -326,10 +340,13 @@ impl ZygiskModule for VpnHide {
             return;
         }
         match install_hooks(hookmask) {
-            Ok(()) => {
-                info!("selected libc hooks installed (mask=0x{hookmask:x})");
+            Ok(report) => {
+                info!(
+                    "selected libc hooks installed (requested=0x{:x} installed=0x{:x})",
+                    report.requested_mask, report.installed_mask,
+                );
                 if self.report_status.load(Ordering::Relaxed) {
-                    write_status_file();
+                    write_status_file(&report);
                 }
                 // Erase shadowhook's fingerprints from /proc/self/maps
                 // before any anti-tamper SDK gets a chance to scan
@@ -344,7 +361,7 @@ impl ZygiskModule for VpnHide {
     // which is what we want: system_server isn't in scope for this module.
 }
 
-fn write_status_file() {
+fn write_status_file(report: &HookInstallReport) {
     let boot_id = match fs::read_to_string("/proc/sys/kernel/random/boot_id") {
         Ok(v) => v.trim().to_string(),
         Err(err) => {
@@ -359,12 +376,20 @@ fn write_status_file() {
             return;
         }
     };
+    let filesystem_error = report
+        .filesystem_error
+        .as_deref()
+        .unwrap_or_default()
+        .replace(['\n', '\r'], " ");
     let content = format!(
-        "version={}\nboot_id={}\npid={}\ntimestamp={}\n",
+        "version={}\nboot_id={}\npid={}\ntimestamp={}\nrequested_hooks={:x}\ninstalled_hooks={:x}\nfilesystem_error={}\n",
         env!("CARGO_PKG_VERSION"),
         boot_id,
         process::id(),
         timestamp,
+        report.requested_mask,
+        report.installed_mask,
+        filesystem_error,
     );
     if let Some(parent) = Path::new(APP_STATUS_FILE).parent() {
         if let Err(err) = fs::create_dir_all(parent) {
@@ -391,6 +416,13 @@ struct HookDesc {
     store_orig: fn(*const ()),
 }
 
+#[derive(Debug)]
+struct HookInstallReport {
+    requested_mask: u32,
+    installed_mask: u32,
+    filesystem_error: Option<String>,
+}
+
 /// Install selected inline hooks on `libc.so` via ByteDance shadowhook.
 ///
 ///   * `ioctl` — catches `SIOCGIFNAME` / `SIOCGIFFLAGS` interface
@@ -414,7 +446,7 @@ struct HookDesc {
 /// excludes `libflutter.so`/`libapp.so` and any other library loaded later
 /// via `dlopen`. Inline-hooking libc's entry points themselves catches
 /// every caller regardless of load order.
-fn install_hooks(hookmask: u32) -> Result<(), String> {
+fn install_hooks(hookmask: u32) -> Result<HookInstallReport, String> {
     shadowhook::init_once().map_err(|rc| format!("shadowhook_init: rc={rc}"))?;
 
     // Every libc symbol the Zygisk backend can hook, in install order (we roll
@@ -427,7 +459,7 @@ fn install_hooks(hookmask: u32) -> Result<(), String> {
     // itself is 12 bytes (3 instructions), safe for island-mode hooking.
     // recvfrom + __recvfrom_chk catch FORTIFY'd / direct callers that never
     // touch the `recv` symbol (issue #86 native route dump).
-    let table = [
+    let base_table = [
         HookDesc {
             sym: c"ioctl",
             hook_id: Hook::ZygiskIoctl,
@@ -445,12 +477,6 @@ fn install_hooks(hookmask: u32) -> Result<(), String> {
             hook_id: Hook::ZygiskSetsockopt,
             replacement: hooked_setsockopt as *mut _,
             store_orig: set_real_setsockopt_ptr,
-        },
-        HookDesc {
-            sym: c"openat",
-            hook_id: Hook::ZygiskOpenat,
-            replacement: hooked_openat as *mut _,
-            store_orig: set_real_openat_ptr,
         },
         HookDesc {
             sym: c"recvmsg",
@@ -478,33 +504,210 @@ fn install_hooks(hookmask: u32) -> Result<(), String> {
         },
     ];
 
-    let mut installed: Vec<*mut c_void> = Vec::with_capacity(table.len());
-    for desc in table {
+    let mut base_stubs: Vec<*mut c_void> = Vec::with_capacity(base_table.len() + 1);
+    for desc in base_table {
         if !zygisk_hook_enabled(hookmask, desc.hook_id) {
             continue;
         }
         match hook_libc_sym(desc.sym, desc.replacement, desc.store_orig) {
-            Ok(stub) => installed.push(stub),
+            Ok(stub) => base_stubs.push(stub),
             Err(err) => {
                 // Roll back any hooks already installed before this
                 // one failed — better to be fully off than to leave
                 // the process with a torn hook plan that filters
                 // some libc paths but not others.
-                for stub in installed.into_iter().rev() {
-                    let rc = unsafe { shadowhook::unhook(stub) };
-                    if rc != 0 {
-                        // Nothing useful to do — we're already on
-                        // the error path. Surface it via log so a
-                        // bad install at least leaves a trail.
-                        error!("install_hooks rollback: shadowhook_unhook rc={rc}");
-                    }
-                }
+                rollback_hooks(&mut base_stubs);
                 return Err(err);
             }
         }
     }
 
-    Ok(())
+    let proc_open_requested = zygisk_hook_enabled(hookmask, Hook::ZygiskOpenat);
+    let filesystem_requested = zygisk_hook_enabled(hookmask, Hook::FilesystemIfacePaths);
+    let mut shared_openat_stub = None;
+    let mut filesystem_error = None;
+    if proc_open_requested || filesystem_requested {
+        match hook_libc_sym(c"openat", hooked_openat as *mut _, set_real_openat_ptr) {
+            Ok(stub) => shared_openat_stub = Some(stub),
+            Err(err) if proc_open_requested => {
+                rollback_hooks(&mut base_stubs);
+                return Err(err);
+            }
+            Err(err) => filesystem_error = Some(err),
+        }
+    }
+
+    let filesystem_table = [
+        HookDesc {
+            sym: c"open",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_open as *mut _,
+            store_orig: set_real_open_ptr,
+        },
+        HookDesc {
+            sym: c"open64",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_open64 as *mut _,
+            store_orig: set_real_open64_ptr,
+        },
+        HookDesc {
+            sym: c"openat64",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_openat64 as *mut _,
+            store_orig: set_real_openat64_ptr,
+        },
+        HookDesc {
+            sym: c"__open_2",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_open_2 as *mut _,
+            store_orig: set_real_open_2_ptr,
+        },
+        HookDesc {
+            sym: c"__openat_2",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_openat_2 as *mut _,
+            store_orig: set_real_openat_2_ptr,
+        },
+        HookDesc {
+            sym: c"access",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_access as *mut _,
+            store_orig: set_real_access_ptr,
+        },
+        HookDesc {
+            sym: c"faccessat",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_faccessat as *mut _,
+            store_orig: set_real_faccessat_ptr,
+        },
+        HookDesc {
+            sym: c"stat",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_stat as *mut _,
+            store_orig: set_real_stat_ptr,
+        },
+        HookDesc {
+            sym: c"stat64",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_stat64 as *mut _,
+            store_orig: set_real_stat64_ptr,
+        },
+        HookDesc {
+            sym: c"lstat",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_lstat as *mut _,
+            store_orig: set_real_lstat_ptr,
+        },
+        HookDesc {
+            sym: c"lstat64",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_lstat64 as *mut _,
+            store_orig: set_real_lstat64_ptr,
+        },
+        HookDesc {
+            sym: c"fstat",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_fstat as *mut _,
+            store_orig: set_real_fstat_ptr,
+        },
+        HookDesc {
+            sym: c"fstat64",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_fstat64 as *mut _,
+            store_orig: set_real_fstat64_ptr,
+        },
+        HookDesc {
+            sym: c"fstatat",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_fstatat as *mut _,
+            store_orig: set_real_fstatat_ptr,
+        },
+        HookDesc {
+            sym: c"fstatat64",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_fstatat64 as *mut _,
+            store_orig: set_real_fstatat64_ptr,
+        },
+        HookDesc {
+            sym: c"readlink",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_readlink as *mut _,
+            store_orig: set_real_readlink_ptr,
+        },
+        HookDesc {
+            sym: c"readlinkat",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_readlinkat as *mut _,
+            store_orig: set_real_readlinkat_ptr,
+        },
+        HookDesc {
+            sym: c"__readlink_chk",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_readlink_chk as *mut _,
+            store_orig: set_real_readlink_chk_ptr,
+        },
+        HookDesc {
+            sym: c"__readlinkat_chk",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_readlinkat_chk as *mut _,
+            store_orig: set_real_readlinkat_chk_ptr,
+        },
+        HookDesc {
+            sym: c"readdir",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_readdir as *mut _,
+            store_orig: set_real_readdir_ptr,
+        },
+        HookDesc {
+            sym: c"readdir64",
+            hook_id: Hook::FilesystemIfacePaths,
+            replacement: hooked_readdir64 as *mut _,
+            store_orig: set_real_readdir64_ptr,
+        },
+    ];
+
+    let mut filesystem_stubs = Vec::with_capacity(filesystem_table.len());
+    if filesystem_requested && filesystem_error.is_none() {
+        for desc in filesystem_table {
+            match hook_libc_sym(desc.sym, desc.replacement, desc.store_orig) {
+                Ok(stub) => filesystem_stubs.push(stub),
+                Err(err) => {
+                    rollback_hooks(&mut filesystem_stubs);
+                    if !proc_open_requested {
+                        if let Some(stub) = shared_openat_stub.take() {
+                            rollback_hook(stub);
+                        }
+                    }
+                    filesystem_error = Some(err);
+                    break;
+                }
+            }
+        }
+    }
+
+    let mut installed_mask = hookmask & ZYGISK_HOOK_MASK & !Hook::FilesystemIfacePaths.bit();
+    if filesystem_requested && filesystem_error.is_none() {
+        installed_mask |= Hook::FilesystemIfacePaths.bit();
+    }
+    set_active_hookmask(installed_mask);
+    Ok(HookInstallReport {
+        requested_mask: hookmask & ZYGISK_HOOK_MASK,
+        installed_mask,
+        filesystem_error,
+    })
+}
+
+fn rollback_hook(stub: *mut c_void) {
+    let rc = unsafe { shadowhook::unhook(stub) };
+    if rc != 0 {
+        error!("install_hooks rollback: shadowhook_unhook rc={rc}");
+    }
+}
+
+fn rollback_hooks(stubs: &mut Vec<*mut c_void>) {
+    for stub in stubs.drain(..).rev() {
+        rollback_hook(stub);
+    }
 }
 
 /// Install a single inline hook on a libc symbol and stash the
@@ -527,6 +730,7 @@ fn hook_libc_sym(
         ));
     }
     if orig.is_null() {
+        rollback_hook(stub);
         return Err(format!(
             "shadowhook returned null trampoline for libc.so!{}",
             sym.to_string_lossy()

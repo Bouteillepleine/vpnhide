@@ -108,6 +108,25 @@ class LayerStatusTest {
     }
 
     @Test
+    fun `optional Zygisk filesystem vectors are owned only after the group installs`() {
+        val outcomes = mapOf("sys_class_net" to CheckOutcome.Leak)
+        val backend = zygisk(installed(active = true))
+
+        assertEquals(
+            LayerStatus.Active(hidden = 0, leaks = 0),
+            summarizeNativeLayer(backend, outcomes),
+        )
+        assertEquals(
+            LayerStatus.Active(hidden = 0, leaks = 1),
+            summarizeNativeLayer(
+                backend,
+                outcomes,
+                installedOptionalHooks = setOf(HookIds.Hook.FILESYSTEM_IFACE_PATHS),
+            ),
+        )
+    }
+
+    @Test
     fun `ownership is per backend family - zygisk owns what the kernel does not`() {
         // Mirror image of the kmod case: proc_dev (zygisk openat) is zygisk-owned;
         // netlink_getrule (fib_nl_fill_rule, kernel-only — no zygisk parses rule

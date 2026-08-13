@@ -1576,10 +1576,10 @@ internal suspend fun loadDashboardState(
 
     filesystemHidingDashboardMessage(
         desiredEnabled =
-            KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS in
+            OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS in
                 targetsSnapshot.canonicalConfig
                     ?.settings
-                    ?.kernelBootFeatures
+                    ?.optionalFeatures
                     .orEmpty(),
         sections = shellSnapshot,
         res = res,
@@ -1641,11 +1641,7 @@ internal suspend fun loadDashboardState(
     // computation, surfaced via the hero warning so a leak there is never invisible.
     var unownedNativeLeakCount = 0
     val installedOptionalHooks =
-        when (nativeBackend.id) {
-            NativeBackendId.Kmod -> installedHooks(shellSnapshot["kmod_state"].orEmpty())
-            NativeBackendId.Kpm -> installedHooks(shellSnapshot["kpm_state"].orEmpty())
-            else -> emptySet()
-        }
+        installedNativeOptionalHooks(nativeBackend.id, shellSnapshot, currentBootId)
     // Single source of truth: the cache does all the gating (VPN off / needs-restart /
     // self-not-routed) through the one fold. awaitTerminal returns the terminal state
     // itself, so the reason for "no results" (blocked gate vs a failed run) is carried

@@ -9,13 +9,13 @@ class FilesystemHidingDataTest {
     @Test
     fun `filesystem hiding remains opt in by default`() {
         assertFalse(
-            KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS in
-                CanonicalSettings().kernelBootFeatures,
+            OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS in
+                CanonicalSettings().optionalFeatures,
         )
     }
 
     @Test
-    fun `feature is unavailable without a kernel backend`() {
+    fun `feature is unavailable without a native backend`() {
         assertEquals(
             FilesystemHidingStatus.Unavailable,
             resolveFilesystemHidingState(desiredEnabled = false, sections = emptyMap()).status,
@@ -66,6 +66,71 @@ class FilesystemHidingDataTest {
                         statusError = HookIds.StatusError.PARTIAL_HOOKS,
                     ),
             ).status,
+        )
+    }
+
+    @Test
+    fun `Zygisk heartbeat reports active optional filesystem hooks`() {
+        val sections =
+            zygiskSections(
+                requested = HookIds.Hook.FILESYSTEM_IFACE_PATHS.bit,
+                installed = HookIds.Hook.FILESYSTEM_IFACE_PATHS.bit,
+            )
+
+        assertEquals(
+            FilesystemHidingStatus.Active,
+            resolveFilesystemHidingState(desiredEnabled = true, sections = sections).status,
+        )
+        assertEquals(
+            setOf(HookIds.Hook.FILESYSTEM_IFACE_PATHS),
+            installedZygiskOptionalHooks(sections.getValue("zygisk_status"), "test-boot"),
+        )
+    }
+
+    @Test
+    fun `active Zygisk heartbeat wins over an installed inactive kmod`() {
+        val sections =
+            zygiskSections(
+                requested = HookIds.Hook.FILESYSTEM_IFACE_PATHS.bit,
+                installed = HookIds.Hook.FILESYSTEM_IFACE_PATHS.bit,
+            ) + ("kmod_module_dir" to "1")
+
+        val state = resolveFilesystemHidingState(desiredEnabled = true, sections = sections)
+        assertEquals(FilesystemHidingStatus.Active, state.status)
+        assertEquals(NativeBackendId.Zygisk, state.backend)
+    }
+
+    @Test
+    fun `Zygisk optional hook failure is reported without claiming ownership`() {
+        val sections =
+            zygiskSections(
+                requested = HookIds.Hook.FILESYSTEM_IFACE_PATHS.bit,
+                installed = 0,
+                error = "shadowhook failed",
+            )
+        val state = resolveFilesystemHidingState(desiredEnabled = true, sections = sections)
+
+        assertEquals(FilesystemHidingStatus.HookSetupError, state.status)
+        assertEquals(NativeBackendId.Zygisk, state.backend)
+        assertEquals("shadowhook failed", state.errorDetail)
+        assertEquals(
+            emptySet<HookIds.Hook>(),
+            installedZygiskOptionalHooks(sections.getValue("zygisk_status"), "test-boot"),
+        )
+    }
+
+    @Test
+    fun `stale Zygisk heartbeat leaves an enabled feature pending`() {
+        val sections =
+            zygiskSections(
+                requested = HookIds.Hook.FILESYSTEM_IFACE_PATHS.bit,
+                installed = HookIds.Hook.FILESYSTEM_IFACE_PATHS.bit,
+                bootId = "old-boot",
+            )
+
+        assertEquals(
+            FilesystemHidingStatus.PendingEnable,
+            resolveFilesystemHidingState(desiredEnabled = true, sections = sections).status,
         )
     }
 
@@ -170,4 +235,22 @@ class FilesystemHidingDataTest {
             loadStatusKey to loadStatus,
         )
     }
+
+    private fun zygiskSections(
+        requested: Long,
+        installed: Long,
+        error: String = "",
+        bootId: String = "test-boot",
+    ): Map<String, String> =
+        mapOf(
+            "zygisk_module_dir" to "1",
+            "current_boot_id" to "test-boot",
+            "zygisk_status" to
+                """
+                boot_id=$bootId
+                requested_hooks=${requested.toString(16)}
+                installed_hooks=${installed.toString(16)}
+                filesystem_error=$error
+                """.trimIndent(),
+        )
 }

@@ -14,7 +14,7 @@ use crate::{
     is_app_uid, pm_list_packages, pm_list_users, wait_for_pm_ready,
 };
 
-pub const KERNEL_BOOT_FEATURE_FILESYSTEM_IFACE_PATHS: &str = Hook::FilesystemIfacePaths.name();
+pub const OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS: &str = Hook::FilesystemIfacePaths.name();
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -35,7 +35,7 @@ pub struct Settings {
     #[serde(default)]
     pub remember_superkey: bool,
     #[serde(default)]
-    pub kernel_boot_features: BTreeSet<String>,
+    pub optional_features: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -175,6 +175,10 @@ impl HookSet {
 
     const fn with(self, hook: Hook) -> Self {
         Self(self.0 | hook.bit())
+    }
+
+    const fn without(self, hook: Hook) -> Self {
+        Self(self.0 & !hook.bit())
     }
 
     const fn restricted_to(self, owner: Self) -> Self {
@@ -397,11 +401,26 @@ pub(crate) fn project_native_with_resolver_for_family(
     resolver: &PackageUidMap,
     family: NativeHookFamily,
 ) -> String {
+    let zygisk_filesystem_enabled = cfg
+        .settings
+        .optional_features
+        .contains(OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS);
     let mut by_uid = BTreeMap::<u32, HookSet>::new();
     for (pkg, app) in &cfg.apps {
-        let Some(hooks) = app.native.hooks(family) else {
+        let Some(mut hooks) = app.native.hooks(family) else {
             continue;
         };
+        // Kernel backends receive the per-app desired bit independently from
+        // whether their load-time hook group is present; their runtime status
+        // reports the installed capability. Zygisk has no separate loader ABI,
+        // so the optional feature gate is projected directly into each process
+        // mask and takes effect when that app next specializes.
+        if family == NativeHookFamily::Zygisk && !zygisk_filesystem_enabled {
+            hooks = hooks.without(Hook::FilesystemIfacePaths);
+            if hooks.is_empty() {
+                continue;
+            }
+        }
         // The APK is intentionally single-owner: only its main-profile copy
         // may manage the shared config. Keep its mandatory self target just as
         // singular here. An accidentally installed work/clone-profile copy is
