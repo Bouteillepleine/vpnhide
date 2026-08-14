@@ -70,12 +70,13 @@ object AppMotion {
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 val AppMotionScheme: MotionScheme =
     object : MotionScheme {
-        private val defaultSpatial = tween<Any>(durationMillis = 400, easing = AppEasing.FancyTransition)
-        private val fastSpatial = spring<Any>(dampingRatio = 0.6f, stiffness = 800f)
-        private val slowSpatial = spring<Any>(dampingRatio = 0.8f, stiffness = 200f)
-        private val defaultEffects = spring<Any>(dampingRatio = 1.0f, stiffness = 1600f)
-        private val fastEffects = tween<Any>(durationMillis = 300, easing = AppEasing.FancyTransition)
-        private val slowEffects = tween<Any>(durationMillis = 500, easing = AppEasing.FancyTransition)
+        // Single-sourced from AppMotion so the spec literals live in exactly one place.
+        private val defaultSpatial = AppMotion.defaultSpatial<Any>()
+        private val fastSpatial = AppMotion.fastSpatial<Any>()
+        private val slowSpatial = AppMotion.slowSpatial<Any>()
+        private val defaultEffects = AppMotion.defaultEffects<Any>()
+        private val fastEffects = AppMotion.fastEffects<Any>()
+        private val slowEffects = AppMotion.slowEffects<Any>()
 
         @Suppress("UNCHECKED_CAST")
         override fun <T> defaultSpatialSpec(): FiniteAnimationSpec<T> = defaultSpatial as FiniteAnimationSpec<T>

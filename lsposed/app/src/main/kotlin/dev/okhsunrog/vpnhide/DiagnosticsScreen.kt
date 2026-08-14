@@ -7,6 +7,7 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.util.Log
+import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
@@ -186,6 +187,35 @@ fun DiagnosticsScreen(
     }
 }
 
+/**
+ * A "Save As…" launcher for a generated `application/zip` file: on a picked uri it
+ * copies [source]`()` off the main thread and swallows IO errors (a large zip would
+ * block the UI, and a write failure would crash) — logging under [errorLabel].
+ * [source] is read at launch time, so it always sees the latest generated file.
+ */
+@Composable
+private fun rememberZipSaveLauncher(
+    errorLabel: String,
+    source: () -> File?,
+): ManagedActivityResultLauncher<String, Uri?> {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    return rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri: Uri? ->
+        val src = source() ?: return@rememberLauncherForActivityResult
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                        src.inputStream().use { it.copyTo(out) }
+                    }
+                }.onFailure { HookLog.e("VpnHide: $errorLabel save failed: ${it.message}") }
+            }
+        }
+    }
+}
+
 @Composable
 fun DebugToolsSection(
     selfNeedsRestart: Boolean?,
@@ -197,23 +227,7 @@ fun DebugToolsSection(
     var exporting by remember { mutableStateOf(false) }
     var debugZipFile by remember { mutableStateOf<File?>(null) }
 
-    val saveLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.CreateDocument("application/zip"),
-        ) { uri: Uri? ->
-            val zip = debugZipFile ?: return@rememberLauncherForActivityResult
-            if (uri != null) {
-                // Copy off the main thread and swallow IO errors — a large zip
-                // would otherwise block the UI and a write failure would crash.
-                scope.launch(Dispatchers.IO) {
-                    runCatching {
-                        context.contentResolver.openOutputStream(uri)?.use { out ->
-                            zip.inputStream().use { it.copyTo(out) }
-                        }
-                    }.onFailure { HookLog.e("VpnHide: debug-zip save failed: ${it.message}") }
-                }
-            }
-        }
+    val saveLauncher = rememberZipSaveLauncher("debug-zip") { debugZipFile }
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -272,21 +286,7 @@ private fun KernelImageExportCard() {
     var exporting by remember { mutableStateOf(false) }
     var kernelImagesFile by remember { mutableStateOf<File?>(null) }
 
-    val saveLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.CreateDocument("application/zip"),
-        ) { uri: Uri? ->
-            val zip = kernelImagesFile ?: return@rememberLauncherForActivityResult
-            if (uri != null) {
-                scope.launch(Dispatchers.IO) {
-                    runCatching {
-                        context.contentResolver.openOutputStream(uri)?.use { out ->
-                            zip.inputStream().use { it.copyTo(out) }
-                        }
-                    }.onFailure { HookLog.e("VpnHide: kernel-image save failed: ${it.message}") }
-                }
-            }
-        }
+    val saveLauncher = rememberZipSaveLauncher("kernel-image") { kernelImagesFile }
 
     EnhancedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -373,20 +373,7 @@ private fun LogcatRecordCard(selfNeedsRestart: Boolean?) {
     }
 
     val saveLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.CreateDocument("application/zip"),
-        ) { uri: Uri? ->
-            val src = (state as? LogcatRecorder.State.Stopped)?.lastFile ?: return@rememberLauncherForActivityResult
-            if (uri != null) {
-                scope.launch(Dispatchers.IO) {
-                    runCatching {
-                        context.contentResolver.openOutputStream(uri)?.use { out ->
-                            src.inputStream().use { it.copyTo(out) }
-                        }
-                    }.onFailure { HookLog.e("VpnHide: logcat save failed: ${it.message}") }
-                }
-            }
-        }
+        rememberZipSaveLauncher("logcat") { (state as? LogcatRecorder.State.Stopped)?.lastFile }
 
     EnhancedCard(
         modifier = Modifier.fillMaxWidth(),

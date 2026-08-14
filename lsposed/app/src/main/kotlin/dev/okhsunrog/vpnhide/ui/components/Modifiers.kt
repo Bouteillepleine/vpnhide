@@ -8,9 +8,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -117,13 +114,3 @@ fun Modifier.pulse(
         scaleY = scale
     }
 }
-
-/** Tracks the pressed state of [interactionSource] (for press-scale effects). */
-@Composable
-fun rememberIsPressed(interactionSource: MutableInteractionSource): Boolean {
-    val pressed by interactionSource.collectIsPressedAsState()
-    return pressed
-}
-
-/** A medium rounded shape constant for ad-hoc use where the theme scale doesn't fit. */
-val DefaultRowShape: Shape = RoundedCornerShape(20.dp)

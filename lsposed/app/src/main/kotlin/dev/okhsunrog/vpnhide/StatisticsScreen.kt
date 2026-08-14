@@ -792,12 +792,13 @@ private fun AppProbeDetailDialog(
                     .entries
                     .sortedByDescending { (_, hooks) -> hooks.sumOf { it.value } }
                     .forEach { (surface, surfaceHooks) ->
+                        val visual = surfaceVisual(surface)
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(
-                                text = surfaceLabel(surface),
+                                text = visual.label,
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = surfaceAccentColor(surface),
+                                color = visual.accent,
                             )
                             surfaceHooks
                                 .groupBy { DetectionMethod.of(it.key) }
@@ -874,7 +875,7 @@ private fun MethodChip(
         modifier =
             Modifier
                 .clip(MaterialTheme.shapes.small)
-                .background(surfaceContainerColor(method.surface))
+                .background(surfaceVisual(method.surface).container)
                 .padding(horizontal = 10.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -893,31 +894,30 @@ private fun MethodChip(
     }
 }
 
-@Composable
-private fun surfaceContainerColor(surface: MethodSurface): Color =
+/** The container/accent colours and localized label for a detection surface,
+ * folded into one lookup (mirrors [HealthVisual]) so the three used to drift. */
+private data class SurfaceVisual(
+    val container: Color,
+    val accent: Color,
+    val label: String,
+)
+
+private fun surfaceLabelRes(surface: MethodSurface): Int =
     when (surface) {
-        MethodSurface.Java -> StatusColors.infoContainer()
-        MethodSurface.Native -> StatusColors.successContainer()
-        MethodSurface.Package -> StatusColors.neutralContainer()
+        MethodSurface.Java -> R.string.surface_java
+        MethodSurface.Native -> R.string.surface_native
+        MethodSurface.Package -> R.string.surface_package
     }
 
 @Composable
-private fun surfaceAccentColor(surface: MethodSurface): Color =
-    when (surface) {
-        MethodSurface.Java -> StatusColors.infoAccent
-        MethodSurface.Native -> StatusColors.successDot
-        MethodSurface.Package -> StatusColors.neutralAccent
+private fun surfaceVisual(surface: MethodSurface): SurfaceVisual {
+    val label = stringResource(surfaceLabelRes(surface))
+    return when (surface) {
+        MethodSurface.Java -> SurfaceVisual(StatusColors.infoContainer(), StatusColors.infoAccent, label)
+        MethodSurface.Native -> SurfaceVisual(StatusColors.successContainer(), StatusColors.successDot, label)
+        MethodSurface.Package -> SurfaceVisual(StatusColors.neutralContainer(), StatusColors.neutralAccent, label)
     }
-
-@Composable
-private fun surfaceLabel(surface: MethodSurface): String =
-    stringResource(
-        when (surface) {
-            MethodSurface.Java -> R.string.surface_java
-            MethodSurface.Native -> R.string.surface_native
-            MethodSurface.Package -> R.string.surface_package
-        },
-    )
+}
 
 @Composable
 private fun AppStatAvatar(icon: Drawable?) {
@@ -990,9 +990,9 @@ private fun appLabel(app: AppProbeStats): String =
 private fun appSurfacesText(app: AppProbeStats): String {
     // Resolve labels up front: stringResource can't be called inside the
     // joinToString transform (not a @Composable context).
-    val java = stringResource(R.string.surface_java)
-    val native = stringResource(R.string.surface_native)
-    val pkg = stringResource(R.string.surface_package)
+    val java = stringResource(surfaceLabelRes(MethodSurface.Java))
+    val native = stringResource(surfaceLabelRes(MethodSurface.Native))
+    val pkg = stringResource(surfaceLabelRes(MethodSurface.Package))
     return app.surfaces.sorted().joinToString(" · ") { surface ->
         when (surface) {
             MethodSurface.Java -> java
