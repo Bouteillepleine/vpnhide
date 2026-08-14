@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.okhsunrog.vpnhide.generated.IfaceLists
+import dev.okhsunrog.vpnhide.ui.components.ButtonSpinner
 import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
 import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
 import dev.okhsunrog.vpnhide.ui.components.GroupedCard
@@ -241,11 +242,7 @@ fun DebugToolsSection(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 if (exporting) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                    )
+                    ButtonSpinner()
                     Spacer(Modifier.width(8.dp))
                 }
                 Text(
@@ -327,11 +324,7 @@ private fun KernelImageExportCard() {
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     if (exporting) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary,
-                        )
+                        ButtonSpinner()
                     } else {
                         Icon(
                             Icons.Default.FileDownload,

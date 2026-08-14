@@ -8,9 +8,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonColors
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonColors
@@ -31,6 +33,8 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import dev.okhsunrog.vpnhide.ui.theme.AppColors
 import dev.okhsunrog.vpnhide.ui.theme.AppMotion
 import dev.okhsunrog.vpnhide.ui.theme.groupCornerRadii
@@ -211,6 +215,25 @@ fun EnhancedIconButton(
     ) {
         Icon(imageVector = icon, contentDescription = contentDescription)
     }
+}
+
+/**
+ * A small circular progress spinner sized for inline use inside a button or a
+ * compact status row (the `strokeWidth = 2.dp` look repeated across the app).
+ * [color] defaults to [LocalContentColor], so inside a Material button it inherits
+ * the button's content color automatically — pass it explicitly only outside one.
+ */
+@Composable
+fun ButtonSpinner(
+    modifier: Modifier = Modifier,
+    size: Dp = 18.dp,
+    color: Color = LocalContentColor.current,
+) {
+    CircularProgressIndicator(
+        modifier = modifier.size(size),
+        strokeWidth = 2.dp,
+        color = color,
+    )
 }
 
 @Composable

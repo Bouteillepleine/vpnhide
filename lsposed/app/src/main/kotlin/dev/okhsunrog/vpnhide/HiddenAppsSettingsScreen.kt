@@ -58,6 +58,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import dev.okhsunrog.vpnhide.ui.components.ButtonSpinner
 import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
 import dev.okhsunrog.vpnhide.ui.theme.AppColors
 import kotlinx.coroutines.Dispatchers
@@ -463,11 +464,7 @@ private fun HiddenAppsSaveBar(
             }
             EnhancedButton(onClick = onSave, enabled = dirty && !saving) {
                 if (saving) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                    )
+                    ButtonSpinner()
                     Spacer(Modifier.width(8.dp))
                 }
                 Text(stringResource(R.string.btn_save))
