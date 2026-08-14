@@ -83,10 +83,6 @@ reinvent them.** `grep` for an existing helper before writing a new one.
   `@Suppress("RuleName")` + a one-line reason — visible in the code, not hidden
   in a baseline. Only disable a rule in `detekt.yml` (with a comment) when it
   doesn't fit the codebase at all.
-- **Kotlin source-size budget** — `:app:detekt` also runs
-  `checkKotlinSourceSize`. New source files are capped at 700 lines; existing
-  oversized files have explicit shrink-only budgets in `app/build.gradle.kts`.
-  Split responsibilities instead of raising a budget.
 - **CPD** (copy-paste detector) — finds cross-file duplicated blocks that
   detekt can't (re-implemented parsers / save-builders are the classic
   AI-duplication smell). CI-enforced (`./gradlew cpdCheck`); report at

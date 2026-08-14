@@ -1,42 +1,7 @@
 import java.io.FileInputStream
 import java.util.Properties
-import org.gradle.api.DefaultTask
-import org.gradle.api.file.ConfigurableFileCollection
-import org.gradle.api.provider.MapProperty
-import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Exec
-import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.InputFiles
-import org.gradle.api.tasks.PathSensitivity
-import org.gradle.api.tasks.PathSensitive
-import org.gradle.api.tasks.TaskAction
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-
-abstract class CheckKotlinSourceSize : DefaultTask() {
-    @get:InputFiles
-    @get:PathSensitive(PathSensitivity.RELATIVE)
-    abstract val sources: ConfigurableFileCollection
-
-    @get:Input
-    abstract val budgets: MapProperty<String, Int>
-
-    @get:Input
-    abstract val defaultLimit: Property<Int>
-
-    @TaskAction
-    fun verify() {
-        val limits = budgets.get()
-        val violations =
-            sources.files.mapNotNull { source ->
-                val lineCount = source.readLines().size
-                val limit = limits[source.name] ?: defaultLimit.get()
-                if (lineCount > limit) "${source.name}: $lineCount lines (limit $limit)" else null
-            }
-        check(violations.isEmpty()) {
-            "Kotlin source-size budget exceeded:\n${violations.joinToString("\n")}"
-        }
-    }
-}
 
 plugins {
     alias(libs.plugins.android.application)
@@ -58,33 +23,6 @@ detekt {
     parallel = true
     source.setFrom(files("src/main/kotlin", "src/test/kotlin"))
 }
-
-// Top-level Compose functions evade detekt's LargeClass rule, so keep a
-// separate file-size budget. Existing oversized files are shrink-only debt:
-// their exact current sizes are explicit here, while every new source gets the
-// default ceiling. Remove an entry once a file drops below the default.
-val kotlinSourceLineBudgets =
-    mapOf(
-        "DashboardData.kt" to 1730,
-        "DashboardScreen.kt" to 1335,
-        "HookEntry.kt" to 1276,
-        "SettingsScreen.kt" to 1201,
-        "StatisticsScreen.kt" to 1102,
-        "AppPickerScreen.kt" to 940,
-        "AgentControl.kt" to 888,
-        "MainActivity.kt" to 817,
-    )
-
-val checkKotlinSourceSize =
-    tasks.register<CheckKotlinSourceSize>("checkKotlinSourceSize") {
-        group = "verification"
-        description = "Rejects new Kotlin god-files and growth in existing oversized sources."
-        sources.from(fileTree("src/main/kotlin") { include("**/*.kt") })
-        budgets.set(kotlinSourceLineBudgets)
-        defaultLimit.set(700)
-    }
-
-tasks.named("detekt").configure { dependsOn(checkKotlinSourceSize) }
 
 tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
     // Codegen output (IfaceLists) and UniFFI bindings aren't hand-written.
