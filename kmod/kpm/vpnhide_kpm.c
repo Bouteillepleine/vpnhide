@@ -875,13 +875,10 @@ static void socket_bind_sk_before(hook_fargs8_t *fargs, void *udata)
 	socket_bind_before_common(fargs, 1);
 }
 
-/* SIOCGIF* range (0x8910..0x8930). SIOCGIFCONF (0x8912) goes via sock_ioctl,
- * never dev_ioctl, so the overlap is harmless here. */
-static int is_siocgif(unsigned long cmd)
-{
-	return cmd >= 0x8910 && cmd <= 0x8930;
-}
-
+/* The get-interface-by-name opcode range (0x8910..0x8970) is the shared
+ * predicate vpnhide_ioctl_is_get_by_name() in shared/vpnhide_logic.h — one
+ * source of truth so this gate cannot narrow below SIOCGIFINDEX (0x8933) again
+ * while the zygisk copy stays wide, which is exactly how a leak crept in before. */
 static void dev_ioctl_after(hook_fargs5_t *fargs, void *udata)
 {
 	unsigned long cmd = (unsigned long)fargs->arg1;
@@ -891,7 +888,8 @@ static void dev_ioctl_after(hook_fargs5_t *fargs, void *udata)
 
 	if ((long)fargs->ret != 0 || !ifr)
 		return;
-	if (!hook_active(VPNHIDE_HOOK_DEV_IOCTL) || !is_siocgif(cmd))
+	if (!hook_active(VPNHIDE_HOOK_DEV_IOCTL) ||
+	    !vpnhide_ioctl_is_get_by_name(cmd))
 		return;
 
 	if (ptr_is_kernel(ifr)) {
