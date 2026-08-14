@@ -16,6 +16,7 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
 import kotlin.concurrent.thread
@@ -136,6 +137,14 @@ private class BridgeServer(
         }
     }
 
+    private fun authorized(header: String?): Boolean {
+        val provided = (header ?: return false).toByteArray(Charsets.US_ASCII)
+        val expected = "Bearer $token".toByteArray(Charsets.US_ASCII)
+        // MessageDigest.isEqual is constant-time (no early return on first
+        // mismatch) on modern Android/JDK.
+        return MessageDigest.isEqual(provided, expected)
+    }
+
     private fun handleClient(client: Socket) {
         try {
             val input = client.getInputStream()
@@ -146,7 +155,9 @@ private class BridgeServer(
             }
             // Authenticate on the headers BEFORE allocating/reading the body, so
             // an unauthenticated peer can never trigger a body-sized allocation.
-            if (head.headers["authorization"] != "Bearer $token") {
+            // Constant-time compare so the check does not leak the token prefix
+            // through response timing (belt-and-suspenders for a 256-bit token).
+            if (!authorized(head.headers["authorization"])) {
                 writeError(client, 401, "Unauthorized", "Missing or invalid bearer token")
                 return
             }

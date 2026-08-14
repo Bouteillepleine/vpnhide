@@ -245,7 +245,12 @@ private fun parseNativeRole(value: Any?): NativeRole =
     }
 
 private fun parseNativeRoleObject(obj: JSONObject): NativeRole {
-    val enabled = obj.optBoolean("enabled", obj.has("kernel") || obj.has("zygisk"))
+    // A native object with no explicit `enabled` defaults to enabled, matching
+    // the Rust activator's serde default (`NativeSelectionDetail.enabled = true`),
+    // which is the authoritative projector. The old `has("kernel")||has("zygisk")`
+    // default disagreed only for a bare `{}` object — display-only drift, aligned
+    // here so the app shows what the activator would apply.
+    val enabled = obj.optBoolean("enabled", true)
     if (!enabled) return NativeRole.Disabled
     return NativeRole(
         enabled = true,
