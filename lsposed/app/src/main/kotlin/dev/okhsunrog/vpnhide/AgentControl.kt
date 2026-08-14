@@ -321,7 +321,9 @@ internal object AgentControl {
             val hookFamily = family?.let(::parseNativeHookFamily) ?: snapshot.nativeHookFamily
             val entries = nativeHookEntriesFor(hookFamily)
             val hooks = resolveHookIds(hookIds, entries)
-            val base = currentCanonicalConfig(refresh = false)
+            // Derive base from the snapshot already fetched (not a second cache
+            // read), so this read-modify-write can't depend on cache ordering.
+            val base = snapshot.canonicalConfig ?: buildCanonicalConfigFromTargetsSnapshot(snapshot)
             val current = base.apps[pkg] ?: CanonicalApp()
             val selected = resolveNativeHookSelection(entries.map { it.hookName }, hooks.toSet())
             val next =

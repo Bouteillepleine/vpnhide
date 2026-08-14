@@ -316,7 +316,10 @@ private fun checkNetworkInterfaceEnum(name: String): CheckResult =
             }
         javaCheck(name, vpnNames.isEmpty(), detail)
     } catch (e: Exception) {
-        javaCheck(name, false, "${e.message}")
+        // An exception means the enumeration could not be observed — that is
+        // not-measured, not a leak. Reporting it as a leak (clean=false) paints
+        // a false FAIL on an unmeasurable surface.
+        javaCheck(name, null, "${e.message}")
     }
 
 @Suppress("DEPRECATION")
@@ -477,7 +480,11 @@ internal fun checkNetworkCallbackVpn(
         val fired = latch.await(3, TimeUnit.SECONDS)
         val caps = seen.get()
         if (!fired || caps == null) {
-            javaCheck(name, true, "no callback delivered")
+            // No callback within the deadline is a non-observation, not evidence
+            // of hiding: reporting it clean (green) would mask a broken/slow
+            // push path. Under the gate a default-network callback fires
+            // promptly, so this is a rare edge — surface it as not-measured.
+            javaCheck(name, null, "no callback delivered")
         } else {
             val hasVpn = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
             val notVpn = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
