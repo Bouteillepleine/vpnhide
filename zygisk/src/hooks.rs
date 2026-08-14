@@ -576,7 +576,12 @@ pub unsafe extern "C" fn hooked_ioctl(
 /// (0x8970) sat above the ceiling too. SIOCGIFNAME (0x8910) and SIOCGIFCONF
 /// (0x8912) are handled in their own branches before this check.
 fn is_siocgif(request: libc::c_ulong) -> bool {
-    (0x8910..=0x8970).contains(&(request as u32))
+    // c_ulong is u64 on 64-bit (the `as u32` truncates the ioctl request to
+    // its low 32 bits) but already u32 on armeabi-v7a, where clippy sees the
+    // cast as unnecessary — the truncation is intended, so allow it.
+    #[allow(clippy::unnecessary_cast)]
+    let request = request as u32;
+    (0x8910..=0x8970).contains(&request)
 }
 
 /// Walk the `ifreq[]` array inside an `ifconf`, shift non-VPN entries forward,
@@ -1578,6 +1583,10 @@ mod setsockopt_tests {
     static REAL_CALLS: AtomicUsize = AtomicUsize::new(0);
     static LAST_OPTLEN: AtomicU32 = AtomicU32::new(0);
 
+    // socklen_t is u32 on 64-bit bionic but i32 on 32-bit (armeabi-v7a); the
+    // `as u32` below is required on arm and a no-op on arm64, so allow the
+    // "unnecessary cast" clippy fires on the 64-bit build.
+    #[allow(clippy::unnecessary_cast)]
     unsafe extern "C" fn fake_setsockopt(
         _fd: c_int,
         _level: c_int,
@@ -1586,7 +1595,7 @@ mod setsockopt_tests {
         optlen: libc::socklen_t,
     ) -> c_int {
         REAL_CALLS.fetch_add(1, Ordering::Relaxed);
-        LAST_OPTLEN.store(optlen, Ordering::Relaxed);
+        LAST_OPTLEN.store(optlen as u32, Ordering::Relaxed);
         73
     }
 

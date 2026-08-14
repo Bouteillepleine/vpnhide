@@ -9,8 +9,10 @@ MOD_VER="$(grep '^version=' "$MODPATH/module.prop" | cut -d= -f2)"
 ui_print "- VPN Hide (Zygisk) ${MOD_VER:-unknown}"
 ui_print "- Installing to $MODPATH"
 
-# Make the native library readable/executable by zygote
+# Make the native libraries readable/executable by zygote (one per ABI:
+# arm64-v8a for 64-bit processes, armeabi-v7a for 32-bit ones).
 set_perm "$MODPATH/zygisk/arm64-v8a.so" 0 0 0755
+[ -f "$MODPATH/zygisk/armeabi-v7a.so" ] && set_perm "$MODPATH/zygisk/armeabi-v7a.so" 0 0 0755
 set_perm "$MODPATH/activator" 0 0 0755
 set_perm "$MODPATH/service.sh" 0 0 0755
 set_perm "$MODPATH/uninstall.sh" 0 0 0755
