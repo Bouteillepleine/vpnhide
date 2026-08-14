@@ -96,6 +96,12 @@ kind|vpnhide 0 stats\n|INVALID
 kind|vpnhide 2 stats\n|INVALID
 kind|vpnhide 2 status\n|INVALID
 kind|garbage\n|INVALID
+# The version token is DIGITS ONLY (§4.2). A leading `+` is not a digit, so the
+# header is rejected whole — even though `+1`/`+2` name a current version. This
+# pins a classic silent-drift corner: C/Rust reject `+`, but a naive decimal
+# parse (e.g. Kotlin's toIntOrNull) would fold `+2` to 2 and misclassify it.
+kind|vpnhide +1 stats\n|INVALID
+kind|vpnhide +2 config\n|INVALID
 # non-ASCII first significant line rejects the whole payload — the parser must
 # NOT skip it and find the header on the following line (§4.2 parity).
 kind|\x80bad\nvpnhide 2 config\n|INVALID

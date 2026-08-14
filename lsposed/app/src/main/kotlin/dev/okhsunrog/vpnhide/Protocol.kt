@@ -125,7 +125,14 @@ internal object Protocol {
             if (!isAscii(line)) return null
             val toks = tokens(contentAfterWs(line))
             if (toks.getOrNull(0) != "vpnhide") return null
-            val ver = toks.getOrNull(1)?.toIntOrNull() ?: return null
+            // Digits only, matching the C (`vpnhide_tok_decimal`) and Rust
+            // (`parse_decimal`) version parsers. Kotlin's `toIntOrNull()` would
+            // otherwise accept a leading `+` (`"+2".toIntOrNull() == 2`), which
+            // those reject — a silent three-parser drift the shared `kind`
+            // vectors (`vpnhide +1 stats`) now pin.
+            val verTok = toks.getOrNull(1) ?: return null
+            if (verTok.isEmpty() || verTok.any { it !in '0'..'9' }) return null
+            val ver = verTok.toIntOrNull() ?: return null
             val kind =
                 when (toks.getOrNull(2)) {
                     "config" -> Kind.CONFIG
