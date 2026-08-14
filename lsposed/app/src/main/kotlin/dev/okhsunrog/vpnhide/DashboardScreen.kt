@@ -231,56 +231,44 @@ fun DashboardScreen(
             UpdateAvailableCard(info)
         }
 
-        if (errors.isNotEmpty()) {
-            Spacer(Modifier.height(20.dp))
-            SectionHeader(stringResource(R.string.dashboard_issues, errors.size), color = errorHeader)
-            Spacer(Modifier.height(8.dp))
-            for (issue in errors) {
-                StatusBanner(
-                    text = issue.text,
-                    containerColor = errorBg,
-                    contentColor = onBannerColor,
-                    action = messageActionSlot(issue, onOpenDiagnostics) { showContact = true },
-                )
-                Spacer(Modifier.height(6.dp))
-            }
-        }
-
-        if (warnings.isNotEmpty()) {
-            Spacer(Modifier.height(20.dp))
-            SectionHeader(stringResource(R.string.dashboard_warnings, warnings.size), color = warningHeader)
-            Spacer(Modifier.height(8.dp))
-            for (issue in warnings) {
-                StatusBanner(
-                    text = issue.text,
-                    containerColor = warningBg,
-                    contentColor = onBannerColor,
-                    action = messageActionSlot(issue, onOpenDiagnostics) { showContact = true },
-                )
-                Spacer(Modifier.height(6.dp))
-            }
-        }
-
-        if (infos.isNotEmpty()) {
-            Spacer(Modifier.height(20.dp))
-            SectionHeader(stringResource(R.string.dashboard_info, infos.size), color = infoHeader)
-            Spacer(Modifier.height(8.dp))
-            for (message in infos) {
-                StatusBanner(
-                    text = message.text,
-                    containerColor = infoBg,
-                    contentColor = onBannerColor,
-                    action = messageActionSlot(message, onOpenDiagnostics) { showContact = true },
-                )
-                Spacer(Modifier.height(6.dp))
-            }
-        }
+        val onContact = { showContact = true }
+        MessageSection(errors, R.string.dashboard_issues, errorHeader, errorBg, onBannerColor, onOpenDiagnostics, onContact)
+        MessageSection(warnings, R.string.dashboard_warnings, warningHeader, warningBg, onBannerColor, onOpenDiagnostics, onContact)
+        MessageSection(infos, R.string.dashboard_info, infoHeader, infoBg, onBannerColor, onOpenDiagnostics, onContact)
 
         Spacer(Modifier.height(16.dp))
     }
 }
 
 // ── UI Components ────────────────────────────────────────────────────────
+
+// One severity block (issues / warnings / info): a counted section header over a
+// list of StatusBanners. No-op when [messages] is empty, so the three call sites
+// can't drift in spacing or action wiring. [titleRes] takes the count as its arg.
+@Composable
+private fun MessageSection(
+    messages: List<DashboardMessage>,
+    titleRes: Int,
+    headerColor: Color,
+    containerColor: Color,
+    contentColor: Color,
+    onOpenDiagnostics: () -> Unit,
+    onContact: () -> Unit,
+) {
+    if (messages.isEmpty()) return
+    Spacer(Modifier.height(20.dp))
+    SectionHeader(stringResource(titleRes, messages.size), color = headerColor)
+    Spacer(Modifier.height(8.dp))
+    for (message in messages) {
+        StatusBanner(
+            text = message.text,
+            containerColor = containerColor,
+            contentColor = contentColor,
+            action = messageActionSlot(message, onOpenDiagnostics, onContact),
+        )
+        Spacer(Modifier.height(6.dp))
+    }
+}
 
 // Maps a message's data-layer action tag to the actual button + handler in ONE
 // place, so a new action is an enum case + one branch here — not an edit in
@@ -600,18 +588,20 @@ private fun DashboardHeroCard(
                         accent = moduleSummaryAccent(state),
                         modifier = Modifier.weight(1f),
                     )
+                    val nativeMetric = protectionMetric(state.protection) { it.native }
                     MetricTile(
                         label = stringResource(R.string.dashboard_native_protection),
-                        value = nativeSummaryText(state.protection),
-                        accent = nativeSummaryAccent(state.protection),
+                        value = nativeMetric.text,
+                        accent = nativeMetric.accent,
                         modifier = Modifier.weight(1f),
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val javaMetric = protectionMetric(state.protection) { it.java }
                     MetricTile(
                         label = stringResource(R.string.dashboard_java_protection),
-                        value = javaSummaryText(state.protection),
-                        accent = javaSummaryAccent(state.protection),
+                        value = javaMetric.text,
+                        accent = javaMetric.accent,
                         modifier = Modifier.weight(1f),
                     )
                     MetricTile(
@@ -643,86 +633,50 @@ private fun moduleSummaryAccent(state: DashboardState): Color {
     }
 }
 
-/** One tile label for any layer, from its [LayerStatus]/[Verdict]. Native and
- * Java tiles now share this mapping. */
+/** A metric tile's text + accent, kept in lock-step so they can't diverge. */
+private data class MetricSpec(
+    val text: String,
+    val accent: Color,
+)
+
+/** One tile's text + accent for any protection layer, from its
+ * [LayerStatus]/[Verdict]. Native and Java tiles share this mapping. */
 @Composable
-private fun layerSummaryText(layer: LayerStatus): String =
+private fun layerSummary(layer: LayerStatus): MetricSpec =
     when (layer) {
         LayerStatus.Absent -> {
-            stringResource(R.string.dashboard_protection_no_module)
+            MetricSpec(stringResource(R.string.dashboard_protection_no_module), MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         LayerStatus.Inactive -> {
-            stringResource(R.string.dashboard_protection_not_active)
+            MetricSpec(stringResource(R.string.dashboard_protection_not_active), MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         is LayerStatus.Active -> {
             when (layer.verdict) {
-                Verdict.Ok -> stringResource(R.string.dashboard_protection_ok)
-                Verdict.Partial -> stringResource(R.string.dashboard_protection_partial)
-                Verdict.Broken -> stringResource(R.string.dashboard_protection_fail)
+                Verdict.Ok -> MetricSpec(stringResource(R.string.dashboard_protection_ok), StatusColors.successDot)
+                Verdict.Partial -> MetricSpec(stringResource(R.string.dashboard_protection_partial), StatusColors.warningAccent)
+                Verdict.Broken -> MetricSpec(stringResource(R.string.dashboard_protection_fail), StatusColors.errorAccent)
             }
         }
     }
 
+/** The native/java tile metric for [protection]. [layer] picks which measured
+ * layer to summarize. VPN off / app not in the tunnel / needs restart reads
+ * "not checked" — the hero and banner carry the actual reason. */
 @Composable
-private fun layerSummaryAccent(layer: LayerStatus): Color =
-    when (layer) {
-        LayerStatus.Absent -> {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        }
-
-        LayerStatus.Inactive -> {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        }
-
-        is LayerStatus.Active -> {
-            when (layer.verdict) {
-                Verdict.Ok -> StatusColors.successDot
-                Verdict.Partial -> StatusColors.warningAccent
-                Verdict.Broken -> StatusColors.errorAccent
-            }
-        }
-    }
-
-@Composable
-private fun nativeSummaryText(protection: ProtectionCheck): String =
+private fun protectionMetric(
+    protection: ProtectionCheck,
+    layer: (ProtectionCheck.Checked) -> LayerStatus,
+): MetricSpec =
     when (protection) {
-        // VPN off / app not in the tunnel / needs restart: the layer wasn't measured, so the
-        // tile just reads "not checked" — the hero and banner carry the actual reason.
         is ProtectionCheck.Blocked, ProtectionCheck.Failed -> {
-            stringResource(R.string.dashboard_protection_unknown)
+            MetricSpec(stringResource(R.string.dashboard_protection_unknown), MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         is ProtectionCheck.Checked -> {
-            layerSummaryText(protection.native)
+            layerSummary(layer(protection))
         }
-    }
-
-@Composable
-private fun nativeSummaryAccent(protection: ProtectionCheck): Color =
-    when (protection) {
-        is ProtectionCheck.Blocked, ProtectionCheck.Failed -> MaterialTheme.colorScheme.onSurfaceVariant
-        is ProtectionCheck.Checked -> layerSummaryAccent(protection.native)
-    }
-
-@Composable
-private fun javaSummaryText(protection: ProtectionCheck): String =
-    when (protection) {
-        is ProtectionCheck.Blocked, ProtectionCheck.Failed -> {
-            stringResource(R.string.dashboard_protection_unknown)
-        }
-
-        is ProtectionCheck.Checked -> {
-            layerSummaryText(protection.java)
-        }
-    }
-
-@Composable
-private fun javaSummaryAccent(protection: ProtectionCheck): Color =
-    when (protection) {
-        is ProtectionCheck.Blocked, ProtectionCheck.Failed -> MaterialTheme.colorScheme.onSurfaceVariant
-        is ProtectionCheck.Checked -> layerSummaryAccent(protection.java)
     }
 
 private data class InstalledVisual(

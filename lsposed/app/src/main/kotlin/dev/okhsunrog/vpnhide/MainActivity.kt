@@ -21,10 +21,8 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Refresh
@@ -240,13 +238,16 @@ private data class RefreshContext(
 )
 
 @Composable
+private fun tabLabel(tab: Tab): String =
+    when (tab) {
+        Tab.Dashboard -> stringResource(R.string.tab_dashboard)
+        Tab.Statistics -> stringResource(R.string.tab_statistics)
+        Tab.Protection -> stringResource(R.string.tab_protection)
+    }
+
+@Composable
 private fun AppTopBarTitle(currentTab: Tab) {
-    val tabLabel =
-        when (currentTab) {
-            Tab.Dashboard -> stringResource(R.string.tab_dashboard)
-            Tab.Statistics -> stringResource(R.string.tab_statistics)
-            Tab.Protection -> stringResource(R.string.tab_protection)
-        }
+    val tabLabel = tabLabel(currentTab)
     // The full-size brand block (logo + wordmark) wants ~190dp. Material3's
     // TopAppBar hands the title only the width left over after the action
     // buttons, so on very narrow / high-density screens that slot shrinks.
@@ -295,12 +296,7 @@ private fun AppHeaderBrand(
     progress: Float,
     modifier: Modifier = Modifier,
 ) {
-    val tabLabel =
-        when (currentTab) {
-            Tab.Dashboard -> stringResource(R.string.tab_dashboard)
-            Tab.Statistics -> stringResource(R.string.tab_statistics)
-            Tab.Protection -> stringResource(R.string.tab_protection)
-        }
+    val tabLabel = tabLabel(currentTab)
     BoxWithConstraints(modifier) {
         val narrowScale = (maxWidth.value / 200f).coerceIn(0.6f, 1f)
         val logoSize = lerp(38.dp * narrowScale, 58.dp, progress)
@@ -486,36 +482,14 @@ private fun MainScreen() {
         containerColor = AppColors.screenBackground,
         topBar = {
             if (searchActive && currentTab == Tab.Protection) {
-                SearchBar(
-                    inputField = {
-                        SearchBarDefaults.InputField(
-                            query = searchQuery,
-                            onQueryChange = { searchQuery = it },
-                            onSearch = {},
-                            expanded = false,
-                            onExpandedChange = {},
-                            placeholder = { Text(stringResource(R.string.search_placeholder)) },
-                            leadingIcon = {
-                                IconButton(onClick = {
-                                    searchActive = false
-                                    searchQuery = ""
-                                }) {
-                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
-                                }
-                            },
-                            trailingIcon = {
-                                if (searchQuery.isNotEmpty()) {
-                                    IconButton(onClick = { searchQuery = "" }) {
-                                        Icon(Icons.Default.Clear, contentDescription = null)
-                                    }
-                                }
-                            },
-                        )
+                AppSearchTopBar(
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    onClose = {
+                        searchActive = false
+                        searchQuery = ""
                     },
-                    expanded = false,
-                    onExpandedChange = {},
-                    modifier = Modifier.fillMaxWidth(),
-                ) {}
+                )
             } else {
                 // Dashboard on a tall screen gets an "airy" header: the brand
                 // grows and drops below the (fixed) action buttons. Everywhere

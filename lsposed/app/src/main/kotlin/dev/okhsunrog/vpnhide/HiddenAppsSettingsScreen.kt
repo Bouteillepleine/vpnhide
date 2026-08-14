@@ -21,7 +21,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -33,8 +32,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SearchBar
-import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -160,36 +157,14 @@ internal fun HiddenAppsSettingsScreen(onBack: () -> Unit) {
         containerColor = AppColors.screenBackground,
         topBar = {
             if (searchActive) {
-                SearchBar(
-                    inputField = {
-                        SearchBarDefaults.InputField(
-                            query = query,
-                            onQueryChange = { query = it },
-                            onSearch = {},
-                            expanded = false,
-                            onExpandedChange = {},
-                            placeholder = { Text(stringResource(R.string.search_placeholder)) },
-                            leadingIcon = {
-                                IconButton(onClick = {
-                                    searchActive = false
-                                    query = ""
-                                }) {
-                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
-                                }
-                            },
-                            trailingIcon = {
-                                if (query.isNotEmpty()) {
-                                    IconButton(onClick = { query = "" }) {
-                                        Icon(Icons.Default.Clear, contentDescription = null)
-                                    }
-                                }
-                            },
-                        )
+                AppSearchTopBar(
+                    query = query,
+                    onQueryChange = { query = it },
+                    onClose = {
+                        searchActive = false
+                        query = ""
                     },
-                    expanded = false,
-                    onExpandedChange = {},
-                    modifier = Modifier.fillMaxWidth(),
-                ) {}
+                )
             } else {
                 TopAppBar(
                     title = { Text(stringResource(R.string.settings_hidden_apps)) },

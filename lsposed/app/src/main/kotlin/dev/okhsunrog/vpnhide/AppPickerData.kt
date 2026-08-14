@@ -188,10 +188,9 @@ internal fun applyAutoHiddenPackages(
     val observerPkgs = config.apps.filterValues { it.appHiding }.keys
     val manualHiddenPkgs = config.apps.filterValues { it.hidden }.keys - config.settings.autoHiddenPackages
     val autoHiddenPkgs = resolveAutoHiddenPackages(signals, config.settings, selfPkg)
-    val effectiveAutoHiddenPkgs = autoHiddenPkgs
     val hiddenPkgs =
         resolveHiddenPackages(
-            existing = manualHiddenPkgs + effectiveAutoHiddenPkgs,
+            existing = manualHiddenPkgs + autoHiddenPkgs,
             selfPkg = selfPkg,
         )
     return buildCanonicalConfig(
@@ -201,7 +200,7 @@ internal fun applyAutoHiddenPackages(
         hiddenPkgs = hiddenPkgs,
         observerPkgs = observerPkgs,
         portsPkgs = config.apps.filterValues { it.ports }.keys,
-        existing = config.copy(settings = config.settings.copy(autoHiddenPackages = effectiveAutoHiddenPkgs.toSortedSet())),
+        existing = config.copy(settings = config.settings.copy(autoHiddenPackages = autoHiddenPkgs.toSortedSet())),
     )
 }
 
@@ -294,32 +293,29 @@ private fun Collection<AppRoleSelection>.selectedPortPolicies(): Map<String, Por
             selection.packageName to normalizePortPolicy(selection.portPolicy)
         }
 
-private fun CanonicalConfig.withJavaHooks(hooks: Map<String, List<String>?>): CanonicalConfig {
-    if (hooks.isEmpty()) return this
+/**
+ * Rewrite the per-app [values] onto matching packages, preserving the sorted-map
+ * invariant. A no-op when [values] is empty; apps not in [values] are untouched.
+ * [set] applies one entry's value (which may itself be null, e.g. cleared hooks).
+ */
+private fun <V> CanonicalConfig.withAppValues(
+    values: Map<String, V>,
+    set: (CanonicalApp, V) -> CanonicalApp,
+): CanonicalConfig {
+    if (values.isEmpty()) return this
     val updated =
         apps
             .mapValues { (pkg, app) ->
-                if (pkg in hooks) app.copy(javaHooks = hooks[pkg]) else app
+                if (pkg in values) set(app, values.getValue(pkg)) else app
             }.toSortedMap()
     return copy(apps = updated)
 }
 
-private fun CanonicalConfig.withNativeRoles(roles: Map<String, NativeRole>): CanonicalConfig {
-    if (roles.isEmpty()) return this
-    val updated =
-        apps
-            .mapValues { (pkg, app) ->
-                roles[pkg]?.let { app.copy(native = it) } ?: app
-            }.toSortedMap()
-    return copy(apps = updated)
-}
+private fun CanonicalConfig.withJavaHooks(hooks: Map<String, List<String>?>): CanonicalConfig =
+    withAppValues(hooks) { app, v -> app.copy(javaHooks = v) }
 
-private fun CanonicalConfig.withPortPolicies(policies: Map<String, PortPolicy?>): CanonicalConfig {
-    if (policies.isEmpty()) return this
-    val updated =
-        apps
-            .mapValues { (pkg, app) ->
-                if (pkg in policies) app.copy(portPolicy = policies[pkg]) else app
-            }.toSortedMap()
-    return copy(apps = updated)
-}
+private fun CanonicalConfig.withNativeRoles(roles: Map<String, NativeRole>): CanonicalConfig =
+    withAppValues(roles) { app, v -> app.copy(native = v) }
+
+private fun CanonicalConfig.withPortPolicies(policies: Map<String, PortPolicy?>): CanonicalConfig =
+    withAppValues(policies) { app, v -> app.copy(portPolicy = v) }
