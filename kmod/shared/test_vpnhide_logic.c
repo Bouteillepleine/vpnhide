@@ -141,6 +141,33 @@ static void test_is_physical_iface(void)
 	expect_int("phys NULL", vpnhide_iface_is_physical((const char *)0), 0);
 }
 
+static void test_ioctl_is_get_by_name(void)
+{
+	/* The whole get-by-name SIOCGIF* family must be inside the range. The
+	 * regression that motivated this vector: a 0x8930 ceiling excluded
+	 * SIOCGIFINDEX (0x8933), so `if_nametoindex("vpn0")` leaked the index. */
+	expect_int("ioctl SIOCGIFNAME 0x8910",
+		   vpnhide_ioctl_is_get_by_name(0x8910), 1);
+	expect_int("ioctl SIOCGIFCONF 0x8912",
+		   vpnhide_ioctl_is_get_by_name(0x8912), 1);
+	expect_int("ioctl SIOCGIFFLAGS 0x8913",
+		   vpnhide_ioctl_is_get_by_name(0x8913), 1);
+	expect_int("ioctl SIOCGIFHWADDR 0x8927",
+		   vpnhide_ioctl_is_get_by_name(0x8927), 1);
+	expect_int("ioctl SIOCGIFINDEX 0x8933 (regression)",
+		   vpnhide_ioctl_is_get_by_name(0x8933), 1);
+	expect_int("ioctl SIOCGIFTXQLEN 0x8942",
+		   vpnhide_ioctl_is_get_by_name(0x8942), 1);
+	expect_int("ioctl SIOCGIFMAP 0x8970",
+		   vpnhide_ioctl_is_get_by_name(0x8970), 1);
+	/* Just outside the range on both ends. */
+	expect_int("ioctl 0x890f below range",
+		   vpnhide_ioctl_is_get_by_name(0x890f), 0);
+	expect_int("ioctl 0x8971 above range",
+		   vpnhide_ioctl_is_get_by_name(0x8971), 0);
+	expect_int("ioctl 0 non-ioctl", vpnhide_ioctl_is_get_by_name(0), 0);
+}
+
 int main(void)
 {
 	test_route_first_field();
@@ -149,6 +176,7 @@ int main(void)
 	test_is_public_ipv4();
 	test_is_public_ipv6();
 	test_is_physical_iface();
+	test_ioctl_is_get_by_name();
 	if (failures) {
 		fprintf(stderr, "%d test(s) failed\n", failures);
 		return 1;

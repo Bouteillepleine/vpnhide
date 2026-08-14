@@ -85,6 +85,23 @@ static inline int vpnhide_iface_is_physical(const char *name)
 	       vpnhide_str_starts_with_ci(name, "seth");
 }
 
+/* True if `cmd` is a get-interface-by-name ioctl: the whole SIOCGIF* family
+ * from SIOCGIFNAME (0x8910) through SIOCGIFMAP (0x8970), each of which takes a
+ * `struct ifreq` with the interface name in `ifr_name`. A backend that gates
+ * dev_ioctl on the opcode (the KPM does; the zygisk libc hook carries the same
+ * range in Rust) MUST span the full range: `SIOCGIFINDEX` (0x8933, the ioctl
+ * `if_nametoindex()` issues), `SIOCGIFTXQLEN` (0x8942), and `SIOCGIFMAP`
+ * (0x8970) all sit above the obvious FLAGS/MTU/HWADDR cluster, and a too-narrow
+ * ceiling leaks VPN presence (a non-zero `if_nametoindex("vpn0")` is a positive
+ * fingerprint). SIOCGIFCONF (0x8912) is handled on a separate path (sock_ioctl),
+ * so its membership here is harmless. The `.ko` needs no opcode gate at all — it
+ * filters on the returned `ifr_name` — but the predicate stays freestanding and
+ * available to any opcode-gated backend. */
+static inline int vpnhide_ioctl_is_get_by_name(unsigned long cmd)
+{
+	return cmd >= 0x8910 && cmd <= 0x8970;
+}
+
 /* Public-IPv4 test on the 4 network-order bytes of an address (be[0] is the
  * first octet, so this is endianness-explicit — no host byte-swap needed).
  * Rejects 0/8, 10/8, 127/8, 224/4+, 100.64/10, 169.254/16, 172.16/12,

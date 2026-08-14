@@ -154,6 +154,17 @@ saw a one-interface discrepancy. `sock_ioctl_ret` now also handles the
 exact set/naming `inet_gifconf` would have emitted), so the size query agrees with
 the filtered fill. Validated by the harness `ifconf_probe` vector.
 
+**By-name `SIOCGIF*` range — the whole `0x8910`–`0x8970` family, not just the
+common few.** The by-name row above covers every get-by-name ioctl, and the gate
+must span the full range: `SIOCGIFINDEX` (0x8933, the ioctl `if_nametoindex()`
+issues), `SIOCGIFTXQLEN` (0x8942), and `SIOCGIFMAP` (0x8970) all sit above the
+"obvious" FLAGS/MTU/HWADDR cluster. A too-narrow ceiling leaks: `if_nametoindex`
+returning a non-zero index for a hidden `vpn0` is a positive fingerprint. The
+`.ko` avoids the trap entirely by filtering on the *returned* name with no cmd
+gate; zygisk and KPM both use an explicit `0x8910..=0x8970` range check. (KPM
+briefly capped at `0x8930` and leaked `SIOCGIFINDEX` before this was widened to
+match.)
+
 All three native implementations also clear the compacted part of the
 kernel-written buffer before shortening `ifc_len`. Without that cleanup, a
 caller could scan its oversized buffer past the reported length and recover a
