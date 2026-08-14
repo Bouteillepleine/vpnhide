@@ -58,7 +58,10 @@ internal data class DiagnosticCheck(
     val owned: Boolean,
 )
 
-/** Per-layer rollup: presence/verdict plus the classified checks that produced it. */
+/** Per-layer rollup: presence plus the classified checks that produced it. The
+ * Ok/Partial/Broken verdict is deliberately NOT exposed here — it is only valid
+ * for a measured run, so it is reachable only through the gate-checked
+ * [DiagnosticReport.nativeVerdict] / [DiagnosticReport.javaVerdict]. */
 internal data class LayerReport(
     val layer: CheckLayer,
     val backend: NativeBackendId?,
@@ -67,12 +70,7 @@ internal data class LayerReport(
     // a warning, never counted against the tile verdict. Always 0 for the Java layer.
     val unownedLeaks: Int,
     val checks: List<DiagnosticCheck>,
-) {
-    /** Ok/Partial/Broken when the layer is [LayerStatus.Active]; null otherwise.
-     * Only meaningful when the report's [DiagnosticReport.gate] is
-     * [DiagnosticGate.ROUTED] — a gated report carries presence only. */
-    val verdict: Verdict? get() = (status as? LayerStatus.Active)?.verdict
-}
+)
 
 /**
  * The single canonical diagnostic snapshot.
@@ -91,15 +89,29 @@ internal data class DiagnosticReport(
     // False after the fast core phase, true once the slow Java probes have filled in.
     val complete: Boolean,
     val schema: Int = DIAGNOSTIC_REPORT_SCHEMA,
-)
+) {
+    /** Per-layer Ok/Partial/Broken — the ONLY way to read a report's verdict.
+     * Null unless the run was actually measured ([DiagnosticGate.ROUTED]); a
+     * gated report's layers carry a placeholder [LayerStatus.Active] with zero
+     * counts, so returning its verdict would render a false "Ok". */
+    val nativeVerdict: Verdict? get() = native.verdictFor(gate)
+    val javaVerdict: Verdict? get() = java.verdictFor(gate)
+}
+
+/** Verdict of a layer, but only for a measured run — the gate is required so no
+ * caller can obtain a verdict without acknowledging whether the run measured
+ * anything. */
+private fun LayerReport.verdictFor(gate: DiagnosticGate): Verdict? =
+    if (gate == DiagnosticGate.ROUTED) (status as? LayerStatus.Active)?.verdict else null
 
 /**
  * Fold the raw check run into the canonical [DiagnosticReport]. Pure: same inputs
  * → same report, no Android or IO dependency, so it is unit-tested directly.
  *
  * [results] is null when the gate blocked the run ([DiagnosticGate.ROUTED] is the
- * only gate that carries measurements); the layers then report presence only and
- * their [LayerReport.verdict] must not be consulted.
+ * only gate that carries measurements); the layers then report presence only, and
+ * [DiagnosticReport.nativeVerdict] / [DiagnosticReport.javaVerdict] return null so
+ * a gated verdict can never be rendered.
  */
 internal fun buildDiagnosticReport(
     gate: DiagnosticGate,

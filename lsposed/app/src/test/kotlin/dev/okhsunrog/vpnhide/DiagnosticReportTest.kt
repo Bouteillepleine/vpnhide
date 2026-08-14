@@ -1,6 +1,8 @@
 package dev.okhsunrog.vpnhide
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -45,19 +47,19 @@ class DiagnosticReportTest {
     @Test
     fun `native verdict is Broken when an owned vector leaks and nothing hid`() {
         val r = report(results = CheckResults(native = nativeResults("ioctl_flags" to CheckOutcome.Leak)))
-        assertEquals(Verdict.Broken, r.native.verdict)
+        assertEquals(Verdict.Broken, r.nativeVerdict)
     }
 
     @Test
     fun `native verdict is Partial when it hides some but an owned vector leaks`() {
         val native = nativeResults("ioctl_flags" to CheckOutcome.Leak, "getifaddrs" to CheckOutcome.HiddenByBackend)
-        assertEquals(Verdict.Partial, report(results = CheckResults(native = native)).native.verdict)
+        assertEquals(Verdict.Partial, report(results = CheckResults(native = native)).nativeVerdict)
     }
 
     @Test
     fun `native verdict is Ok when nothing owned leaks`() {
         val native = nativeResults("ioctl_flags" to CheckOutcome.HiddenByBackend)
-        assertEquals(Verdict.Ok, report(results = CheckResults(native = native)).native.verdict)
+        assertEquals(Verdict.Ok, report(results = CheckResults(native = native)).nativeVerdict)
     }
 
     // ── unowned leaks are surfaced separately, never against the verdict ────
@@ -67,7 +69,7 @@ class DiagnosticReportTest {
         // netlink_getrule (fib_nl_fill_rule) has no zygisk hook → out of scope for
         // the zygisk tile, so the verdict stays Ok and the leak is counted as unowned.
         val r = report(results = CheckResults(native = nativeResults("netlink_getrule" to CheckOutcome.Leak)))
-        assertEquals(Verdict.Ok, r.native.verdict)
+        assertEquals(Verdict.Ok, r.nativeVerdict)
         assertEquals(1, r.native.unownedLeaks)
     }
 
@@ -119,7 +121,7 @@ class DiagnosticReportTest {
         val r = report(results = results)
         val javaCheck = r.java.checks.single()
         assertEquals(CheckOutcome.Leak, javaCheck.outcome)
-        assertEquals(Verdict.Broken, r.java.verdict)
+        assertEquals(Verdict.Broken, r.javaVerdict)
     }
 
     // ── gate ───────────────────────────────────────────────────────────────
@@ -130,6 +132,20 @@ class DiagnosticReportTest {
         assertEquals(DiagnosticGate.VPN_OFF, r.gate)
         assertTrue(r.native.checks.isEmpty())
         assertTrue(r.java.checks.isEmpty())
+    }
+
+    @Test
+    fun `a blocked gate exposes no verdict and never renders a placeholder ok`() {
+        // A gated run's active layers carry a placeholder Active(0,0). The
+        // gate-checked accessors must return null and the renderers must show
+        // "not-measured", never a false "ok" folded off the zero counts.
+        val r = report(gate = DiagnosticGate.VPN_OFF, results = null)
+        assertNull(r.nativeVerdict)
+        assertNull(r.javaVerdict)
+        val text = r.toDiagnosticsText()
+        assertTrue("gated layers render not-measured", text.contains("not-measured"))
+        assertFalse("no placeholder ok verdict", text.contains("ok (hidden 0, leaks 0"))
+        assertFalse("json verdict stays null for a gated run", r.toJson().contains("\"verdict\": \"ok\""))
     }
 
     @Test
