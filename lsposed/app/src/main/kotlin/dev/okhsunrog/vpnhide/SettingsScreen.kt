@@ -79,6 +79,7 @@ import dev.okhsunrog.vpnhide.settings.CornerStyle
 import dev.okhsunrog.vpnhide.settings.LocalSettingsInteractor
 import dev.okhsunrog.vpnhide.settings.LocalSettingsState
 import dev.okhsunrog.vpnhide.settings.ThemeMode
+import dev.okhsunrog.vpnhide.ui.components.ButtonSpinner
 import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
 import dev.okhsunrog.vpnhide.ui.components.EnhancedOutlinedButton
 import dev.okhsunrog.vpnhide.ui.components.PreferenceRow
@@ -89,6 +90,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.nio.charset.StandardCharsets
+
+/** The small status line shown under a settings action (import/export result,
+ * superkey save outcome). Renders nothing when [status] is null. */
+@Composable
+private fun SettingsStatusLine(status: String?) {
+    status?.let {
+        Text(
+            text = it,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 4.dp),
+        )
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -523,11 +538,7 @@ private fun ConfigBackupSection() {
                 modifier = Modifier.weight(1f),
             ) {
                 if (operation == ConfigOperation.Export) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp).padding(end = 8.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                    ButtonSpinner(Modifier.padding(end = 8.dp))
                 } else {
                     Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
@@ -550,11 +561,7 @@ private fun ConfigBackupSection() {
                 modifier = Modifier.weight(1f),
             ) {
                 if (operation == ConfigOperation.Import) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp).padding(end = 8.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                    )
+                    ButtonSpinner(Modifier.padding(end = 8.dp))
                 } else {
                     Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
@@ -575,14 +582,7 @@ private fun ConfigBackupSection() {
             enabled = targets != null && operation == ConfigOperation.Idle,
             onClick = { packageListDialogOpen = true },
         )
-        status?.let {
-            Text(
-                text = it,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 4.dp),
-            )
-        }
+        SettingsStatusLine(status)
     }
 
     val packageListConfig = targets?.let(::buildConfigExportCanonical)
@@ -818,23 +818,12 @@ private fun SuperkeySettingsSection() {
                 modifier = Modifier.weight(1f),
             ) {
                 if (saving) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp).padding(end = 8.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                    )
+                    ButtonSpinner(Modifier.padding(end = 8.dp))
                 }
                 Text(stringResource(R.string.settings_superkey_store))
             }
         }
-        status?.let {
-            Text(
-                text = it,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 4.dp),
-            )
-        }
+        SettingsStatusLine(status)
     }
 }
 
@@ -1046,14 +1035,7 @@ private fun AutoHideSettingsSection(onOpenHiddenApps: () -> Unit) {
             enabled = canWrite && unavailableConfigured.isNotEmpty(),
             onClick = { unavailableDialogOpen = true },
         )
-        status?.let {
-            Text(
-                text = it,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 4.dp),
-            )
-        }
+        SettingsStatusLine(status)
     }
 
     if (unavailableDialogOpen) {

@@ -52,6 +52,7 @@ import dev.okhsunrog.vpnhide.settings.LocalSettingsState
 import dev.okhsunrog.vpnhide.settings.RepositorySettingsInteractor
 import dev.okhsunrog.vpnhide.settings.SettingsRepository
 import dev.okhsunrog.vpnhide.ui.components.BlockingErrorCard
+import dev.okhsunrog.vpnhide.ui.components.ButtonSpinner
 import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
 import dev.okhsunrog.vpnhide.ui.components.EnhancedCard
 import dev.okhsunrog.vpnhide.ui.components.pulse
@@ -608,11 +609,7 @@ private fun MainScreen() {
                                 enabled = !refreshContext.loading,
                             ) {
                                 if (refreshContext.loading) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(20.dp),
-                                        strokeWidth = 2.dp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
+                                    ButtonSpinner(size = 20.dp)
                                 } else {
                                     Icon(
                                         Icons.Default.Refresh,
