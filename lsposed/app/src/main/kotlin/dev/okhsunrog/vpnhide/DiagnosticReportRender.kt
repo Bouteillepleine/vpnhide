@@ -17,10 +17,13 @@ private fun LayerStatus.presenceToken(): String =
         is LayerStatus.Active -> "active"
     }
 
-/** One-line verdict/presence summary for a layer, e.g. `broken (hidden 0, leaks 2, unowned 1)`. */
-internal fun LayerReport.verdictLabel(): String {
+/** One-line verdict/presence summary for a layer, e.g. `broken (hidden 0, leaks 2,
+ * unowned 1)`. [verdict] comes from the report's gate-checked accessor, so a gated
+ * run (verdict == null) renders `not-measured`, never a placeholder `ok`. */
+internal fun LayerReport.verdictLabel(verdict: Verdict?): String {
     val active = status as? LayerStatus.Active ?: return status.presenceToken()
-    return "${active.verdict.name.lowercase()} (hidden ${active.hidden}, leaks ${active.leaks}, unowned $unownedLeaks)"
+    val head = verdict?.name?.lowercase() ?: "not-measured"
+    return "$head (hidden ${active.hidden}, leaks ${active.leaks}, unowned $unownedLeaks)"
 }
 
 /** Count of every check by outcome token across both layers — the honest headline
@@ -43,18 +46,19 @@ internal fun DiagnosticReport.toDiagnosticsText(): String =
         appendLine("complete: $complete")
         appendLine("outcomes: ${outcomeTally()}")
         appendLine()
-        appendLayer(native, "Native", native.backend?.name?.lowercase() ?: "none")
+        appendLayer(native, "Native", native.backend?.name?.lowercase() ?: "none", nativeVerdict)
         appendLine()
-        appendLayer(java, "Java", "lsposed")
+        appendLayer(java, "Java", "lsposed", javaVerdict)
     }.trimEnd()
 
 private fun StringBuilder.appendLayer(
     layer: LayerReport,
     title: String,
     backendLabel: String,
+    verdict: Verdict?,
 ) {
     appendLine("--- $title layer ($backendLabel) ---")
-    appendLine(layer.verdictLabel())
+    appendLine(layer.verdictLabel(verdict))
     if (layer.checks.isEmpty()) {
         appendLine("(no checks — gated run)")
         return
@@ -113,17 +117,17 @@ private fun DiagnosticReport.toReportJson(): ReportJson =
         schema = schema,
         gate = gate.name.lowercase(),
         complete = complete,
-        native = native.toLayerJson(),
-        java = java.toLayerJson(),
+        native = native.toLayerJson(nativeVerdict),
+        java = java.toLayerJson(javaVerdict),
     )
 
-private fun LayerReport.toLayerJson(): LayerJson {
+private fun LayerReport.toLayerJson(verdict: Verdict?): LayerJson {
     val active = status as? LayerStatus.Active
     return LayerJson(
         layer = layer.name.lowercase(),
         backend = backend?.name?.lowercase(),
         presence = status.presenceToken(),
-        verdict = active?.verdict?.name?.lowercase(),
+        verdict = verdict?.name?.lowercase(),
         hidden = active?.hidden,
         leaks = active?.leaks,
         unownedLeaks = unownedLeaks,

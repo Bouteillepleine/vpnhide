@@ -163,8 +163,8 @@ internal fun buildDiagnosticSummaryText(
             appendLine("Diagnostics: not run")
         } else {
             appendLine("Diagnostics gate: ${report.gate.name.lowercase()}")
-            appendLine("Native verdict: ${report.native.verdictLabel()}")
-            appendLine("Java verdict: ${report.java.verdictLabel()}")
+            appendLine("Native verdict: ${report.native.verdictLabel(report.nativeVerdict)}")
+            appendLine("Java verdict: ${report.java.verdictLabel(report.javaVerdict)}")
             appendLine("Outcomes: ${report.outcomeTally()}")
         }
         appendLine("selfNeedsRestart: $selfNeedsRestart")
