@@ -101,15 +101,15 @@ use zygisk_api::{ZygiskModule, register_companion, register_module};
 
 use crate::filesystem::{
     hooked_access, hooked_faccessat, hooked_fstat, hooked_fstat64, hooked_fstatat,
-    hooked_fstatat64, hooked_lstat, hooked_lstat64, hooked_open, hooked_open_2, hooked_open64,
-    hooked_openat_2, hooked_openat64, hooked_readdir, hooked_readdir64, hooked_readlink,
-    hooked_readlink_chk, hooked_readlinkat, hooked_readlinkat_chk, hooked_stat, hooked_stat64,
-    set_real_access_ptr, set_real_faccessat_ptr, set_real_fstat_ptr, set_real_fstat64_ptr,
-    set_real_fstatat_ptr, set_real_fstatat64_ptr, set_real_lstat_ptr, set_real_lstat64_ptr,
-    set_real_open_2_ptr, set_real_open_ptr, set_real_open64_ptr, set_real_openat_2_ptr,
-    set_real_openat64_ptr, set_real_readdir_ptr, set_real_readdir64_ptr, set_real_readlink_chk_ptr,
-    set_real_readlink_ptr, set_real_readlinkat_chk_ptr, set_real_readlinkat_ptr, set_real_stat_ptr,
-    set_real_stat64_ptr,
+    hooked_fstatat64, hooked_getdents64, hooked_lstat, hooked_lstat64, hooked_open, hooked_open_2,
+    hooked_open64, hooked_openat_2, hooked_openat64, hooked_readdir, hooked_readdir64,
+    hooked_readlink, hooked_readlink_chk, hooked_readlinkat, hooked_readlinkat_chk, hooked_stat,
+    hooked_stat64, set_real_access_ptr, set_real_faccessat_ptr, set_real_fstat_ptr,
+    set_real_fstat64_ptr, set_real_fstatat_ptr, set_real_fstatat64_ptr, set_real_getdents64_ptr,
+    set_real_lstat_ptr, set_real_lstat64_ptr, set_real_open_2_ptr, set_real_open_ptr,
+    set_real_open64_ptr, set_real_openat_2_ptr, set_real_openat64_ptr, set_real_readdir_ptr,
+    set_real_readdir64_ptr, set_real_readlink_chk_ptr, set_real_readlink_ptr,
+    set_real_readlinkat_chk_ptr, set_real_readlinkat_ptr, set_real_stat_ptr, set_real_stat64_ptr,
 };
 use crate::hooks::{
     hooked_getifaddrs, hooked_ioctl, hooked_openat, hooked_recv, hooked_recvfrom,
@@ -681,6 +681,19 @@ fn install_hooks(hookmask: u32) -> Result<HookInstallReport, String> {
                     filesystem_error = Some(err);
                     break;
                 }
+            }
+        }
+        // getdents64 is a best-effort addition on top of readdir*: some bionic
+        // versions do not export it as a dynamic symbol, and its absence must NOT
+        // tear down the whole filesystem feature (readdir/open/stat still hide the
+        // paths). So hook it outside the fatal loop and ignore a resolution failure.
+        if filesystem_error.is_none() {
+            if let Ok(stub) = hook_libc_sym(
+                c"getdents64",
+                hooked_getdents64 as *mut _,
+                set_real_getdents64_ptr,
+            ) {
+                filesystem_stubs.push(stub);
             }
         }
     }
