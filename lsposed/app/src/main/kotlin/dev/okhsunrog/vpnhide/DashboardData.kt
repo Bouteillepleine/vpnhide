@@ -270,6 +270,10 @@ internal data class DashboardState(
     val kmodLoadStatus: KmodLoadStatus?,
     val protection: ProtectionCheck,
     val messages: List<DashboardMessage>,
+    // Optional native hooks this boot actually installed. Retained so the Detailed
+    // diagnostics screen can rebuild the canonical DiagnosticReport (which vectors
+    // the active backend owns) rather than deriving ownership a second way.
+    val installedOptionalHooks: Set<HookIds.Hook> = emptySet(),
 )
 
 internal enum class HeroStatus { Protected, Attention, Unprotected, VpnOff }
@@ -1634,12 +1638,6 @@ internal suspend fun loadDashboardState(
     val vpnActive = isVpnActiveFromSnapshot(shellSnapshot["vpn_ifaces"].orEmpty())
     VpnHideLog.i(TAG, "vpnActive=$vpnActive selfNeedsRestart=$selfNeedsRestart")
 
-    // Native leaks the tile doesn't score: vectors the active backend does not own
-    // (SELinux/zygisk territory), plus the Java-implemented native-level probes
-    // (NetworkInterface enum, /proc/net/route via ART) which carry no root
-    // differential and so aren't in nativeOutcomes. Set during the protection
-    // computation, surfaced via the hero warning so a leak there is never invisible.
-    var unownedNativeLeakCount = 0
     val installedOptionalHooks =
         installedNativeOptionalHooks(nativeBackend.id, shellSnapshot, currentBootId)
     // Single source of truth: the cache does all the gating (VPN off / needs-restart /
@@ -1666,7 +1664,6 @@ internal suspend fun loadDashboardState(
                         complete = true,
                         installedOptionalHooks = installedOptionalHooks,
                     )
-                unownedNativeLeakCount = report.native.unownedLeaks
                 ProtectionCheck.Checked(report.native.status, report.java.status)
             }
 
@@ -1685,17 +1682,19 @@ internal suspend fun loadDashboardState(
         }
     }
 
-    // A hiding layer is active but some of its runtime probes still leak (native
-    // partial/full, or a Java probe fails). Without this the state shows only as
-    // an amber hero/tile with no explanation — surface a warning that links to
-    // the full diagnostics for the per-check breakdown.
-    // A leak is a leak: an active layer's owned vector leaks, or a native surface
-    // the backend doesn't cover leaks (only SELinux would). Either way the VPN is
-    // detectable — link to the per-check breakdown.
+    // A hiding layer is active but a vector it OWNS still leaks — the backend
+    // should hide it and didn't, so the VPN is detectable AND the user can act on
+    // it (report the device). Surface a warning linking to the per-check breakdown.
+    //
+    // Unowned leaks — vectors no active backend covers on this device (e.g.
+    // RTM_GETRULE with no kernel backend loaded, or a best-effort sysfs path) — are
+    // deliberately NOT surfaced here: the active backend is already doing everything
+    // it can, so alarming about a gap the user cannot close just generates noise (and
+    // support churn). Those still appear, neutrally, in the per-check breakdown.
     val checked = protection as? ProtectionCheck.Checked
     val nativeLeaks = (checked?.native as? LayerStatus.Active)?.leaks ?: 0
     val javaLeaks = (checked?.java as? LayerStatus.Active)?.leaks ?: 0
-    if (nativeLeaks > 0 || javaLeaks > 0 || unownedNativeLeakCount > 0) {
+    if (nativeLeaks > 0 || javaLeaks > 0) {
         messages +=
             DashboardMessage(
                 DashboardMessageSeverity.WARNING,
@@ -1722,5 +1721,6 @@ internal suspend fun loadDashboardState(
         kmodLoadStatus = kmodLoadStatus,
         protection = protection,
         messages = messages,
+        installedOptionalHooks = installedOptionalHooks,
     )
 }

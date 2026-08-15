@@ -83,9 +83,17 @@ tile's verdict:
 probe — otherwise Partial and Broken are indistinguishable. The native tile is judged
 **only on vectors the active backend owns** (has a hook for): a leak on a not-owned
 vector (e.g. `/proc/net/dev` under a kernel backend — no kernel hook exists) does not
-turn the tile red; it surfaces as a hero warning instead. So the **tile** answers "is
-this module doing its job" and the **hero** answers "is the VPN hidden at all". The
-Java tile uses the same rollup; LSPosed owns every Java check, so all its leaks count.
+turn the tile red. Such an **unowned leak is a surface no active backend can close on
+this device**, so it also does **not** raise a dashboard warning or the "Issues" count
+— alarming about a gap the user cannot act on is just noise (and support churn).
+Instead it is shown neutrally ("not covered") in a separate group of the per-check
+breakdown, so the residual surface stays honest without reading as a failure. The
+only thing that raises the hero to *attention* is an **owned** leak — a vector the
+active backend should hide but didn't (the user can act: report the device / switch
+backend) — or a genuine module/version problem. So the **tile** answers "is this
+module doing its job", and the dashboard stays clean whenever the active backend
+hides everything it *can*. The Java tile uses the same rollup; LSPosed owns every Java
+check, so all its leaks count.
 
 ## 5. Self-in-tunnel gate
 
