@@ -67,6 +67,11 @@ fun DiagnosticsScreen(
     val scope = rememberCoroutineScope()
 
     val diagState by DiagnosticsCache.state.collectAsState()
+    // The dashboard state carries which native backend is active + the optional hooks
+    // it installed — the inputs needed to rebuild the canonical DiagnosticReport here,
+    // so each check can be shown against the vectors the backend actually OWNS. Null
+    // until the dashboard has loaded (then we fall back to the raw, ownership-less list).
+    val dashState by DashboardCache.state.collectAsState()
     val tallyFmt = stringResource(R.string.diag_summary_tally)
 
     // Kick off the diagnostics run once per process. The cache parks at
@@ -74,6 +79,9 @@ fun DiagnosticsScreen(
     // app yet, so a run would be meaningless); run is idempotent otherwise.
     LaunchedEffect(selfNeedsRestart) {
         DiagnosticsCache.run(scope, context, selfNeedsRestart)
+        // Ensure the backend/ownership state is available even when the user opens
+        // Diagnostics without visiting the Dashboard first (cheap no-op if cached).
+        DashboardCache.ensureLoaded(scope, context, selfNeedsRestart)
     }
 
     val results = (diagState as? DiagnosticsCache.State.Ready)?.results
@@ -82,13 +90,6 @@ fun DiagnosticsScreen(
     // NotMeasured(NoNetworkPermission). Java-level checks never produce that state,
     // so this isolates the "app has no network permission" banner from everything else.
     val networkBlocked = results?.native?.anyNetworkBlocked() == true
-    // Honest headline: how many vectors we hide vs still leak (the misleading
-    // "N/total passed" score was the thing the report redesign retired).
-    val summary =
-        results?.let { r ->
-            val counts = r.all.protectionCounts()
-            String.format(tallyFmt, counts.hidden, counts.leaks)
-        }
 
     Column(
         modifier =
@@ -150,35 +151,23 @@ fun DiagnosticsScreen(
                     )
                 }
 
-                if (summary != null) {
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        text = summary,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
-
                 results?.let { r ->
-                    Spacer(Modifier.height(16.dp))
-
-                    SectionHeader(stringResource(R.string.section_native))
-                    Spacer(Modifier.height(6.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        r.nativeAll.forEachIndexed { i, check ->
-                            CheckCard(check, index = i, count = r.nativeAll.size)
+                    // Build the canonical report when the dashboard has loaded so each
+                    // check knows whether the active backend OWNS its vector; otherwise
+                    // render the raw list (every leak reads as a leak — the pre-report
+                    // behaviour, used only in the brief window before the dashboard loads).
+                    val report =
+                        dashState?.let { ds ->
+                            buildDiagnosticReport(
+                                gate = DiagnosticGate.ROUTED,
+                                results = r,
+                                backend = ds.nativeBackend,
+                                lsposedActive = ds.lsposed is LsposedState.Active,
+                                complete = (diagState as? DiagnosticsCache.State.Ready)?.complete == true,
+                                installedOptionalHooks = ds.installedOptionalHooks,
+                            )
                         }
-                    }
-
-                    Spacer(Modifier.height(16.dp))
-
-                    SectionHeader(stringResource(R.string.section_java))
-                    Spacer(Modifier.height(6.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        r.java.forEachIndexed { i, check ->
-                            CheckCard(check, index = i, count = r.java.size)
-                        }
-                    }
+                    DiagnosticsResults(report = report, results = r, tallyFmt = tallyFmt)
                 }
             }
         }
@@ -485,6 +474,97 @@ private fun formatSize(bytes: Long): String {
 }
 
 /**
+ * One row on the Diagnostics list, unified across sources so [CheckCard] renders one
+ * shape. [uncovered] marks a native leak on a vector the active backend does not own
+ * — a detection surface no active hook covers on this device. It is shown neutrally
+ * (see [diagStatusUncovered]), never as a red leak, and grouped apart from the
+ * backend's own vectors.
+ */
+private data class DiagCard(
+    val name: String,
+    val detail: String,
+    val groundTruthDetail: String?,
+    val outcome: CheckOutcome,
+    val uncovered: Boolean,
+)
+
+/** From a canonical report check — the only source that knows [DiagnosticCheck.owned],
+ * so it is the only one that can flag an uncovered native leak. */
+private fun DiagnosticCheck.toDiagCard(): DiagCard =
+    DiagCard(
+        name = label,
+        detail = appDetail,
+        groundTruthDetail = groundTruthDetail,
+        outcome = outcome,
+        uncovered = layer == CheckLayer.NATIVE && outcome is CheckOutcome.Leak && !owned,
+    )
+
+/** Raw-list fallback (dashboard not yet loaded): no ownership known, so nothing is
+ * marked uncovered — a leak reads as a leak, the pre-report behaviour. */
+private fun CheckResult.toDiagCard(): DiagCard = DiagCard(name, detail, groundTruthDetail, outcome, uncovered = false)
+
+/**
+ * The results body: the honest headline (hidden vs still-leaking) plus the check
+ * cards, split into the backend's own vectors, the vectors no active backend covers
+ * on this device (shown neutrally), and the Java layer. [report] is null only in the
+ * brief window before the dashboard loads, when we fall back to the raw list.
+ */
+@Composable
+private fun DiagnosticsResults(
+    report: DiagnosticReport?,
+    results: CheckResults,
+    tallyFmt: String,
+) {
+    val nativeCards = report?.native?.checks?.map { it.toDiagCard() } ?: results.nativeAll.map { it.toDiagCard() }
+    val javaCards = report?.java?.checks?.map { it.toDiagCard() } ?: results.java.map { it.toDiagCard() }
+    val covered = nativeCards.filterNot { it.uncovered }
+    val uncovered = nativeCards.filter { it.uncovered }
+
+    // Headline counts the backend's job: hidden vectors vs still-leaking OWNED
+    // vectors. Uncovered vectors are out of the active backend's scope, so they are
+    // reported below rather than folded into "leaking".
+    val scored = covered + javaCards
+    val hidden = scored.count { it.outcome is CheckOutcome.HiddenByBackend || it.outcome is CheckOutcome.HiddenBySelinux }
+    val leaks = scored.count { it.outcome is CheckOutcome.Leak }
+
+    Spacer(Modifier.height(12.dp))
+    Text(
+        text = String.format(tallyFmt, hidden, leaks),
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.Bold,
+    )
+
+    Spacer(Modifier.height(16.dp))
+    SectionHeader(stringResource(R.string.section_native))
+    Spacer(Modifier.height(6.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        covered.forEachIndexed { i, c -> CheckCard(c, index = i, count = covered.size) }
+    }
+
+    if (uncovered.isNotEmpty()) {
+        Spacer(Modifier.height(16.dp))
+        SectionHeader(stringResource(R.string.section_native_uncovered))
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = stringResource(R.string.diag_uncovered_caption),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(6.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            uncovered.forEachIndexed { i, c -> CheckCard(c, index = i, count = uncovered.size) }
+        }
+    }
+
+    Spacer(Modifier.height(16.dp))
+    SectionHeader(stringResource(R.string.section_java))
+    Spacer(Modifier.height(6.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        javaCards.forEachIndexed { i, c -> CheckCard(c, index = i, count = javaCards.size) }
+    }
+}
+
+/**
  * One check's status: a coloured **dot + short word** (the "3-B" treatment — the
  * app's own status-dot idiom from the module rows). The card colour tracks current
  * reality only — green when hidden (by backend OR SELinux) or nothing-to-leak, red
@@ -528,13 +608,26 @@ private fun diagStatus(outcome: CheckOutcome): DiagStatus =
         }
     }
 
+/** Neutral "out of scope" status for a native leak on a vector the active backend
+ * does not own: no active hook covers it on this device, so it is not the backend
+ * failing — it is reported calmly (grey dot + word, no alarm, collapsed), never as a
+ * red leak, so a working backend never reads as broken over a gap it cannot close. */
+@Composable
+private fun diagStatusUncovered(): DiagStatus =
+    DiagStatus(
+        stringResource(R.string.diag_status_uncovered),
+        StatusColors.neutralAccent,
+        StatusColors.neutralContainer(),
+        false,
+    )
+
 @Composable
 private fun CheckCard(
-    r: CheckResult,
+    r: DiagCard,
     index: Int = -1,
     count: Int = 1,
 ) {
-    val status = diagStatus(r.outcome)
+    val status = if (r.uncovered) diagStatusUncovered() else diagStatus(r.outcome)
     var expanded by remember(r.name) { mutableStateOf(status.expandedByDefault) }
     val caretRotation by animateFloatAsState(if (expanded) 90f else 0f, label = "caret")
     GroupedCard(

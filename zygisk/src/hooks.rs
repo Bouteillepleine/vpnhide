@@ -30,9 +30,9 @@ use core::{mem, ptr, slice};
 use libc::{SIOCGIFCONF, SIOCGIFNAME, ifreq};
 
 use crate::filter::{
-    MAX_VPN_ADDRS, RTM_NEWADDR, RTM_NEWLINK, RTM_NEWROUTE, filter_dev_buf, filter_if_inet6_buf,
-    filter_ipv6_route_buf, filter_netlink_dump, filter_route_buf, filter_tcp4_buf, filter_tcp6_buf,
-    is_vpn_iface_bytes, is_vpn_iface_cstr,
+    MAX_VPN_ADDRS, RTM_NEWADDR, RTM_NEWLINK, RTM_NEWROUTE, RTM_NEWRULE, filter_dev_buf,
+    filter_if_inet6_buf, filter_ipv6_route_buf, filter_netlink_dump, filter_route_buf,
+    filter_tcp4_buf, filter_tcp6_buf, is_vpn_iface_bytes, is_vpn_iface_cstr,
 };
 use crate::generated::hook_ids::Hook;
 
@@ -1252,6 +1252,7 @@ pub unsafe extern "C" fn hooked_recvmsg(fd: c_int, msg: *mut libc::msghdr, flags
     if n == 0 {
         return ret;
     }
+    let vpn_uid = unsafe { libc::getuid() };
 
     NETLINK_IOV_BUF.with(|cell| {
         let Ok(mut scratch) = cell.try_borrow_mut() else {
@@ -1263,7 +1264,7 @@ pub unsafe extern "C" fn hooked_recvmsg(fd: c_int, msg: *mut libc::msghdr, flags
                 hdr.msg_iovlen,
                 in_iovecs,
                 &mut scratch,
-                |data| filter_netlink_dump(data, &indices[..n]),
+                |data| filter_netlink_dump(data, &indices[..n], vpn_uid),
             )
         }) else {
             return ret;
@@ -1397,7 +1398,11 @@ unsafe fn maybe_filter_netlink_buf(fd: c_int, buf: *mut u8, ret: isize) -> isize
     // (RTM_GETROUTE) come back as RTM_NEWROUTE and must not be skipped —
     // that gap was the issue #86 `if<N>` leak.
     let nlmsg_type = u16::from_ne_bytes([data[4], data[5]]);
-    if nlmsg_type != RTM_NEWADDR && nlmsg_type != RTM_NEWLINK && nlmsg_type != RTM_NEWROUTE {
+    if nlmsg_type != RTM_NEWADDR
+        && nlmsg_type != RTM_NEWLINK
+        && nlmsg_type != RTM_NEWROUTE
+        && nlmsg_type != RTM_NEWRULE
+    {
         return ret;
     }
 
@@ -1405,8 +1410,9 @@ unsafe fn maybe_filter_netlink_buf(fd: c_int, buf: *mut u8, ret: isize) -> isize
     if n == 0 {
         return ret;
     }
+    let vpn_uid = unsafe { libc::getuid() };
 
-    filter_netlink_dump(data, &indices[..n]) as isize
+    filter_netlink_dump(data, &indices[..n], vpn_uid) as isize
 }
 
 // ============================================================================
@@ -1806,7 +1812,7 @@ mod iovec_tests {
                 iovecs.len(),
                 copied,
                 &mut scratch,
-                |data| filter_netlink_dump(data, &[7]),
+                |data| filter_netlink_dump(data, &[7], 0),
             )
             .unwrap()
         };

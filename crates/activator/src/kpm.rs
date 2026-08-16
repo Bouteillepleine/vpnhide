@@ -87,6 +87,10 @@ pub(crate) struct KpmLoadOptions {
 
 impl KpmLoadOptions {
     fn args(self) -> Option<&'static str> {
+        // When off, omit the arg rather than passing `=0`: the KPM parser defaults
+        // filesystem_hiding to off, so absence == disabled. (The .ko path in
+        // lifecycle.rs instead passes an explicit `filesystem_hiding=0` — same
+        // intent, different loader ABIs.)
         self.filesystem_hiding.then_some("filesystem_hiding=1")
     }
 }

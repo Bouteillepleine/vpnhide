@@ -65,10 +65,11 @@ class DiagnosticReportTest {
     // ── unowned leaks are surfaced separately, never against the verdict ────
 
     @Test
-    fun `a kernel-only leak under zygisk is unowned, not a verdict leak`() {
-        // netlink_getrule (fib_nl_fill_rule) has no zygisk hook → out of scope for
-        // the zygisk tile, so the verdict stays Ok and the leak is counted as unowned.
-        val r = report(results = CheckResults(native = nativeResults("netlink_getrule" to CheckOutcome.Leak)))
+    fun `a not-owned leak under zygisk is unowned, not a verdict leak`() {
+        // sys_class_net is covered only by the optional FILESYSTEM_IFACE_PATHS hook,
+        // which this report is built without installing → out of scope for the zygisk
+        // tile, so the verdict stays Ok and the leak is counted as unowned.
+        val r = report(results = CheckResults(native = nativeResults("sys_class_net" to CheckOutcome.Leak)))
         assertEquals(Verdict.Ok, r.nativeVerdict)
         assertEquals(1, r.native.unownedLeaks)
     }

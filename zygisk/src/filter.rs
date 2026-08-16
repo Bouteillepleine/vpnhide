@@ -248,6 +248,20 @@ const RTA_ALIGNTO: usize = 4;
 /// `rtattr` type carrying the output interface index (`RTA_OIF`).
 const RTA_OIF: u16 = 4;
 
+/// `RTM_NEWRULE` — the reply the kernel emits for an `RTM_GETRULE` policy-rule
+/// dump. `struct fib_rule_hdr` shares `struct rtmsg`'s 12-byte layout, so
+/// [`RTMSG_HDRLEN`] doubles as the rule header length.
+pub(crate) const RTM_NEWRULE: u16 = 32;
+// fib_rule attribute (`FRA_*`) types and standard table ids
+// (linux/fib_rules.h, linux/rtnetlink.h).
+const FRA_IIFNAME: u16 = 3;
+const FRA_TABLE: u16 = 15;
+const FRA_OIFNAME: u16 = 17;
+const FRA_UID_RANGE: u16 = 20;
+const RT_TABLE_DEFAULT: u32 = 253;
+const RT_TABLE_MAIN: u32 = 254;
+const RT_TABLE_LOCAL: u32 = 255;
+
 const fn nlmsg_align(len: usize) -> usize {
     (len + NLMSG_ALIGNTO - 1) & !(NLMSG_ALIGNTO - 1)
 }
@@ -282,6 +296,71 @@ fn route_oif(msg: &[u8]) -> Option<u32> {
     None
 }
 
+/// Whether a single `RTM_NEWRULE` message `msg` (the whole message, starting at
+/// the `nlmsghdr`) reveals the VPN. Mirrors the app-side probe predicate exactly
+/// (`check_netlink_getrule_uid`): a policy rule leaks the VPN if it names a VPN
+/// interface (`FRA_IIFNAME`/`FRA_OIFNAME`), or steers this process's own uid into
+/// a non-standard routing table — the per-app tun policy rule Android installs.
+///
+/// `vpn_uid` is the calling app's uid (`getuid()`); the hook runs in-process so it
+/// is the same uid the probe compares against. The `0..=u32::MAX` uid range is the
+/// catch-all default rule, not a VPN rule, so it is excluded.
+fn rule_hides_vpn(msg: &[u8], vpn_uid: u32) -> bool {
+    // fib_rule_hdr shares struct rtmsg's layout: the table id's low byte sits at
+    // header offset 4, and the full u32 (Android tun tables are > 255) arrives in
+    // an FRA_TABLE attribute.
+    let mut table = msg.get(NLMSG_HDRLEN + 4).copied().map_or(0u32, u32::from);
+    let mut uid_lo = 0u32;
+    let mut uid_hi = 0u32;
+    let mut has_uidrange = false;
+    let mut names_vpn = false;
+
+    let mut pos = NLMSG_HDRLEN + RTMSG_HDRLEN;
+    while pos + 4 <= msg.len() {
+        let Some(rta_len) = read_u16_ne(msg, pos).map(usize::from) else {
+            break;
+        };
+        let Some(rta_type) = read_u16_ne(msg, pos + 2) else {
+            break;
+        };
+        if rta_len < 4 || pos + rta_len > msg.len() {
+            break;
+        }
+        let payload = &msg[pos + 4..pos + rta_len];
+        match rta_type {
+            FRA_IIFNAME | FRA_OIFNAME if !payload.is_empty() => {
+                if is_vpn_iface_bytes(payload) {
+                    names_vpn = true;
+                }
+            }
+            FRA_TABLE if payload.len() >= 4 => {
+                table = read_u32_ne(payload, 0).unwrap_or(table);
+            }
+            FRA_UID_RANGE if payload.len() >= 8 => {
+                if let (Some(lo), Some(hi)) = (read_u32_ne(payload, 0), read_u32_ne(payload, 4)) {
+                    uid_lo = lo;
+                    uid_hi = hi;
+                    has_uidrange = true;
+                }
+            }
+            _ => {}
+        }
+        pos += rta_align(rta_len);
+    }
+
+    if names_vpn {
+        return true;
+    }
+    has_uidrange
+        && uid_lo <= vpn_uid
+        && vpn_uid <= uid_hi
+        && !(uid_lo == 0 && uid_hi == u32::MAX)
+        && table != RT_TABLE_MAIN
+        && table != RT_TABLE_LOCAL
+        && table != RT_TABLE_DEFAULT
+        && table > 100
+}
+
 fn read_u32_ne(data: &[u8], off: usize) -> Option<u32> {
     let bytes: &[u8; 4] = data.get(off..off + 4)?.try_into().ok()?;
     Some(u32::from_ne_bytes(*bytes))
@@ -307,9 +386,14 @@ fn read_u16_ne(data: &[u8], off: usize) -> Option<u16> {
 /// sees the VPN's default route by oif index even when the interface
 /// name itself is hidden, then renders it as the synthetic `if<index>`.
 ///
+/// `RTM_NEWRULE` (an `RTM_GETRULE` policy-rule dump) is matched by name/uid
+/// rather than by index — see [`rule_hides_vpn`] — so `vpn_uid` (the calling
+/// app's `getuid()`) is threaded through. This closes the routing-policy-rule
+/// leak that no zygisk hook previously covered.
+///
 /// Returns the new valid length of the buffer.
-pub fn filter_netlink_dump(data: &mut [u8], vpn_indices: &[u32]) -> usize {
-    if vpn_indices.is_empty() || data.len() < NLMSG_HDRLEN {
+pub fn filter_netlink_dump(data: &mut [u8], vpn_indices: &[u32], vpn_uid: u32) -> usize {
+    if data.len() < NLMSG_HDRLEN {
         return data.len();
     }
 
@@ -341,6 +425,9 @@ pub fn filter_netlink_dump(data: &mut [u8], vpn_indices: &[u32]) -> usize {
             // Output interface is an RTA_OIF rtattr after struct rtmsg.
             route_oif(&data[read_pos..read_pos + nlmsg_len])
                 .is_some_and(|oif| vpn_indices.contains(&oif))
+        } else if nlmsg_type == RTM_NEWRULE && nlmsg_len >= NLMSG_HDRLEN + RTMSG_HDRLEN {
+            // Policy rule: matched by VPN iface name / this uid's tun table.
+            rule_hides_vpn(&data[read_pos..read_pos + nlmsg_len], vpn_uid)
         } else {
             false
         };
@@ -518,7 +605,7 @@ tun0:  300    3    0    0\n"
         buf.extend(make_nlmsg(RTM_NEWADDR, wlan_idx));
 
         let orig_msgs = 3;
-        let new_len = filter_netlink_dump(&mut buf, &[vpn_idx]);
+        let new_len = filter_netlink_dump(&mut buf, &[vpn_idx], 0);
 
         // Should have removed exactly the vpn_idx message (24 bytes).
         assert_eq!(new_len, 24 * (orig_msgs - 1));
@@ -537,7 +624,7 @@ tun0:  300    3    0    0\n"
         buf.extend(make_nlmsg(RTM_NEWLINK, vpn_idx));
         buf.extend(make_nlmsg(RTM_NEWLINK, lo_idx));
 
-        let new_len = filter_netlink_dump(&mut buf, &[vpn_idx]);
+        let new_len = filter_netlink_dump(&mut buf, &[vpn_idx], 0);
         assert_eq!(new_len, 24); // only lo remains
         assert_eq!(read_u16_ne(&buf, 4), Some(RTM_NEWLINK));
         assert_eq!(read_u32_ne(&buf, NLMSG_HDRLEN + 4), Some(lo_idx));
@@ -550,7 +637,7 @@ tun0:  300    3    0    0\n"
         buf.extend(make_nlmsg(RTM_NEWADDR, 2));
         let orig_len = buf.len();
 
-        let new_len = filter_netlink_dump(&mut buf, &[99]);
+        let new_len = filter_netlink_dump(&mut buf, &[99], 0);
         assert_eq!(new_len, orig_len);
     }
 
@@ -560,7 +647,7 @@ tun0:  300    3    0    0\n"
         buf.extend(make_nlmsg(RTM_NEWADDR, 7));
         buf.extend(make_nlmsg(RTM_NEWADDR, 7));
 
-        let new_len = filter_netlink_dump(&mut buf, &[7]);
+        let new_len = filter_netlink_dump(&mut buf, &[7], 0);
         assert_eq!(new_len, 0);
     }
 
@@ -572,7 +659,7 @@ tun0:  300    3    0    0\n"
         buf.extend(make_nlmsg(nlmsg_done_type, 0)); // DONE — keep
         buf.extend(make_nlmsg(RTM_NEWADDR, 2)); // wlan — keep
 
-        let new_len = filter_netlink_dump(&mut buf, &[7]);
+        let new_len = filter_netlink_dump(&mut buf, &[7], 0);
         // Should keep DONE + wlan = 48 bytes
         assert_eq!(new_len, 48);
         assert_eq!(read_u16_ne(&buf, 4), Some(nlmsg_done_type));
@@ -584,7 +671,7 @@ tun0:  300    3    0    0\n"
     fn netlink_filter_empty_indices() {
         let mut buf = make_nlmsg(RTM_NEWADDR, 7);
         let orig_len = buf.len();
-        let new_len = filter_netlink_dump(&mut buf, &[]);
+        let new_len = filter_netlink_dump(&mut buf, &[], 0);
         assert_eq!(new_len, orig_len);
     }
 
@@ -642,7 +729,7 @@ tun0:  300    3    0    0\n"
         buf.extend(make_route_nlmsg(vpn_idx)); // tun0 — remove
         buf.extend(make_route_nlmsg(4)); // rmnet — keep
 
-        let new_len = filter_netlink_dump(&mut buf, &[vpn_idx]);
+        let new_len = filter_netlink_dump(&mut buf, &[vpn_idx], 0);
         assert_eq!(new_len, route_len * 2);
         // Remaining messages are wlan0 then rmnet, VPN route gone.
         assert_eq!(read_u32_ne(&buf, ROUTE_OIF_OFF), Some(2));
@@ -654,7 +741,7 @@ tun0:  300    3    0    0\n"
         // Multipath / oif-less routes must pass through untouched.
         let mut buf = make_route_nlmsg_inner(None);
         let orig_len = buf.len();
-        let new_len = filter_netlink_dump(&mut buf, &[33]);
+        let new_len = filter_netlink_dump(&mut buf, &[33], 0);
         assert_eq!(new_len, orig_len);
     }
 
@@ -667,9 +754,110 @@ tun0:  300    3    0    0\n"
         buf.extend(make_route_nlmsg(2)); // keep (wlan0)
         buf.extend(make_route_nlmsg(vpn_idx)); // remove (tun0)
 
-        let new_len = filter_netlink_dump(&mut buf, &[vpn_idx]);
+        let new_len = filter_netlink_dump(&mut buf, &[vpn_idx], 0);
         assert_eq!(new_len, make_route_nlmsg(0).len());
         assert_eq!(read_u16_ne(&buf, 4), Some(RTM_NEWROUTE));
         assert_eq!(read_u32_ne(&buf, ROUTE_OIF_OFF), Some(2));
+    }
+
+    // ---- RTM_GETRULE (policy rule) tests ----
+
+    fn push_rule_attr(attrs: &mut Vec<u8>, rta_type: u16, payload: &[u8]) {
+        let rta_len = 4 + payload.len();
+        attrs.extend_from_slice(&(rta_len as u16).to_ne_bytes());
+        attrs.extend_from_slice(&rta_type.to_ne_bytes());
+        attrs.extend_from_slice(payload);
+        while attrs.len() % RTA_ALIGNTO != 0 {
+            attrs.push(0);
+        }
+    }
+
+    /// Build an RTM_NEWRULE message: nlmsghdr + fib_rule_hdr + optional
+    /// FRA_OIFNAME / FRA_UID_RANGE / FRA_TABLE attributes. Header table byte = 0.
+    fn make_rule_nlmsg(
+        oifname: Option<&[u8]>,
+        uidrange: Option<(u32, u32)>,
+        table: Option<u32>,
+    ) -> Vec<u8> {
+        let mut attrs = Vec::new();
+        if let Some(name) = oifname {
+            let mut p = name.to_vec();
+            p.push(0);
+            push_rule_attr(&mut attrs, FRA_OIFNAME, &p);
+        }
+        if let Some((lo, hi)) = uidrange {
+            let mut p = Vec::new();
+            p.extend_from_slice(&lo.to_ne_bytes());
+            p.extend_from_slice(&hi.to_ne_bytes());
+            push_rule_attr(&mut attrs, FRA_UID_RANGE, &p);
+        }
+        if let Some(t) = table {
+            push_rule_attr(&mut attrs, FRA_TABLE, &t.to_ne_bytes());
+        }
+        let body_len = NLMSG_HDRLEN + RTMSG_HDRLEN + attrs.len();
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&(body_len as u32).to_ne_bytes()); // nlmsg_len
+        msg.extend_from_slice(&RTM_NEWRULE.to_ne_bytes()); // nlmsg_type
+        msg.extend_from_slice(&0u16.to_ne_bytes()); // nlmsg_flags
+        msg.extend_from_slice(&1u32.to_ne_bytes()); // nlmsg_seq
+        msg.extend_from_slice(&0u32.to_ne_bytes()); // nlmsg_pid
+        // fib_rule_hdr: family, dst_len, src_len, tos, table, res1, res2, action, flags(u32).
+        msg.extend_from_slice(&[2u8, 0, 0, 0, 0, 0, 0, 1]);
+        msg.extend_from_slice(&0u32.to_ne_bytes());
+        msg.extend_from_slice(&attrs);
+        msg
+    }
+
+    #[test]
+    fn rule_hides_vpn_by_oifname() {
+        assert!(rule_hides_vpn(
+            &make_rule_nlmsg(Some(b"tun0"), None, None),
+            10253
+        ));
+        assert!(!rule_hides_vpn(
+            &make_rule_nlmsg(Some(b"wlan0"), None, None),
+            10253
+        ));
+    }
+
+    #[test]
+    fn rule_hides_vpn_by_uid_table() {
+        // uid 10253 steered into a non-standard table (>255) → per-app tun rule.
+        let msg = make_rule_nlmsg(None, Some((10253, 10253)), Some(1027));
+        assert!(rule_hides_vpn(&msg, 10253));
+        // another uid's rule doesn't reveal *this* app's VPN.
+        assert!(!rule_hides_vpn(&msg, 10000));
+    }
+
+    #[test]
+    fn rule_keeps_standard_tables_and_catchall() {
+        // main/local/default and low table ids are not VPN tables.
+        assert!(!rule_hides_vpn(
+            &make_rule_nlmsg(None, Some((10253, 10253)), Some(RT_TABLE_MAIN)),
+            10253
+        ));
+        assert!(!rule_hides_vpn(
+            &make_rule_nlmsg(None, Some((10253, 10253)), Some(99)),
+            10253
+        ));
+        // the 0..=u32::MAX catch-all default rule is not a VPN rule.
+        assert!(!rule_hides_vpn(
+            &make_rule_nlmsg(None, Some((0, u32::MAX)), Some(1027)),
+            10253
+        ));
+    }
+
+    #[test]
+    fn netlink_filter_removes_vpn_rules() {
+        let uid = 10253u32;
+        let keep = make_rule_nlmsg(None, Some((0, u32::MAX)), Some(RT_TABLE_MAIN)); // catch-all — keep
+        let mut buf = Vec::new();
+        buf.extend(keep.clone());
+        buf.extend(make_rule_nlmsg(Some(b"tun0"), None, None)); // iface tun0 — remove
+        buf.extend(make_rule_nlmsg(None, Some((uid, uid)), Some(1027))); // uid→tun table — remove
+
+        let new_len = filter_netlink_dump(&mut buf, &[7], uid);
+        assert_eq!(new_len, keep.len());
+        assert_eq!(read_u16_ne(&buf, 4), Some(RTM_NEWRULE));
     }
 }

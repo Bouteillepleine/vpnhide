@@ -67,7 +67,8 @@ class LayerStatusTest {
             )
         val layer = summarizeNativeLayer(kmod(installed(active = true)), outcomes)
         assertEquals(LayerStatus.Active(hidden = 2, leaks = 0), layer)
-        // …but it is still surfaced, via the unowned-leak count (the hero warning).
+        // …but it is still surfaced, via the unowned-leak count (shown neutrally in
+        // the per-check breakdown — it never raises a dashboard warning).
         assertEquals(1, unownedNativeLeaks(kmod(installed(active = true)), outcomes))
     }
 
@@ -129,14 +130,14 @@ class LayerStatusTest {
     @Test
     fun `ownership is per backend family - zygisk owns what the kernel does not`() {
         // Mirror image of the kmod case: proc_dev (zygisk openat) is zygisk-owned;
-        // netlink_getrule (fib_nl_fill_rule, kernel-only — no zygisk parses rule
-        // dumps) is not. That kernel-only leak is out of scope for the zygisk tile
-        // and shows up as an unowned leak instead. (Note: ioctl_flags would NOT
-        // work here — it is zygisk-owned too, via zygisk_ioctl.)
+        // sys_class_net (only the optional FILESYSTEM_IFACE_PATHS hook, not installed
+        // here) is not. That not-owned leak is out of scope for the zygisk tile and
+        // shows up as an unowned leak instead. (Note: ioctl_flags would NOT work here
+        // — it is zygisk-owned too, via zygisk_ioctl.)
         val outcomes =
             mapOf(
                 "proc_dev" to CheckOutcome.Leak,
-                "netlink_getrule" to CheckOutcome.Leak,
+                "sys_class_net" to CheckOutcome.Leak,
             )
         assertEquals(
             LayerStatus.Active(hidden = 0, leaks = 1),

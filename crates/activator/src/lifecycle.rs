@@ -6,9 +6,10 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::{
-    APATCH_DIR, KPM_CTL_LOCK, KpmBootOutcome, KpmBootReport, PORTS_CHAIN4, PORTS_CHAIN6,
-    PORTS_STATUS_DIR, Result, activate_kmod_boot, activate_kpm_boot, activate_ports_recorded,
-    activate_zygisk_boot, kmod_backend_present, load_kpm_boot, optional_feature_enabled,
+    APATCH_DIR, KPM_CTL_LOCK, KpmBootOutcome, KpmBootReport,
+    OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS, PORTS_CHAIN4, PORTS_CHAIN6, PORTS_STATUS_DIR, Result,
+    activate_kmod_boot, activate_kpm_boot, activate_ports_recorded, activate_zygisk_boot,
+    kmod_backend_present, load_kpm_boot, optional_feature_enabled,
     optional_feature_enabled_or_default, write_atomic,
 };
 
@@ -18,7 +19,6 @@ const KMOD_LOAD_DMESG: &str = "/data/adb/vpnhide_kmod/load_dmesg";
 const KMOD_NAME: &str = "vpnhide_kmod";
 const KPM_STATUS_DIR: &str = "/data/adb/vpnhide_kpm";
 const KPM_LOAD_STATUS: &str = "/data/adb/vpnhide_kpm/load_status";
-const FILESYSTEM_BOOT_FEATURE: &str = "filesystem_iface_paths";
 pub(crate) const CHILD_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -198,7 +198,7 @@ pub fn boot_load_kmod() -> Result<()> {
     let module_prop = read_module_properties(&module_dir.join("module.prop"));
     let (kprobes, kretprobes) = read_kprobe_config();
     let (filesystem_hiding, filesystem_config_exit, filesystem_config_error) =
-        match optional_feature_enabled(FILESYSTEM_BOOT_FEATURE) {
+        match optional_feature_enabled(OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS) {
             Ok(enabled) => (enabled, i32::from(!enabled), String::new()),
             Err(err) => (false, 2, err.to_string()),
         };
@@ -332,7 +332,9 @@ pub fn boot_load_kpm() -> Result<()> {
     }
 
     if Path::new(APATCH_DIR).is_dir() {
-        let filesystem_hiding = Some(optional_feature_enabled_or_default(FILESYSTEM_BOOT_FEATURE));
+        let filesystem_hiding = Some(optional_feature_enabled_or_default(
+            OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS,
+        ));
         log_android(
             "vpnhide",
             "kpm: APatch/FolkPatch runtime — deferring load to service activator",

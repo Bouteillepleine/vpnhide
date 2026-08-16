@@ -507,6 +507,13 @@ saved_original!(
     set_real_readdir64_ptr,
     unsafe extern "C" fn(*mut libc::DIR) -> *mut libc::dirent64
 );
+saved_original!(
+    Getdents64Fn,
+    REAL_GETDENTS64,
+    real_getdents64,
+    set_real_getdents64_ptr,
+    unsafe extern "C" fn(c_int, *mut c_void, usize) -> libc::ssize_t
+);
 
 fn denied() -> c_int {
     set_errno(libc::ENOENT);
@@ -707,6 +714,84 @@ pub(crate) unsafe extern "C" fn hooked_readdir64(dir: *mut libc::DIR) -> *mut li
     }
 }
 
+// Offsets within a packed `struct linux_dirent64`: d_ino(8) + d_off(8) then
+// d_reclen(u16) at 16 and the NUL-terminated d_name at 19. Records are
+// variable-length (d_reclen), so the buffer is walked by d_reclen, never by a
+// fixed struct stride.
+const DENTS64_RECLEN_OFF: usize = 16;
+const DENTS64_NAME_OFF: usize = 19;
+
+/// Whether a single packed `linux_dirent64` record (`rec` = one whole record,
+/// `d_reclen` bytes) names a VPN interface.
+fn dent64_name_is_vpn(rec: &[u8]) -> bool {
+    let Some(name) = rec.get(DENTS64_NAME_OFF..) else {
+        return false;
+    };
+    let end = name
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(name.len());
+    end != 0 && is_vpn_iface_bytes(&name[..end])
+}
+
+/// Drop VPN-interface entries from a raw `getdents64` buffer, compacting the
+/// surviving records toward the front in place. Returns the new byte length.
+/// A malformed record (bad `d_reclen`) stops parsing and the remainder is kept
+/// verbatim, mirroring the netlink filter's conservative tail handling.
+fn compact_dents64(buf: &mut [u8]) -> usize {
+    let len = buf.len();
+    let mut read_pos = 0usize;
+    let mut write_pos = 0usize;
+
+    while read_pos + DENTS64_NAME_OFF <= len {
+        let reclen = u16::from_ne_bytes([
+            buf[read_pos + DENTS64_RECLEN_OFF],
+            buf[read_pos + DENTS64_RECLEN_OFF + 1],
+        ]) as usize;
+        if reclen < DENTS64_NAME_OFF || read_pos + reclen > len {
+            break;
+        }
+        if !dent64_name_is_vpn(&buf[read_pos..read_pos + reclen]) {
+            if write_pos != read_pos {
+                buf.copy_within(read_pos..read_pos + reclen, write_pos);
+            }
+            write_pos += reclen;
+        }
+        read_pos += reclen;
+    }
+
+    if read_pos < len {
+        let tail = len - read_pos;
+        if write_pos != read_pos {
+            buf.copy_within(read_pos..len, write_pos);
+        }
+        write_pos += tail;
+    }
+    write_pos
+}
+
+/// `getdents64` is the raw directory-enumeration syscall wrapper `readdir`/
+/// `readdir64` (and Rust/Go/native readers) sit on. Hooking it — not just the
+/// higher-level `readdir*` — closes the `/sys/class/net` (and `.../net`,
+/// `/proc/sys/net/.../{conf,neigh}`) listing for callers that read dirents
+/// directly. Still best-effort: an inlined `svc #0` getdents64 bypasses it.
+pub(crate) unsafe extern "C" fn hooked_getdents64(
+    fd: c_int,
+    dirp: *mut c_void,
+    count: usize,
+) -> libc::ssize_t {
+    let Some(real) = real_getdents64() else {
+        set_errno(libc::EFAULT);
+        return -1;
+    };
+    let n = unsafe { real(fd, dirp, count) };
+    if n <= 0 || dirp.is_null() || !listing_fd(fd) {
+        return n;
+    }
+    let buf = unsafe { slice::from_raw_parts_mut(dirp.cast::<u8>(), n as usize) };
+    compact_dents64(buf) as libc::ssize_t
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -751,5 +836,47 @@ mod tests {
 
         let path = normalize_absolute(b"/../../sys/class/net/wlan0").unwrap();
         assert_eq!(path.as_bytes(), b"/sys/class/net/wlan0");
+    }
+
+    /// Build one packed `linux_dirent64` record for `name` (8-byte aligned, as
+    /// the kernel emits), with `d_reclen` filled in and the rest zeroed.
+    fn make_dent64(name: &[u8]) -> Vec<u8> {
+        let reclen = (DENTS64_NAME_OFF + name.len() + 1 + 7) & !7; // +1 NUL, align to 8
+        let mut rec = vec![0u8; reclen];
+        rec[DENTS64_RECLEN_OFF..DENTS64_RECLEN_OFF + 2]
+            .copy_from_slice(&(reclen as u16).to_ne_bytes());
+        rec[DENTS64_NAME_OFF..DENTS64_NAME_OFF + name.len()].copy_from_slice(name);
+        rec
+    }
+
+    #[test]
+    fn compact_dents64_drops_vpn_entries() {
+        let mut buf = Vec::new();
+        buf.extend(make_dent64(b"lo"));
+        buf.extend(make_dent64(b"tun0"));
+        buf.extend(make_dent64(b"wlan0"));
+        let expect = make_dent64(b"lo").len() + make_dent64(b"wlan0").len();
+        let n = compact_dents64(&mut buf);
+        assert_eq!(n, expect);
+        assert!(
+            buf[DENTS64_NAME_OFF..].starts_with(b"lo\0"),
+            "lo kept first"
+        );
+        assert!(!buf[..n].windows(4).any(|w| w == b"tun0"), "tun0 removed");
+    }
+
+    #[test]
+    fn compact_dents64_keeps_all_when_no_vpn() {
+        let mut buf = Vec::new();
+        buf.extend(make_dent64(b"lo"));
+        buf.extend(make_dent64(b"wlan0"));
+        let orig = buf.len();
+        assert_eq!(compact_dents64(&mut buf), orig);
+    }
+
+    #[test]
+    fn compact_dents64_removes_all_vpn() {
+        let mut buf = make_dent64(b"wg0");
+        assert_eq!(compact_dents64(&mut buf), 0);
     }
 }

@@ -78,11 +78,20 @@ internal val NATIVE_CHECKS: List<NativeCheckSpec> =
                 ),
         ),
         NativeCheckSpec(
-            // Kernel-only vector: no zygisk hook parses RTM_NEWRULE. The
-            // fib_nl_fill_rule kernel hook trims the per-UID tun policy rules.
+            // Kernel backends trim the per-UID tun policy rules via fib_nl_fill_rule;
+            // zygisk parses RTM_NEWRULE in the same recv netlink filter as GETLINK/
+            // GETROUTE, dropping rules that name a VPN iface or steer this uid into a
+            // tun table (see filter::rule_hides_vpn).
             id = "netlink_getrule",
             labelRes = R.string.check_netlink_getrule,
-            expectedHooks = setOf(HookIds.Hook.FIB_NL_FILL_RULE),
+            expectedHooks =
+                setOf(
+                    HookIds.Hook.FIB_NL_FILL_RULE,
+                    HookIds.Hook.ZYGISK_RECVMSG,
+                    HookIds.Hook.ZYGISK_RECV,
+                    HookIds.Hook.ZYGISK_RECVFROM,
+                    HookIds.Hook.ZYGISK_RECVFROM_CHK,
+                ),
         ),
         NativeCheckSpec(
             id = "proc_route",

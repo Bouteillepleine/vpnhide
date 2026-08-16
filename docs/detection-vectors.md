@@ -71,9 +71,10 @@ Key consequences:
       any arm64 kernel, but only catches libc-routed calls (a raw `svc #0` slips
       past) and runs in-process, visible to aggressive anti-tamper.
   The small deltas between backends — e.g. Zygisk also filters
-  `/proc/net/{if_inet6,tcp,tcp6}`, kmod/KPM also handle `RTM_GETRULE` and the
-  server host-route — are noted in the matrix; neither delta is a reason to
-  stack native backends.
+  `/proc/net/{if_inet6,tcp,tcp6}`, kmod/KPM also handle the server host-route —
+  are noted in the matrix; neither delta is a reason to stack native backends.
+  (`RTM_GETRULE` used to be a kernel-only vector; Zygisk now parses it in the
+  same recv netlink filter as `RTM_GETLINK`/`RTM_GETROUTE`.)
 - So a complete install is **two components**: exactly one native backend (kmod,
   KPM, or Zygisk) **plus** lsposed — which covers both the Java network vectors
   and package visibility — with SELinux as an unreliable platform backstop
@@ -118,7 +119,7 @@ Legend: ✅ covered · ⚠️ partial / conditional · — not applicable to tha
 | `ioctl(SIOCGIF{FLAGS,MTU,INDEX,HWADDR,ADDR})` by name | native | ✅ `dev_ioctl` | ✅ `dev_ioctl` | ✅ pre-screen | — | |
 | netlink `RTM_GETLINK` dump | `recvmsg`/`recvfrom` of `RTM_NEWLINK` | ✅ `rtnl_fill_ifinfo` | ✅ `rtnl_fill_ifinfo` | ✅ filter by index | — | |
 | netlink `RTM_GETADDR` dump | `RTM_NEWADDR` | ✅ `inet*_fill_ifaddr` | ✅ `inet*_fill_ifaddr` | ✅ filter by index | — | |
-| `/sys/class/net/<iface>/*` | lookup/stat/open/readlink/readdir reveal iface nodes | ⚠️ optional reboot-gated VFS hooks | ⚠️ optional reboot-gated VFS hooks | ⚠️ optional best-effort libc hooks | — | 🔒 usually denied |
+| `/sys/class/net/<iface>/*` | lookup/stat/open/readlink/readdir reveal iface nodes | ⚠️ optional reboot-gated VFS hooks | ⚠️ optional reboot-gated VFS hooks | ⚠️ optional best-effort libc hooks (incl. `readdir`/`getdents64` listing filter) | — | 🔒 usually denied |
 | `/proc/sys/net/{ipv4,ipv6}/{conf,neigh}/<iface>` | lookup/stat/open/readlink/readdir reveal per-iface sysctl dirs | ⚠️ optional reboot-gated VFS hooks | ⚠️ optional reboot-gated VFS hooks | ⚠️ optional best-effort libc hooks | — | 🔒 usually denied |
 
 Notes: bionic's `getifaddrs` itself runs over netlink, so the kernel-backend
@@ -197,7 +198,7 @@ subcase is therefore `.ko`-only for now and remains a known KPM gap.
 | `/proc/net/ipv6_route` | text, iface last field | ✅ `ipv6_route_seq_show` | ✅ `ipv6_route_seq_show` | ✅ | — | 🔒 |
 | netlink `RTM_GETROUTE` **dump** | `RTA_OIF` index per route | ✅ `fib_dump_info` / `rt6_fill_node` | ✅ `fib_dump_info` / `rt6_fill_node` | ✅ `RTM_NEWROUTE` filter (issue #86) | — | |
 | netlink `RTM_GETROUTE` **single** (`ip route get`) | one `rt_fill_info` reply | ⚠️ intentionally unhooked (see ROADMAP) | ⚠️ intentionally unhooked | ⚠️ not filtered | — | |
-| netlink `RTM_GETRULE` (policy rules) | per-UID lookup tables | ✅ `fib_nl_fill_rule` | ✅ `fib_nl_fill_rule` | — | — | |
+| netlink `RTM_GETRULE` (policy rules) | per-UID lookup tables | ✅ `fib_nl_fill_rule` | ✅ `fib_nl_fill_rule` | ✅ `rule_hides_vpn` (recv filter) | — | |
 | host-route to the VPN **server** | `/32`·`/128` to a public IP via a *physical* iface | ✅ `is_public_host_route_via_physical` | ✅ `kpm_is_public_host_route{4,6}` | — | — | |
 | `LinkProperties.getRoutes()` (Java) | framework route list | — | — | — | ✅ filter `mRoutes` | |
 
