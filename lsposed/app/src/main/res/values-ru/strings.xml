@@ -385,7 +385,7 @@
     <string name="banner_network_blocked">Доступ к сети отключён для этого приложения. Проверки ioctl (SIOCGIFFLAGS, SIOCGIFMTU, SIOCGIFCONF) не могут быть выполнены. Включите в Настройки → Приложения → VPN Hide → Мобильный интернет и Wi-Fi.</string>
     <string name="section_native">Нативный уровень (kmod / KPM / Zygisk)</string>
     <string name="section_native_uncovered">Вне зоны активного модуля</string>
-    <string name="diag_uncovered_caption">Способы обнаружения, которые не закрывает ни один активный модуль на этом устройстве. Это не ошибка работающего модуля: их закрыл бы модуль уровня ядра (kmod / KPM), если устройство его поддерживает.</string>
+    <string name="diag_uncovered_caption">Способы обнаружения, которые активный модуль не покрывает — это не ошибка работающего модуля. VPN-пути в файловой системе (например /sys/class/net) закрываются включением «Экспериментальной защиты» в Настройках; остальные могут потребовать модуль уровня ядра (kmod / KPM), если устройство его поддерживает.</string>
     <string name="section_java">Java API уровень (LSPosed)</string>
 
     <!-- Экран настроек -->

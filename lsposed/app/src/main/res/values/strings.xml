@@ -113,7 +113,7 @@
     <string name="banner_network_blocked">Network access is disabled for this app. ioctl checks (SIOCGIFFLAGS, SIOCGIFMTU, SIOCGIFCONF) cannot run without it. Enable in Settings → Apps → VPN Hide → Mobile data &amp; Wi-Fi.</string>
     <string name="section_native">Native level (kmod / KPM / Zygisk)</string>
     <string name="section_native_uncovered">Outside the active backend\'s reach</string>
-    <string name="diag_uncovered_caption">Detection surfaces no active backend covers on this device — not a failure of the running module. A kernel-level backend (kmod / KPM) would close these where the device supports one.</string>
+    <string name="diag_uncovered_caption">Detection surfaces the active backend doesn\'t cover — not a failure of the running module. VPN filesystem paths (e.g. /sys/class/net) are closed by turning on Experimental protection in Settings; other surfaces may need a kernel-level backend (kmod / KPM) where the device supports one.</string>
     <string name="section_java">Java API level (LSPosed)</string>
 
     <!-- Dashboard -->
