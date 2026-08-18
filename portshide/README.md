@@ -41,36 +41,10 @@ Hide app (it invokes the ports activator via `su`).
 ## Configuration
 
 Managed by the VPN Hide app (**Hiding** tab -> **Ports** / **P**, settings icon
-next to the role label). Direct shell
-alternative:
-
-```
-# Edit /data/system/vpnhide_config.json:
-# "com.example.app": { "java": false, "native": false, "appHiding": false, "ports": true }
-# or with ranges:
-# "com.example.app": {
-#   "ports": true,
-#   "portPolicy": {
-#     "mode": "custom",
-#     "rules": [
-#       { "protocol": "both", "start": 1080 },
-#       { "protocol": "tcp", "start": 7890, "end": 7892 }
-#     ]
-#   }
-# }
-```
-
-Then:
-
-```sh
-su -c /data/adb/modules/vpnhide_ports/activator
-```
-
-The latest apply result is recorded in:
-
-```sh
-su -c 'cat /data/adb/vpnhide_ports/load_status; cat /data/adb/vpnhide_ports/load_log'
-```
+next to the role label). The settings icon also exposes optional per-app port
+ranges when the whole-loopback block is too broad. The shell equivalent (edit
+JSON + run the activator) is in the collapsible **For developers / advanced
+usage** section at the end of this file.
 
 ## Why just localhost, and why for selected apps only
 
@@ -106,3 +80,34 @@ su -c 'cat /data/adb/vpnhide_ports/load_status; cat /data/adb/vpnhide_ports/load
 
 Via root manager — `uninstall.sh` execs the activator, which flushes and removes
 our chains and persistent diagnostics.
+
+<details>
+<summary><strong>For developers / advanced usage</strong></summary>
+
+You do not need these to use the module — the VPN Hide app writes the canonical
+config and applies the rules for you. Direct shell alternative for development
+and debugging:
+
+```jsonc
+// Edit /data/system/vpnhide_config.json:
+"com.example.app": { "java": false, "native": false, "appHiding": false, "ports": true }
+// or with ranges:
+"com.example.app": {
+  "ports": true,
+  "portPolicy": {
+    "mode": "custom",
+    "rules": [
+      { "protocol": "both", "start": 1080 },
+      { "protocol": "tcp", "start": 7890, "end": 7892 }
+    ]
+  }
+}
+```
+
+```sh
+# apply, then inspect the result:
+su -c /data/adb/modules/vpnhide_ports/activator
+su -c 'cat /data/adb/vpnhide_ports/load_status; cat /data/adb/vpnhide_ports/load_log'
+```
+
+</details>
