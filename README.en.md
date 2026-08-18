@@ -13,7 +13,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
 </p>
 
-<p align="center"><strong><a href="README.md">Русская версия</a></strong></p>
+<p align="center"><strong><a href="README.md">Русская версия</a> · <a href="README.zh.md">中文版</a></strong></p>
 
 ## Why vpnhide over alternatives?
 
