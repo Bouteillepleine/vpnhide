@@ -290,11 +290,17 @@ internal fun checkTransportInfo(
     name: String,
 ): CheckResult =
     withActiveCaps(cm, name) { caps ->
-        val info = caps.transportInfo
-        val className = info?.javaClass?.name ?: "null"
-        val isVpn = className.contains("VpnTransportInfo")
-        val detail = if (!isVpn) "transportInfo=$className" else "VpnTransportInfo: $info"
-        javaCheck(name, !isVpn, detail)
+        // NetworkCapabilities.getTransportInfo() is API 29+. On Android 9 the
+        // VpnTransportInfo leak path does not exist, so the check trivially passes.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            javaCheck(name, true, "transportInfo unavailable (API < 29)")
+        } else {
+            val info = caps.transportInfo
+            val className = info?.javaClass?.name ?: "null"
+            val isVpn = className.contains("VpnTransportInfo")
+            val detail = if (!isVpn) "transportInfo=$className" else "VpnTransportInfo: $info"
+            javaCheck(name, !isVpn, detail)
+        }
     }
 
 private fun checkNetworkInterfaceEnum(name: String): CheckResult =
