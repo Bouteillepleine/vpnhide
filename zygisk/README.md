@@ -117,9 +117,7 @@ cargo ndk -t arm64-v8a build --release \
 1. `adb push target/vpnhide-zygisk.zip /sdcard/Download/`
 2. KernelSU/Magisk manager -> Modules -> Install from storage -> pick the zip.
 3. Reboot.
-4. Pick target apps:
-   - **VPN Hide app (recommended):** open the VPN Hide app (the [lsposed](../lsposed/) APK). Lists all installed apps with icons, search, and checkboxes. Works on both KernelSU and Magisk.
-   - **Shell:** edit `/data/system/vpnhide_config.json`, then run `/data/adb/modules/vpnhide_zygisk/activator` as root to regenerate the module-dir runtime config.
+4. Pick target apps with the **VPN Hide app (recommended)** (the [lsposed](../lsposed/) APK). Lists all installed apps with icons, search, and checkboxes. Works on both KernelSU and Magisk. The shell equivalent is in the collapsible **For developers / advanced usage** section at the end of this file.
 5. Force-stop target apps: `adb shell am force-stop <pkg>`
 6. Verify: `adb logcat | grep vpnhide-zygisk`
 
@@ -151,6 +149,22 @@ VPN interface prefixes: `tun`, `ppp`, `tap`, `wg`, `ipsec`, `xfrm`, `utun`, `l2t
 - `third_party/android-inline-hook/` -- submodule (our shadowhook fork)
 - `module/` -- KernelSU/Magisk module metadata
 - `build.py` -- cross-compile + package script
+
+<details>
+<summary><strong>For developers / advanced usage</strong></summary>
+
+You do not need this to use the module — the VPN Hide app writes the canonical
+config and runs the activator for you. Shell equivalent for development and
+debugging:
+
+```sh
+# Edit /data/system/vpnhide_config.json, then regenerate the module-dir runtime
+# wire and force-stop the target so it re-forks with the new config:
+adb shell su -c '/data/adb/modules/vpnhide_zygisk/activator'
+adb shell am force-stop <pkg>
+```
+
+</details>
 
 ## License
 

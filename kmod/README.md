@@ -95,19 +95,7 @@ On boot:
 
 ### Target management
 
-**VPN Hide app (recommended):** open the VPN Hide app (the [lsposed](../lsposed/) APK). It lists all installed apps with icons, search, and checkboxes. Saves the canonical JSON config and runs the installed native activator immediately. Works on KernelSU, Magisk, and APatch.
-
-**Shell:**
-```bash
-# Edit /data/system/vpnhide_config.json, then run the module activator.
-adb shell su -c '/data/adb/modules/vpnhide_kmod/activator'
-
-# Or push a control-config snapshot straight to the kernel (docs/protocol.md):
-# header + folded debug flag + grouped target UIDs + mandatory end count
-# (a0003ff = shared kernel hooks plus the optional .ko filesystem hook;
-# control v2 uses bare hex).
-adb shell su -c 'printf "vpnhide 2 config\ndebug 0\ntargets a0003ff 28b7\nend 1\n" > /proc/vpnhide_ctl'
-```
+**VPN Hide app (recommended):** open the VPN Hide app (the [lsposed](../lsposed/) APK). It lists all installed apps with icons, search, and checkboxes. Saves the canonical JSON config and runs the installed native activator immediately. Works on KernelSU, Magisk, and APatch. Managing targets this way is all a normal setup needs; the shell equivalents are in the collapsible **For developers / advanced usage** section at the end of this file.
 
 The app first writes `/data/system/vpnhide_config.json`, the persistent
 package-keyed desired state, and then invokes the selected native activator. The
@@ -184,6 +172,26 @@ We do **not** return `-EMSGSIZE` to skip a VPN entry. On Android 14 / 6.1 GKI ke
 The kretprobe entry handler saves the `seq` pointer and `seq->count` (current buffer position) in `ri->data`. The return handler scans the newly written region `[saved_count, seq->count)` line by line, extracts the first tab-delimited field (interface name), and compacts out VPN lines using `memmove`. Finally, `seq->count` is adjusted to reflect the reduced content.
 
 **Why we save seq in the entry handler:** in a kretprobe return handler, `regs->regs[0]` (x0 on arm64) contains the function's *return value*, not the original first argument. The original code tried to read `seq` from x0 in the return handler, which was reading the return value (0) as a pointer -- a bug that would crash or silently fail. The fix is standard kretprobe practice: save arguments in `ri->data` during the entry handler.
+
+<details>
+<summary><strong>For developers / advanced usage</strong></summary>
+
+You do not need these to use the module — the VPN Hide app writes the canonical
+config and runs the activator for you. They are shell equivalents for
+development and debugging.
+
+```bash
+# Edit /data/system/vpnhide_config.json, then run the module activator.
+adb shell su -c '/data/adb/modules/vpnhide_kmod/activator'
+
+# Or push a control-config snapshot straight to the kernel (docs/protocol.md):
+# header + folded debug flag + grouped target UIDs + mandatory end count
+# (a0003ff = shared kernel hooks plus the optional .ko filesystem hook;
+# control v2 uses bare hex).
+adb shell su -c 'printf "vpnhide 2 config\ndebug 0\ntargets a0003ff 28b7\nend 1\n" > /proc/vpnhide_ctl'
+```
+
+</details>
 
 ## License
 
