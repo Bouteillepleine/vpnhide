@@ -84,6 +84,13 @@ val rustNdkDir =
 val nativeCrateDir = projectDir.parentFile.resolve("native")
 val rustAssetsOut = rustAssetsDir.get().asFile
 
+// Opt-in x86_64 native + APK ABI for running the app on an Android x86_64
+// emulator (arm64 system images don't run on x86 hosts). Enable with
+// `-PvpnhideEmulatorX86` (or `vpnhideEmulatorX86=true` in gradle.properties).
+// Off by default: release and normal dev builds stay arm64-only. Only the
+// `debug` build type honours it. See docs/avd-magisk-testing.md.
+val emulatorX86 = (project.findProperty("vpnhideEmulatorX86") as String?)?.toBoolean() == true
+
 val buildRustProbe =
     tasks.register<Exec>("buildRustProbe") {
         group = "build"
@@ -96,21 +103,42 @@ val buildRustProbe =
         outputs.dir(rustJniLibsDir)
         outputs.dir(rustAssetsDir)
         commandLine(
-            "cargo", "ndk",
-            "-t", "arm64-v8a",
-            "-P", "29",
-            "-o", rustJniLibsDir.get().asFile.absolutePath,
-            // --locked: fail if Cargo.lock drifted rather than rewriting it (a
-            // dirtied tree stamps the build "-dirty" via git describe --dirty).
-            "build", "--release", "--locked",
+            buildList {
+                add("cargo")
+                add("ndk")
+                add("-t")
+                add("arm64-v8a")
+                // Opt-in second ABI for the x86_64 emulator (see emulatorX86).
+                if (emulatorX86) {
+                    add("-t")
+                    add("x86_64")
+                }
+                // -P 28 matches minSdk; getifaddrs needs API >= 24, so 28 is safe.
+                add("-P")
+                add("28")
+                add("-o")
+                add(rustJniLibsDir.get().asFile.absolutePath)
+                // --locked: fail if Cargo.lock drifted rather than rewriting it
+                // (a dirtied tree stamps the build "-dirty" via git describe).
+                add("build")
+                add("--release")
+                add("--locked")
+            },
         )
         // Locals (not top-level script vals) so the doLast action captures only
-        // File values — required for configuration-cache serialization.
-        val probeBin = nativeCrateDir.resolve("target/aarch64-linux-android/release/vhprobe")
-        val probeDest = rustAssetsOut.resolve("bin/arm64-v8a/vhprobe")
+        // File/Boolean values — required for configuration-cache serialization.
+        val probeBinArm = nativeCrateDir.resolve("target/aarch64-linux-android/release/vhprobe")
+        val probeDestArm = rustAssetsOut.resolve("bin/arm64-v8a/vhprobe")
+        val probeBinX86 = nativeCrateDir.resolve("target/x86_64-linux-android/release/vhprobe")
+        val probeDestX86 = rustAssetsOut.resolve("bin/x86_64/vhprobe")
+        val copyX86 = emulatorX86
         doLast {
-            probeDest.parentFile.mkdirs()
-            probeBin.copyTo(probeDest, overwrite = true)
+            probeDestArm.parentFile.mkdirs()
+            probeBinArm.copyTo(probeDestArm, overwrite = true)
+            if (copyX86) {
+                probeDestX86.parentFile.mkdirs()
+                probeBinX86.copyTo(probeDestX86, overwrite = true)
+            }
         }
     }
 
@@ -149,7 +177,7 @@ android {
 
     defaultConfig {
         applicationId = "dev.okhsunrog.vpnhide"
-        minSdk = 29
+        minSdk = 28
         targetSdk = 36
         versionCode = 10101
         versionName = buildVersion
@@ -198,6 +226,14 @@ android {
                 "proguard-rules.pro",
                 "proguard-debug-rules.pro",
             )
+            // Opt-in x86_64 (via -PvpnhideEmulatorX86) so the debug APK installs
+            // on an x86_64 API-28 emulator. Release stays arm64-only (defaultConfig
+            // above) regardless of the flag. See docs/avd-magisk-testing.md.
+            if (emulatorX86) {
+                ndk {
+                    abiFilters += "x86_64"
+                }
+            }
         }
         create("rawDebug") {
             initWith(getByName("debug"))

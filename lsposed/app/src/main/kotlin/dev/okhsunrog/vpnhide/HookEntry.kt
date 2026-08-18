@@ -282,7 +282,11 @@ class HookEntry : IXposedHookLoadPackage {
 
     private fun sanitizeNetworkCapabilities(copy: NetworkCapabilities): Boolean {
         val hasVpnTransport = copy.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
-        val hasVpnInfo = copy.transportInfo?.javaClass?.name == "android.net.VpnTransportInfo"
+        // NetworkCapabilities.getTransportInfo() is API 29+; VpnTransportInfo does
+        // not exist on Android 9, so there is nothing to clear there.
+        val hasVpnInfo =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                copy.transportInfo?.javaClass?.name == "android.net.VpnTransportInfo"
 
         if (!hasVpnTransport && !hasVpnInfo) return false
 
@@ -1090,7 +1094,14 @@ class HookEntry : IXposedHookLoadPackage {
             // known-good device.
             counts[method] = hooked.size
             if (hooked.isEmpty()) {
-                HookLog.e("VpnHide: no ConnectivityService.$method result hook target on ${csClass.name}")
+                val minApi = CONNECTIVITY_RESULT_METHOD_MIN_API[method]
+                if (minApi != null && Build.VERSION.SDK_INT < minApi) {
+                    // The method (and the detection vector it covers) doesn't exist
+                    // on this Android version — absence is expected, not an error.
+                    HookLog.i("VpnHide: ConnectivityService.$method absent on API ${Build.VERSION.SDK_INT} (added in API $minApi)")
+                } else {
+                    HookLog.e("VpnHide: no ConnectivityService.$method result hook target on ${csClass.name}")
+                }
             } else {
                 HookLog.i("VpnHide: hooked ConnectivityService.$method result (${hooked.size})")
             }
@@ -1251,6 +1262,16 @@ class HookEntry : IXposedHookLoadPackage {
                 "getNetworkInfo" to null,
                 "getNetworkInfoForUid" to 1,
                 "getAllNetworkInfo" to null,
+            )
+
+        // Result methods that AOSP only added in a later API. Below that level the
+        // method (and the detection vector it covers) simply doesn't exist, so a
+        // missing hook target is expected — log it at INFO, not ERROR.
+        private val CONNECTIVITY_RESULT_METHOD_MIN_API =
+            mapOf(
+                // getRedacted*ForPackage arrived with the per-package redaction API.
+                "getRedactedLinkPropertiesForPackage" to Build.VERSION_CODES.S,
+                "getRedactedNetworkCapabilitiesForPackage" to Build.VERSION_CODES.S,
             )
 
         // Per-hook critical-probe sets. A hook is skipped if any key in

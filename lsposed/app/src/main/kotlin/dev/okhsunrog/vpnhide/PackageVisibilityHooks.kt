@@ -4,6 +4,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.ResolveInfo
 import android.os.Binder
+import android.os.Build
 import android.os.FileObserver
 import android.os.Process
 import de.robv.android.xposed.XC_MethodHook
@@ -89,7 +90,12 @@ internal object PackageVisibilityHooks {
         hook(ipmClass, "getPackageInfo", singleHideByFirstStringArg("getPackageInfo"))
         hook(ipmClass, "getApplicationInfo", singleHideByFirstStringArg("getApplicationInfo"))
         hook(ipmClass, "getInstallerPackageName", singleHideByFirstStringArg("getInstallerPackageName"))
-        hook(ipmClass, "getInstallSourceInfo", singleHideByFirstStringArg("getInstallSourceInfo"))
+        hook(
+            ipmClass,
+            "getInstallSourceInfo",
+            singleHideByFirstStringArg("getInstallSourceInfo"),
+            minApi = Build.VERSION_CODES.R,
+        )
         hook(ipmClass, "getPackageUid", packageUidHide())
         hook(ipmClass, "resolveIntent", resolveInfoSingleHide("resolveIntent"))
         hook(ipmClass, "resolveService", resolveInfoSingleHide("resolveService"))
@@ -136,11 +142,19 @@ internal object PackageVisibilityHooks {
         clazz: Class<*>,
         methodName: String,
         handler: XC_MethodHook,
+        // AOSP API level that introduced the method. Below it the method (and the
+        // detection vector it covers) doesn't exist, so a missing target is
+        // expected — logged at INFO instead of ERROR. 0 = present on all supported.
+        minApi: Int = 0,
     ) {
         try {
             val hooked = XposedBridge.hookAllMethods(clazz, methodName, handler)
             if (hooked.isEmpty()) {
-                HookLog.e("VpnHide/PV: no method '$methodName' on ${clazz.name}")
+                if (minApi > 0 && Build.VERSION.SDK_INT < minApi) {
+                    HookLog.i("VpnHide/PV: $methodName absent on API ${Build.VERSION.SDK_INT} (added in API $minApi)")
+                } else {
+                    HookLog.e("VpnHide/PV: no method '$methodName' on ${clazz.name}")
+                }
             } else {
                 HookLog.i("VpnHide/PV: hooked $methodName (${hooked.size} overload(s))")
             }

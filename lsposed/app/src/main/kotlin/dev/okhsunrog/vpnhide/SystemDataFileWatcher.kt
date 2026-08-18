@@ -1,9 +1,10 @@
 package dev.okhsunrog.vpnhide
 
 import android.os.FileObserver
-import java.io.File
 
-private val SYSTEM_DATA_DIR = File("/data/system")
+// String path, not File: FileObserver(File, Int) is API 29+, while the
+// FileObserver(String, Int) form works back to API 28 (Android 9).
+private const val SYSTEM_DATA_DIR = "/data/system"
 
 /**
  * Watch `/data/system` for the events our config writers produce and invoke
@@ -26,6 +27,7 @@ internal fun watchSystemDataDir(
     onChange: (filename: String) -> Unit,
 ): FileObserver {
     val observer =
+        @Suppress("DEPRECATION")
         object : FileObserver(
             SYSTEM_DATA_DIR,
             CREATE or CLOSE_WRITE or MOVED_TO or extraEvents,
