@@ -62,6 +62,32 @@ class RootSnapshotCacheTest {
     }
 
     @Test
+    fun `parser recovers content glued onto the end marker without a trailing newline`() {
+        // A file emitted without a trailing newline (e.g. a hand-edited config
+        // cat'd by the snapshot script) puts its last line and the END marker on
+        // the same line. The section must still parse, not be dropped as unclosed.
+        val raw =
+            "__VPNHIDE_ROOT_SECTION_BEGIN__:canonical_config\n" +
+                "{\"version\":1,\"debug\":true}__VPNHIDE_ROOT_SECTION_END__:canonical_config\n"
+
+        val sections = parseRootShellSnapshot(raw, recordMetric = { _, _ -> })
+
+        assertEquals("{\"version\":1,\"debug\":true}", sections["canonical_config"])
+    }
+
+    @Test
+    fun `parser recovers a multiline body whose last line is glued to the end marker`() {
+        val raw =
+            "__VPNHIDE_ROOT_SECTION_BEGIN__:canonical_config\n" +
+                "line1\n" +
+                "line2__VPNHIDE_ROOT_SECTION_END__:canonical_config\n"
+
+        val sections = parseRootShellSnapshot(raw, recordMetric = { _, _ -> })
+
+        assertEquals("line1\nline2", sections["canonical_config"])
+    }
+
+    @Test
     fun `snapshot validation rejects missing sections`() {
         val sections = REQUIRED_ROOT_SNAPSHOT_SECTIONS.associateWith { "" } - "vpn_ifaces"
         var thrown: RootSnapshotException? = null

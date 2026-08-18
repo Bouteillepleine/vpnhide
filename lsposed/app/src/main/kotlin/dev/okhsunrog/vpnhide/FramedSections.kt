@@ -43,8 +43,19 @@ internal fun parseFramedSections(
                 currentBody.clear()
             }
 
-            line.startsWith(endPrefix) -> {
-                val endName = line.removePrefix(endPrefix)
+            line.contains(endPrefix) -> {
+                val markerStart = line.indexOf(endPrefix)
+                // Recover content glued onto the marker: a file emitted without a
+                // trailing newline (e.g. `cat`'d) puts its last line and the END
+                // marker on the same line (`...}__..._END__:name`). Without this
+                // the marker wouldn't be recognised and the section would be
+                // dropped as unterminated. The prefixes are unique sentinels, so a
+                // mid-line occurrence is always a glued marker, never real content.
+                if (markerStart > 0 && currentName != null) {
+                    if (currentBody.isNotEmpty()) currentBody.append('\n')
+                    currentBody.append(line, 0, markerStart)
+                }
+                val endName = line.substring(markerStart + endPrefix.length)
                 if (currentName == endName) {
                     sections[endName] = body()
                     clearCurrent()
