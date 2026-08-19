@@ -11,6 +11,14 @@ use crate::{
     PortRule, PortUidPolicy, PortsActivationReport, PortsRuleset, Result, write_atomic,
 };
 
+// Wait (bounded) for the xtables lock instead of failing instantly. netd, an
+// OEM firewall (e.g. MIUI), or our own back-to-back iptables/ip6tables calls
+// can hold it, so an unguarded restore aborts with "Another app is currently
+// holding the xtables lock" (exit 4) and the whole ports apply is marked
+// failed. Every iptables-family invocation passes these first; the timeout
+// keeps a stuck lock from hanging boot.
+const XTABLES_WAIT: [&str; 2] = ["-w", "5"];
+
 pub(crate) fn build_ports_ruleset(
     chain: &str,
     loopback: &str,
@@ -98,10 +106,15 @@ fn port_match(rule: PortRule) -> String {
 pub(crate) fn apply_ports_rules(rules: &PortsRuleset) -> Result<PortsActivationReport> {
     let mut log = String::new();
 
-    if let Ok(out) = Command::new("iptables").args(["-N", PORTS_CHAIN4]).output() {
+    if let Ok(out) = Command::new("iptables")
+        .args(XTABLES_WAIT)
+        .args(["-N", PORTS_CHAIN4])
+        .output()
+    {
         append_command_output(&mut log, "iptables -N vpnhide_out", &out);
     }
     if let Ok(out) = Command::new("ip6tables")
+        .args(XTABLES_WAIT)
         .args(["-N", PORTS_CHAIN6])
         .output()
     {
@@ -133,6 +146,7 @@ pub(crate) fn apply_ports_rules(rules: &PortsRuleset) -> Result<PortsActivationR
 
 fn run_with_stdin(program: &str, args: &[&str], stdin: &str) -> Result<Output> {
     let mut child = Command::new(program)
+        .args(XTABLES_WAIT)
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -147,6 +161,7 @@ fn run_with_stdin(program: &str, args: &[&str], stdin: &str) -> Result<Output> {
 
 fn ensure_output_jump(program: &str, chain: &str, log: &mut String) -> Result<()> {
     let check = Command::new(program)
+        .args(XTABLES_WAIT)
         .args(["-C", "OUTPUT", "-j", chain])
         .output()?;
     append_command_output(log, &format!("{program} -C OUTPUT -j {chain}"), &check);
@@ -154,6 +169,7 @@ fn ensure_output_jump(program: &str, chain: &str, log: &mut String) -> Result<()
         return Ok(());
     }
     let insert = Command::new(program)
+        .args(XTABLES_WAIT)
         .args(["-I", "OUTPUT", "-j", chain])
         .output()?;
     append_command_output(log, &format!("{program} -I OUTPUT -j {chain}"), &insert);
