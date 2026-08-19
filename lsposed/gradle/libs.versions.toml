@@ -1,20 +1,25 @@
 [versions]
-agp = "9.2.1"
-kotlin = "2.4.0"
-compose-bom = "2026.06.00"
+agp = "9.3.1"
+kotlin = "2.4.10"
+compose-bom = "2026.08.00"
 # Pinned above the BOM (1.4.0): Material 3 Expressive theme APIs
 # (MaterialExpressiveTheme, MotionScheme) are public only from 1.5.0-alpha.
-# Requires AGP 9.1+ (we're on 9.2.1 from google()), mirrors ImageToolbox.
-material3 = "1.5.0-alpha22"
+# Requires AGP 9.1+ (we're on 9.3.1 from google()), mirrors ImageToolbox.
+material3 = "1.5.0-alpha26"
 activity-compose = "1.13.0"
 core-ktx = "1.19.0"
 datastore = "1.2.1"
-material-kolor = "4.1.1"
-squircle-shape = "5.3.0"
+material-kolor = "5.0.0"
+squircle-shape = "5.4.0"
 detekt = "1.23.8"
 cpd = "3.5"
-kotlinx-serialization-json = "1.9.0"
+kotlinx-serialization-json = "1.11.0"
 work = "2.11.2"
+# Tooling: dependency-update reporting + version-catalog rewriting.
+# Run `./gradlew dependencyUpdates` for a report, or
+# `./gradlew versionCatalogUpdate --interactive` to stage changes for review.
+ben-manes-versions = "0.61.0"
+version-catalog-update = "1.1.1"
 
 [libraries]
 core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx" }
@@ -38,3 +43,5 @@ kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", versi
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
 cpd = { id = "de.aaschmid.cpd", version.ref = "cpd" }
+ben-manes-versions = { id = "io.github.ben-manes.versions", version.ref = "ben-manes-versions" }
+version-catalog-update = { id = "nl.littlerobots.version-catalog-update", version.ref = "version-catalog-update" }
