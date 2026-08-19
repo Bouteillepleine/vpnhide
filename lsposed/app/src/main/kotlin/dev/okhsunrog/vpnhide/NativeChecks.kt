@@ -51,6 +51,16 @@ internal val NATIVE_CHECKS: List<NativeCheckSpec> =
                 ),
         ),
         NativeCheckSpec(
+            // setsockopt(SO_BINDTODEVICE, tun0): the kernel backends (kmod/KPM) own
+            // this vector — they deny it in sock_setsockopt / sk_setsockopt (6.1+)
+            // before sk_bound_dev_if mutates. Zygisk has only an opportunistic
+            // bionic-routed setsockopt hook and does not claim the vector in its
+            // owned mask, so under zygisk a leak here is (correctly) unowned.
+            id = "so_bindtodevice",
+            labelRes = R.string.check_so_bindtodevice,
+            expectedHooks = setOf(HookIds.Hook.SOCKET_BIND_INTERFACE),
+        ),
+        NativeCheckSpec(
             id = "netlink_getlink",
             labelRes = R.string.check_netlink_getlink,
             expectedHooks =

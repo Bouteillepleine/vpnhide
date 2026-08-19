@@ -116,6 +116,14 @@ private suspend fun buildDebugState(
             bootLsposedLogcat = if (options.forensics) captureBootLsposedLogcat() else "",
             lsposedConfigDb = if (options.forensics) buildLsposedConfigText(context) else "",
             hookReport = shellSnapshot?.let { buildHookDiagnosticsText(context, it, counterBaseline) },
+            // Always carry the point-in-time hook counters (a few KB, already in the
+            // snapshot): the per-uid SOCKET_BIND_INTERFACE deny-count is what tells a
+            // dead redirect from a working one, and a bundle that silently dropped it
+            // is exactly the blind spot this closes. Not gated behind forensics.
+            statistics =
+                runCatching {
+                    buildStatisticsState(rootSnapshot).toAgentStatisticsState(selfPackage = context.packageName)
+                }.getOrNull(),
             debugCapture = session?.toDebugCaptureInfo(),
             errors = errors,
             options = options,

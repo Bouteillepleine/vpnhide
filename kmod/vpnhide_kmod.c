@@ -578,6 +578,22 @@ enum socket_bind_action {
 	VPNHIDE_BIND_FAULT,
 };
 
+/* Human-readable action for the debug trace. Never returns NULL. */
+static const char *socket_bind_action_str(enum socket_bind_action action)
+{
+	switch (action) {
+	case VPNHIDE_BIND_PASSTHROUGH:
+		return "passthrough";
+	case VPNHIDE_BIND_FROZEN:
+		return "frozen";
+	case VPNHIDE_BIND_DENY:
+		return "deny";
+	case VPNHIDE_BIND_FAULT:
+		return "fault";
+	}
+	return "?";
+}
+
 /* 1 = VPN interface, 0 = physical/non-VPN, -1 = unknown. Unknown positive
  * indexes fail closed: sock_bindtoindex accepts a non-existent positive index,
  * which would otherwise leave observable state on the socket. */
@@ -668,6 +684,10 @@ static noinline int vpnhide_sock_setsockopt(struct socket *sock, int level,
 		prepare_socket_bind(sock ? READ_ONCE(sock->sk) : NULL, level,
 				    optname, optval, optlen, &snapshot);
 
+	vpnhide_dbg("sock_setsockopt_entry: uid=%u level=%d optname=%d action=%s\n",
+		    from_kuid(&init_user_ns, current_uid()), level, optname,
+		    socket_bind_action_str(action));
+
 	if (action == VPNHIDE_BIND_DENY) {
 		record_hook_hit(VPNHIDE_HOOK_SOCKET_BIND_INTERFACE);
 		return -ENODEV;
@@ -699,6 +719,10 @@ static noinline int vpnhide_sk_setsockopt(struct sock *sk, int level,
 	union socket_bind_snapshot snapshot;
 	enum socket_bind_action action = prepare_socket_bind(
 		sk, level, optname, optval, optlen, &snapshot);
+
+	vpnhide_dbg("sk_setsockopt_entry: uid=%u level=%d optname=%d action=%s\n",
+		    from_kuid(&init_user_ns, current_uid()), level, optname,
+		    socket_bind_action_str(action));
 
 	if (action == VPNHIDE_BIND_DENY) {
 		record_hook_hit(VPNHIDE_HOOK_SOCKET_BIND_INTERFACE);
