@@ -1,6 +1,6 @@
 {
-  "version": "v1.2.2",
-  "versionCode": 10202,
-  "zipUrl": "https://github.com/okhsunrog/vpnhide/releases/download/v1.2.2/vpnhide-kmod-android13-5.15.zip",
+  "version": "v1.2.3",
+  "versionCode": 10203,
+  "zipUrl": "https://github.com/okhsunrog/vpnhide/releases/download/v1.2.3/vpnhide-kmod-android13-5.15.zip",
   "changelog": "https://raw.githubusercontent.com/okhsunrog/vpnhide/main/update-json/changelog.md"
 }
