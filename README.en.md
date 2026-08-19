@@ -286,7 +286,7 @@ vpnhide is free, with no ads and no telemetry. There will be no paid features �
 
 The same list is in the app under **Settings → Support the project**, where addresses copy on tap.
 
-**Boosty** — card payment, one-off or recurring: <https://boosty.to/okhsunrog>
+**Boosty** — card payment, one-off or recurring: <https://boosty.to/okhsunrog/donate>
 
 | Coin | Network | Address |
 | --- | --- | --- |

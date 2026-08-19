@@ -35,7 +35,7 @@ import dev.okhsunrog.vpnhide.ui.components.PreferenceRow
 // never pass through a translation round-trip.
 //
 // A blank constant hides its row, so an unfinished rail simply doesn't render.
-internal const val DONATE_BOOSTY_URL = "https://boosty.to/okhsunrog"
+internal const val DONATE_BOOSTY_URL = "https://boosty.to/okhsunrog/donate"
 internal const val DONATE_USDT_TRC20_ADDRESS = "TMskx2wKmPg11VYvHoS93vUQGm7yhcetUU"
 internal const val DONATE_BTC_ADDRESS = "bc1pmt9u6nux4x7n86zknwdgt9v02lah2tu6d983ak2prc5cwt8hsetq82ganh"
 
