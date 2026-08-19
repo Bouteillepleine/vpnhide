@@ -247,40 +247,17 @@ fun DebugToolsSection(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(12.dp))
-
-                val file = resultFile
-                if (file == null) {
-                    EnhancedButton(
-                        onClick = { showModal = true },
-                        enabled = !exporting && selfNeedsRestart != null,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        if (exporting) {
-                            ButtonSpinner()
-                        } else {
-                            Icon(
-                                Icons.Default.FileDownload,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            if (exporting) {
-                                stringResource(R.string.btn_export_debug_running)
-                            } else {
-                                stringResource(R.string.btn_export_debug)
-                            },
-                        )
-                    }
-                } else {
-                    FileSaveShareRow(
-                        saveLabel = stringResource(R.string.btn_save_debug),
-                        shareLabel = stringResource(R.string.btn_share_debug),
-                        sharePrimary = true,
-                        onSave = { saveLauncher.launch(file.name) },
-                        onShare = { shareFileViaProvider(context, file, mime) },
-                    )
+                // The card button only ever opens the modal — the whole export flow
+                // (progress, then Save/Share, then re-export with changed options)
+                // lives inside the sheet, so nothing shifts under the user's finger.
+                EnhancedButton(
+                    onClick = { showModal = true },
+                    enabled = selfNeedsRestart != null,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.btn_export_debug))
                 }
             }
         }
@@ -291,7 +268,9 @@ fun DebugToolsSection(
     }
 
     if (showModal) {
-        ModalBottomSheet(onDismissRequest = { showModal = false }) {
+        // Changing any toggle invalidates a result produced with the old recipe.
+        val clearResult = { resultFile = null }
+        ModalBottomSheet(onDismissRequest = { if (!exporting) showModal = false }) {
             Column(
                 modifier =
                     Modifier
@@ -309,20 +288,31 @@ fun DebugToolsSection(
                     title = stringResource(R.string.debug_export_opt_forensics),
                     description = stringResource(R.string.debug_export_opt_forensics_desc),
                     checked = optForensics,
-                    onCheckedChange = { optForensics = it },
+                    enabled = !exporting,
+                    onCheckedChange = {
+                        optForensics = it
+                        clearResult()
+                    },
                 )
                 ExportToggle(
                     title = stringResource(R.string.debug_export_opt_applist),
                     description = stringResource(R.string.debug_export_opt_applist_desc),
                     checked = optAppList && optForensics,
-                    enabled = optForensics,
-                    onCheckedChange = { optAppList = it },
+                    enabled = optForensics && !exporting,
+                    onCheckedChange = {
+                        optAppList = it
+                        clearResult()
+                    },
                 )
                 ExportToggle(
                     title = stringResource(R.string.debug_export_opt_kernel),
                     description = stringResource(R.string.debug_export_opt_kernel_desc),
                     checked = optKernelImage,
-                    onCheckedChange = { optKernelImage = it },
+                    enabled = !exporting,
+                    onCheckedChange = {
+                        optKernelImage = it
+                        clearResult()
+                    },
                 )
                 Spacer(Modifier.height(16.dp))
                 EnhancedButton(
@@ -331,7 +321,6 @@ fun DebugToolsSection(
                         val options =
                             StateContentOptions(forensics = optForensics, appList = optAppList && optForensics)
                         val kernel = optKernelImage
-                        showModal = false
                         exporting = true
                         scope.launch {
                             resultFile = exportDebug(cm, context, restartState, options, kernel)
@@ -339,10 +328,32 @@ fun DebugToolsSection(
                             exporting = false
                         }
                     },
-                    enabled = !exporting,
+                    enabled = !exporting && selfNeedsRestart != null,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(stringResource(R.string.debug_export_modal_confirm))
+                    if (exporting) {
+                        ButtonSpinner()
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(
+                        if (exporting) {
+                            stringResource(R.string.btn_export_debug_running)
+                        } else {
+                            stringResource(R.string.debug_export_modal_confirm)
+                        },
+                    )
+                }
+
+                val file = resultFile
+                if (file != null) {
+                    Spacer(Modifier.height(12.dp))
+                    FileSaveShareRow(
+                        saveLabel = stringResource(R.string.btn_save_debug),
+                        shareLabel = stringResource(R.string.btn_share_debug),
+                        sharePrimary = true,
+                        onSave = { saveLauncher.launch(file.name) },
+                        onShare = { shareFileViaProvider(context, file, mime) },
+                    )
                 }
             }
         }
