@@ -44,7 +44,7 @@ TOML_PATH = REPO_ROOT / "data" / "hooks.toml"
 
 # Targets are only the protocol participants (§1.3): the kernel backends (C),
 # the Zygisk backend (Rust), and the app + system_server hook (Kotlin). NOT
-# lsposed/native — that Rust crate is the uniffi diagnostic-probe library; it
+# lsposed/native — that Rust crate is the diagnostic-probe cdylib; it
 # consumes iface_lists (VPN-name matching) but never the protocol/registry.
 OUT_KMOD = REPO_ROOT / "kmod" / "generated" / "hook_ids.h"
 OUT_PROTOCOL_RS = REPO_ROOT / "crates" / "protocol" / "src" / "generated" / "hook_ids.rs"

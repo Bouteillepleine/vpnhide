@@ -25,7 +25,7 @@ detekt {
 }
 
 tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
-    // Codegen output (IfaceLists) and UniFFI bindings aren't hand-written.
+    // Generated codegen output (IfaceLists, HookIds) isn't hand-written.
     exclude("**/generated/**")
     jvmTarget = "17"
     reports {

@@ -27,7 +27,7 @@ tasks.named<Cpd>("cpdCheck") {
         text.required.set(true)
         xml.required.set(false)
     }
-    // Hand-written Kotlin only — skip codegen (IfaceLists) and UniFFI bindings.
+    // Hand-written Kotlin only — skip generated codegen output (IfaceLists, HookIds).
     source =
         fileTree("app/src/main/kotlin") {
             include("**/*.kt")

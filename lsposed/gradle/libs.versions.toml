@@ -4,7 +4,7 @@ kotlin = "2.4.0"
 compose-bom = "2026.06.00"
 # Pinned above the BOM (1.4.0): Material 3 Expressive theme APIs
 # (MaterialExpressiveTheme, MotionScheme) are public only from 1.5.0-alpha.
-# Requires AGP 9.1+ (satisfied via the local Gobley fork), mirrors ImageToolbox.
+# Requires AGP 9.1+ (we're on 9.2.1 from google()), mirrors ImageToolbox.
 material3 = "1.5.0-alpha22"
 activity-compose = "1.13.0"
 core-ktx = "1.19.0"

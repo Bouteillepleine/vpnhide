@@ -6,7 +6,7 @@ How to build vpnhide from source.
 
 - **JDK 17 or later** — what the CI image installs (`openjdk-17-jdk-headless`); local builds with JDK 21 also work. The `lsposed/app` Gradle build sets `sourceCompatibility = 17` and `jvmTarget = "17"`.
 - **Android SDK** — install `platforms;android-35`, `build-tools;35.0.0`, `platform-tools` (via Android Studio or `cmdline-tools`). Export `ANDROID_HOME`.
-- **Android NDK r28 or later** — export `ANDROID_NDK_HOME` (or drop it in `$ANDROID_HOME/ndk/<version>/`, the scripts auto-detect). The Gobley Gradle plugin used by `lsposed/app` reads `ANDROID_NDK_ROOT`, not `ANDROID_NDK_HOME`, so export both (or alias one to the other) when invoking Gradle directly. r27c builds compile, but the resulting cdylibs trigger an Android 16 KiB-page-size compatibility warning at app start on Pixel 8 Pro / future hardware (`сегмент LOAD не выровнен`); r28+ aligns LOAD segments on 16 KiB by default. (`zygisk/build.rs` and `lsposed/native/build.rs` also pass `-Wl,-z,max-page-size=16384` explicitly so older NDKs stay compatible — defence in depth.)
+- **Android NDK r28 or later** — export `ANDROID_NDK_HOME` (or drop it in `$ANDROID_HOME/ndk/<version>/`, the scripts auto-detect). The `lsposed/app` `buildRustProbe` task reads `ANDROID_NDK_HOME` (falling back to `ANDROID_NDK_ROOT`, then the SDK-managed `ndk/<version>`) and passes it to cargo-ndk. r27c builds compile, but the resulting cdylibs trigger an Android 16 KiB-page-size compatibility warning at app start on Pixel 8 Pro / future hardware (`сегмент LOAD не выровнен`); r28+ aligns LOAD segments on 16 KiB by default. (`zygisk/build.rs` and `lsposed/native/build.rs` also pass `-Wl,-z,max-page-size=16384` explicitly so older NDKs stay compatible — defence in depth.)
 - **Rust** (latest stable) with the Android target:
   ```sh
   rustup target add aarch64-linux-android
@@ -25,7 +25,7 @@ How to build vpnhide from source.
 - **`zip`** — packaging module zips.
 - **`adb`** — installing builds on a device.
 
-[Gobley](https://github.com/gobley/gobley) (Gradle plugins `dev.gobley.cargo` + `dev.gobley.uniffi`) is what builds the Rust crate at `lsposed/native/` via cargo-ndk and bundles the resulting `libvpnhide_checks.so` plus its UniFFI-generated Kotlin bindings (package `dev.okhsunrog.vpnhide.checks`) into the APK. The plugins are auto-resolved by Gradle from Maven Central — no manual install. Version is pinned in `lsposed/gradle/libs.versions.toml`.
+The Rust crate at `lsposed/native/` is built via cargo-ndk by the `buildRustProbe` Gradle `Exec` task in `lsposed/app/build.gradle.kts` (wired into `preBuild`), which bundles the resulting `libvpnhide_checks.so` into the APK's `jniLibs/` plus the root-exec'able `vhprobe` bin as an asset. There is no codegen and no extra Gradle plugin: the whole native surface is one JSON-returning JNI function (`NativeProbe.runAllChecksJson`), parsed on the Kotlin side — no manual `cargo` invocation needed.
 
 ## Repository layout
 

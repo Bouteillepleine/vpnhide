@@ -225,9 +225,9 @@ jobs:
       - name: ktlint
         run: ktlint "lsposed/app/src/**/*.kt"
       # Single Gradle invocation: detekt + cpd + lint + tests share one
-      # configuration phase + warm daemon. Configures Gobley's cargo plugin
-      # once instead of four times. ANDROID_NDK_ROOT is baked into the CI
-      # image (Dockerfile ENV), no manual export needed.
+      # configuration phase + warm daemon. Runs the buildRustProbe (cargo-ndk)
+      # task once instead of four times. ANDROID_NDK_HOME/_ROOT are baked into
+      # the CI image (Dockerfile ENV), no manual export needed.
       - name: detekt + CPD + Android lint + Kotlin unit tests
         # `:app:lintDebug` (not `:app:lint`) runs Lint on the debug
         # variant only — release-variant Lint covers R8/ProGuard issues

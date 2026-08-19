@@ -915,9 +915,9 @@ fn check_proc_sys_net_ifaces() -> CheckOutput {
     }
 }
 
-// ── /proc/net/* wrappers: one uniffi export per path so the Kotlin side
-//    keeps a thin `checkProcNetFoo(): CheckOutput` surface instead of
-//    pushing path strings across the FFI. ──────────────────────────────
+// ── /proc/net/* wrappers: one fn per path, aggregated into the single
+//    JSON-returning probe surface, so the Kotlin side never pushes path
+//    strings across the FFI. ────────────────────────────────────────────
 
 fn check_proc_net_route() -> CheckOutput {
     check_proc_file("/proc/net/route")
