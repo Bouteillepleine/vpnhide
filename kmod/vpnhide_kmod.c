@@ -613,11 +613,18 @@ static int classify_bind_ifindex(struct sock *sk, int ifindex)
 }
 
 static enum socket_bind_action
-prepare_socket_bind(struct sock *sk, int level, int optname, sockptr_t optval,
+prepare_socket_bind(struct sock *sk, int optname, sockptr_t optval,
 		    unsigned int optlen, union socket_bind_snapshot *snapshot)
 {
-	if (level != SOL_SOCKET ||
-	    !hook_active(VPNHIDE_HOOK_SOCKET_BIND_INTERFACE))
+	/* No `level` gate on purpose. Both hooked functions (sock_setsockopt,
+	 * sk_setsockopt) ARE the SOL_SOCKET option handler — reaching them proves
+	 * level == SOL_SOCKET by control flow. We must NOT read the ABI `level`
+	 * argument: sk_setsockopt never uses it, so whole-kernel LTO elides setting
+	 * it at the direct __sys_setsockopt -> sk_setsockopt call (the wrapper then
+	 * sees garbage, e.g. 0, and a `level != SOL_SOCKET` check would wrongly pass
+	 * the bind through — the SO_BINDTODEVICE leak on LTO GKI builds where
+	 * sock_setsockopt is inlined away). Gate on the hook toggle alone. */
+	if (!hook_active(VPNHIDE_HOOK_SOCKET_BIND_INTERFACE))
 		return VPNHIDE_BIND_PASSTHROUGH;
 	if (optname != SO_BINDTODEVICE && optname != SO_BINDTOIFINDEX)
 		return VPNHIDE_BIND_PASSTHROUGH;
@@ -681,7 +688,7 @@ static noinline int vpnhide_sock_setsockopt(struct socket *sock, int level,
 {
 	union socket_bind_snapshot snapshot;
 	enum socket_bind_action action =
-		prepare_socket_bind(sock ? READ_ONCE(sock->sk) : NULL, level,
+		prepare_socket_bind(sock ? READ_ONCE(sock->sk) : NULL,
 				    optname, optval, optlen, &snapshot);
 
 	vpnhide_dbg("sock_setsockopt_entry: uid=%u level=%d optname=%d action=%s\n",
@@ -718,7 +725,7 @@ static noinline int vpnhide_sk_setsockopt(struct sock *sk, int level,
 {
 	union socket_bind_snapshot snapshot;
 	enum socket_bind_action action = prepare_socket_bind(
-		sk, level, optname, optval, optlen, &snapshot);
+		sk, optname, optval, optlen, &snapshot);
 
 	vpnhide_dbg("sk_setsockopt_entry: uid=%u level=%d optname=%d action=%s\n",
 		    from_kuid(&init_user_ns, current_uid()), level, optname,
