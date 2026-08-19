@@ -32,6 +32,7 @@ internal data class DiagnosticFileEntry(
  * the heavy forensic captures ride along as raw sections + log blobs. The document
  * always serializes — partial-capture failures are recorded in `errors`, never lost.
  */
+@Suppress("LongMethod")
 internal suspend fun exportDebugJson(
     cm: ConnectivityManager,
     context: Context,
@@ -86,6 +87,8 @@ internal suspend fun exportDebugJson(
                     checkResults = checkResults,
                     dmesg = dmesg,
                     logcat = logcat.ifEmpty { "(no logcat entries)" },
+                    bootLsposedLogcat = captureBootLsposedLogcat(),
+                    lsposedConfigDb = buildLsposedConfigText(context),
                     hookReport = buildHookDiagnosticsText(context, shellSnapshot, counterBaseline),
                     debugCapture = session.toDebugCaptureInfo(),
                     errors = errors,

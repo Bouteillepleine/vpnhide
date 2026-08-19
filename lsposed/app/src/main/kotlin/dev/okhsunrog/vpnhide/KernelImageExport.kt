@@ -99,6 +99,8 @@ private suspend fun writeKernelStateJson(
             checkResults = null,
             dmesg = dmesg,
             logcat = "",
+            bootLsposedLogcat = captureBootLsposedLogcat(),
+            lsposedConfigDb = buildLsposedConfigText(context),
             hookReport = null,
             debugCapture = null,
             errors = emptyList(),

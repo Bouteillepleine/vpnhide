@@ -5,6 +5,7 @@ import android.os.Build
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 
 /**
  * The one canonical, fully-serializable app-state snapshot.
@@ -46,6 +47,18 @@ internal data class VpnHideState(
     val activeBackend: DisplayNativeBackend,
     val ports: ModuleState,
     val kmodLoadStatus: KmodLoadStatus?,
+    // The full live dashboard model (hero/messages/recommendations on top of the
+    // module states above). Populated by the agent-bridge getState (which has a
+    // live DashboardState); null in the file export, which carries only the cheap
+    // detector-derived fields above.
+    val dashboard: DashboardState? = null,
+    // Desired-state config embedded as structured JSON (the canonical
+    // /data/system/vpnhide_config.json). Lets one read answer "is app X even a
+    // target" alongside the runtime state. Null when not requested.
+    val config: JsonElement? = null,
+    // Current hook-counter snapshot. The stateful baseline/diff capture stays a
+    // separate bridge call; this is just the point-in-time totals.
+    val statistics: AgentStatisticsState? = null,
     // Root-shell self-diagnosis: who the snapshot shell ran as, and whether its
     // liveness probes are trustworthy. This is what tells a "not verified" module
     // apart from a genuinely inactive one.
@@ -149,7 +162,7 @@ internal fun VpnHideState.toJson(): String = stateJson.encodeToString(this)
  * [checkResults] are non-null only for a real diagnostics run (the debug export);
  * the logcat/kernel captures pass null and carry no [report].
  */
-@Suppress("LongParameterList")
+@Suppress("LongParameterList", "LongMethod")
 internal fun buildVpnHideState(
     context: Context,
     captureKind: String,
@@ -161,9 +174,18 @@ internal fun buildVpnHideState(
     checkResults: CheckResults?,
     dmesg: String,
     logcat: String,
+    bootLsposedLogcat: String,
+    lsposedConfigDb: String,
     hookReport: String?,
     debugCapture: DebugCaptureInfo?,
     errors: List<String>,
+    dashboard: DashboardState? = null,
+    config: JsonElement? = null,
+    statistics: AgentStatisticsState? = null,
+    // When false, the big raw `sections` map is omitted (the typed fields above are
+    // still derived from it). The agent-bridge lean call sets this false to keep the
+    // live payload small; the file export keeps it true for a complete forensic dump.
+    includeRawSections: Boolean = true,
 ): VpnHideState {
     val rootSections = rootSnapshot.sections
     val currentBootId = rootSections["current_boot_id"].orEmpty()
@@ -214,14 +236,17 @@ internal fun buildVpnHideState(
         activeBackend = activeBackend,
         ports = ports,
         kmodLoadStatus = kmodLoadStatus,
+        dashboard = dashboard,
+        config = config,
+        statistics = statistics,
         rootShell = RootShellDiag.from(rootSections),
         // Forensic sections on top of the authoritative root sections. Root sections
         // win on key collisions (they carry the liveness ground truth).
-        sections = shellSnapshot?.sections.orEmpty() + rootSections,
+        sections = if (includeRawSections) shellSnapshot?.sections.orEmpty() + rootSections else emptyMap(),
         dmesg = dmesg,
         logcat = logcat,
-        bootLsposedLogcat = captureBootLsposedLogcat(),
-        lsposedConfigDb = buildLsposedConfigText(context),
+        bootLsposedLogcat = bootLsposedLogcat,
+        lsposedConfigDb = lsposedConfigDb,
         hookReport = hookReport,
         debugCapture = debugCapture,
         errors = errors,

@@ -28,9 +28,9 @@ class AgentControlDispatcherTest {
 
     @Test
     fun callEnvelopeRoundTrips() {
-        val call = AgentBridgeJson.decodeFromString<AgentBridgeCall>("""{"fn":"getDashboardState","args":{"refresh":true}}""")
+        val call = AgentBridgeJson.decodeFromString<AgentBridgeCall>("""{"fn":"getState","args":{"refresh":true}}""")
 
-        assertEquals("getDashboardState", call.fn)
+        assertEquals("getState", call.fn)
         assertEquals("true", call.args["refresh"].toString())
     }
 }

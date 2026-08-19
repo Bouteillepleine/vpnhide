@@ -17,26 +17,17 @@ import kotlinx.serialization.json.putJsonObject
 internal object AgentControlDispatcher {
     private val functions: List<BridgeFunction> =
         listOf(
-            function<RefreshArgs, AgentDashboardState>(
-                name = "getDashboardState",
-                description = "Return the current dashboard state. Set refresh to true to force a fresh root snapshot.",
-                inputSchema = schema(optional("refresh", booleanSchema())),
+            function<GetStateArgs, VpnHideState>(
+                name = "getState",
+                description =
+                    "The one canonical read for debugging: live dashboard (hero/messages) + the full " +
+                        "diagnostics report (gate, per-layer verdict, per-check outcome + root ground truth) + " +
+                        "per-module liveness + rootShell self-diagnosis + the canonical config + a hook-counter " +
+                        "snapshot. Set includeForensics=true to also embed dmesg, boot logcat, lsposed config, the " +
+                        "hook report and every raw shell section. refresh forces a fresh root snapshot.",
+                inputSchema = schema(optional("refresh", booleanSchema()), optional("includeForensics", booleanSchema())),
             ) { context, args ->
-                AgentControl.getDashboardState(context, args.refresh)
-            },
-            function<EmptyArgs, AgentDiagnosticsReport>(
-                name = "runFullDiagnostics",
-                description = "Run the full diagnostics suite and return every check shown in Detailed diagnostics.",
-                inputSchema = schema(),
-            ) { context, _ ->
-                AgentControl.runFullDiagnostics(context)
-            },
-            function<ExportDebugZipArgs, AgentDebugZipExport>(
-                name = "exportDebugZip",
-                description = "Create the same debug ZIP as Detailed diagnostics and return app-cache metadata.",
-                inputSchema = schema(optional("selfNeedsRestart", booleanSchema())),
-            ) { context, args ->
-                AgentControl.exportDebugZip(context, args.selfNeedsRestart)
+                AgentControl.getState(context, args.refresh, args.includeForensics)
             },
             function<EmptyArgs, AgentDebugZipExport>(
                 name = "exportKernelImages",
@@ -80,13 +71,6 @@ internal object AgentControlDispatcher {
             ) { context, args ->
                 AgentControl.getStatisticsCaptureDiff(context, args.baseline, args.refresh)
             },
-            function<RefreshArgs, AgentProtectionState>(
-                name = "getProtectionState",
-                description = "Return the Apps tab canonical config and configured package summary.",
-                inputSchema = schema(optional("refresh", booleanSchema())),
-            ) { context, args ->
-                AgentControl.getProtectionState(context, args.refresh)
-            },
             function<ListInstalledAppsArgs, List<AgentInstalledApp>>(
                 name = "listInstalledApps",
                 description = "List installed apps in the same shape used by the Apps picker.",
@@ -103,13 +87,6 @@ internal object AgentControlDispatcher {
                     configuredOnly = args.configuredOnly,
                     refresh = args.refresh,
                 )
-            },
-            function<EmptyArgs, String>(
-                name = "exportCanonicalConfig",
-                description = "Export the canonical JSON config used by Settings backup/export.",
-                inputSchema = schema(),
-            ) { context, _ ->
-                AgentControl.exportCanonicalConfig(context)
             },
             function<ImportCanonicalConfigArgs, AgentMutationResult>(
                 name = "importCanonicalConfig",
@@ -257,6 +234,12 @@ private class EmptyArgs
 @Serializable
 private data class RefreshArgs(
     val refresh: Boolean? = null,
+)
+
+@Serializable
+private data class GetStateArgs(
+    val refresh: Boolean? = null,
+    val includeForensics: Boolean? = null,
 )
 
 @Serializable

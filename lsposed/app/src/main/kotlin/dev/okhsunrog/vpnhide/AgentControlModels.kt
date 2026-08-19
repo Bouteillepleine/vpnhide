@@ -15,89 +15,6 @@ data class AgentMutationResult(
     val targetRestartRecommended: Boolean = false,
 )
 
-/** Dashboard state summarized for machine consumers. */
-@Serializable
-data class AgentDashboardState(
-    /** One of Protected, Attention, Unprotected, or VpnOff. */
-    val heroStatus: String,
-    /** Number of active logical layers: Java, Native, Ports. */
-    val activeModuleCount: Int,
-    /** Total logical layers shown by the dashboard. */
-    val totalModuleCount: Int,
-    /** Number of error messages shown by the dashboard. */
-    val errorCount: Int,
-    /** Number of warning messages shown by the dashboard. */
-    val warningCount: Int,
-    /** Number of neutral info messages shown by the dashboard. */
-    val infoCount: Int,
-    /** Native backend selected by the app priority logic, or null when none is active. */
-    val activeNativeBackend: String?,
-    /** Per-module state cards shown on the dashboard. */
-    val modules: List<AgentModuleState>,
-    /** Protection check summary shown on the dashboard. */
-    val protection: AgentProtectionSummary,
-    /** Dashboard messages in display priority order. */
-    val messages: List<AgentDashboardMessage>,
-)
-
-/** One dashboard module/backend card. */
-@Serializable
-data class AgentModuleState(
-    /** Stable card id. */
-    val id: String,
-    /** Backend kind: java, native, or ports. */
-    val layer: String,
-    /** Installed backend label. */
-    val backend: String,
-    /** High-level state such as active, installed_inactive, not_installed. */
-    val state: String,
-    /** Installed/running module version when known. */
-    val version: String? = null,
-    /** Number of configured targets for this backend. */
-    val targetCount: Int = 0,
-    /** Additional broken/degraded reason when known. */
-    val reason: String? = null,
-)
-
-/** Dashboard protection summary. */
-@Serializable
-data class AgentProtectionSummary(
-    /** none, needs_restart, self_not_routed, checked, or vpn_off. */
-    val state: String,
-    /** Native-level summary: ok, fail, no_module, or null. */
-    val native: String? = null,
-    /** Java-level summary: ok, fail, hooks_inactive, or null. */
-    val java: String? = null,
-    /** Native checks passed when available. */
-    val nativePassed: Int? = null,
-    /** Native checks failed when available. */
-    val nativeFailed: Int? = null,
-    /** Java checks failed when available. */
-    val javaFailed: Int? = null,
-)
-
-/** One dashboard message. */
-@Serializable
-data class AgentDashboardMessage(
-    /** error, warning, or info. */
-    val severity: String,
-    /** User-facing message text. */
-    val text: String,
-)
-
-/** Full diagnostics result. */
-@Serializable
-data class AgentDiagnosticsReport(
-    /** ready, vpn_off, or self_not_routed. */
-    val state: String,
-    /** Combined pass score, excluding informational checks. */
-    val score: AgentCheckScore,
-    /** Native-level checks in UI order. */
-    val nativeChecks: List<AgentCheckResult>,
-    /** Java API-level checks in UI order. */
-    val javaChecks: List<AgentCheckResult>,
-)
-
 /** Debug ZIP export metadata for agent-controlled diagnostics capture. */
 @Serializable
 data class AgentDebugZipExport(
@@ -107,33 +24,6 @@ data class AgentDebugZipExport(
     val sizeBytes: Long,
     /** File entries contained in the ZIP. */
     val entries: List<String>,
-)
-
-/** Pass/total diagnostics score. */
-@Serializable
-data class AgentCheckScore(
-    /** Passed checks. */
-    val passed: Int,
-    /** Checks that produced a pass/fail result. */
-    val total: Int,
-)
-
-/** One diagnostics probe result. */
-@Serializable
-data class AgentCheckResult(
-    /** Probe name. */
-    val name: String,
-    /** pass, fail, or info. */
-    val status: String,
-    /** Probe detail text. */
-    val detail: String,
-    /** Who-hid-it outcome from the root differential (native checks): leak,
-     * hidden_backend, hidden_selinux, nothing_to_leak, not_measured_*. Null for
-     * checks without a root-differential outcome (Java / nativeExtra). */
-    val outcome: String? = null,
-    /** The root ground-truth probe's own detail (native checks) — what root saw on
-     * this surface, the basis for the outcome. Null for checks without a root diff. */
-    val groundTruthDetail: String? = null,
 )
 
 /** Statistics tab state. */

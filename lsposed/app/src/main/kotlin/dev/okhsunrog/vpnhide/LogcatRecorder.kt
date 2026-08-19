@@ -307,6 +307,8 @@ internal object LogcatRecorder {
             checkResults = null,
             dmesg = dmesg,
             logcat = filterVpnHideLogcat(recording.rawLogFile),
+            bootLsposedLogcat = captureBootLsposedLogcat(),
+            lsposedConfigDb = buildLsposedConfigText(context),
             hookReport = buildHookDiagnosticsText(context, shellSnapshot),
             debugCapture = session.toDebugCaptureInfo(),
             errors = emptyList(),
