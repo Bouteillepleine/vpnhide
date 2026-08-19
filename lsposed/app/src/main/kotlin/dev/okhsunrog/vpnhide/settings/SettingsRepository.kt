@@ -40,6 +40,7 @@ class SettingsRepository(
         val AGENT_CONTROL = booleanPreferencesKey("agent_control_enabled")
         val SETTINGS_HINT_SEEN = booleanPreferencesKey("settings_hint_seen")
         val SUPPRESS_VERSION_WARNINGS = booleanPreferencesKey("suppress_version_warnings")
+        val DONATE_PROMPT_DISMISSED = booleanPreferencesKey("donate_prompt_dismissed")
 
         // Worker-internal state (not a user-facing setting, so not surfaced in
         // AppSettings): the last release the background update worker already
@@ -68,6 +69,8 @@ class SettingsRepository(
                 settingsHintSeen = p[Keys.SETTINGS_HINT_SEEN] ?: defaults.settingsHintSeen,
                 suppressVersionWarnings =
                     p[Keys.SUPPRESS_VERSION_WARNINGS] ?: defaults.suppressVersionWarnings,
+                donatePromptDismissed =
+                    p[Keys.DONATE_PROMPT_DISMISSED] ?: defaults.donatePromptDismissed,
             )
         }
 
@@ -96,6 +99,8 @@ class SettingsRepository(
     suspend fun setSettingsHintSeen(value: Boolean) = edit { it[Keys.SETTINGS_HINT_SEEN] = value }
 
     suspend fun setSuppressVersionWarnings(value: Boolean) = edit { it[Keys.SUPPRESS_VERSION_WARNINGS] = value }
+
+    suspend fun setDonatePromptDismissed(value: Boolean) = edit { it[Keys.DONATE_PROMPT_DISMISSED] = value }
 
     /** Last release the background update worker has already notified about, if any. */
     suspend fun lastNotifiedUpdateVersion(): String? =

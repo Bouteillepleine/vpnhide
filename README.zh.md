@@ -281,6 +281,19 @@ vpnhide 对特定应用隐藏活动的 VPN。它并非为以下用途设计：
 - 直接的 `svc #0` 系统调用会绕过 Zygisk 的 libc 钩子 —— 为此请使用内核级后端（kmod 或 KPM）
 - 服务端检测在客户端无法解决 —— 请使用分应用代理
 
+## 支持项目
+
+vpnhide 免费，无广告、无遥测。不会有付费功能，捐赠不会解锁任何内容。
+
+应用内的 **设置 → 支持项目** 中也有同样的列表，点按地址即可复制。
+
+| 币种 | 网络 | 地址 |
+| --- | --- | --- |
+| USDT | Tron (TRC20) | `TMskx2wKmPg11VYvHoS93vUQGm7yhcetUU` |
+| BTC | Bitcoin | `bc1pmt9u6nux4x7n86zknwdgt9v02lah2tu6d983ak2prc5cwt8hsetq82ganh` |
+| GRAM | The Open Network | `UQADYTtMBQdZvmNNEX02R9sACpdnXKlPV8RbuFrxo7JFBRGS` |
+| LTC | Litecoin | `MBLKJfPNANH3U41UPJFtha7EPJGdbiW5dZ` |
+
 ## 许可证
 
 MIT。见 [LICENSE](LICENSE)。

@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.okhsunrog.vpnhide.settings.LocalSettingsInteractor
 import dev.okhsunrog.vpnhide.settings.LocalSettingsState
 import dev.okhsunrog.vpnhide.settings.SettingsRepository
 import dev.okhsunrog.vpnhide.ui.components.EnhancedButton
@@ -67,9 +68,13 @@ fun DashboardScreen(
     var showChangelog by remember { mutableStateOf(false) }
     var changelogData by remember { mutableStateOf<ChangelogData?>(null) }
     var showContact by remember { mutableStateOf(false) }
+    var showDonate by remember { mutableStateOf(false) }
 
     if (showContact) {
         ContactModal(onDismiss = { showContact = false })
+    }
+    if (showDonate) {
+        DonateModal(onDismiss = { showDonate = false })
     }
 
     // Both caches are reactive to tab switches without re-doing work:
@@ -235,6 +240,30 @@ fun DashboardScreen(
         MessageSection(errors, R.string.dashboard_issues, errorHeader, errorBg, onBannerColor, onOpenDiagnostics, onContact)
         MessageSection(warnings, R.string.dashboard_warnings, warningHeader, warningBg, onBannerColor, onOpenDiagnostics, onContact)
         MessageSection(infos, R.string.dashboard_info, infoHeader, infoBg, onBannerColor, onOpenDiagnostics, onContact)
+
+        // Asks for support only on a setup that provably works, and only once —
+        // see shouldShowDonatePrompt for the full gate.
+        val now = remember { System.currentTimeMillis() }
+        if (shouldShowDonatePrompt(
+                dismissed = LocalSettingsState.current.donatePromptDismissed,
+                installedAtMillis = remember { appInstalledAtMillis(context, now) },
+                nowMillis = now,
+                protection = loadedState.protection,
+                hasIssues = errors.isNotEmpty() || warnings.isNotEmpty(),
+            )
+        ) {
+            val interactor = LocalSettingsInteractor.current
+            Spacer(Modifier.height(20.dp))
+            DonatePromptBanner(
+                containerColor = infoBg,
+                contentColor = onBannerColor,
+                onDonate = {
+                    interactor.setDonatePromptDismissed(true)
+                    showDonate = true
+                },
+                onHide = { interactor.setDonatePromptDismissed(true) },
+            )
+        }
 
         Spacer(Modifier.height(16.dp))
     }

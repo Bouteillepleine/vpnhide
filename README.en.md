@@ -280,6 +280,21 @@ vpnhide hides an active VPN from specific apps. It is NOT designed for:
 - Direct `svc #0` syscalls bypass Zygisk's libc hooks — use a kernel-level backend (kmod or KPM) for that
 - Server-side detection is unfixable client-side — use split tunneling
 
+## Support the project
+
+vpnhide is free, with no ads and no telemetry. There will be no paid features — donating unlocks nothing.
+
+The same list is in the app under **Settings → Support the project**, where addresses copy on tap.
+
+**Boosty** — card payment, one-off or recurring: <https://boosty.to/okhsunrog>
+
+| Coin | Network | Address |
+| --- | --- | --- |
+| USDT | Tron (TRC20) | `TMskx2wKmPg11VYvHoS93vUQGm7yhcetUU` |
+| BTC | Bitcoin | `bc1pmt9u6nux4x7n86zknwdgt9v02lah2tu6d983ak2prc5cwt8hsetq82ganh` |
+| GRAM | The Open Network | `UQADYTtMBQdZvmNNEX02R9sACpdnXKlPV8RbuFrxo7JFBRGS` |
+| LTC | Litecoin | `MBLKJfPNANH3U41UPJFtha7EPJGdbiW5dZ` |
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

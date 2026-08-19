@@ -281,6 +281,21 @@ vpnhide скрывает активный VPN от конкретных прил
 - Прямые системные вызовы `svc #0` обходят хуки libc в Zygisk — для этого нужен kernel-level backend (kmod или KPM)
 - Серверная детекция неисправима на стороне клиента — используйте раздельное туннелирование
 
+## Поддержать проект
+
+vpnhide бесплатный, без рекламы и телеметрии. Платных функций не будет — донат ничего не открывает.
+
+Тот же список есть в приложении: **Настройки → Поддержать проект**, там адреса копируются по тапу.
+
+**Boosty** — оплата картой, разово или подпиской: <https://boosty.to/okhsunrog>
+
+| Монета | Сеть | Адрес |
+| --- | --- | --- |
+| USDT | Tron (TRC20) | `TMskx2wKmPg11VYvHoS93vUQGm7yhcetUU` |
+| BTC | Bitcoin | `bc1pmt9u6nux4x7n86zknwdgt9v02lah2tu6d983ak2prc5cwt8hsetq82ganh` |
+| GRAM | The Open Network | `UQADYTtMBQdZvmNNEX02R9sACpdnXKlPV8RbuFrxo7JFBRGS` |
+| LTC | Litecoin | `MBLKJfPNANH3U41UPJFtha7EPJGdbiW5dZ` |
+
 ## Лицензия
 
 MIT. См. [LICENSE](LICENSE).

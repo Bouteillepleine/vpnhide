@@ -252,6 +252,21 @@
     <string name="settings_community_section">Сообщество</string>
     <string name="settings_community">Сообщество и обратная связь</string>
     <string name="settings_community_sub">Контакты автора: GitHub, Telegram, 4PDA</string>
+    <string name="settings_donate">Поддержать проект</string>
+    <string name="settings_donate_sub">Boosty или криптовалюта</string>
+    <string name="donate_title">Поддержать проект</string>
+    <string name="donate_body">VPN Hide бесплатный, без рекламы и ничего никуда не отправляет. Платных функций не будет — донат ничего не открывает. Если приложение пригодилось, можно скинуться на его развитие.</string>
+    <string name="donate_boosty">Boosty</string>
+    <string name="donate_boosty_sub">Оплата картой, разово или ежемесячно</string>
+    <string name="donate_usdt">USDT (TRC20)</string>
+    <string name="donate_gram">GRAM</string>
+    <string name="donate_ltc">LTC</string>
+    <string name="donate_btc">BTC</string>
+    <string name="donate_copied">Адрес скопирован</string>
+    <string name="donate_close">Закрыть</string>
+    <string name="donate_banner">VPN Hide бесплатный и без рекламы. Если он вам полезен — можно поддержать разработку.</string>
+    <string name="donate_banner_support">Поддержать</string>
+    <string name="donate_banner_hide">Скрыть</string>
     <!-- Full reset / leftover cleanup -->
     <string name="settings_reset_section">Сброс</string>
     <string name="reset_button">Удалить оставшиеся файлы</string>

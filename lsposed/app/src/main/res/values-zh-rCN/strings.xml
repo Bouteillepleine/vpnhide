@@ -273,6 +273,21 @@
     <string name="settings_community_section">社区</string>
     <string name="settings_community">社区与反馈</string>
     <string name="settings_community_sub">作者联系方式：GitHub、Telegram、4PDA</string>
+    <string name="settings_donate">支持项目</string>
+    <string name="settings_donate_sub">加密货币</string>
+    <string name="donate_title">支持项目</string>
+    <string name="donate_body">VPN Hide 免费、无广告，也不会向任何地方发送数据。不会有付费功能，捐赠不会解锁任何内容。如果这个应用对你有帮助，可以为它的开发出一份力。</string>
+    <string name="donate_boosty">Boosty</string>
+    <string name="donate_boosty_sub">银行卡支付，单次或定期</string>
+    <string name="donate_usdt">USDT (TRC20)</string>
+    <string name="donate_gram">GRAM</string>
+    <string name="donate_ltc">LTC</string>
+    <string name="donate_btc">BTC</string>
+    <string name="donate_copied">地址已复制到剪贴板</string>
+    <string name="donate_close">关闭</string>
+    <string name="donate_banner">VPN Hide 免费且无广告。如果它对你有用，可以支持它的开发。</string>
+    <string name="donate_banner_support">支持</string>
+    <string name="donate_banner_hide">隐藏</string>
     <!-- Full reset / leftover cleanup -->
     <string name="settings_reset_section">重置</string>
     <string name="reset_button">移除残留文件</string>
