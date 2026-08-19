@@ -1653,9 +1653,12 @@ static void iterate_dir_after(hook_fargs2_t *fargs, void *udata)
 /*
  * Resolve a hook target by name, tolerating compiler-renamed clones. GCC may
  * emit a static function as `name.isra.N` / `name.constprop.N` (a specialised
- * clone) — kallsyms_lookup_name("name") then misses it. The clang-built GKI
- * images usually retain the plain name, while gcc-built legacy QEMU images can
- * rename e.g. fib_nl_fill_rule -> fib_nl_fill_rule.isra.N.
+ * clone) — kallsyms_lookup_name("name") then misses it. Clang with (Thin)LTO
+ * promotes a local symbol to `name.llvm.<hash>` (seen on a vendor 5.4 build
+ * where ipv6_route_seq_show became ipv6_route_seq_show.llvm.NNN while the plain
+ * fib_route_seq_show stayed — leaving the IPv6 route hook uninstalled). The
+ * clang-built GKI images usually retain the plain name, while gcc-built legacy
+ * QEMU images can rename e.g. fib_nl_fill_rule -> fib_nl_fill_rule.isra.N.
  * Fall back only to compiler clone forms observed in supported reference
  * kernels. Other dotted symbols (for example cold fragments) are not valid
  * substitutes for the complete function.
@@ -1682,6 +1685,8 @@ static int vpnhide_is_clone_suffix(const char *suffix)
 
 	if (!number)
 		number = vpnhide_skip_prefix(suffix, ".constprop.");
+	if (!number)
+		number = vpnhide_skip_prefix(suffix, ".llvm.");
 	if (!number || *number < '0' || *number > '9')
 		return 0;
 	do {
