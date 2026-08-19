@@ -164,6 +164,14 @@ internal fun kpmAwaitingSuperkey(
         status.reason == KpmFailureReason.AwaitingSuperkey &&
         status.isFreshFor(currentBootId)
 
+/**
+ * True when a *live* KernelPatch runtime is present — the kernel is actually
+ * patched and can load KPMs. Either APatch (its /data/adb/ap dir) or a
+ * KPatch-Next-Module whose `kpatch hello` succeeded ([hello_exit]=0). A
+ * KPatch-Next-Module that is installed but whose kernel has not been patched
+ * from its UI reports hello_exit≠0 and is correctly treated as unavailable.
+ * See the kpatch_runtime probe in RootSnapshotCache.
+ */
 internal fun kpatchRuntimeAvailable(kpatchRuntimeSection: String): Boolean {
     val props = parseKeyValueLines(kpatchRuntimeSection)
     if (props["apatch_dir"]?.trim() == "1") return true
@@ -1264,7 +1272,7 @@ internal suspend fun loadDashboardState(
                 sections = shellSnapshot,
                 activatorPath = KPM_ACTIVATOR,
             )?.let { renderModuleIntegrityProblem(it, res) }
-                ?: classifyKpmProblem(kpmRaw, kpmLoadStatus, currentBootId)
+                ?: classifyKpmProblem(kpmRaw, kpmLoadStatus, currentBootId, hasKpatchRuntime)
                     ?.let { renderKpmProblem(it, res) }
         }
     val kpm = kpmRaw.withBrokenReason(kpmProblem?.reason).withPendingReboot(kpmPendingReboot)
