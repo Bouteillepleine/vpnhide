@@ -24,6 +24,11 @@ sealed interface ModuleState {
         // is permanently broken (distinct from "active=false" which usually
         // just means a reboot is pending). UI colors the card red.
         val brokenReason: ModuleBrokenReason? = null,
+        // True when a complete install is staged in modules_update/ and the
+        // active dir has no activator yet — the module just needs a reboot to
+        // take effect. UI colors the card orange, not red, and the dashboard
+        // surfaces a reboot warning rather than a corruption error.
+        val pendingReboot: Boolean = false,
     ) : ModuleState
 }
 
@@ -1225,48 +1230,71 @@ internal suspend fun loadDashboardState(
         )
     VpnHideLog.i(TAG, "kmodLoadStatus=$kmodLoadStatus")
 
+    // A freshly-installed module staged in modules_update/ needs a reboot, not
+    // a reinstall — suppress its integrity/runtime error and warn instead.
+    val kmodPendingReboot = modulePendingReboot(FlashableModuleKind.Kmod, kmodRaw, shellSnapshot)
+    val kpmPendingReboot = modulePendingReboot(FlashableModuleKind.Kpm, kpmRaw, shellSnapshot)
+    val zygiskPendingReboot = modulePendingReboot(FlashableModuleKind.Zygisk, zygiskRaw, shellSnapshot)
+    val portsPendingReboot = modulePendingReboot(FlashableModuleKind.Ports, portsRaw, shellSnapshot)
+
     // Integrity takes priority; one problem drives both card color and banner.
     val kmodProblem: ModuleProblem? =
-        moduleIntegrityProblem(
-            kind = FlashableModuleKind.Kmod,
-            module = kmodRaw,
-            sections = shellSnapshot,
-            activatorPath = KMOD_ACTIVATOR,
-        )?.let { renderModuleIntegrityProblem(it, res) }
-            ?: classifyKmodProblem(kmodRaw, kernelRecommendation, kmodLoadStatus)
-                ?.let { renderKmodProblem(it, res) }
-    val kmod = kmodRaw.withBrokenReason(kmodProblem?.reason)
+        if (kmodPendingReboot) {
+            null
+        } else {
+            moduleIntegrityProblem(
+                kind = FlashableModuleKind.Kmod,
+                module = kmodRaw,
+                sections = shellSnapshot,
+                activatorPath = KMOD_ACTIVATOR,
+            )?.let { renderModuleIntegrityProblem(it, res) }
+                ?: classifyKmodProblem(kmodRaw, kernelRecommendation, kmodLoadStatus)
+                    ?.let { renderKmodProblem(it, res) }
+        }
+    val kmod = kmodRaw.withBrokenReason(kmodProblem?.reason).withPendingReboot(kmodPendingReboot)
     VpnHideLog.i(TAG, "kmod (with brokenReason): $kmod")
 
     val kpmProblem: ModuleProblem? =
-        moduleIntegrityProblem(
-            kind = FlashableModuleKind.Kpm,
-            module = kpmRaw,
-            sections = shellSnapshot,
-            activatorPath = KPM_ACTIVATOR,
-        )?.let { renderModuleIntegrityProblem(it, res) }
-            ?: classifyKpmProblem(kpmRaw, kpmLoadStatus, currentBootId)
-                ?.let { renderKpmProblem(it, res) }
-    val kpm = kpmRaw.withBrokenReason(kpmProblem?.reason)
+        if (kpmPendingReboot) {
+            null
+        } else {
+            moduleIntegrityProblem(
+                kind = FlashableModuleKind.Kpm,
+                module = kpmRaw,
+                sections = shellSnapshot,
+                activatorPath = KPM_ACTIVATOR,
+            )?.let { renderModuleIntegrityProblem(it, res) }
+                ?: classifyKpmProblem(kpmRaw, kpmLoadStatus, currentBootId)
+                    ?.let { renderKpmProblem(it, res) }
+        }
+    val kpm = kpmRaw.withBrokenReason(kpmProblem?.reason).withPendingReboot(kpmPendingReboot)
     VpnHideLog.i(TAG, "kpm (with brokenReason): $kpm")
 
     val zygiskProblem =
-        moduleIntegrityProblem(
-            kind = FlashableModuleKind.Zygisk,
-            module = zygiskRaw,
-            sections = shellSnapshot,
-            activatorPath = ZYGISK_ACTIVATOR,
-        )?.let { renderModuleIntegrityProblem(it, res) }
-    val zygisk = zygiskRaw.withBrokenReason(zygiskProblem?.reason)
+        if (zygiskPendingReboot) {
+            null
+        } else {
+            moduleIntegrityProblem(
+                kind = FlashableModuleKind.Zygisk,
+                module = zygiskRaw,
+                sections = shellSnapshot,
+                activatorPath = ZYGISK_ACTIVATOR,
+            )?.let { renderModuleIntegrityProblem(it, res) }
+        }
+    val zygisk = zygiskRaw.withBrokenReason(zygiskProblem?.reason).withPendingReboot(zygiskPendingReboot)
 
     val portsProblem =
-        moduleIntegrityProblem(
-            kind = FlashableModuleKind.Ports,
-            module = portsRaw,
-            sections = shellSnapshot,
-            activatorPath = PORTS_ACTIVATOR,
-        )?.let { renderModuleIntegrityProblem(it, res) }
-    val ports = portsRaw.withBrokenReason(portsProblem?.reason)
+        if (portsPendingReboot) {
+            null
+        } else {
+            moduleIntegrityProblem(
+                kind = FlashableModuleKind.Ports,
+                module = portsRaw,
+                sections = shellSnapshot,
+                activatorPath = PORTS_ACTIVATOR,
+            )?.let { renderModuleIntegrityProblem(it, res) }
+        }
+    val ports = portsRaw.withBrokenReason(portsProblem?.reason).withPendingReboot(portsPendingReboot)
 
     // The one place all three backends are grouped together — every
     // "is anything installed / active" gate below reads from this instead of
@@ -1632,6 +1660,15 @@ internal suspend fun loadDashboardState(
     kpmProblem?.let { err(it.text) }
     zygiskProblem?.let { err(it.text) }
     portsProblem?.let { err(it.text) }
+
+    // ── Warnings: modules installed but staged for the next reboot ──
+    fun rebootWarn(moduleName: String) {
+        warn(res.getString(R.string.dashboard_issue_module_reboot_to_activate, moduleName))
+    }
+    if (kmodPendingReboot) rebootWarn("kmod")
+    if (kpmPendingReboot) rebootWarn("KPM")
+    if (zygiskPendingReboot) rebootWarn("Zygisk")
+    if (portsPendingReboot) rebootWarn("Ports")
 
     // ── Protection checks ──
     StartupTrace.mark("dashboard_protection_start")

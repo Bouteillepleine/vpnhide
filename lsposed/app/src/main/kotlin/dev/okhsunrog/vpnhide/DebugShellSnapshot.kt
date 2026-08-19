@@ -121,6 +121,22 @@ internal fun buildDebugShellSnapshotCommand(): String =
         echo "(missing: ${'$'}PATH_TO_HASH)"
       fi
     }
+    # Reports the copy staged in modules_update/ awaiting the next reboot. A
+    # complete staged install with the active activator absent means "installed,
+    # reboot needed" rather than a corrupt install (matches pending_update in the
+    # runtime snapshot).
+    staged_state() {
+      STAGED=/data/adb/modules_update/${'$'}{1##*/}
+      if [ ! -d "${'$'}STAGED" ]; then
+        echo "staged=0"
+      elif [ -x "${'$'}STAGED/activator" ]; then
+        echo "staged=1 staged_activator=executable"
+      elif [ -e "${'$'}STAGED/activator" ]; then
+        echo "staged=1 staged_activator=not_executable"
+      else
+        echo "staged=1 staged_activator=missing"
+      fi
+    }
     redact_cmdline() {
       sed -E \
         -e 's/(androidboot[.]serialno=)[^ ]+/\1<redacted>/g' \
@@ -223,13 +239,13 @@ internal fun buildDebugShellSnapshotCommand(): String =
     '
 
     emit_file kmod_prop $KMOD_MODULE_DIR/module.prop
-    emit_eval kmod_module_state 'file_flags $KMOD_MODULE_DIR; hash_file $KMOD_MODULE_DIR/vpnhide_kmod.ko; hash_file $KMOD_ACTIVATOR'
+    emit_eval kmod_module_state 'file_flags $KMOD_MODULE_DIR; hash_file $KMOD_MODULE_DIR/vpnhide_kmod.ko; hash_file $KMOD_ACTIVATOR; staged_state $KMOD_MODULE_DIR'
     emit_file kmod_load_status $KMOD_LOAD_STATUS_FILE
     emit_file kmod_load_dmesg $KMOD_LOAD_DMESG_FILE
     emit_eval kmod_state '[ -e $PROC_CTL ] && cat $PROC_CTL 2>&1 || echo "(missing: $PROC_CTL)"'
 
     emit_file kpm_prop $KPM_MODULE_DIR/module.prop
-    emit_eval kpm_module_state 'file_flags $KPM_MODULE_DIR; hash_file $KPM_MODULE_DIR/vpnhide.kpm; hash_file $KPM_ACTIVATOR'
+    emit_eval kpm_module_state 'file_flags $KPM_MODULE_DIR; hash_file $KPM_MODULE_DIR/vpnhide.kpm; hash_file $KPM_ACTIVATOR; staged_state $KPM_MODULE_DIR'
     emit_file kpm_load_status $KPM_LOAD_STATUS_FILE
     emit_eval kpm_state '
       if [ -x $KPM_ACTIVATOR ] && [ ! -f $KPM_MODULE_DIR/disable ]; then
@@ -262,7 +278,7 @@ internal fun buildDebugShellSnapshotCommand(): String =
     '
 
     emit_file zygisk_prop $ZYGISK_MODULE_DIR/module.prop
-    emit_eval zygisk_module_state 'file_flags $ZYGISK_MODULE_DIR; hash_file $ZYGISK_MODULE_DIR/zygisk/arm64-v8a.so; hash_file $ZYGISK_ACTIVATOR'
+    emit_eval zygisk_module_state 'file_flags $ZYGISK_MODULE_DIR; hash_file $ZYGISK_MODULE_DIR/zygisk/arm64-v8a.so; hash_file $ZYGISK_ACTIVATOR; staged_state $ZYGISK_MODULE_DIR'
     emit_file zygisk_status $ZYGISK_STATUS_FILE
     emit_eval zygisk_runtime '
       for BASE in /data/adb/modules /data/adb/modules_update; do
@@ -272,7 +288,7 @@ internal fun buildDebugShellSnapshotCommand(): String =
     '
 
     emit_file ports_prop $PORTS_MODULE_DIR/module.prop
-    emit_eval ports_module_state 'file_flags $PORTS_MODULE_DIR; hash_file $PORTS_ACTIVATOR'
+    emit_eval ports_module_state 'file_flags $PORTS_MODULE_DIR; hash_file $PORTS_ACTIVATOR; staged_state $PORTS_MODULE_DIR'
     emit_file ports_load_status $PORTS_LOAD_STATUS_FILE
     emit_file ports_load_log $PORTS_LOAD_LOG_FILE
     emit_eval ports_state '

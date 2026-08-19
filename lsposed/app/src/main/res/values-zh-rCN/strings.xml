@@ -131,6 +131,7 @@
     <string name="dashboard_not_installed">未安装</string>
     <string name="dashboard_installed_inactive">已安装，未启用</string>
     <string name="dashboard_installed_restart_app">已安装，重启 VPN Hide 后生效</string>
+    <string name="dashboard_module_installed_reboot_needed">已安装，需要重启</string>
     <string name="dashboard_kmod_broken_wrong_variant">已安装，GKI 变体不匹配</string>
     <string name="dashboard_kmod_broken_unsupported_kernel">已安装，内核不受支持</string>
     <string name="dashboard_kmod_broken_no_kprobes">已安装，内核不支持 kprobes</string>
@@ -318,6 +319,7 @@
     <string name="dashboard_issue_native_conflict_kernel">内核模块（.ko）和 KPM 同时装着。它们挂钩相同的内核函数，两个都生效可能导致设备硬冻结。请只保留其一——卸载内核模块或 KPM。</string>
     <string name="dashboard_issue_native_conflict_deferred">内核模块（.ko）和 KPM 同时装着。KPM 已在开机时主动让位以避免冻结，因此没有起任何作用。请只保留其一——卸载 KPM（或内核模块）。</string>
     <string name="dashboard_issue_kpm_awaiting_superkey">KPM 已安装但未生效：APatch/FolkPatch 无法用受信任的 su 令牌加载它。请在“设置 → 安全”中保存 SuperKey，然后重启以启用原生隐藏。</string>
+    <string name="dashboard_issue_module_reboot_to_activate">%1$s 模块已安装，但尚未启用 — 重启设备后生效。</string>
     <string name="dashboard_issue_module_activator_missing">%1$s 模块安装已损坏：缺少激活器（%2$s）。请从最新发行版重新安装该模块 ZIP。</string>
     <string name="dashboard_issue_module_activator_not_executable">%1$s 模块安装已损坏：激活器不可执行（%2$s）。请从最新发行版重新安装该模块 ZIP。</string>
     <string name="dashboard_issue_kpm_bundle_activator_missing">KPM 模块安装已损坏：缺少激活器（%1$s）。请通过 Root 管理器的模块界面，把完整的 vpnhide-kpm.zip 作为兼容 APM/Magisk 的模块安装；不要单独解压或加载里面的 vpnhide.kpm 文件。</string>

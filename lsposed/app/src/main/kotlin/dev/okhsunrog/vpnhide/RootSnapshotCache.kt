@@ -204,6 +204,21 @@ internal fun buildRootShellSnapshotCommand(
         echo missing
       fi
     }
+    # 1 when a complete module is staged in modules_update/ awaiting the next
+    # reboot: the root manager keeps the freshly-installed files (activator,
+    # scripts, payload) there and only swaps them into modules/ on boot, so the
+    # active dir legitimately has no activator yet. Distinguishes "just
+    # installed, reboot needed" from a genuinely corrupt install.
+    pending_update() {
+      STAGED=/data/adb/modules_update/${'$'}{1##*/}
+      if [ -x "${'$'}STAGED/activator" ]; then
+        echo 1
+      elif [ -f "${'$'}1/update" ] && [ -d "${'$'}STAGED" ]; then
+        echo 1
+      else
+        echo 0
+      fi
+    }
     now_ms() {
       if [ -n "${'$'}{EPOCHREALTIME:-}" ]; then
         SEC="${'$'}{EPOCHREALTIME%.*}"
@@ -247,6 +262,10 @@ internal fun buildRootShellSnapshotCommand(
       emit_eval kpm_disabled '[ -f $KPM_MODULE_DIR/disable ] && echo 1 || echo 0'
       emit_eval zygisk_disabled '[ -f $ZYGISK_MODULE_DIR/disable ] && echo 1 || echo 0'
       emit_eval ports_disabled '[ -f $PORTS_MODULE_DIR/disable ] && echo 1 || echo 0'
+      emit_eval kmod_pending_update 'pending_update $KMOD_MODULE_DIR'
+      emit_eval kpm_pending_update 'pending_update $KPM_MODULE_DIR'
+      emit_eval zygisk_pending_update 'pending_update $ZYGISK_MODULE_DIR'
+      emit_eval ports_pending_update 'pending_update $PORTS_MODULE_DIR'
       phase_end
     }
     phase_target_files() {
