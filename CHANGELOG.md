@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v1.2.1
+
+### Changed
+- The KPM (KernelPatch Module) backend is now considered stable — its experimental/beta labels and the "if something breaks, fall back" warning cards have been removed.
+
+### Fixed
+- A freshly installed native module (kmod/KPM) that is only waiting for its first reboot now shows "Installed, reboot needed" instead of a misleading "installation corrupted — reinstall" error.
+- Kernel module (.ko) no longer fails to load on OEM kernels that don't export path_put (e.g. some OnePlus android14-6.1 builds), where the backend showed as installed but inactive with a "missing vpnhide_kmod.ko" error.
+- Port-hiding activation no longer fails when another process (netd, an OEM firewall) briefly holds the iptables lock — the activator now waits for the lock instead of aborting the whole apply.
+- When the KPM backend is installed but the kernel has no live KernelPatch runtime to load it (detected via `kpatch hello`, the same check KPatch-Next uses), the dashboard now tells you to install the KPatch-Next-Module and patch your kernel from its interface — or use APatch/FolkPatch — instead of a cryptic "kpatch CLI not found — reinstall the zip" error.
+
 ## v1.2.0
 
 ### Added

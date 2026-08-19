@@ -1,6 +1,41 @@
 {
   "history": [
     {
+      "version": "1.2.1",
+      "sections": [
+        {
+          "type": "changed",
+          "items": [
+            {
+              "en": "The KPM (KernelPatch Module) backend is now considered stable — its experimental/beta labels and the \"if something breaks, fall back\" warning cards have been removed.",
+              "ru": "Бэкенд KPM (KernelPatch Module) теперь считается стабильным — убраны пометки «экспериментальный/бета» и предупреждающие карточки «если что-то сломается, откатитесь»."
+            }
+          ]
+        },
+        {
+          "type": "fixed",
+          "items": [
+            {
+              "en": "A freshly installed native module (kmod/KPM) that is only waiting for its first reboot now shows \"Installed, reboot needed\" instead of a misleading \"installation corrupted — reinstall\" error.",
+              "ru": "Свежеустановленный нативный модуль (kmod/KPM), которому нужна лишь первая перезагрузка, теперь показывает «Установлен, нужна перезагрузка» вместо вводящей в заблуждение ошибки «установка повреждена — переустановите»."
+            },
+            {
+              "en": "Kernel module (.ko) no longer fails to load on OEM kernels that don't export path_put (e.g. some OnePlus android14-6.1 builds), where the backend showed as installed but inactive with a \"missing vpnhide_kmod.ko\" error.",
+              "ru": "Модуль ядра (.ko) больше не отказывается загружаться на прошивках, где ядро не экспортирует path_put (например, некоторые сборки OnePlus android14-6.1) — раньше бэкенд отображался как установленный, но неактивный, с ошибкой об отсутствии vpnhide_kmod.ko."
+            },
+            {
+              "en": "Port-hiding activation no longer fails when another process (netd, an OEM firewall) briefly holds the iptables lock — the activator now waits for the lock instead of aborting the whole apply.",
+              "ru": "Активация скрытия портов больше не срывается, когда блокировку iptables на мгновение держит другой процесс (netd, фаервол прошивки) — активатор теперь ждёт освобождения блокировки, а не прерывает всю настройку."
+            },
+            {
+              "en": "When the KPM backend is installed but the kernel has no live KernelPatch runtime to load it (detected via `kpatch hello`, the same check KPatch-Next uses), the dashboard now tells you to install the KPatch-Next-Module and patch your kernel from its interface — or use APatch/FolkPatch — instead of a cryptic \"kpatch CLI not found — reinstall the zip\" error.",
+              "ru": "Когда KPM установлен, но у ядра нет живого runtime KernelPatch для его загрузки (определяется через `kpatch hello` — так же, как это делает KPatch-Next), на обзоре теперь предлагается установить KPatch-Next-Module и пропатчить ядро в его интерфейсе — или использовать APatch/FolkPatch — вместо непонятной ошибки «kpatch CLI not found — переустановите zip»."
+            }
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.2.0",
       "sections": [
         {
