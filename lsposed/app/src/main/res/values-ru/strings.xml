@@ -379,7 +379,7 @@
     <string name="debug_export_modal_title">Что включить</string>
     <string name="debug_export_modal_confirm">Экспорт</string>
     <string name="debug_export_collect_again">Собрать заново</string>
-    <string name="debug_export_opt_forensics">Форензик-логи</string>
+    <string name="debug_export_opt_forensics">Расширенный лог</string>
     <string name="debug_export_opt_forensics_desc">dmesg, logcat и сырые пробы ядра/сети. Файл больше; обычно именно это и нужно для баг-репорта.</string>
     <string name="debug_export_opt_applist">Список приложений</string>
     <string name="debug_export_opt_applist_desc">Раскрывает, какие приложения у тебя установлены. По умолчанию выкл; включай только по просьбе разработчика.</string>

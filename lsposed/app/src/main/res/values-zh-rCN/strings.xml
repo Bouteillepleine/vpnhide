@@ -83,7 +83,7 @@
     <string name="debug_export_modal_title">包含哪些内容</string>
     <string name="debug_export_modal_confirm">导出</string>
     <string name="debug_export_collect_again">重新收集</string>
-    <string name="debug_export_opt_forensics">取证日志</string>
+    <string name="debug_export_opt_forensics">详细日志</string>
     <string name="debug_export_opt_forensics_desc">dmesg、logcat 及内核/网络原始探测。文件更大；通常正是错误报告所需。</string>
     <string name="debug_export_opt_applist">已安装应用列表</string>
     <string name="debug_export_opt_applist_desc">会暴露你安装了哪些应用。默认关闭；仅在开发者要求时开启。</string>
