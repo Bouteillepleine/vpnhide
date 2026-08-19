@@ -78,7 +78,6 @@ internal fun parsePackageInventory(
     val profiles = parseUserProfiles(usersRaw)
     val userListStatuses = parseUserListStatuses(usersRaw)
     val packageStatuses = linkedMapOf<Int, Int>()
-    val usersWithPackages = mutableSetOf<Int>()
     val packages = linkedMapOf<String, MutablePackageInventoryEntry>()
     var currentUserId: Int? = null
 
@@ -102,7 +101,6 @@ internal fun parsePackageInventory(
                 if (entry.apkPath == null) entry.apkPath = parsed.apkPath
                 val userIds = currentUserId?.let(::listOf) ?: parsed.uids.map { it / PACKAGE_UIDS_PER_USER }
                 userIds.forEach { userId ->
-                    usersWithPackages += userId
                     entry.uidsByUser.getOrPut(userId) { linkedSetOf() }.addAll(parsed.uids)
                 }
             }
@@ -110,7 +108,14 @@ internal fun parsePackageInventory(
     }
 
     val expectedUserIds = profiles.keys
-    val failedUserIds = expectedUserIds.filterTo(sortedSetOf()) { packageStatuses[it] != 0 || it !in usersWithPackages }
+    // A profile is failed only when its scan did not succeed: a non-zero
+    // `pm list packages` exit, or no END marker at all (a truncated scan →
+    // status is null → null != 0). An exit-0 scan that returned no packages is
+    // a *success* — the profile is legitimately empty (seen on a Motorola
+    // vendor profile: user 10 running, exit 0, zero packages). Treating
+    // empty-but-successful as a failure used to block the whole app list with
+    // "couldn't read all profiles".
+    val failedUserIds = expectedUserIds.filterTo(sortedSetOf()) { packageStatuses[it] != 0 }
     val userListComplete = userListStatuses.any { it == 0 } && expectedUserIds.isNotEmpty()
     return PackageInventory(
         packages = packages.mapValues { (_, entry) -> entry.freeze() },

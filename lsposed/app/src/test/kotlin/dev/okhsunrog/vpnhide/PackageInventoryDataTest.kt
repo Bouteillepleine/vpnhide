@@ -62,12 +62,14 @@ class PackageInventoryDataTest {
     }
 
     @Test
-    fun `successful but empty profile output is incomplete`() {
+    fun `a profile that scans successfully but empty is not a failure`() {
+        // Motorola vendor profile: user 10 is running, pm exits 0, but returns
+        // zero packages. A successful empty scan must not block the whole list.
         val users =
             """
             ${PM_USERS_STATUS_PREFIX}plain:0
-            UserInfo{0:Owner:c13}
-            UserInfo{10:Private:1030}
+            UserInfo{0:Owner:c13} running
+            UserInfo{10:Vendor:1001010} running
             """.trimIndent()
         val packages =
             """
@@ -76,6 +78,30 @@ class PackageInventoryDataTest {
             $PM_USER_END_PREFIX${0}:0
             $PM_USER_BEGIN_PREFIX${10}
             $PM_USER_END_PREFIX${10}:0
+            """.trimIndent()
+
+        val inventory = parsePackageInventory(packages, users)
+
+        assertTrue(inventory.complete)
+        assertTrue(inventory.failedUserIds.isEmpty())
+    }
+
+    @Test
+    fun `a truncated scan with no end marker is still a failure`() {
+        // User 10 is listed but its per-user block never closed (no END marker),
+        // so its status is unknown — treat that as a failure, not a success.
+        val users =
+            """
+            ${PM_USERS_STATUS_PREFIX}plain:0
+            UserInfo{0:Owner:c13} running
+            UserInfo{10:Work:1030} running
+            """.trimIndent()
+        val packages =
+            """
+            $PM_USER_BEGIN_PREFIX${0}
+            package:/system/framework/framework-res.apk=android uid:1000
+            $PM_USER_END_PREFIX${0}:0
+            $PM_USER_BEGIN_PREFIX${10}
             """.trimIndent()
 
         assertEquals(setOf(10), parsePackageInventory(packages, users).failedUserIds)
