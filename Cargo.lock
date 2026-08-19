@@ -511,7 +511,7 @@ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
 name = "vpnhide_activator"
-version = "1.1.1"
+version = "1.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -525,7 +525,7 @@ version = "1.1.1"
 
 [[package]]
 name = "vpnhide_protocol"
-version = "1.1.1"
+version = "1.2.0"
 
 [[package]]
 name = "vpnhide_protocol_diff"
@@ -538,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "vpnhide_zygisk"
-version = "1.1.1"
+version = "1.2.0"
 dependencies = [
  "android_logger",
  "cmake",

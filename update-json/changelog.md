@@ -1,3 +1,50 @@
+## v1.2.0
+
+### Added
+- Selected apps can no longer bind sockets to hidden VPN interfaces through SO_BINDTODEVICE or SO_BINDTOIFINDEX on the kernel backends, with a best-effort libc fallback for Zygisk-only installs.
+- KPM supports Android 4.9 kernels, with the matching in-app installation recommendation; legacy 4.14/4.19 validation moved to pinned AOSP common reference kernels.
+- Zygisk now hides VPN routing policy rules (ip rule / RTM_GETRULE) from target apps — a detection vector that previously only the kernel backends (.ko / KPM) covered, so Zygisk-only devices leaked it.
+- Simplified Chinese (zh-rCN) app translation and a Chinese README.
+- The Dashboard shows a one-time support request once hiding is confirmed working, with Support and Hide.
+- The minimum supported Android version is now 9 (API 28).
+- Optional filesystem path hiding for VPN interfaces under sysfs and /proc/sys/net, on all three native backends. It is an explicit opt-in: the UI warns about the possible slowdown and shows whether the reboot has taken effect. kmod and KPM apply it after a reboot and install no VFS hooks at all while it is off; Zygisk covers it best-effort in-process, filtering both libc readdir and raw getdents64 so native and Rust callers cannot enumerate those directories either.
+- Settings has a "Support the project" entry with Boosty and crypto donation options.
+
+### Changed
+- The GKI kernel module stays loaded until reboot, matching the Magisk, KernelSU, and APatch module lifecycle.
+- Detailed diagnostics headlines how many vectors are hidden vs leaking instead of a misleading passed-count.
+- Diagnostics debug export now records each check's full outcome (leak / hidden by backend / hidden by SELinux) and the root ground-truth behind it, plus each layer's verdict and a machine-readable diagnostics.json — instead of a plain pass/fail list.
+- The native backend target limit is raised from 64 to 160 UIDs, while oversized KPM control payloads stay fail-safe.
+- The app now blocks Native selections beyond 159 resolved app UIDs, reserves one backend slot for VPN Hide, and prevents secondary-profile copies from changing the shared configuration.
+- Diagnostics no longer treats detection vectors that no active backend can cover on this device as errors: the Dashboard stays clean when the active module hides everything it can, and such vectors are shown neutrally ("not covered") in the detailed breakdown instead of as red leaks.
+
+### Fixed
+- VPN interfaces named for Tailscale, ZeroTier, and Hurricane Electric IPv6 tunnels are now hidden consistently across every backend.
+- Stale SIOCGIFCONF buffer entries are cleared, so apps cannot recover hidden VPN interface names past the returned length.
+- Apps in a user profile the system leaves nameless (cloned apps, private space) are labelled by profile type in the Hiding list instead of a bare user ID — rows like "Beeline (10)" read as leftovers from an already uninstalled app.
+- The Dashboard no longer says the VPN is off when a diagnostics run actually failed (root dropped); it shows a distinct retry prompt.
+- Apps from work, private, clone, and secondary profiles no longer go missing from the Hiding list on ROMs with incomplete multi-user package enumeration.
+- KPM rejects unvalidated kernel families before loading and reports the exact incompatibility in the app, and uses raw user-copy routines only where the kernel or hardware PAN makes them safe.
+- KPM telemetry now reports failed userspace copies instead of returning a false successful byte count.
+- Concurrent KPM configuration updates now use a race-free snapshot protocol.
+- Malformed custom port policies no longer expand into all-port blocking.
+- The app now detects when vpnhide.kpm was installed by itself instead of the complete KPM module ZIP and explains how to repair the installation.
+- The Dashboard and Diagnostics screens now agree on why a check is blocked, and a pending self-restart is shown ahead of a VPN-off prompt.
+- The Hiding screen now warns after Save when the native backend's resolved UID limit leaves some selected app profiles without Native protection.
+- A target list that exceeds KernelPatch's 1024-byte control buffer is now rejected with a clear capacity error — by the activator before it is sent, and by the kernel and KPM backends on receipt — instead of being silently truncated, which could leave some selected apps unprotected.
+- Native backend statistics no longer stop at a fixed KPM or kernel-module output buffer; a readout that does hit the limit ends on a complete record and is marked partial instead of being counted as whole.
+- VPN Hide no longer targets packages that share a platform identity such as android.uid.system. Selecting one used to write a rule against every system component running under that same UID, which could break connectivity; vendor-preinstalled apps have ordinary app UIDs and are unaffected.
+- The Dashboard detects missing or non-executable module activators directly, and Save reports a corrupted module bundle instead of silently skipping it.
+- Zygisk native mode now works in 32-bit app processes: the module ships an armeabi-v7a build alongside arm64-v8a (previously NeoZygisk failed to load it into processes forked from zygote32, e.g. on Samsung devices).
+- Diagnostics no longer reports an unobservable check as a pass or a leak: a push-callback that never arrives and a network-interface enumeration that throws are now shown as "not measured" instead of a misleading green or red verdict.
+- KPM backend now hides ioctl(SIOCGIFINDEX) interface-index probes (used by if_nametoindex), closing a VPN-presence leak that the .ko and Zygisk backends already blocked.
+- The app no longer fails to load its state when a config file lacks a trailing newline.
+- Zygisk no longer leaks hidden VPN interfaces through scatter/gather netlink reads.
+
+### Removed
+- The obsolete decimal KPM load-argument format is gone; load-time configuration now uses the control v2 snapshot.
+- The retired pre-v1.0 per-backend storage migration is gone; the canonical JSON config is now the only configuration source.
+
 ## v1.1.1
 
 ### Fixed
@@ -85,29 +132,3 @@
 ### Fixed
 - Kmod install recommendation no longer falsely pushes users to Zygisk on custom kernels whose `uname -r` lacks the GKI KMI tag (e.g. `android12`, `android13`). The heuristic now matches only the parsed KMI — not the phone's Android OS release, which is an unrelated label — and falls back on kernel series when the KMI is missing: 6.1 / 6.6 / 6.12 each ship a single KMI variant and are still unambiguous; 5.10 and 5.15 each have two candidates, both of which the app now surfaces (primary + alternative), with a dedicated banner when the installed variant fails to load so the user knows to try the other. An active kmod — `/proc/vpnhide_targets` present — also overrides any remaining heuristic-driven warning.
 - Polish multi-profile app list: the Show system filter now classifies apps installed only in a secondary profile correctly, and the user-ID suffix no longer appears on every row for users without a secondary profile
-
-## v0.7.0
-
-### Added
-- Dashboard now splits issues into Errors (red, block protection) and Warnings (amber, setup is suboptimal but working). Four new warnings: kernel supports kmod but only Zygisk is installed; kmod and Zygisk both active simultaneously (means you have to remember per-app Z-off for banking / payment apps that detect Zygisk); debug logging left on; SELinux in Permissive mode (exposes six detection vectors that VPN Hide relies on the kernel to block).
-- Debug logging toggle in Diagnostics: off by default — VPN Hide, LSPosed hooks (VpnHide-NC/NI/LP and the package-visibility filter), and zygisk keep logcat near-silent. Start recording and Collect debug log automatically enable verbose logging for the duration of the capture and restore it afterwards, so the toggle is only needed if you want logs emitted continuously outside a capture. Errors always pass through so hook-install failures remain visible.
-- Diagnose wrong-variant kmod installs: Dashboard surfaces when the installed kernel module is built for a different GKI variant than your kernel (e.g. android13-5.10 installed on android14-6.1), when your kernel is missing kretprobes, or has no compatible kmod variant at all — and points to the right zip. The same boot-time insmod status is bundled into the Collect debug log zip on the Diagnostics screen for bug reports.
-- Expand Russian-apps filter: Pribyvalka 63, RosDomofon, Drivee, Setka, Twinby, GoodLine (4pda user feedback).
-- Expand Russian-apps filter: Youla, Delivery Club, SDEK, Russian Post, Dom.ru, ConsultantPlus, etc. — local retailers, pharmacies, food chains and services.
-- Multi-profile support: VPN Hide now targets every instance of a selected app across user profiles (work profile, MIUI Second Space, Private Space, secondary users). Previously hooks only matched the app in your primary profile — a work-profile Ozon would still see the VPN. Package-to-UID resolution at boot + at Save time now uses 'pm list packages -U --user all' and writes every UID to targets, so all profiles are covered automatically without any UI changes. Fixes the work-profile request in issue #15.
-
-### Changed
-- Changelog entries now live as per-PR Markdown fragments under changelog.d/ instead of a shared JSON section, and CHANGELOG.md is regenerated only at release time, so concurrent PRs no longer conflict on the changelog.
-- Dashboard no longer re-runs all checks (module detection, kprobes, SELinux, target counts, GitHub update check, etc.) on every tab switch. State is loaded once at startup and cached in RAM; the Refresh button in the top bar forces a reload. Update check is cached for 6 hours and re-runs when the app comes back to the foreground after sitting in the background longer than that — no background jobs, no notifications, just reactive to app lifecycle.
-- Help text on Protection screens (Tun / Apps / Ports) moved from a hard-to-discover ? icon in the top bar to always-visible collapsible cards at the top of each list. Users who read and understood the hints can collapse them — the state is remembered across app restarts.
-- Installed-app list is now loaded once at app start and cached in RAM, so switching between Protection tabs is instant instead of waiting for the icon+label load every time. Added a refresh button in the top bar to force a reload (also re-reads the per-screen target/observer files).
-- Diagnostics and Protection tabs now open instantly after the first load. Previously each tab switch re-ran all root-shell probes (module detection, target/observer files, pm lookups, 500ms of check functions), now those results live in process-lifetime caches. Diagnostics specifically: checks run once when VPN is first detected active, then results are fixed for the process — hooks don't change mid-session, so re-running is pointless. When VPN is off, both Dashboard and Diagnostics show a shared "turn on VPN, then Retry" banner. Log-capture tools (debug logging toggle, logcat recorder, debug-zip export) are now always visible on Diagnostics, regardless of VPN state.
-- Diagnostics tab opens instantly even on the first time you tap it. The cache that stores the protection-check results now starts running in the background as soon as the app launches, instead of waiting for you to navigate to the tab — by the time you switch from Dashboard to Diagnostics, the results are usually already there.
-- Tun help accordion now spells out which layers need a target-app restart after Save: L (LSPosed) and K (kmod) apply immediately, Z (Zygisk) hooks are per-process so any just-toggled target with Z needs a force-stop + reopen to pick up the change.
-
-### Fixed
-- App Hiding: marking the same app as both H (Hidden) and O (Observer) caused it to crash on startup — the app would query its own PackageInfo, our system_server hook matched it as an observer and stripped its own package from the result, and the framework bailed. Roles are now mutually exclusive: toggling one clears the other, and existing H+O configs are migrated to O-only on first launch.
-- Dashboard now shows a consistent version string for all modules. Kernel-module, Zygisk and Ports module cards used to display the Magisk-style 'vX.Y.Z' from their module.prop, while the LSPosed hook module card showed the Android-style 'X.Y.Z' from the APK's versionName — on the same screen, for the same version number. The 'v' prefix is now stripped at parse time so every card reads 'X.Y.Z' (or 'X.Y.Z-N-gSHA' for dev builds).
-- Dev builds of the app no longer trigger a false 'module version mismatch' warning on the Dashboard. The check now strips the git-describe dev suffix (e.g. 0.6.2-14-g1f2205e vs module 0.6.2) before comparing.
-- Dev builds of the app now correctly receive "new version available" notifications. The comparison used to bail on the git-describe suffix (0.6.2-14-gSHA) and silently treat it as "no update", so testers running dev APKs never saw release prompts.
-- Protection toolbar: the filter icon indicator for "filter is applied" no longer blends into the topbar background on Material You palettes. Active state is now a FilledIconButton (primary / onPrimary pair, guaranteed contrast) instead of a plain icon tinted with primary on top of primaryContainer.
