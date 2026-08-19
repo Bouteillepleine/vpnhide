@@ -3,7 +3,7 @@
 # header), so ruff is a dev/CI tool here, never a runtime dependency.
 
 [tool.ruff]
-required-version = "==0.15.20"
+required-version = "==0.16.3"
 target-version = "py312"  # CI image (Ubuntu 24.04) ships Python 3.12
 line-length = 100
 extend-exclude = [

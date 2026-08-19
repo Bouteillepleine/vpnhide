@@ -12,7 +12,7 @@ permissions:
   packages: read
 
 env:
-  RUFF_VERSION: "0.15.20"
+  RUFF_VERSION: "0.16.3"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
