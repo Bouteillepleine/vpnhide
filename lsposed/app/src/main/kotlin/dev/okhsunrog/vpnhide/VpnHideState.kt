@@ -185,6 +185,10 @@ private val REDACTED_SECTIONS = setOf("pm_packages", "pm_users")
 /** Drop user-identifying sections from a dumped section map. */
 internal fun redactSections(sections: Map<String, String>): Map<String, String> = sections - REDACTED_SECTIONS
 
+/** Parse the raw canonical-config section into structured JSON, or null if absent/unparseable. */
+private fun parseCanonicalConfigSection(raw: String?): JsonElement? =
+    raw?.takeIf { it.isNotBlank() }?.let { runCatching { Json.parseToJsonElement(it) }.getOrNull() }
+
 /**
  * Fold one capture into the canonical [VpnHideState]. The module/liveness state is
  * derived from [rootSnapshot] — the SAME snapshot the live dashboard uses — so the
@@ -268,7 +272,9 @@ internal fun buildVpnHideState(
         ports = ports,
         kmodLoadStatus = kmodLoadStatus,
         dashboard = dashboard,
-        config = config,
+        // Explicit config (the bridge lean call) wins; otherwise derive it from the
+        // raw canonical-config section so the file export carries it structured too.
+        config = config ?: parseCanonicalConfigSection(rootSections["canonical_config"]),
         statistics = statistics,
         rootShell = RootShellDiag.from(rootSections),
         // Raw sections only in a forensic capture. Forensic (shell) sections on top of
