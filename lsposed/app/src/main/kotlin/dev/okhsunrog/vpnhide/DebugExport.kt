@@ -25,92 +25,107 @@ internal data class DiagnosticFileEntry(
 // ==========================================================================
 
 /**
- * Collect the whole app state into one [VpnHideState] and write it as a single
- * `vpnhide_debug_<ts>.json`. Module/liveness state is derived from the same
- * [RootSnapshotCache] the live dashboard uses (so the dump can't disagree with the
- * screen), the diagnostics run is folded into the canonical [DiagnosticReport], and
- * the heavy forensic captures ride along as raw sections + log blobs. The document
- * always serializes — partial-capture failures are recorded in `errors`, never lost.
+ * The single debug-export entry point behind the Diagnostics "Collect" modal. The
+ * [options] (forensics / app-list) drive the JSON content — the SAME type the agent
+ * bridge getState takes — and [attachKernelImage] decides the container: a plain
+ * `.json`, or a `.zip` bundling the boot/kernel images next to that same state.json.
  */
-@Suppress("LongMethod")
-internal suspend fun exportDebugJson(
+internal suspend fun exportDebug(
     cm: ConnectivityManager,
     context: Context,
     selfNeedsRestart: Boolean,
+    options: StateContentOptions,
+    attachKernelImage: Boolean,
 ): File? =
     withContext(Dispatchers.IO) {
-        // Force-enable debug logging across app, system_server and active native
-        // sinks while the capture runs; the session records what it applied/restored.
-        val loggingSession = beginDebugCaptureLogging()
-        var restoreAttempted = false
-        val errors = mutableListOf<String>()
         try {
-            val counterBaseline = collectHookCounterSnapshot()
-            // Clear dmesg so we only capture output from the hooks the checks fire.
-            suExec("dmesg -c > /dev/null 2>&1")
-            val checkResults = runAllChecks(cm, context)
-            val (_, dmesg) = suExec("dmesg 2>/dev/null")
-
-            // Authoritative module/liveness state — the SAME snapshot the dashboard
-            // derives from. This is what fixes the old export path silently reading
-            // "inactive" from a shell that never emitted proc_exists/ports_chain.
-            val rootSnapshot =
-                runCatching { RootSnapshotCache.refresh() }
-                    .getOrElse {
-                        errors += "root snapshot failed: ${it.message}"
-                        RootSnapshot(emptyMap())
-                    }
-            val shellSnapshot = collectDebugShellSnapshot()
-            if (shellSnapshot.exitCode != 0) errors += "debug shell exit=${shellSnapshot.exitCode}"
-            shellSnapshot.sections["debug_snapshot_truncated"]?.let { errors += "snapshot truncated at: $it" }
-
-            val logcat = captureDebugLogcat()
-            val restore = restoreDebugCaptureLogging(loggingSession)
-            restoreAttempted = true
-            val session = loggingSession.withRestore(restore)
-
-            val gate =
-                resolveDiagnosticGate(
-                    vpnActive = isVpnActive(),
-                    selfRouted = GroundTruthProbe.selfRoutedThroughVpn(context),
-                    selfNeedsRestart = selfNeedsRestart,
-                )
-            val state =
-                buildVpnHideState(
-                    context = context,
-                    captureKind = "debug",
-                    generatedAt = isoNow(),
-                    selfNeedsRestart = selfNeedsRestart,
-                    rootSnapshot = rootSnapshot,
-                    shellSnapshot = shellSnapshot,
-                    gate = gate,
-                    checkResults = checkResults,
-                    dmesg = dmesg,
-                    logcat = logcat.ifEmpty { "(no logcat entries)" },
-                    bootLsposedLogcat = captureBootLsposedLogcat(),
-                    lsposedConfigDb = buildLsposedConfigText(context),
-                    hookReport = buildHookDiagnosticsText(context, shellSnapshot, counterBaseline),
-                    debugCapture = session.toDebugCaptureInfo(),
-                    errors = errors,
-                )
-
+            val state = buildDebugState(cm, context, selfNeedsRestart, options)
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val jsonFile = File(context.cacheDir, "vpnhide_debug_$timestamp.json")
-            jsonFile.writeText(state.toJson())
-            jsonFile
+            if (attachKernelImage) {
+                writeKernelBundleZip(context, timestamp, state.toJson())
+            } else {
+                File(context.cacheDir, "vpnhide_debug_$timestamp.json").apply { writeText(state.toJson()) }
+            }
         } catch (c: CancellationException) {
-            // The finally below still restores debug logging; don't mask cancellation
-            // as a normal "export failed" — rethrow for structured concurrency.
             throw c
         } catch (e: Exception) {
             VpnHideLog.e(TAG, "Debug export failed", e)
             null
-        } finally {
-            if (!restoreAttempted) {
-                restoreDebugCaptureLogging(loggingSession)
-            }
         }
     }
+
+@Suppress("LongMethod")
+private suspend fun buildDebugState(
+    cm: ConnectivityManager,
+    context: Context,
+    selfNeedsRestart: Boolean,
+    options: StateContentOptions,
+): VpnHideState {
+    // Forensics forces debug logging + a fresh dmesg window while the capture runs;
+    // a lean (no-forensics) export skips all of that and just serializes the state.
+    val loggingSession = if (options.forensics) beginDebugCaptureLogging() else null
+    var restoreAttempted = false
+    val errors = mutableListOf<String>()
+    return try {
+        val counterBaseline = if (options.forensics) collectHookCounterSnapshot() else null
+        // Clear dmesg so we only capture output from the hooks the checks fire.
+        if (options.forensics) suExec("dmesg -c > /dev/null 2>&1")
+        val checkResults = runAllChecks(cm, context)
+
+        // Authoritative module/liveness state — the SAME snapshot the dashboard
+        // derives from. This is what fixes the old export path silently reading
+        // "inactive" from a shell that never emitted proc_exists/ports_chain.
+        val rootSnapshot =
+            runCatching { RootSnapshotCache.refresh() }
+                .getOrElse {
+                    errors += "root snapshot failed: ${it.message}"
+                    RootSnapshot(emptyMap())
+                }
+
+        val shellSnapshot =
+            if (options.forensics) {
+                collectDebugShellSnapshot().also {
+                    if (it.exitCode != 0) errors += "debug shell exit=${it.exitCode}"
+                    it.sections["debug_snapshot_truncated"]?.let { s -> errors += "snapshot truncated at: $s" }
+                }
+            } else {
+                null
+            }
+        val dmesg = if (options.forensics) suExec("dmesg 2>/dev/null").second else ""
+        val logcat = if (options.forensics) captureDebugLogcat().ifEmpty { "(no logcat entries)" } else ""
+        val session = loggingSession?.let { it.withRestore(restoreDebugCaptureLogging(it)) }
+        restoreAttempted = true
+
+        val gate =
+            resolveDiagnosticGate(
+                vpnActive = isVpnActive(),
+                selfRouted = GroundTruthProbe.selfRoutedThroughVpn(context),
+                selfNeedsRestart = selfNeedsRestart,
+            )
+        buildVpnHideState(
+            context = context,
+            captureKind = "debug",
+            generatedAt = isoNow(),
+            selfNeedsRestart = selfNeedsRestart,
+            rootSnapshot = rootSnapshot,
+            shellSnapshot = shellSnapshot,
+            gate = gate,
+            checkResults = checkResults,
+            dmesg = dmesg,
+            logcat = logcat,
+            bootLsposedLogcat = if (options.forensics) captureBootLsposedLogcat() else "",
+            lsposedConfigDb = if (options.forensics) buildLsposedConfigText(context) else "",
+            hookReport = shellSnapshot?.let { buildHookDiagnosticsText(context, it, counterBaseline) },
+            debugCapture = session?.toDebugCaptureInfo(),
+            errors = errors,
+            options = options,
+        )
+    } finally {
+        if (!restoreAttempted) {
+            loggingSession?.let { restoreDebugCaptureLogging(it) }
+        }
+    }
+}
 
 /** ISO-8601 timestamp for [VpnHideState.generatedAt] (the serializer has no clock). */
 internal fun isoNow(): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.US).format(Date())

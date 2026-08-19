@@ -85,16 +85,21 @@
     <!-- Diagnostics -->
     <string name="diag_summary_tally">%1$d hidden · %2$d leaking</string>
     <string name="btn_export_debug">Collect debug log</string>
+    <string name="debug_export_card_title">Debug export</string>
+    <string name="debug_export_card_description">Collect diagnostics into one file to send the developer. Choose what to include (logs, app list, kernel image).</string>
+    <string name="debug_export_modal_title">What to include</string>
+    <string name="debug_export_modal_confirm">Export</string>
+    <string name="debug_export_opt_forensics">Forensic logs</string>
+    <string name="debug_export_opt_forensics_desc">dmesg, logcat and raw kernel/network probes. Bigger file; usually what a bug report needs.</string>
+    <string name="debug_export_opt_applist">Installed-app list</string>
+    <string name="debug_export_opt_applist_desc">Reveals which apps you have installed. Off by default; enable only when the developer asks.</string>
+    <string name="debug_export_opt_kernel">Kernel image</string>
+    <string name="debug_export_opt_kernel_desc">Attaches the active boot/kernel partitions. Large, takes ~a minute; produces a .zip. For boot/kernel bugs.</string>
     <string name="btn_export_debug_running">Collecting debug info&#8230;</string>
     <string name="btn_save_debug">Save</string>
-    <string name="btn_save_kernel_images">Save images</string>
     <string name="btn_share_debug">Share</string>
     <string name="diag_debug_logging_title">Debug logging</string>
     <string name="settings_debug_logging_sub">Off by default to keep logcat quiet and avoid the overhead. The capture tools in Debugging enable it automatically — turn this on only for continuous logs across every component.</string>
-    <string name="kernel_images_card_title">Diagnostics + kernel image</string>
-    <string name="kernel_images_card_description">A ZIP with the active boot/init_boot/vendor_boot/vendor_kernel_boot images plus the full diagnostics (state.json) — one self-contained file, no separate diagnostics export needed. It can be large and sensitive; send it only when the developer asks.</string>
-    <string name="kernel_images_btn_export">Export kernel images</string>
-    <string name="kernel_images_btn_export_running">Exporting images&#8230;</string>
     <string name="logcat_card_title">Full system logcat</string>
     <string name="logcat_card_description">Records unfiltered logs from all buffers (main/system/crash/events/radio) and saves a ZIP with device, backend, kernel, and config context. It can include sensitive app data and the agent-control token. Start recording, reproduce the bug, then stop.</string>
     <string name="logcat_btn_start">Start recording</string>

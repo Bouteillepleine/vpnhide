@@ -23,11 +23,21 @@ internal object AgentControlDispatcher {
                     "The one canonical read for debugging: live dashboard (hero/messages) + the full " +
                         "diagnostics report (gate, per-layer verdict, per-check outcome + root ground truth) + " +
                         "per-module liveness + rootShell self-diagnosis + the canonical config + a hook-counter " +
-                        "snapshot. Set includeForensics=true to also embed dmesg, boot logcat, lsposed config, the " +
-                        "hook report and every raw shell section. refresh forces a fresh root snapshot.",
-                inputSchema = schema(optional("refresh", booleanSchema()), optional("includeForensics", booleanSchema())),
+                        "snapshot. forensics=true also embeds dmesg, boot logcat, lsposed config, the hook report " +
+                        "and every raw shell section. appList=true additionally keeps the installed-app / profile " +
+                        "lists (identifying — off by default). refresh forces a fresh root snapshot.",
+                inputSchema =
+                    schema(
+                        optional("refresh", booleanSchema()),
+                        optional("forensics", booleanSchema()),
+                        optional("appList", booleanSchema()),
+                    ),
             ) { context, args ->
-                AgentControl.getState(context, args.refresh, args.includeForensics)
+                AgentControl.getState(
+                    context,
+                    args.refresh,
+                    StateContentOptions(forensics = args.forensics == true, appList = args.appList == true),
+                )
             },
             function<EmptyArgs, AgentDebugZipExport>(
                 name = "exportKernelImages",
@@ -239,7 +249,8 @@ private data class RefreshArgs(
 @Serializable
 private data class GetStateArgs(
     val refresh: Boolean? = null,
-    val includeForensics: Boolean? = null,
+    val forensics: Boolean? = null,
+    val appList: Boolean? = null,
 )
 
 @Serializable

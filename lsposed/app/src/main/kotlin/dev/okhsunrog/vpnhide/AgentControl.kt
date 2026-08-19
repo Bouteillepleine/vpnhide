@@ -26,10 +26,9 @@ internal object AgentControl {
     suspend fun getState(
         context: Context,
         refresh: Boolean? = null,
-        includeForensics: Boolean? = null,
+        options: StateContentOptions = StateContentOptions(),
     ): VpnHideState =
         withAppContext(context) { context ->
-            val forensics = includeForensics == true
             val rootSnapshot = rootSnapshot(refresh == true)
             val dashboard = loadDashboardState(context, selfNeedsRestart = false, rootSnapshot = rootSnapshot)
             val statistics = buildStatisticsState(rootSnapshot).toAgentStatisticsState(selfPackage = context.packageName)
@@ -49,8 +48,8 @@ internal object AgentControl {
 
             // Forensic blobs (shell snapshot, dmesg, boot logcat, lsposed config,
             // hook counters, raw sections) only on request — they run extra root
-            // shells and bloat the live payload.
-            val shellSnapshot = if (forensics) collectDebugShellSnapshot() else null
+            // shells and bloat the live payload. Same options as the file export.
+            val shellSnapshot = if (options.forensics) collectDebugShellSnapshot() else null
             buildVpnHideState(
                 context = context,
                 captureKind = "agent_bridge",
@@ -60,17 +59,17 @@ internal object AgentControl {
                 shellSnapshot = shellSnapshot,
                 gate = gate,
                 checkResults = checkResults,
-                dmesg = if (forensics) suExec("dmesg 2>/dev/null").second else "",
+                dmesg = if (options.forensics) suExec("dmesg 2>/dev/null").second else "",
                 logcat = "",
-                bootLsposedLogcat = if (forensics) captureBootLsposedLogcat() else "",
-                lsposedConfigDb = if (forensics) buildLsposedConfigText(context) else "",
+                bootLsposedLogcat = if (options.forensics) captureBootLsposedLogcat() else "",
+                lsposedConfigDb = if (options.forensics) buildLsposedConfigText(context) else "",
                 hookReport = shellSnapshot?.let { buildHookDiagnosticsText(context, it) },
                 debugCapture = null,
                 errors = emptyList(),
                 dashboard = dashboard,
                 config = config,
                 statistics = statistics,
-                includeRawSections = forensics,
+                options = options,
             )
         }
 
@@ -79,7 +78,17 @@ internal object AgentControl {
      */
     suspend fun exportKernelImages(context: Context): AgentDebugZipExport =
         withAppContext(context) { context ->
-            val file = exportKernelImagesZip(context) ?: error("Kernel image export failed")
+            val connectivityManager =
+                context.getSystemService(ConnectivityManager::class.java)
+                    ?: error("ConnectivityManager unavailable")
+            val file =
+                exportDebug(
+                    cm = connectivityManager,
+                    context = context,
+                    selfNeedsRestart = false,
+                    options = StateContentOptions(forensics = true),
+                    attachKernelImage = true,
+                ) ?: error("Kernel image export failed")
             file.toAgentDebugZipExport()
         }
 

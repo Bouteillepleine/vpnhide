@@ -24,6 +24,28 @@ import kotlinx.serialization.json.JsonElement
  */
 internal const val VPNHIDE_STATE_SCHEMA: Int = 1
 
+/**
+ * What to include in a captured [VpnHideState]. The ONE source of truth for the
+ * export "recipe": the agent-bridge getState args decode straight into it, the
+ * file-export modal's toggles produce it, and [buildVpnHideState] consumes it —
+ * so a switch on screen, a bridge argument and a builder branch can never drift.
+ *
+ * These are CONTENT options (they shape the JSON). Attaching a kernel image is a
+ * packaging choice (JSON → zip, binary), not a content option, so it lives only on
+ * the file-export path, never here.
+ */
+@Serializable
+internal data class StateContentOptions(
+    // dmesg, logcat, boot logcat, lsposed config, hook report, and the raw shell
+    // sections. Off by default → a small, quick state payload.
+    val forensics: Boolean = false,
+    // The installed-app list + profile names (pm_packages/pm_users). Off by default
+    // for privacy; opt in — with the user's explicit consent on the modal — only
+    // when the developer needs to see which apps are present. No effect without
+    // [forensics] (the lists live in the raw sections).
+    val appList: Boolean = false,
+)
+
 @Serializable
 internal data class VpnHideState(
     val schema: Int = VPNHIDE_STATE_SCHEMA,
@@ -75,6 +97,8 @@ internal data class VpnHideState(
     // the forced check run). Null for captures that don't take a counter baseline.
     val hookReport: String?,
     val debugCapture: DebugCaptureInfo?,
+    // Self-documenting: the options this capture was built with (what was included).
+    val captureOptions: StateContentOptions = StateContentOptions(),
     // Non-fatal capture failures (a probe that threw, a truncated section). The
     // document always serializes; partial data is flagged here rather than lost.
     val errors: List<String> = emptyList(),
@@ -192,10 +216,7 @@ internal fun buildVpnHideState(
     dashboard: DashboardState? = null,
     config: JsonElement? = null,
     statistics: AgentStatisticsState? = null,
-    // When false, the big raw `sections` map is omitted (the typed fields above are
-    // still derived from it). The agent-bridge lean call sets this false to keep the
-    // live payload small; the file export keeps it true for a complete forensic dump.
-    includeRawSections: Boolean = true,
+    options: StateContentOptions = StateContentOptions(),
 ): VpnHideState {
     val rootSections = rootSnapshot.sections
     val currentBootId = rootSections["current_boot_id"].orEmpty()
@@ -250,13 +271,14 @@ internal fun buildVpnHideState(
         config = config,
         statistics = statistics,
         rootShell = RootShellDiag.from(rootSections),
-        // Forensic sections on top of the authoritative root sections. Root sections
-        // win on key collisions (they carry the liveness ground truth). User-identifying
-        // sections (installed-app list, profile names) are redacted out — see
-        // [REDACTED_SECTIONS].
+        // Raw sections only in a forensic capture. Forensic (shell) sections on top of
+        // the authoritative root sections; root wins on key collisions. The
+        // user-identifying installed-app / profile lists are redacted unless the user
+        // explicitly opted in via [StateContentOptions.appList].
         sections =
-            if (includeRawSections) {
-                redactSections(shellSnapshot?.sections.orEmpty() + rootSections)
+            if (options.forensics) {
+                val merged = shellSnapshot?.sections.orEmpty() + rootSections
+                if (options.appList) merged else redactSections(merged)
             } else {
                 emptyMap()
             },
@@ -266,6 +288,7 @@ internal fun buildVpnHideState(
         lsposedConfigDb = lsposedConfigDb,
         hookReport = hookReport,
         debugCapture = debugCapture,
+        captureOptions = options,
         errors = errors,
     )
 }

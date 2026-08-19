@@ -312,6 +312,9 @@ internal object LogcatRecorder {
             hookReport = buildHookDiagnosticsText(context, shellSnapshot),
             debugCapture = session.toDebugCaptureInfo(),
             errors = emptyList(),
+            // A full-logcat bug report wants the forensic context; keep the
+            // installed-app list private (redacted) as before.
+            options = StateContentOptions(forensics = true, appList = false),
         ).toJson()
     }
 

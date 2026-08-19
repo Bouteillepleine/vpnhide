@@ -25,113 +25,66 @@ internal fun buildKernelPartitionMetadataText(): String {
     }.trimEnd()
 }
 
-internal suspend fun exportKernelImagesZip(context: Context): File? =
+/**
+ * Capture the active boot/kernel partition images and pack them with the caller's
+ * already-built [stateJson] into one zip, so a kernel bug report travels as a single
+ * self-contained file. If image capture yields nothing, the zip still carries the
+ * state.json + partition metadata rather than failing outright.
+ */
+internal suspend fun writeKernelBundleZip(
+    context: Context,
+    timestamp: String,
+    stateJson: String,
+): File? =
     withContext(Dispatchers.IO) {
         val appContext = context.applicationContext
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val partsDir = File(appContext.cacheDir, "vpnhide_kernel_images_${timestamp}_parts")
-        val zipFile = File(appContext.cacheDir, "vpnhide_kernel_images_$timestamp.zip")
+        val zipFile = File(appContext.cacheDir, "vpnhide_debug_$timestamp.zip")
         try {
             runCatching { partsDir.deleteRecursively() }
-
             val (exit, output) =
                 suExec(
-                    buildKernelImagesExportCommand(
-                        outputDir = partsDir.absolutePath,
-                        appUid = Process.myUid(),
-                    ),
+                    buildKernelImagesExportCommand(outputDir = partsDir.absolutePath, appUid = Process.myUid()),
                     timeoutSec = KERNEL_IMAGE_EXPORT_TIMEOUT_SEC,
                 )
-
             val imageFiles =
                 partsDir
                     .listFiles()
                     .orEmpty()
                     .filter { it.isFile && it.name.endsWith(".img.gz") }
                     .sortedBy { it.name }
-
-            if (exit != 0 || imageFiles.isEmpty()) {
-                HookLog.e("VpnHide: kernel image export failed: exit=$exit output=${output.take(400)}")
-                return@withContext null
+            if (imageFiles.isEmpty()) {
+                HookLog.e("VpnHide: kernel image capture produced no images: exit=$exit output=${output.take(400)}")
             }
-
+            val manifest =
+                partsDir
+                    .resolve("manifest.txt")
+                    .takeIf { it.isFile }
+                    ?.readText()
+                    .orEmpty()
             writeDiagnosticZip(
                 zipFile = zipFile,
-                textEntries = kernelExportTextEntries(appContext, partsDir, exit),
-                fileEntries =
-                    imageFiles.map { file -> DiagnosticFileEntry("images/${file.name}", file) } +
-                        DiagnosticFileEntry("state.json", writeKernelStateJson(appContext, partsDir)),
+                textEntries =
+                    mapOf(
+                        "state.json" to stateJson,
+                        "manifest.txt" to manifest.ifBlank { "(missing manifest)" },
+                        "kernel_partitions.txt" to buildKernelPartitionMetadataText(),
+                    ),
+                fileEntries = imageFiles.map { file -> DiagnosticFileEntry("images/${file.name}", file) },
             )
             zipFile
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
-            // Never let a zip/IO failure (e.g. /data full while packing tens of
-            // MB of images) escape and strand the caller's UI in a stuck state.
-            HookLog.e("VpnHide: kernel image export error: ${t.message}")
+            // Never let a zip/IO failure (e.g. /data full while packing tens of MB of
+            // images) escape and strand the caller's UI in a stuck state.
+            HookLog.e("VpnHide: kernel bundle export error: ${t.message}")
             runCatching { zipFile.delete() }
             null
         } finally {
             runCatching { partsDir.deleteRecursively() }
         }
     }
-
-// A kernel-image bug report always needs the app-state context too (which .ko is
-// loaded, kernel version, root manager). Bundling the canonical state.json here
-// means the user sends one file, not two. Written into [partsDir] so the caller's
-// finally cleans it up with the rest.
-private suspend fun writeKernelStateJson(
-    context: Context,
-    partsDir: File,
-): File {
-    val rootSnapshot = runCatching { RootSnapshotCache.refresh() }.getOrElse { RootSnapshot(emptyMap()) }
-    val shellSnapshot = collectDebugShellSnapshot()
-    val dmesg = suExec("dmesg 2>/dev/null").second
-    val state =
-        buildVpnHideState(
-            context = context,
-            captureKind = "kernel_images",
-            generatedAt = isoNow(),
-            selfNeedsRestart = false,
-            rootSnapshot = rootSnapshot,
-            shellSnapshot = shellSnapshot,
-            gate = null,
-            checkResults = null,
-            dmesg = dmesg,
-            logcat = "",
-            bootLsposedLogcat = captureBootLsposedLogcat(),
-            lsposedConfigDb = buildLsposedConfigText(context),
-            hookReport = null,
-            debugCapture = null,
-            errors = emptyList(),
-        )
-    return partsDir.resolve("state.json").apply { writeText(state.toJson()) }
-}
-
-private fun kernelExportTextEntries(
-    appContext: Context,
-    partsDir: File,
-    exit: Int,
-): LinkedHashMap<String, String> {
-    val manifest =
-        partsDir
-            .resolve("manifest.txt")
-            .takeIf { it.isFile }
-            ?.readText()
-            .orEmpty()
-    return linkedMapOf(
-        "summary.txt" to
-            buildString {
-                appendLine("Kernel image export")
-                appendLine("Generated: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.US).format(Date())}")
-                appendLine("App package: ${appContext.packageName}")
-                appendLine("App version: ${appVersionText(appContext)}")
-                appendLine("commandExit=$exit")
-            }.trimEnd(),
-        "manifest.txt" to manifest.ifBlank { "(missing manifest)" },
-        "kernel_partitions.txt" to buildKernelPartitionMetadataText(),
-    )
-}
 
 internal fun buildKernelPartitionMetadataCommand(): String =
     """
