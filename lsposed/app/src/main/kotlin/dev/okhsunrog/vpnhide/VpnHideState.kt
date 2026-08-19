@@ -151,6 +151,16 @@ private val stateJson =
 
 internal fun VpnHideState.toJson(): String = stateJson.encodeToString(this)
 
+// Raw shell sections that identify the user (full installed-app list with paths +
+// UIDs; profile names) — omitted from the dumped `sections` the way the old text
+// bundle deliberately never wrote them. The privacy-safe `app_scan_diagnostics`
+// (redacted names, counts only) stays; the full list is available on explicit
+// request via the agent-bridge listInstalledApps call.
+private val REDACTED_SECTIONS = setOf("pm_packages", "pm_users")
+
+/** Drop user-identifying sections from a dumped section map. */
+internal fun redactSections(sections: Map<String, String>): Map<String, String> = sections - REDACTED_SECTIONS
+
 /**
  * Fold one capture into the canonical [VpnHideState]. The module/liveness state is
  * derived from [rootSnapshot] — the SAME snapshot the live dashboard uses — so the
@@ -241,8 +251,15 @@ internal fun buildVpnHideState(
         statistics = statistics,
         rootShell = RootShellDiag.from(rootSections),
         // Forensic sections on top of the authoritative root sections. Root sections
-        // win on key collisions (they carry the liveness ground truth).
-        sections = if (includeRawSections) shellSnapshot?.sections.orEmpty() + rootSections else emptyMap(),
+        // win on key collisions (they carry the liveness ground truth). User-identifying
+        // sections (installed-app list, profile names) are redacted out — see
+        // [REDACTED_SECTIONS].
+        sections =
+            if (includeRawSections) {
+                redactSections(shellSnapshot?.sections.orEmpty() + rootSections)
+            } else {
+                emptyMap()
+            },
         dmesg = dmesg,
         logcat = logcat,
         bootLsposedLogcat = bootLsposedLogcat,

@@ -68,6 +68,22 @@ class VpnHideStateTest {
     }
 
     @Test
+    fun `the dumped sections redact the user-identifying package and user lists`() {
+        val raw =
+            mapOf(
+                "proc_exists" to "1",
+                "pm_packages" to "package:/data/app/com.bank/base.apk=com.bank uid:10123",
+                "pm_users" to "UserInfo{0:Alice:c13} running",
+                "kmod_state" to "vpnhide 1 status",
+            )
+        val redacted = redactSections(raw)
+        assertTrue("keeps non-identifying sections", redacted.containsKey("proc_exists"))
+        assertTrue("keeps kmod_state", redacted.containsKey("kmod_state"))
+        assertTrue("drops the installed-app list", !redacted.containsKey("pm_packages"))
+        assertTrue("drops the profile list", !redacted.containsKey("pm_users"))
+    }
+
+    @Test
     fun `an unverified module serializes its runtime-unverified state`() {
         val json = sampleState(installed(active = false, runtimeCheckable = false)).toJson()
         assertTrue(json.contains("\"runtimeCheckable\": false"))
