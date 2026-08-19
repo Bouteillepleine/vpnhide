@@ -97,6 +97,7 @@
     <string name="dashboard_backend_line">%1$s · %2$s</string>
     <string name="dashboard_not_installed">Не установлен</string>
     <string name="dashboard_installed_inactive">Установлен, неактивен</string>
+    <string name="dashboard_installed_not_verified">Установлен, статус не проверен</string>
     <string name="dashboard_installed_restart_app">Установлен, перезапустите VPN Hide</string>
     <string name="dashboard_module_installed_reboot_needed">Установлен, нужна перезагрузка</string>
     <string name="dashboard_kmod_broken_wrong_variant">Установлен, неподходящий вариант GKI</string>
@@ -127,6 +128,7 @@
     <string name="dashboard_protection_unknown">Не проверено</string>
     <string name="dashboard_protection_no_module">Нет модуля</string>
     <string name="dashboard_protection_not_active">Не активен</string>
+    <string name="dashboard_protection_not_verified">Не проверено</string>
     <string name="dashboard_needs_restart">VPN Hide только что включил скрытие для самого себя. Принудительно остановите VPN Hide и откройте снова, чтобы проверить скрытие — перезагрузка устройства не нужна.</string>
     <string name="vpn_off_prompt">VPN не активен. Включите его и нажмите «Повторить», чтобы проверить скрытие.</string>
     <string name="self_not_routed_prompt">VPN активен, но VPN Hide через него не идёт. Добавьте VPN Hide в туннель вашего VPN (не исключайте его сплит-туннелем) и нажмите «Повторить» — иначе этим проверкам нечего скрывать.</string>
@@ -372,16 +374,22 @@
 
     <!-- Diagnostics -->
     <string name="btn_export_debug">Собрать отладочный лог</string>
+    <string name="debug_export_card_title">Экспорт диагностики</string>
+    <string name="debug_export_card_description">Собрать диагностику в один файл для разработчика. Выбери, что включить (логи, список приложений, образ ядра).</string>
+    <string name="debug_export_modal_title">Что включить</string>
+    <string name="debug_export_modal_confirm">Экспорт</string>
+    <string name="debug_export_collect_again">Собрать заново</string>
+    <string name="debug_export_opt_forensics">Форензик-логи</string>
+    <string name="debug_export_opt_forensics_desc">dmesg, logcat и сырые пробы ядра/сети. Файл больше; обычно именно это и нужно для баг-репорта.</string>
+    <string name="debug_export_opt_applist">Список приложений</string>
+    <string name="debug_export_opt_applist_desc">Раскрывает, какие приложения у тебя установлены. По умолчанию выкл; включай только по просьбе разработчика.</string>
+    <string name="debug_export_opt_kernel">Образ ядра</string>
+    <string name="debug_export_opt_kernel_desc">Прикладывает активные разделы boot/ядра. Большой, занимает ~минуту; на выходе .zip. Для багов загрузки/ядра.</string>
     <string name="btn_export_debug_running">Собираю отладочную информацию&#8230;</string>
     <string name="btn_save_debug">Сохранить</string>
-    <string name="btn_save_kernel_images">Сохранить образы</string>
     <string name="btn_share_debug">Поделиться</string>
     <string name="diag_debug_logging_title">Отладочные логи</string>
     <string name="settings_debug_logging_sub">По умолчанию выключено, чтобы не засорять logcat и не тратить ресурсы. Инструменты захвата в «Отладке» включают его автоматически — вручную нужен только для постоянных логов во всех компонентах.</string>
-    <string name="kernel_images_card_title">Образы ядра</string>
-    <string name="kernel_images_card_description">Создаёт отдельный ZIP с активными boot/init_boot/vendor_boot/vendor_kernel_boot и метаданными разделов. Файл может быть большим и чувствительным; отправляйте его только по запросу разработчика.</string>
-    <string name="kernel_images_btn_export">Экспортировать образы</string>
-    <string name="kernel_images_btn_export_running">Экспортирую образы&#8230;</string>
     <string name="logcat_card_title">Полный системный logcat</string>
     <string name="logcat_card_description">Записывает неотфильтрованные логи из всех буферов (main/system/crash/events/radio) и сохраняет ZIP с информацией об устройстве, бэкендах, ядре и конфигурации. Внутри могут быть данные других приложений и токен agent-control. Начните запись, воспроизведите ошибку, затем остановите.</string>
     <string name="logcat_btn_start">Начать запись</string>

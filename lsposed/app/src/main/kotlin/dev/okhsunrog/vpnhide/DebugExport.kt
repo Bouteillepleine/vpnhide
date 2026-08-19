@@ -15,191 +15,128 @@ import java.util.zip.ZipOutputStream
 
 private const val TAG = LogTags.TEST
 
-// Schema version of the debug bundle's summary/manifest — distinct from
-// DIAGNOSTIC_REPORT_SCHEMA (the diagnostics.json/txt payload the bundle carries).
-// Bump when the bundle's file set or summary shape changes.
-private const val DEBUG_BUNDLE_SCHEMA = 4
-
 internal data class DiagnosticFileEntry(
     val name: String,
     val file: File,
 )
 
 // ==========================================================================
-//  Debug log export
+//  Debug export — one canonical JSON
 // ==========================================================================
 
-internal suspend fun exportDebugZip(
+/**
+ * The single debug-export entry point behind the Diagnostics "Collect" modal. The
+ * [options] (forensics / app-list) drive the JSON content — the SAME type the agent
+ * bridge getState takes — and [attachKernelImage] decides the container: a plain
+ * `.json`, or a `.zip` bundling the boot/kernel images next to that same state.json.
+ */
+internal suspend fun exportDebug(
     cm: ConnectivityManager,
     context: Context,
     selfNeedsRestart: Boolean,
+    options: StateContentOptions,
+    attachKernelImage: Boolean,
 ): File? =
     withContext(Dispatchers.IO) {
-        // Force-enable debug logging across app, system_server and active
-        // native sinks while the capture runs. The helper records exactly what
-        // it applied/restored so bug reports can distinguish "no logs" from
-        // "debug propagation failed".
-        val loggingSession = beginDebugCaptureLogging()
-        var restoreAttempted = false
         try {
-            val counterBaseline = collectHookCounterSnapshot()
-            // 1. Clear dmesg so we only capture fresh output from the
-            //    native hooks fired by runAllChecks below.
-            suExec("dmesg -c > /dev/null 2>&1")
-
-            // 2. Run all diagnostic checks (this triggers native hooks)
-            val checkResults = runAllChecks(cm, context)
-
-            // 3. Capture dmesg right after checks
-            val (_, dmesg) = suExec("dmesg 2>/dev/null")
-            val shellSnapshot = collectDebugShellSnapshot()
-
-            val logcat = captureDebugLogcat()
-            val restore = restoreDebugCaptureLogging(loggingSession)
-            restoreAttempted = true
-            val completedLoggingSession = loggingSession.withRestore(restore)
-
-            // 4. Fold the run into the one canonical report (the same object the
-            //    dashboard renders), then collect everything into named files.
-            val report = buildExportDiagnosticReport(context, checkResults, shellSnapshot, selfNeedsRestart)
-            val files =
-                linkedMapOf(
-                    "summary.txt" to
-                        buildDiagnosticSummaryText(
-                            context = context,
-                            selfNeedsRestart = selfNeedsRestart,
-                            report = report,
-                            shellSnapshot = shellSnapshot,
-                            loggingSession = completedLoggingSession,
-                            captureKind = "debug_zip",
-                        ),
-                    "diagnostics.txt" to report.toDiagnosticsText(),
-                    "diagnostics.json" to report.toJson(),
-                )
-            files.putAll(buildCommonDiagnosticTextFiles(context, selfNeedsRestart, shellSnapshot, completedLoggingSession))
-            files["hook_report.txt"] =
-                buildHookDiagnosticsText(
-                    context = context,
-                    shellSnapshot = shellSnapshot,
-                    counterBaseline = counterBaseline,
-                    report = report,
-                )
-            files["dmesg_vpnhide.txt"] = filterVpnHideDmesg(dmesg)
-            files["dmesg_full.txt"] = dmesg.ifBlank { "(no dmesg entries)" }
-            files["logcat_vpnhide.txt"] = logcat.ifEmpty { "(no logcat entries)" }
-
-            // Create zip
+            val state = buildDebugState(cm, context, selfNeedsRestart, options)
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val zipFile = File(context.cacheDir, "vpnhide_debug_$timestamp.zip")
-            writeDiagnosticZip(zipFile, files)
-            zipFile
+            if (attachKernelImage) {
+                writeKernelBundleZip(context, timestamp, state.toJson())
+            } else {
+                File(context.cacheDir, "vpnhide_debug_$timestamp.json").apply { writeText(state.toJson()) }
+            }
         } catch (c: CancellationException) {
-            // The finally below still restores debug logging; don't mask the
-            // cancellation as a normal "export failed" — rethrow for structured
-            // concurrency (navigating away mid-capture must cancel cleanly).
             throw c
         } catch (e: Exception) {
             VpnHideLog.e(TAG, "Debug export failed", e)
             null
-        } finally {
-            if (!restoreAttempted) {
-                restoreDebugCaptureLogging(loggingSession)
-            }
         }
     }
 
-/**
- * Fold the forced capture run into the canonical [DiagnosticReport]. Derives the
- * gate (VPN presence + self-in-tunnel + pending restart), the active native backend,
- * and the Java-layer liveness from the same helpers the dashboard uses, so the
- * bundle's verdict is identical to the on-screen one.
- */
-private suspend fun buildExportDiagnosticReport(
+@Suppress("LongMethod")
+private suspend fun buildDebugState(
+    cm: ConnectivityManager,
     context: Context,
-    checkResults: CheckResults,
-    shellSnapshot: DebugShellSnapshot,
     selfNeedsRestart: Boolean,
-): DiagnosticReport =
-    buildDiagnosticReport(
-        gate =
+    options: StateContentOptions,
+): VpnHideState {
+    // Forensics forces debug logging + a fresh dmesg window while the capture runs;
+    // a lean (no-forensics) export skips all of that and just serializes the state.
+    val loggingSession = if (options.forensics) beginDebugCaptureLogging() else null
+    var restoreAttempted = false
+    val errors = mutableListOf<String>()
+    return try {
+        val counterBaseline = if (options.forensics) collectHookCounterSnapshot() else null
+        // Clear dmesg so we only capture output from the hooks the checks fire.
+        if (options.forensics) suExec("dmesg -c > /dev/null 2>&1")
+        val checkResults = runAllChecks(cm, context)
+
+        // Authoritative module/liveness state — the SAME snapshot the dashboard
+        // derives from. This is what fixes the old export path silently reading
+        // "inactive" from a shell that never emitted proc_exists/ports_chain.
+        val rootSnapshot =
+            runCatching { RootSnapshotCache.refresh() }
+                .getOrElse {
+                    errors += "root snapshot failed: ${it.message}"
+                    RootSnapshot(emptyMap())
+                }
+
+        val shellSnapshot =
+            if (options.forensics) {
+                collectDebugShellSnapshot().also {
+                    if (it.exitCode != 0) errors += "debug shell exit=${it.exitCode}"
+                    it.sections["debug_snapshot_truncated"]?.let { s -> errors += "snapshot truncated at: $s" }
+                }
+            } else {
+                null
+            }
+        val dmesg = if (options.forensics) suExec("dmesg 2>/dev/null").second else ""
+        val logcat = if (options.forensics) captureDebugLogcat().ifEmpty { "(no logcat entries)" } else ""
+        val session = loggingSession?.let { it.withRestore(restoreDebugCaptureLogging(it)) }
+        restoreAttempted = true
+
+        val gate =
             resolveDiagnosticGate(
                 vpnActive = isVpnActive(),
                 selfRouted = GroundTruthProbe.selfRoutedThroughVpn(context),
                 selfNeedsRestart = selfNeedsRestart,
-            ),
-        results = checkResults,
-        backend = displayNativeBackend(detectNativeBackendStates(shellSnapshot.sections)),
-        lsposedActive =
-            lsposedHooksActiveThisBoot(
-                shellSnapshot.sections["lsposed_state"].orEmpty(),
-                shellSnapshot.sections["current_boot_id"].orEmpty(),
-            ),
-        complete = true,
-        installedOptionalHooks =
-            when (detectNativeBackendStates(shellSnapshot.sections).activeId) {
-                NativeBackendId.Kmod -> installedHooks(shellSnapshot.sections["kmod_state"].orEmpty())
-                NativeBackendId.Kpm -> installedHooks(shellSnapshot.sections["kpm_state"].orEmpty())
-                else -> emptySet()
-            },
-    )
-
-// ── Debug-zip section builders (each produces one file in the export) ─────
-
-internal fun buildDiagnosticSummaryText(
-    context: Context,
-    selfNeedsRestart: Boolean,
-    report: DiagnosticReport?,
-    shellSnapshot: DebugShellSnapshot,
-    loggingSession: DebugCaptureLoggingSession,
-    captureKind: String,
-): String =
-    buildString {
-        appendLine("Diagnostic bundle schema: $DEBUG_BUNDLE_SCHEMA")
-        appendLine("Capture type: $captureKind")
-        appendLine("Generated: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.US).format(Date())}")
-        appendLine("App package: ${context.packageName}")
-        appendLine("App version: ${appVersionText(context)}")
-        if (report == null) {
-            appendLine("Diagnostics: not run")
-        } else {
-            appendLine("Diagnostics gate: ${report.gate.name.lowercase()}")
-            appendLine("Native verdict: ${report.native.verdictLabel(report.nativeVerdict)}")
-            appendLine("Java verdict: ${report.java.verdictLabel(report.javaVerdict)}")
-            appendLine("Outcomes: ${report.outcomeTally()}")
+            )
+        buildVpnHideState(
+            context = context,
+            captureKind = "debug",
+            generatedAt = isoNow(),
+            selfNeedsRestart = selfNeedsRestart,
+            rootSnapshot = rootSnapshot,
+            shellSnapshot = shellSnapshot,
+            gate = gate,
+            checkResults = checkResults,
+            dmesg = dmesg,
+            logcat = logcat,
+            bootLsposedLogcat = if (options.forensics) captureBootLsposedLogcat() else "",
+            lsposedConfigDb = if (options.forensics) buildLsposedConfigText(context) else "",
+            hookReport = shellSnapshot?.let { buildHookDiagnosticsText(context, it, counterBaseline) },
+            debugCapture = session?.toDebugCaptureInfo(),
+            errors = errors,
+            options = options,
+        )
+    } finally {
+        if (!restoreAttempted) {
+            loggingSession?.let { restoreDebugCaptureLogging(it) }
         }
-        appendLine("selfNeedsRestart: $selfNeedsRestart")
-        appendLine("debugCaptureForced: ${loggingSession.forced}")
-        appendLine("debugCaptureApplyExit: ${loggingSession.apply.commandExit?.toString() ?: "(n/a)"}")
-        appendLine("debugCaptureRestoreExit: ${loggingSession.restore?.commandExit?.toString() ?: "(n/a)"}")
-        appendLine("rootSnapshotExit: ${shellSnapshot.exitCode}")
-        shellSnapshot.section("debug_snapshot_error").takeIf { it.isNotBlank() }?.let {
-            appendLine("rootSnapshotError: $it")
-        }
-        appendLine()
-        appendDebugSection("Current boot_id", shellSnapshot.section("current_boot_id"))
-        appendDebugSection("Backend evidence", buildBackendEvidence(shellSnapshot))
     }
+}
 
-internal fun buildCommonDiagnosticTextFiles(
-    context: Context,
-    selfNeedsRestart: Boolean,
-    shellSnapshot: DebugShellSnapshot,
-    loggingSession: DebugCaptureLoggingSession,
-): LinkedHashMap<String, String> =
-    linkedMapOf(
-        "device_info.txt" to buildDeviceInfoText(context, selfNeedsRestart, shellSnapshot),
-        "backends.txt" to buildBackendsText(context, shellSnapshot),
-        "modules.txt" to buildModulesText(shellSnapshot),
-        "profiles.txt" to buildProfilesText(shellSnapshot),
-        "config.txt" to buildConfigText(shellSnapshot),
-        "interfaces.txt" to buildInterfacesText(shellSnapshot),
-        "proc_net.txt" to buildProcNetText(shellSnapshot),
-        "kernel.txt" to buildKernelText(shellSnapshot),
-        "kernel_partitions.txt" to buildKernelPartitionMetadataText(),
-        "boot_logcat_lsposed.txt" to captureBootLsposedLogcat(),
-        "debug_capture.txt" to loggingSession.toText(),
-    )
+/** ISO-8601 timestamp for [VpnHideState.generatedAt] (the serializer has no clock). */
+internal fun isoNow(): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.US).format(Date())
 
+/**
+ * Pack a small ZIP: named text entries + raw file entries. Retained for the two
+ * captures with a non-text payload — the full-logcat recorder (a multi-MB raw log)
+ * and the kernel-image export (binary partition images) — each of which carries the
+ * canonical `state.json` alongside its payload. The plain debug export is a single
+ * `.json` and does not use this.
+ */
 internal fun writeDiagnosticZip(
     zipFile: File,
     textEntries: Map<String, String>,
@@ -218,118 +155,6 @@ internal fun writeDiagnosticZip(
         }
     }
 }
-
-private fun buildDeviceInfoText(
-    context: Context,
-    selfNeedsRestart: Boolean,
-    shellSnapshot: DebugShellSnapshot,
-): String =
-    buildString {
-        appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
-        appendLine("Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
-        appendLine("ABI: ${Build.SUPPORTED_ABIS.joinToString()}")
-        appendLine("App package: ${context.packageName}")
-        appendLine("App version: ${appVersionText(context)}")
-        appendLine("selfNeedsRestart: $selfNeedsRestart")
-        appendLine()
-        appendDebugSection("uname", shellSnapshot.section("uname"))
-        appendDebugSection("/proc/version", shellSnapshot.section("proc_version"))
-        appendDebugSection("/proc/cmdline", shellSnapshot.section("proc_cmdline"))
-        appendDebugSection("Selected getprop", shellSnapshot.section("getprop_selected"))
-        appendDebugSection("Root manager", shellSnapshot.section("root_manager"))
-        appendDebugSection("SELinux", shellSnapshot.section("selinux"))
-    }
-
-private fun buildBackendsText(
-    context: Context,
-    shellSnapshot: DebugShellSnapshot,
-): String =
-    buildString {
-        appendDebugSection("Current boot_id", shellSnapshot.section("current_boot_id"))
-        appendDebugSection("Backend evidence", buildBackendEvidence(shellSnapshot))
-        appendDebugSection("kmod module.prop", shellSnapshot.section("kmod_prop"))
-        appendDebugSection("kmod module state", shellSnapshot.section("kmod_module_state"))
-        appendDebugSection("kmod live /proc/vpnhide_ctl", shellSnapshot.section("kmod_state"))
-        appendDebugSection("kmod boot load_status", shellSnapshot.section("kmod_load_status"))
-        appendDebugSection("kmod boot dmesg", shellSnapshot.section("kmod_load_dmesg"))
-        appendDebugSection("KPM module.prop", shellSnapshot.section("kpm_prop"))
-        appendDebugSection("KPM module state", shellSnapshot.section("kpm_module_state"))
-        appendDebugSection("KPM live activator state", shellSnapshot.section("kpm_state"))
-        appendDebugSection("KPM boot load_status", shellSnapshot.section("kpm_load_status"))
-        appendDebugSection("KernelPatch runtime", shellSnapshot.section("kpatch_runtime"))
-        appendDebugSection("Zygisk module.prop", shellSnapshot.section("zygisk_prop"))
-        appendDebugSection("Zygisk module state", shellSnapshot.section("zygisk_module_state"))
-        appendDebugSection("Zygisk heartbeat", shellSnapshot.section("zygisk_status"))
-        appendDebugSection("Zygisk runtime modules", shellSnapshot.section("zygisk_runtime"))
-        appendDebugSection("LSPosed hook state", shellSnapshot.section("lsposed_state"))
-        appendDebugSection("LSPosed config DB", buildLsposedConfigText(context))
-        appendDebugSection("LSPosed framework", shellSnapshot.section("lsposed_framework"))
-        appendDebugSection("LSPosed files", shellSnapshot.section("lsposed_files"))
-        appendDebugSection("Ports module.prop", shellSnapshot.section("ports_prop"))
-        appendDebugSection("Ports module state", shellSnapshot.section("ports_module_state"))
-        appendDebugSection("Ports load_status", shellSnapshot.section("ports_load_status"))
-        appendDebugSection("Ports load_log", shellSnapshot.section("ports_load_log"))
-        appendDebugSection("Ports iptables state", shellSnapshot.section("ports_state"))
-    }
-
-private fun buildModulesText(shellSnapshot: DebugShellSnapshot): String =
-    buildString {
-        appendDebugSection("Module inventory", shellSnapshot.section("module_inventory"))
-        appendDebugSection("Root manager", shellSnapshot.section("root_manager"))
-        appendDebugSection("Kernel modules", shellSnapshot.section("proc_modules"))
-    }
-
-private fun buildConfigText(shellSnapshot: DebugShellSnapshot): String =
-    buildString {
-        appendDebugSection("canonical config", shellSnapshot.section("canonical_config"))
-        appendDebugSection("Ports load_status", shellSnapshot.section("ports_load_status"))
-    }
-
-// Android users/profiles and the per-user app-scan result (exit codes, package
-// counts, format flags). Names and the full package list are deliberately
-// redacted/omitted — this is enough to diagnose "couldn't read all profiles"
-// failures without exposing which apps a user has installed.
-private fun buildProfilesText(shellSnapshot: DebugShellSnapshot): String =
-    buildString {
-        appendDebugSection("App scan diagnostics", shellSnapshot.section("app_scan_diagnostics"))
-    }
-
-private fun buildInterfacesText(shellSnapshot: DebugShellSnapshot): String =
-    buildString {
-        appendDebugSection("ip -d addr", shellSnapshot.section("network_addr"))
-        appendDebugSection("Interface operstate", shellSnapshot.section("network_operstate"))
-        appendDebugSection("ip route show table all", shellSnapshot.section("network_routes"))
-        appendDebugSection("ip rule", shellSnapshot.section("network_rules"))
-        appendDebugSection("Listening sockets", shellSnapshot.section("network_sockets"))
-        appendDebugSection("dumpsys connectivity excerpt", shellSnapshot.section("connectivity_dump"))
-    }
-
-private fun buildProcNetText(shellSnapshot: DebugShellSnapshot): String =
-    buildString {
-        val sections =
-            listOf(
-                "route" to "proc_net_route",
-                "ipv6_route" to "proc_net_ipv6_route",
-                "if_inet6" to "proc_net_if_inet6",
-                "tcp" to "proc_net_tcp",
-                "tcp6" to "proc_net_tcp6",
-                "udp" to "proc_net_udp",
-                "udp6" to "proc_net_udp6",
-                "dev" to "proc_net_dev",
-                "fib_trie" to "proc_net_fib_trie",
-            )
-        for ((label, sectionName) in sections) {
-            appendDebugSection("/proc/net/$label", shellSnapshot.section(sectionName))
-        }
-    }
-
-private fun buildKernelText(shellSnapshot: DebugShellSnapshot): String =
-    buildString {
-        appendDebugSection("Kernel config", shellSnapshot.section("kernel_config"))
-        appendDebugSection("Kernel modules", shellSnapshot.section("proc_modules"))
-        appendDebugSection("Registered kprobes", shellSnapshot.section("kprobes"))
-        appendDebugSection("Kernel symbols", shellSnapshot.section("kernel_symbols"))
-    }
 
 private fun captureDebugLogcat(): String {
     val tags =
@@ -391,17 +216,6 @@ private val BOOT_LSPOSED_LOGCAT_PATTERNS =
         "dev[.]okhsunrog[.]vpnhide",
     )
 
-private fun DebugShellSnapshot.section(name: String): String = sections[name].orEmpty()
-
-private fun StringBuilder.appendDebugSection(
-    title: String,
-    body: String,
-) {
-    appendLine("=== $title ===")
-    appendLine(body.trimEnd().ifBlank { "(empty)" })
-    appendLine()
-}
-
 internal fun appVersionText(context: Context): String =
     try {
         val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
@@ -417,25 +231,7 @@ internal fun appVersionText(context: Context): String =
         "(unknown)"
     }
 
-private fun buildBackendEvidence(shellSnapshot: DebugShellSnapshot): String =
-    buildString {
-        fun evidence(
-            label: String,
-            section: String,
-            predicate: (String) -> Boolean,
-        ) {
-            val raw = shellSnapshot.section(section)
-            appendLine("$label: ${if (predicate(raw)) "present" else "not observed"}")
-        }
-        evidence("kmod live proc", "kmod_state") { it.contains("vpnhide 1 status") }
-        evidence("KPM live ctl0", "kpm_state") { it.contains("vpnhide 1 status") }
-        evidence("Zygisk heartbeat", "zygisk_status") { it.contains("boot_id=") }
-        evidence("LSPosed hook state", "lsposed_state") { it.contains("vpnhide 1 status") }
-        evidence("Ports activator status", "ports_load_status") { it.contains("loaded=1") }
-        evidence("Ports iptables", "ports_state") { it.contains("vpnhide_out") || it.contains("vpnhide_out6") }
-    }.trimEnd()
-
-private fun buildLsposedConfigText(context: Context): String {
+internal fun buildLsposedConfigText(context: Context): String {
     val config =
         runCatching {
             readLsposedConfig(context, context.packageName)
@@ -459,17 +255,4 @@ private fun buildLsposedConfigText(context: Context): String {
             }.trimEnd()
         }
     }
-}
-
-internal fun filterVpnHideDmesg(dmesg: String): String {
-    val filtered =
-        dmesg
-            .lineSequence()
-            .filter {
-                it.contains("vpnhide", ignoreCase = true) ||
-                    it.contains("kpm", ignoreCase = true) ||
-                    it.contains("kretprobe", ignoreCase = true) ||
-                    it.contains("[+] KP", ignoreCase = true)
-            }.joinToString("\n")
-    return filtered.ifBlank { "(no vpnhide dmesg entries)" }
 }

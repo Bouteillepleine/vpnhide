@@ -28,7 +28,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 SERVER = Path(__file__).resolve().parent / "server.py"
-PROBE_TOOL = "getDashboardState"
+PROBE_TOOL = "getState"
 
 
 def parse_args() -> argparse.Namespace:

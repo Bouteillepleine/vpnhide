@@ -185,12 +185,13 @@ fun DiagnosticsScreen(
 @Composable
 private fun rememberZipSaveLauncher(
     errorLabel: String,
+    mimeType: String = "application/zip",
     source: () -> File?,
 ): ManagedActivityResultLauncher<String, Uri?> {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     return rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/zip"),
+        ActivityResultContracts.CreateDocument(mimeType),
     ) { uri: Uri? ->
         val src = source() ?: return@rememberLauncherForActivityResult
         if (uri != null) {
@@ -205,6 +206,7 @@ private fun rememberZipSaveLauncher(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DebugToolsSection(
     selfNeedsRestart: Boolean?,
@@ -214,132 +216,191 @@ fun DebugToolsSection(
     val cm = context.getSystemService(ConnectivityManager::class.java)
     val scope = rememberCoroutineScope()
     var exporting by remember { mutableStateOf(false) }
-    var debugZipFile by remember { mutableStateOf<File?>(null) }
+    var showModal by remember { mutableStateOf(false) }
+    var resultFile by remember { mutableStateOf<File?>(null) }
+    var resultIsZip by remember { mutableStateOf(false) }
 
-    val saveLauncher = rememberZipSaveLauncher("debug-zip") { debugZipFile }
+    // One export recipe, shared with the agent bridge's getState.
+    var optForensics by remember { mutableStateOf(true) }
+    var optAppList by remember { mutableStateOf(false) }
+    var optKernelImage by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = modifier.fillMaxWidth(),
-    ) {
-        LogcatRecordCard(selfNeedsRestart = selfNeedsRestart)
+    val mime = if (resultIsZip) "application/zip" else "application/json"
+    val saveLauncher = rememberZipSaveLauncher("debug-export", mimeType = mime) { resultFile }
 
-        Spacer(Modifier.height(16.dp))
-
-        KernelImageExportCard()
-
-        Spacer(Modifier.height(16.dp))
-
-        // Collect button
-        val zip = debugZipFile
-        if (zip == null) {
-            EnhancedButton(
-                onClick = {
-                    val restartState = selfNeedsRestart ?: return@EnhancedButton
-                    exporting = true
-                    scope.launch {
-                        debugZipFile = exportDebugZip(cm, context, restartState)
-                        exporting = false
-                    }
-                },
-                enabled = !exporting && selfNeedsRestart != null,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                if (exporting) {
-                    ButtonSpinner()
-                    Spacer(Modifier.width(8.dp))
-                }
+    Column(modifier = modifier.fillMaxWidth()) {
+        EnhancedCard(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = MaterialTheme.shapes.medium,
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Text(
-                    if (exporting) {
-                        stringResource(R.string.btn_export_debug_running)
-                    } else {
-                        stringResource(R.string.btn_export_debug)
+                    text = stringResource(R.string.debug_export_card_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.debug_export_card_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                // The card button only ever opens the modal — the whole export flow
+                // (progress, then Save/Share, then re-export with changed options)
+                // lives inside the sheet, so nothing shifts under the user's finger.
+                EnhancedButton(
+                    onClick = { showModal = true },
+                    enabled = selfNeedsRestart != null,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.btn_export_debug))
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        LogcatRecordCard(selfNeedsRestart = selfNeedsRestart)
+    }
+
+    if (showModal) {
+        // Changing any toggle invalidates a result produced with the old recipe.
+        val clearResult = { resultFile = null }
+        ModalBottomSheet(onDismissRequest = { if (!exporting) showModal = false }) {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp)
+                        .padding(bottom = 24.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.debug_export_modal_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(12.dp))
+                ExportToggle(
+                    title = stringResource(R.string.debug_export_opt_forensics),
+                    description = stringResource(R.string.debug_export_opt_forensics_desc),
+                    checked = optForensics,
+                    enabled = !exporting,
+                    onCheckedChange = {
+                        optForensics = it
+                        clearResult()
                     },
                 )
+                ExportToggle(
+                    title = stringResource(R.string.debug_export_opt_applist),
+                    description = stringResource(R.string.debug_export_opt_applist_desc),
+                    checked = optAppList && optForensics,
+                    enabled = optForensics && !exporting,
+                    onCheckedChange = {
+                        optAppList = it
+                        clearResult()
+                    },
+                )
+                ExportToggle(
+                    title = stringResource(R.string.debug_export_opt_kernel),
+                    description = stringResource(R.string.debug_export_opt_kernel_desc),
+                    checked = optKernelImage,
+                    enabled = !exporting,
+                    onCheckedChange = {
+                        optKernelImage = it
+                        clearResult()
+                    },
+                )
+                Spacer(Modifier.height(16.dp))
+
+                val doExport = {
+                    selfNeedsRestart?.let { restartState ->
+                        val options =
+                            StateContentOptions(forensics = optForensics, appList = optAppList && optForensics)
+                        val kernel = optKernelImage
+                        exporting = true
+                        scope.launch {
+                            resultFile = exportDebug(cm, context, restartState, options, kernel)
+                            resultIsZip = kernel
+                            exporting = false
+                        }
+                    }
+                    Unit
+                }
+
+                val file = resultFile
+                when {
+                    // In-progress: a disabled progress button, no competing actions.
+                    exporting -> {
+                        EnhancedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
+                            ButtonSpinner()
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(R.string.btn_export_debug_running))
+                        }
+                    }
+
+                    // Configure phase: the one primary action.
+                    file == null -> {
+                        EnhancedButton(
+                            onClick = doExport,
+                            enabled = selfNeedsRestart != null,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(stringResource(R.string.debug_export_modal_confirm))
+                        }
+                    }
+
+                    // Result phase: Save/Share are primary; re-running is a de-emphasized
+                    // secondary action, so there is no ambiguous "Export" to double-tap.
+                    else -> {
+                        FileSaveShareRow(
+                            saveLabel = stringResource(R.string.btn_save_debug),
+                            shareLabel = stringResource(R.string.btn_share_debug),
+                            sharePrimary = true,
+                            onSave = { saveLauncher.launch(file.name) },
+                            onShare = { shareFileViaProvider(context, file, mime) },
+                        )
+                        TextButton(
+                            onClick = doExport,
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                        ) {
+                            Text(stringResource(R.string.debug_export_collect_again))
+                        }
+                    }
+                }
             }
-        } else {
-            FileSaveShareRow(
-                saveLabel = stringResource(R.string.btn_save_debug),
-                shareLabel = stringResource(R.string.btn_share_debug),
-                sharePrimary = true,
-                onSave = { saveLauncher.launch(zip.name) },
-                onShare = { shareFileViaProvider(context, zip, "application/zip") },
-            )
         }
     }
 }
 
 @Composable
-private fun KernelImageExportCard() {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var exporting by remember { mutableStateOf(false) }
-    var kernelImagesFile by remember { mutableStateOf<File?>(null) }
-
-    val saveLauncher = rememberZipSaveLauncher("kernel-image") { kernelImagesFile }
-
-    EnhancedCard(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = MaterialTheme.shapes.medium,
+private fun ExportToggle(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, style = MaterialTheme.typography.bodyLarge)
             Text(
-                text = stringResource(R.string.kernel_images_card_title),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = stringResource(R.string.kernel_images_card_description),
+                text = description,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(12.dp))
-
-            val zip = kernelImagesFile
-            if (zip == null || !zip.exists()) {
-                EnhancedButton(
-                    onClick = {
-                        exporting = true
-                        scope.launch {
-                            try {
-                                kernelImagesFile = exportKernelImagesZip(context)
-                            } finally {
-                                exporting = false
-                            }
-                        }
-                    },
-                    enabled = !exporting,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (exporting) {
-                        ButtonSpinner()
-                    } else {
-                        Icon(
-                            Icons.Default.FileDownload,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        if (exporting) {
-                            stringResource(R.string.kernel_images_btn_export_running)
-                        } else {
-                            stringResource(R.string.kernel_images_btn_export)
-                        },
-                    )
-                }
-            } else {
-                FileSaveShareRow(
-                    saveLabel = stringResource(R.string.btn_save_kernel_images),
-                    shareLabel = stringResource(R.string.btn_share_debug),
-                    sharePrimary = true,
-                    onSave = { saveLauncher.launch(zip.name) },
-                    onShare = { shareFileViaProvider(context, zip, "application/zip") },
-                )
-            }
         }
+        Spacer(Modifier.width(12.dp))
+        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
 }
 

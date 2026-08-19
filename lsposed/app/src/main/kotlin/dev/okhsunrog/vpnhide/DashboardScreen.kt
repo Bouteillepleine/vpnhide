@@ -681,6 +681,10 @@ private fun layerSummary(layer: LayerStatus): MetricSpec =
             MetricSpec(stringResource(R.string.dashboard_protection_not_active), MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
+        LayerStatus.Unverified -> {
+            MetricSpec(stringResource(R.string.dashboard_protection_not_verified), MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
         is LayerStatus.Active -> {
             when (layer.verdict) {
                 Verdict.Ok -> MetricSpec(stringResource(R.string.dashboard_protection_ok), StatusColors.successDot)
@@ -743,12 +747,16 @@ private fun installedVisual(
     // sending the user hunting through KernelSU/Magisk's module list (which
     // shows only the generic module name, not the GKI variant — issue #225).
     val variantSuffix = state.gkiVariant?.let { " · $it" }.orEmpty()
+    // `!runtimeCheckable` guards against a false "inactive": a liveness read from a
+    // non-root snapshot shell (0600 ctl / iptables) is untrustworthy, so show "status
+    // not verified" instead of claiming the module is off.
     return InstalledVisual(
         subtitle =
             when {
                 state.pendingReboot -> stringResource(R.string.dashboard_module_installed_reboot_needed)
                 brokenSubtitleRes != null -> stringResource(brokenSubtitleRes)
                 active -> stringResource(R.string.dashboard_active_targets, targetCount) + variantSuffix
+                !state.runtimeCheckable -> stringResource(R.string.dashboard_installed_not_verified) + variantSuffix
                 selfNeedsRestart -> stringResource(R.string.dashboard_installed_restart_app)
                 else -> stringResource(R.string.dashboard_installed_inactive) + variantSuffix
             },

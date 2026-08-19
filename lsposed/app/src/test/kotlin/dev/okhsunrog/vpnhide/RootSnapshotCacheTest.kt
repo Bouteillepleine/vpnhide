@@ -167,4 +167,22 @@ class RootSnapshotCacheTest {
         val sections = parseRootShellSnapshot(stdout, recordMetric = { _, _ -> })
         assertEquals("available=0", sections["kpm_runtime_modules"])
     }
+
+    // Anti-drift guard: the detectors and the debug export read sections by name
+    // from this one snapshot. If a required section stops being emitted, module
+    // liveness silently reads wrong (this is exactly how the old debug bundle showed
+    // a healthy kmod as "inactive"). Pin that every required section is produced.
+    @Test
+    fun `the snapshot command emits every required section`() {
+        val command = buildRootShellSnapshotCommand()
+        val missing = REQUIRED_ROOT_SNAPSHOT_SECTIONS.filterNot { command.contains(it) }
+        assertTrue("snapshot command is missing emits for: $missing", missing.isEmpty())
+    }
+
+    @Test
+    fun `the snapshot command probes the shell identity for the honest-render gate`() {
+        val command = buildRootShellSnapshotCommand()
+        assertTrue(command.contains("snapshot_shell_uid"))
+        assertTrue("captures the effective uid", command.contains("id -u"))
+    }
 }

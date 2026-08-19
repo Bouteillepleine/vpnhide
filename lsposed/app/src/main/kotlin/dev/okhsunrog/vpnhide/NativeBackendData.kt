@@ -1,8 +1,12 @@
 package dev.okhsunrog.vpnhide
 
+import kotlinx.serialization.Serializable
+
 // The native layer is exactly one of these at runtime (docs/storage.md §4.3).
+@Serializable
 internal enum class NativeBackendId { Kmod, Kpm, Zygisk }
 
+@Serializable
 internal data class NativeBackendStates(
     val kmod: ModuleState,
     val kpm: ModuleState,
@@ -28,6 +32,7 @@ internal val NativeBackendStates.noneInstalled: Boolean
  * an active backend wins, otherwise the highest-priority installed backend is
  * shown so the user can see what is installed but not active yet.
  */
+@Serializable
 internal data class DisplayNativeBackend(
     val id: NativeBackendId?,
     val state: ModuleState,

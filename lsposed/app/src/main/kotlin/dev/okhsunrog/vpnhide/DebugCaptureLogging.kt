@@ -24,6 +24,14 @@ internal data class DebugCaptureLoggingSession(
 
     fun withRestore(restore: DebugCaptureLoggingStep?): DebugCaptureLoggingSession = copy(restore = restore)
 
+    fun toDebugCaptureInfo(): DebugCaptureInfo =
+        DebugCaptureInfo(
+            forced = forced,
+            applyExit = apply.commandExit,
+            restoreExit = restore?.commandExit,
+            detail = apply.detail.ifBlank { null },
+        )
+
     fun toText(): String =
         buildString {
             appendLine("sessionId=$id")

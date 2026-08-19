@@ -17,70 +17,60 @@ import java.util.zip.ZipFile
  */
 internal object AgentControl {
     /**
-     * Return the current dashboard state. Set refresh to true to force a fresh root snapshot.
-     *
-     * @param refresh Force a fresh root snapshot instead of reusing the app cache.
+     * The one canonical read for a Claude Code debugging session: the live dashboard
+     * plus the full diagnostics report, per-module liveness, root-shell self-diagnosis,
+     * the canonical config and a hook-counter snapshot — everything you would otherwise
+     * gather from screenshots and a manual diagnostics export. [includeForensics] adds
+     * the heavy blobs (dmesg / boot logcat / lsposed config / hook report / raw sections).
      */
-    suspend fun getDashboardState(
+    suspend fun getState(
         context: Context,
         refresh: Boolean? = null,
-    ): AgentDashboardState =
+        options: StateContentOptions = StateContentOptions(),
+    ): VpnHideState =
         withAppContext(context) { context ->
             val rootSnapshot = rootSnapshot(refresh == true)
             val dashboard = loadDashboardState(context, selfNeedsRestart = false, rootSnapshot = rootSnapshot)
-            dashboard.toAgentDashboardState()
-        }
+            val statistics = buildStatisticsState(rootSnapshot).toAgentStatisticsState(selfPackage = context.packageName)
+            val config = AgentBridgeJson.parseToJsonElement(canonicalConfigJson(currentCanonicalConfig(refresh = false)))
 
-    /**
-     * Run the full diagnostics suite and return every check shown in Detailed diagnostics.
-     */
-    suspend fun runFullDiagnostics(context: Context): AgentDiagnosticsReport =
-        withAppContext(context) { context ->
-            // awaitTerminal carries the reason (blocked gate / failed) instead of
-            // re-reading state.value after a null (a race) — same fix as the dashboard.
-            // The agent doesn't know selfNeedsRestart; false is safe because the cache's
-            // sticky flag keeps a UI-set NEEDS_RESTART from being cleared here.
-            when (val terminal = DiagnosticsCache.awaitTerminal(context, selfNeedsRestart = false)) {
-                is DiagnosticsCache.State.Ready -> {
-                    terminal.results.toAgentDiagnosticsReport()
+            // awaitTerminal carries the blocked-gate/failed reason instead of racing
+            // on state.value. selfNeedsRestart=false is safe: the cache's sticky flag
+            // keeps a UI-set NEEDS_RESTART from being cleared here.
+            val terminal = DiagnosticsCache.awaitTerminal(context, selfNeedsRestart = false)
+            val gate =
+                when (terminal) {
+                    is DiagnosticsCache.State.Blocked -> terminal.gate
+                    is DiagnosticsCache.State.Ready -> DiagnosticGate.ROUTED
+                    else -> null
                 }
+            val checkResults = (terminal as? DiagnosticsCache.State.Ready)?.results
 
-                else -> {
-                    val state =
-                        when (terminal) {
-                            is DiagnosticsCache.State.Blocked -> terminal.gate.agentStateToken()
-                            else -> "failed"
-                        }
-                    AgentDiagnosticsReport(
-                        state = state,
-                        score = AgentCheckScore(0, 0),
-                        nativeChecks = emptyList(),
-                        javaChecks = emptyList(),
-                    )
-                }
-            }
-        }
-
-    /**
-     * Create the same debug ZIP as Detailed diagnostics and return app-cache metadata.
-     *
-     * @param selfNeedsRestart Whether the current app process needs restart for its own hooks.
-     */
-    suspend fun exportDebugZip(
-        context: Context,
-        selfNeedsRestart: Boolean? = null,
-    ): AgentDebugZipExport =
-        withAppContext(context) { context ->
-            val connectivityManager =
-                context.getSystemService(ConnectivityManager::class.java)
-                    ?: error("ConnectivityManager unavailable")
-            val file =
-                exportDebugZip(
-                    cm = connectivityManager,
-                    context = context,
-                    selfNeedsRestart = selfNeedsRestart == true,
-                ) ?: error("Debug ZIP export failed")
-            file.toAgentDebugZipExport()
+            // Forensic blobs (shell snapshot, dmesg, boot logcat, lsposed config,
+            // hook counters, raw sections) only on request — they run extra root
+            // shells and bloat the live payload. Same options as the file export.
+            val shellSnapshot = if (options.forensics) collectDebugShellSnapshot() else null
+            buildVpnHideState(
+                context = context,
+                captureKind = "agent_bridge",
+                generatedAt = isoNow(),
+                selfNeedsRestart = false,
+                rootSnapshot = rootSnapshot,
+                shellSnapshot = shellSnapshot,
+                gate = gate,
+                checkResults = checkResults,
+                dmesg = if (options.forensics) suExec("dmesg 2>/dev/null").second else "",
+                logcat = "",
+                bootLsposedLogcat = if (options.forensics) captureBootLsposedLogcat() else "",
+                lsposedConfigDb = if (options.forensics) buildLsposedConfigText(context) else "",
+                hookReport = shellSnapshot?.let { buildHookDiagnosticsText(context, it) },
+                debugCapture = null,
+                errors = emptyList(),
+                dashboard = dashboard,
+                config = config,
+                statistics = statistics,
+                options = options,
+            )
         }
 
     /**
@@ -88,7 +78,17 @@ internal object AgentControl {
      */
     suspend fun exportKernelImages(context: Context): AgentDebugZipExport =
         withAppContext(context) { context ->
-            val file = exportKernelImagesZip(context) ?: error("Kernel image export failed")
+            val connectivityManager =
+                context.getSystemService(ConnectivityManager::class.java)
+                    ?: error("ConnectivityManager unavailable")
+            val file =
+                exportDebug(
+                    cm = connectivityManager,
+                    context = context,
+                    selfNeedsRestart = false,
+                    options = StateContentOptions(forensics = true),
+                    attachKernelImage = true,
+                ) ?: error("Kernel image export failed")
             file.toAgentDebugZipExport()
         }
 
@@ -166,20 +166,6 @@ internal object AgentControl {
         }
 
     /**
-     * Return the Apps tab canonical config and configured package summary.
-     *
-     * @param refresh Force a fresh root snapshot instead of reusing the app cache.
-     */
-    suspend fun getProtectionState(
-        context: Context,
-        refresh: Boolean? = null,
-    ): AgentProtectionState =
-        withAppContext(context) { context ->
-            val snapshot = targetsSnapshot(refresh == true)
-            buildProtectionState(snapshot)
-        }
-
-    /**
      * List installed apps in the same shape used by the Apps picker.
      *
      * @param includeSystem Include system packages.
@@ -208,14 +194,6 @@ internal object AgentControl {
                     )
                 }.sortedBy { it.label.lowercase() }
                 .toList()
-        }
-
-    /**
-     * Export the canonical JSON config used by Settings backup/export.
-     */
-    suspend fun exportCanonicalConfig(context: Context): String =
-        withAppContext(context) { context ->
-            canonicalConfigJson(currentCanonicalConfig(refresh = false))
         }
 
     /**
@@ -532,169 +510,6 @@ private fun buildProtectionState(snapshot: TargetsSnapshot): AgentProtectionStat
         settings = canonical.settings.toAgentCanonicalSettings(),
     )
 }
-
-private fun DashboardState.toAgentDashboardState(): AgentDashboardState {
-    val errorCount = messages.count { it.severity == DashboardMessageSeverity.ERROR }
-    val warningCount = messages.count { it.severity == DashboardMessageSeverity.WARNING }
-    val infoCount = messages.count { it.severity == DashboardMessageSeverity.INFO }
-    return AgentDashboardState(
-        heroStatus = computeHeroStatus(this, errorCount, warningCount).name,
-        activeModuleCount = activeModuleCount(this),
-        totalModuleCount = 3,
-        errorCount = errorCount,
-        warningCount = warningCount,
-        infoCount = infoCount,
-        activeNativeBackend = nativeBackend.id?.name,
-        modules =
-            listOf(
-                lsposed.toAgentModuleState(),
-                nativeBackend.toAgentModuleState(nativeTargetCount),
-                ports.toAgentModuleState("ports", "ports", "Ports", portsTargetCount),
-            ),
-        protection = protection.toAgentProtectionSummary(),
-        messages = messages.map { AgentDashboardMessage(it.severity.name.lowercase(), it.text) },
-    )
-}
-
-private fun LsposedState.toAgentModuleState(): AgentModuleState =
-    when (this) {
-        LsposedState.NotInstalled -> {
-            AgentModuleState(id = "lsposed", layer = "java", backend = "LSPosed", state = "not_installed")
-        }
-
-        is LsposedState.InstalledInactive -> {
-            AgentModuleState(
-                id = "lsposed",
-                layer = "java",
-                backend = "LSPosed",
-                state = "installed_inactive",
-                version = version,
-            )
-        }
-
-        is LsposedState.NeedsReboot -> {
-            AgentModuleState(
-                id = "lsposed",
-                layer = "java",
-                backend = "LSPosed",
-                state = "needs_reboot",
-                version = version,
-            )
-        }
-
-        is LsposedState.Active -> {
-            AgentModuleState(
-                id = "lsposed",
-                layer = "java",
-                backend = "LSPosed",
-                state = "active",
-                version = version,
-                targetCount = targetCount,
-            )
-        }
-    }
-
-private fun DisplayNativeBackend.toAgentModuleState(targetCount: Int): AgentModuleState =
-    state.toAgentModuleState(
-        id = id?.name?.lowercase() ?: "native",
-        layer = "native",
-        backend =
-            when (id) {
-                NativeBackendId.Kmod -> "Kmod"
-                NativeBackendId.Kpm -> "KPM"
-                NativeBackendId.Zygisk -> "Zygisk"
-                null -> "Native"
-            },
-        targetCount = targetCount,
-    )
-
-private fun ModuleState.toAgentModuleState(
-    id: String,
-    layer: String,
-    backend: String,
-    targetCount: Int,
-): AgentModuleState =
-    when (this) {
-        ModuleState.NotInstalled -> {
-            AgentModuleState(id = id, layer = layer, backend = backend, state = "not_installed")
-        }
-
-        is ModuleState.Installed -> {
-            AgentModuleState(
-                id = id,
-                layer = layer,
-                backend = backend,
-                state = if (active) "active" else "installed_inactive",
-                version = version,
-                targetCount = targetCount,
-                reason = brokenReason?.name,
-            )
-        }
-    }
-
-/** Agent-bridge wire token for a blocked gate (protocol-facing — keep stable). */
-private fun DiagnosticGate.agentStateToken(): String =
-    when (this) {
-        DiagnosticGate.VPN_OFF -> "vpn_off"
-        DiagnosticGate.NEEDS_RESTART -> "needs_restart"
-        DiagnosticGate.SELF_NOT_ROUTED -> "self_not_routed"
-        DiagnosticGate.ROUTED -> "routed" // unreachable: a Blocked gate is never ROUTED
-    }
-
-private fun ProtectionCheck.toAgentProtectionSummary(): AgentProtectionSummary =
-    when (this) {
-        is ProtectionCheck.Blocked -> {
-            AgentProtectionSummary(state = gate.agentStateToken())
-        }
-
-        ProtectionCheck.Failed -> {
-            AgentProtectionSummary(state = "failed")
-        }
-
-        is ProtectionCheck.Checked -> {
-            AgentProtectionSummary(
-                state = "checked",
-                native = native.toAgentStatus(),
-                java = java.toAgentStatus(),
-                nativePassed = (native as? LayerStatus.Active)?.hidden,
-                nativeFailed = (native as? LayerStatus.Active)?.leaks,
-                javaFailed = (java as? LayerStatus.Active)?.leaks,
-            )
-        }
-    }
-
-private fun LayerStatus.toAgentStatus(): String =
-    when (this) {
-        LayerStatus.Absent -> "absent"
-        LayerStatus.Inactive -> "inactive"
-        is LayerStatus.Active -> verdict.name.lowercase()
-    }
-
-private fun CheckResults.toAgentDiagnosticsReport(): AgentDiagnosticsReport {
-    val score = all.protectionScore()
-    // Every check carries its own root-differential/gate outcome, so the agent
-    // report is a pure render of it — no index join back to NATIVE_CHECKS.
-    return AgentDiagnosticsReport(
-        state = "ready",
-        score = AgentCheckScore(score.passed, score.total),
-        nativeChecks = (native + nativeExtra).map { it.toAgentCheckResult() },
-        javaChecks = java.map { it.toAgentCheckResult() },
-    )
-}
-
-private fun CheckResult.toAgentCheckResult(): AgentCheckResult =
-    AgentCheckResult(
-        name = name,
-        status =
-            when (outcome) {
-                CheckOutcome.Leak -> "fail"
-                is CheckOutcome.NotMeasured -> "info"
-                else -> "pass"
-            },
-        detail = detail,
-        outcome = outcome.token(),
-        groundTruthDetail = groundTruthDetail,
-    )
 
 private fun StatisticsState.toAgentStatisticsState(selfPackage: String? = null): AgentStatisticsState {
     val apps = buildAppProbeStats(this, selfPackage)

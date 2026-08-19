@@ -1,6 +1,8 @@
 package dev.okhsunrog.vpnhide
 
 import dev.okhsunrog.vpnhide.generated.HookIds
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 
 /**
  * Per-layer backend health for a dashboard tile. Presence (Absent / Inactive)
@@ -8,21 +10,36 @@ import dev.okhsunrog.vpnhide.generated.HookIds
  * leak or a verdict — it just reads "not active". This is the fix for the old
  * "Partial" that a not-loaded backend used to show from SELinux-only passes.
  */
+@Serializable
 sealed interface LayerStatus {
     /** No backend module installed for this layer. */
+    @Serializable
+    @SerialName("absent")
     data object Absent : LayerStatus
 
     /** Installed but not loaded this boot (needs a reboot / manager toggle). */
+    @Serializable
+    @SerialName("inactive")
     data object Inactive : LayerStatus
+
+    /** Installed and present, but the snapshot shell could not confirm liveness
+     * (e.g. it lacked root to read the runtime resource). Rendered as "not
+     * verified", never as a false "inactive". */
+    @Serializable
+    @SerialName("unverified")
+    data object Unverified : LayerStatus
 
     /** Active and measured. [hidden] = vectors the backend provably hid;
      * [leaks] = vectors it owns that still leak. */
+    @Serializable
+    @SerialName("active")
     data class Active(
         val hidden: Int,
         val leaks: Int,
     ) : LayerStatus
 }
 
+@Serializable
 enum class Verdict { Ok, Partial, Broken }
 
 /**
@@ -61,8 +78,18 @@ internal fun summarizeNativeLayer(
     outcomes: Map<String, CheckOutcome>,
     installedOptionalHooks: Set<HookIds.Hook> = emptySet(),
 ): LayerStatus {
-    if (backend.state is ModuleState.NotInstalled) return LayerStatus.Absent
-    if (!moduleActive(backend.state)) return LayerStatus.Inactive
+    val state = backend.state
+    if (state is ModuleState.NotInstalled) return LayerStatus.Absent
+    if (!moduleActive(state)) {
+        // Installed but not active. If the snapshot shell couldn't authoritatively
+        // read liveness (non-root → false negative on the 0600 ctl / iptables),
+        // report "not verified" instead of a misleading "inactive".
+        return if ((state as? ModuleState.Installed)?.runtimeCheckable == false) {
+            LayerStatus.Unverified
+        } else {
+            LayerStatus.Inactive
+        }
+    }
     val ownedIds = ownedNativeCheckIds(backend, installedOptionalHooks)
     // Both counts are scoped to vectors this backend owns, so hidden and leaks
     // describe the same vector set — a cross-backend hidden (only possible if the

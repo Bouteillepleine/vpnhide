@@ -78,16 +78,22 @@
     <!-- Diagnostics -->
     <string name="diag_summary_tally">已隐藏 %1$d 项 · 暴露 %2$d 项</string>
     <string name="btn_export_debug">收集调试日志</string>
+    <string name="debug_export_card_title">调试导出</string>
+    <string name="debug_export_card_description">将诊断收集为单个文件发给开发者。可选择包含哪些内容（日志、应用列表、内核镜像）。</string>
+    <string name="debug_export_modal_title">包含哪些内容</string>
+    <string name="debug_export_modal_confirm">导出</string>
+    <string name="debug_export_collect_again">重新收集</string>
+    <string name="debug_export_opt_forensics">取证日志</string>
+    <string name="debug_export_opt_forensics_desc">dmesg、logcat 及内核/网络原始探测。文件更大；通常正是错误报告所需。</string>
+    <string name="debug_export_opt_applist">已安装应用列表</string>
+    <string name="debug_export_opt_applist_desc">会暴露你安装了哪些应用。默认关闭；仅在开发者要求时开启。</string>
+    <string name="debug_export_opt_kernel">内核镜像</string>
+    <string name="debug_export_opt_kernel_desc">附带当前的 boot/内核分区。较大，约需一分钟；输出为 .zip。用于启动/内核问题。</string>
     <string name="btn_export_debug_running">正在收集调试信息…</string>
     <string name="btn_save_debug">保存</string>
-    <string name="btn_save_kernel_images">保存镜像</string>
     <string name="btn_share_debug">分享</string>
     <string name="diag_debug_logging_title">调试日志</string>
     <string name="settings_debug_logging_sub">默认关闭，以保持 logcat 干净并避免额外开销。“调试”里的抓取工具会自动开启它——只有当你需要覆盖所有组件的持续日志时，才手动打开。</string>
-    <string name="kernel_images_card_title">内核镜像</string>
-    <string name="kernel_images_card_description">单独生成一个 ZIP，包含当前的 boot/init_boot/vendor_boot/vendor_kernel_boot 镜像以及分区元数据。文件可能很大且敏感，只在开发者要求时再发送。</string>
-    <string name="kernel_images_btn_export">导出内核镜像</string>
-    <string name="kernel_images_btn_export_running">正在导出镜像…</string>
     <string name="logcat_card_title">完整系统 logcat</string>
     <string name="logcat_card_description">记录所有缓冲区（main/system/crash/events/radio）的未过滤日志，并保存为 ZIP，附带设备、后端、内核和配置信息。其中可能包含敏感的应用数据和 agent 控制令牌。先开始录制，复现问题，再停止。</string>
     <string name="logcat_btn_start">开始录制</string>
@@ -130,6 +136,7 @@
     <string name="dashboard_backend_line">%1$s · %2$s</string>
     <string name="dashboard_not_installed">未安装</string>
     <string name="dashboard_installed_inactive">已安装，未启用</string>
+    <string name="dashboard_installed_not_verified">已安装，状态未验证</string>
     <string name="dashboard_installed_restart_app">已安装，重启 VPN Hide 后生效</string>
     <string name="dashboard_module_installed_reboot_needed">已安装，需要重启</string>
     <string name="dashboard_kmod_broken_wrong_variant">已安装，GKI 变体不匹配</string>
@@ -160,6 +167,7 @@
     <string name="dashboard_protection_unknown">未检查</string>
     <string name="dashboard_protection_no_module">无模块</string>
     <string name="dashboard_protection_not_active">未启用</string>
+    <string name="dashboard_protection_not_verified">未验证</string>
     <string name="dashboard_needs_restart">VPN Hide 刚刚为自身启用了隐藏。请重启 VPN Hide（强制停止后重新打开）来检查隐藏效果——无需重启设备。</string>
     <string name="vpn_off_prompt">当前没有已开启的 VPN。请先开启 VPN，再点按“重试”运行隐藏检查。</string>
     <string name="self_not_routed_prompt">VPN 已开启，但 VPN Hide 的流量没有走这条 VPN。请把 VPN Hide 加入 VPN 隧道（不要用分应用代理把它排除），再点按“重试”；否则这些检查没有需要隐藏的内容。</string>

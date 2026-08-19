@@ -11,6 +11,9 @@ internal val AgentBridgeJson =
     Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
+        // Match the debug-file format so getState and the exported state.json are
+        // byte-identical for the sealed domain types (ModuleState/LayerStatus/…).
+        classDiscriminator = "kind"
     }
 
 @Serializable

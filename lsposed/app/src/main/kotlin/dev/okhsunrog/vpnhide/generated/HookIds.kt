@@ -2,8 +2,14 @@
 
 package dev.okhsunrog.vpnhide.generated
 
+import kotlinx.serialization.Serializable
+
 /** Global hook id space (data/hooks.toml). bit N == hook id N. */
 internal object HookIds {
+    // @Serializable: Hook is embedded in the canonical VpnHideState (diagnostics
+    // report + dashboard optional-hook set) that serializes straight to the debug
+    // JSON; the enum serializes by entry name.
+    @Serializable
     enum class Hook(
         val id: Int,
         val hookName: String,

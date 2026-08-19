@@ -2,6 +2,8 @@ package dev.okhsunrog.vpnhide
 
 import dev.okhsunrog.vpnhide.checks.CheckOutput
 import dev.okhsunrog.vpnhide.checks.CheckStatus
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 
 /**
  * The honest per-check outcome, decided from the app's in-process probe result
@@ -12,26 +14,38 @@ import dev.okhsunrog.vpnhide.checks.CheckStatus
  * EACCES-blocked), or nothing at all (root also sees nothing). [NotMeasured] is
  * orthogonal — the probe produced no usable observation, so it votes for neither.
  */
+@Serializable
 sealed interface CheckOutcome {
     /** App saw VPN-shaped data — a real leak. */
+    @Serializable
+    @SerialName("leak")
     data object Leak : CheckOutcome
 
     /** App saw no VPN and root did: the active backend hid it. (Attribution to a
      * specific hook is layered on later from the coverage map / counters.) */
+    @Serializable
+    @SerialName("hidden_backend")
     data object HiddenByBackend : CheckOutcome
 
     /** The app's read was denied by SELinux — SELinux hid it, not a backend hook. */
+    @Serializable
+    @SerialName("hidden_selinux")
     data object HiddenBySelinux : CheckOutcome
 
     /** Nothing VPN-shaped on this surface for anyone (root also saw nothing). */
+    @Serializable
+    @SerialName("nothing_to_leak")
     data object NothingToLeak : CheckOutcome
 
     /** No usable observation: the probe couldn't run, or no ground truth. */
+    @Serializable
+    @SerialName("not_measured")
     data class NotMeasured(
         val reason: NotMeasuredReason,
     ) : CheckOutcome
 }
 
+@Serializable
 enum class NotMeasuredReason(
     val token: String,
 ) {

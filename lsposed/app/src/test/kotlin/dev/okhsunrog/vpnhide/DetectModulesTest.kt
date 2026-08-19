@@ -29,6 +29,47 @@ class DetectModulesTest {
     }
 
     @Test
+    fun `kmod runtime unverified when snapshot shell lacked root`() {
+        // proc_exists reads 0 because the 0600 /proc/vpnhide_ctl was EACCES to a
+        // non-root shell — NOT because the module is inactive. Mark it unverified.
+        val sections =
+            mapOf(
+                "kmod_prop" to "version=1.2.3",
+                "proc_exists" to "0",
+                "snapshot_shell_uid" to "uid=2000\nid=uid=2000(shell)\ncontext=u:r:shell:s0\nerrno_ctl=eacces",
+            )
+        val state = detectKmodModule(sections) as ModuleState.Installed
+        assertEquals(false, state.active)
+        assertEquals(false, state.runtimeCheckable)
+    }
+
+    @Test
+    fun `kmod genuinely inactive when a root shell confirms the proc node is absent`() {
+        val sections =
+            mapOf(
+                "kmod_prop" to "version=1.2.3",
+                "proc_exists" to "0",
+                "snapshot_shell_uid" to "uid=0\nid=uid=0(root)\ncontext=u:r:ksu:s0\nerrno_ctl=enoent",
+            )
+        val state = detectKmodModule(sections) as ModuleState.Installed
+        assertEquals(false, state.active)
+        assertEquals(true, state.runtimeCheckable)
+    }
+
+    @Test
+    fun `ports runtime unverified when snapshot shell lacked root`() {
+        val sections =
+            mapOf(
+                "ports_prop" to "version=1.2.3",
+                "ports_chain" to "0",
+                "snapshot_shell_uid" to "uid=2000\nid=uid=2000(shell)\ncontext=u:r:shell:s0",
+            )
+        val state = detectPortsModule(sections) as ModuleState.Installed
+        assertEquals(false, state.active)
+        assertEquals(false, state.runtimeCheckable)
+    }
+
+    @Test
     fun `zygisk active only when heartbeat matches current boot`() {
         val sections = mapOf("zygisk_prop" to "version=0.6.3")
         val fresh = detectZygiskModule(sections, "boot_id=boot-1", "boot-1") as ModuleState.Installed
