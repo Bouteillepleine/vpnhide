@@ -415,6 +415,7 @@
     <string name="check_ioctl_mtu" translatable="false">ioctl SIOCGIFMTU tun0</string>
     <string name="check_ioctl_conf" translatable="false">ioctl SIOCGIFCONF enum</string>
     <string name="check_getifaddrs" translatable="false">getifaddrs() enum</string>
+    <string name="check_so_bindtodevice" translatable="false">setsockopt SO_BINDTODEVICE tun0</string>
     <string name="check_netlink_getlink" translatable="false">netlink RTM_GETLINK</string>
     <string name="check_netlink_getroute" translatable="false">netlink RTM_GETROUTE</string>
     <string name="check_netlink_getrule" translatable="false">netlink RTM_GETRULE</string>

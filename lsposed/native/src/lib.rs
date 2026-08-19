@@ -302,6 +302,73 @@ fn check_getifaddrs() -> CheckOutput {
     }
 }
 
+/// `setsockopt(SO_BINDTODEVICE, "tun0")` — the pre-mutation bind-interface vector
+/// (kmod/KPM `socket_bind_interface`, RKNHardering probe n18). A target that can
+/// bind a socket to tun0 has leaked the interface's existence and can pin traffic
+/// to it; the kernel backend denies this by returning ENODEV *before* mutating
+/// `sk_bound_dev_if`.
+///
+/// Classification mirrors the backend contract and RKNHardering's own semantics
+/// (only a completed bind is a leak):
+///
+/// - `rc == 0` → the bind succeeded → the interface is bindable/visible (FAIL).
+/// - `ENODEV` → the hook denied it (or the iface is absent) → not visible (PASS);
+///   the root ground-truth differential decides which.
+/// - `EPERM`/`EACCES`/other → the app could not complete the bind for a reason that
+///   is NOT our hook (capability/SELinux). Report as a permission block, never as a
+///   backend success or a leak.
+fn check_setsockopt_bindtodevice() -> CheckOutput {
+    unsafe {
+        with_inet_dgram_socket(|fd| {
+            // Include the NUL terminator in optlen, exactly like the RKNHardering
+            // probe (name.size() + 1); the kernel reads optval as a C string.
+            let name = b"tun0\0";
+            let ret = libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_BINDTODEVICE,
+                name.as_ptr().cast(),
+                name.len() as libc::socklen_t,
+            );
+            if ret == 0 {
+                // Confirm the bind actually took, exactly like the RKNHardering
+                // probe: a skip_origin-style hook (zygisk) returns 0 without binding,
+                // which neutralises the vector rather than leaking it. Only a
+                // getsockopt that echoes back tun0 is a real leak.
+                let mut dev = [0u8; libc::IFNAMSIZ];
+                let mut dev_len = dev.len() as libc::socklen_t;
+                let got = libc::getsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_BINDTODEVICE,
+                    dev.as_mut_ptr().cast(),
+                    &mut dev_len,
+                );
+                let bound = got == 0 && cstr_to_str(dev.as_ptr().cast()) == "tun0";
+                return if bound {
+                    CheckOutput::fail(
+                        "setsockopt(tun0, SO_BINDTODEVICE) succeeded and getsockopt confirmed — interface bindable/visible",
+                    )
+                } else {
+                    CheckOutput::pass(
+                        "setsockopt(tun0, SO_BINDTODEVICE) returned 0 but getsockopt shows unbound — bind neutralised",
+                    )
+                };
+            }
+            let err = last_os_errno();
+            match err {
+                libc::ENODEV | libc::ENXIO => CheckOutput::pass(
+                    "setsockopt(tun0, SO_BINDTODEVICE) returned ENODEV — interface not visible",
+                ),
+                _ => CheckOutput::selinux_blocked(format!(
+                    "SO_BINDTODEVICE denied (errno {err}: {}) — capability/SELinux block, not a backend hook",
+                    last_os_error()
+                )),
+            }
+        })
+    }
+}
+
 fn check_proc_file(path: &str) -> CheckOutput {
     match fs::read_to_string(path) {
         Err(e) => {
@@ -970,6 +1037,7 @@ fn run_all() -> Vec<CheckJson> {
         j("ioctl_mtu", check_ioctl_siocgifmtu()),
         j("ioctl_conf", check_ioctl_siocgifconf()),
         j("getifaddrs", check_getifaddrs()),
+        j("so_bindtodevice", check_setsockopt_bindtodevice()),
         j("netlink_getlink", check_netlink_getlink()),
         j("netlink_getroute", check_netlink_getroute()),
         j("netlink_getrule", check_netlink_getrule()),

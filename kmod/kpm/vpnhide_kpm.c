@@ -710,7 +710,6 @@ static int ptr_is_kernel(const void *p)
 /*  after the user copy but still before the socket mutation.          */
 /* ================================================================== */
 
-#define VPNHIDE_SOL_SOCKET 1u
 #define VPNHIDE_SO_BINDTODEVICE 25u
 #define VPNHIDE_SO_BINDTOIFINDEX 62u
 
@@ -829,8 +828,14 @@ static void socket_bind_before_common(hook_fargs8_t *fargs, int takes_sk)
 	unsigned char *snapshot = (unsigned char *)&fargs->local;
 	unsigned int i;
 
-	if ((unsigned int)fargs->arg1 != VPNHIDE_SOL_SOCKET ||
-	    !hook_active(VPNHIDE_HOOK_SOCKET_BIND_INTERFACE))
+	/* No `level` gate on purpose. Reaching sock_setsockopt / sk_setsockopt
+	 * proves level == SOL_SOCKET by control flow, and sk_setsockopt never reads
+	 * its `level` parameter — so whole-kernel LTO elides setting it at the direct
+	 * __sys_setsockopt -> sk_setsockopt call, and fargs->arg1 is then garbage
+	 * (observed 0). A `arg1 != SOL_SOCKET` check would wrongly pass the bind
+	 * through and leak on those builds (the same defect fixed in the .ko). Gate
+	 * on the hook toggle alone. */
+	if (!hook_active(VPNHIDE_HOOK_SOCKET_BIND_INTERFACE))
 		return;
 	if (optname != VPNHIDE_SO_BINDTODEVICE &&
 	    optname != VPNHIDE_SO_BINDTOIFINDEX)

@@ -511,7 +511,7 @@ private fun buildProtectionState(snapshot: TargetsSnapshot): AgentProtectionStat
     )
 }
 
-private fun StatisticsState.toAgentStatisticsState(selfPackage: String? = null): AgentStatisticsState {
+internal fun StatisticsState.toAgentStatisticsState(selfPackage: String? = null): AgentStatisticsState {
     val apps = buildAppProbeStats(this, selfPackage)
     return AgentStatisticsState(
         hasAnyData = hasAnyData,
