@@ -688,12 +688,13 @@ static noinline int vpnhide_sock_setsockopt(struct socket *sock, int level,
 {
 	union socket_bind_snapshot snapshot;
 	enum socket_bind_action action =
-		prepare_socket_bind(sock ? READ_ONCE(sock->sk) : NULL,
-				    optname, optval, optlen, &snapshot);
+		prepare_socket_bind(sock ? READ_ONCE(sock->sk) : NULL, optname,
+				    optval, optlen, &snapshot);
 
-	vpnhide_dbg("sock_setsockopt_entry: uid=%u level=%d optname=%d action=%s\n",
-		    from_kuid(&init_user_ns, current_uid()), level, optname,
-		    socket_bind_action_str(action));
+	vpnhide_dbg(
+		"sock_setsockopt_entry: uid=%u level=%d optname=%d action=%s\n",
+		from_kuid(&init_user_ns, current_uid()), level, optname,
+		socket_bind_action_str(action));
 
 	if (action == VPNHIDE_BIND_DENY) {
 		record_hook_hit(VPNHIDE_HOOK_SOCKET_BIND_INTERFACE);
@@ -724,12 +725,13 @@ static noinline int vpnhide_sk_setsockopt(struct sock *sk, int level,
 					  unsigned int optlen)
 {
 	union socket_bind_snapshot snapshot;
-	enum socket_bind_action action = prepare_socket_bind(
-		sk, optname, optval, optlen, &snapshot);
+	enum socket_bind_action action =
+		prepare_socket_bind(sk, optname, optval, optlen, &snapshot);
 
-	vpnhide_dbg("sk_setsockopt_entry: uid=%u level=%d optname=%d action=%s\n",
-		    from_kuid(&init_user_ns, current_uid()), level, optname,
-		    socket_bind_action_str(action));
+	vpnhide_dbg(
+		"sk_setsockopt_entry: uid=%u level=%d optname=%d action=%s\n",
+		from_kuid(&init_user_ns, current_uid()), level, optname,
+		socket_bind_action_str(action));
 
 	if (action == VPNHIDE_BIND_DENY) {
 		record_hook_hit(VPNHIDE_HOOK_SOCKET_BIND_INTERFACE);
