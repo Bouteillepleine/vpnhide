@@ -284,6 +284,21 @@
     <string name="settings_community_section">Community</string>
     <string name="settings_community">Community &amp; feedback</string>
     <string name="settings_community_sub">Author contacts: GitHub, Telegram, 4PDA</string>
+    <string name="settings_donate">Support the project</string>
+    <string name="settings_donate_sub">Boosty or crypto</string>
+    <string name="donate_title">Support the project</string>
+    <string name="donate_body">VPN Hide is free, has no ads and sends nothing anywhere. There will be no paid features — donating unlocks nothing. If the app turned out useful, you can chip in for its development.</string>
+    <string name="donate_boosty">Boosty</string>
+    <string name="donate_boosty_sub">Card payment, one-off or recurring</string>
+    <string name="donate_usdt">USDT (TRC20)</string>
+    <string name="donate_gram">GRAM</string>
+    <string name="donate_ltc">LTC</string>
+    <string name="donate_btc">BTC</string>
+    <string name="donate_copied">Address copied to clipboard</string>
+    <string name="donate_close">Close</string>
+    <string name="donate_banner">VPN Hide is free and has no ads. If it is useful to you, you can support its development.</string>
+    <string name="donate_banner_support">Support</string>
+    <string name="donate_banner_hide">Hide</string>
     <!-- Full reset / leftover cleanup -->
     <string name="settings_reset_section">Reset</string>
     <string name="reset_button">Remove leftover files</string>

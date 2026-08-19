@@ -59,6 +59,12 @@ data class AppSettings(
      * effect on release builds (their versions carry no dev suffix).
      */
     val suppressVersionWarnings: Boolean = false,
+    /**
+     * The donation prompt on the Dashboard has been acted on — either "Support"
+     * or "Hide". Set by both, so the banner is shown until the first deliberate
+     * reaction and never again.
+     */
+    val donatePromptDismissed: Boolean = false,
 ) {
     companion object {
         /** Brand seed — a crisp blue-teal, used as the non-dynamic fallback palette. */

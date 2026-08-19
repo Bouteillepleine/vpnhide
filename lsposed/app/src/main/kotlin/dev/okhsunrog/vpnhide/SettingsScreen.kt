@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Forum
@@ -309,8 +310,12 @@ private fun ResetSettingsSection(selfNeedsRestart: Boolean?) {
 @Composable
 private fun CommunitySettingsSection() {
     var showContact by remember { mutableStateOf(false) }
+    var showDonate by remember { mutableStateOf(false) }
     if (showContact) {
         ContactModal(onDismiss = { showContact = false })
+    }
+    if (showDonate) {
+        DonateModal(onDismiss = { showDonate = false })
     }
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         SettingsSectionHeader(stringResource(R.string.settings_community_section))
@@ -318,7 +323,17 @@ private fun CommunitySettingsSection() {
             title = stringResource(R.string.settings_community),
             subtitle = stringResource(R.string.settings_community_sub),
             icon = Icons.Default.Forum,
+            index = 0,
+            count = 2,
             onClick = { showContact = true },
+        )
+        PreferenceRow(
+            title = stringResource(R.string.settings_donate),
+            subtitle = stringResource(R.string.settings_donate_sub),
+            icon = Icons.Default.Favorite,
+            index = 1,
+            count = 2,
+            onClick = { showDonate = true },
         )
     }
 }

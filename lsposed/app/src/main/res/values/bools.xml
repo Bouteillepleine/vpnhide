@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Boosty is a Russian platform and is not reachable from mainland China, so
+      the zh-rCN locale overrides this to false and shows only the crypto rails.
+      A locale qualifier (rather than a Locale check in Kotlin) so it follows the
+      per-app language setting the same way every other resource does.
+    -->
+    <bool name="donate_show_boosty">true</bool>
+</resources>
