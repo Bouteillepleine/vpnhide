@@ -462,10 +462,20 @@ static int iface_is_vpn(const char *name)
 	return vpnhide_iface_is_vpn(buf);
 }
 
-/* Read net_device.name at the selected table's version-specific offset. */
+/* Read net_device.name at the selected table's version-specific offset.
+ *
+ * `dev` is resolved through version-specific struct offsets (dev_from_fib_info,
+ * dev_from_fib6_info, deref2). On a vendor kernel whose layout differs from the
+ * offset table, that resolution can yield a bogus value; reject anything that
+ * is not a kernel-space pointer so a wrong table degrades to "not hidden"
+ * instead of dereferencing garbage and panicking. ptr_is_kernel is defined
+ * further down but forward-declared for this early use. */
+static int ptr_is_kernel(const void *p);
 static const char *netdev_name(void *dev)
 {
-	return dev ? (const char *)((char *)dev + off->netdev_name) : 0;
+	if (!ptr_is_kernel(dev))
+		return 0;
+	return (const char *)((char *)dev + off->netdev_name);
 }
 
 /* Every hook_fargsN type shares this hook_fargs0_t prefix. Keep the common skb
@@ -1006,7 +1016,10 @@ static void sock_ioctl_after(hook_fargs3_t *fargs, void *udata)
 /*  these close the address path. dev = ifa->{ifa_dev|idev}->dev.       */
 /* ================================================================== */
 
-/* p = *(*(base+off1)+off2) with NULL guards (two-pointer deref). */
+/* p = *(*(base+off1)+off2) with NULL guards (two-pointer deref). The
+ * intermediate pointer is validated as kernel-space before the second deref:
+ * if off1 is wrong on a vendor kernel, *(base+off1) is a bogus value, and
+ * dereferencing it would fault — bail instead. */
 static void *deref2(void *base, unsigned int off1, unsigned int off2)
 {
 	void *p;
@@ -1014,7 +1027,7 @@ static void *deref2(void *base, unsigned int off1, unsigned int off2)
 	if (!base)
 		return 0;
 	p = *(void **)((char *)base + off1);
-	if (!p)
+	if (!ptr_is_kernel(p))
 		return 0;
 	return *(void **)((char *)p + off2);
 }
@@ -1760,9 +1773,17 @@ static int resolve_symbols(void)
 		logki(MODNAME ": using safe raw user-copy routines\n");
 	}
 
-	_skb_trim = (void *)kallsyms_lookup_name("__skb_trim");
+	/* Prefer skb_trim over __skb_trim. Both roll the skb back to the saved
+	 * pre-fill length, but skb_trim guards with `if (skb->len > len)` using
+	 * the kernel's own (correct) skb->len, so a wrong off->skb_len — which
+	 * saves a bogus length on a vendor kernel whose sk_buff layout differs —
+	 * degrades to a no-op instead of __skb_trim unconditionally pushing the
+	 * tail past the allocation (out-of-bounds skb write -> slab corruption ->
+	 * delayed panic). __skb_trim stays as a fallback only if skb_trim is
+	 * somehow unresolvable. */
+	_skb_trim = (void *)kallsyms_lookup_name("skb_trim");
 	if (!_skb_trim)
-		_skb_trim = (void *)kallsyms_lookup_name("skb_trim");
+		_skb_trim = (void *)kallsyms_lookup_name("__skb_trim");
 	_netdev_get_name = (void *)lookup_fn("netdev_get_name");
 
 	if (!_skb_trim) {
