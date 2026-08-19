@@ -28,7 +28,7 @@ vpnhide solves both problems with a layered architecture:
 
 **Layer 2 — Native (kmod, KPM, or Zygisk):** covers native detection paths. Exactly one native backend should be active:
 - **kmod** (recommended for supported GKI kernels) — kernel-level `kprobe`/`kretprobe` hooks. Filters `ioctl`, `getifaddrs`/netlink interface, address, route, and policy-rule dumps, and rejects `SO_BINDTODEVICE` / `SO_BINDTOIFINDEX` for hidden interfaces before socket state changes. Zero footprint in the target process: no library injection, nothing to detect.
-- **KPM** (beta) — a KernelPatch Module implementing the same 11 logical kernel hooks without a GKI-variant-specific `.ko`. Useful for old/non-GKI 4.14 / 4.19 / 5.4 kernels and cases where the `.ko` cannot load. Requires a KernelPatch runtime: APatch or KPatch-Next-Module.
+- **KPM** — a KernelPatch Module implementing the same 11 logical kernel hooks without a GKI-variant-specific `.ko`. Useful for old/non-GKI 4.14 / 4.19 / 5.4 kernels and cases where the `.ko` cannot load. Requires a KernelPatch runtime: APatch or KPatch-Next-Module.
 - **Zygisk** — fallback when a kernel-level backend is not possible. Its `libc.so` inline hooks include best-effort `setsockopt` filtering, run inside the target process, and can be bypassed by direct syscalls, so banking and anti-fraud apps may detect it. For those apps, leave Native off and rely on the Java layer.
 
 **Layer 3 — Ports module (portshide):** a separate Magisk module. It blocks selected apps from reaching `127.0.0.1` / `::1` (via iptables), so they can't detect a locally bound VPN / proxy daemon by its open port (the **Ports** role).
@@ -48,7 +48,7 @@ vpnhide hides three things from selected apps, all configured per app via the fo
 You always need the **VPN Hide app** (`vpnhide.apk`) + LSPosed/Vector for the Java layer + exactly one Native backend for native hiding. The app can also use the optional Ports module if you want localhost port blocking:
 
 - **`kmod`** (stable default) — fully out-of-process, invisible to anti-tamper. Requires a supported GKI kernel: 5.10, 5.15, 6.1, 6.6, or 6.12.
-- **`KPM`** (beta) — kernel-level backend for 4.14 / 4.19 / 5.4 and other cases where the `.ko` does not fit. Requires APatch or KPatch-Next-Module.
+- **`KPM`** — kernel-level backend for 4.14 / 4.19 / 5.4 and other cases where the `.ko` does not fit. Requires APatch or KPatch-Next-Module.
 - **`Zygisk`** — fallback if kmod/KPM are unavailable or you do not want to install a KernelPatch runtime.
 - **`portshide`** (optional) — install this if you want to block selected apps from probing localhost ports.
 
@@ -72,7 +72,7 @@ Download the latest release from [Releases](https://github.com/okhsunrog/vpnhide
 Open the VPN Hide app. The **Dashboard** tab will detect your device and kernel, and tell you which Native backend to install:
 
 - For a supported GKI kernel, it recommends a specific kmod file, e.g. `vpnhide-kmod-android14-6.1.zip`.
-- For old/non-GKI 4.14 / 4.19 / 5.4 kernels, it recommends `vpnhide-kpm.zip` (beta). If no KernelPatch runtime is detected yet, the app asks you to install KPatch-Next-Module first or use Zygisk as a fallback.
+- For old/non-GKI 4.14 / 4.19 / 5.4 kernels, it recommends `vpnhide-kpm.zip`. If no KernelPatch runtime is detected yet, the app asks you to install KPatch-Next-Module first or use Zygisk as a fallback.
 - For other kernels, it recommends `vpnhide-zygisk.zip`.
 
 Install the recommended module:
@@ -171,7 +171,7 @@ Any issues found are shown as actionable cards with specific instructions.
 
 | Directory | What | How |
 |---|---|---|
-| **[kmod/](kmod/)** | `.ko` kernel module + KPM backend (C) | Two kernel-level Native backends: the stable GKI `.ko` using `kretprobe`, and the KPM beta using KernelPatch inline hooks. Both have zero footprint in the target app's process; only one should be active. ([details](kmod/README.md), [KPM](kmod/kpm/README.md)) |
+| **[kmod/](kmod/)** | `.ko` kernel module + KPM backend (C) | Two kernel-level Native backends: the GKI `.ko` using `kretprobe`, and the KPM using KernelPatch inline hooks. Both have zero footprint in the target app's process; only one should be active. ([details](kmod/README.md), [KPM](kmod/kpm/README.md)) |
 | **[lsposed/](lsposed/)** | LSPosed module + app (Kotlin + Rust) | Hooks `writeToParcel` in `system_server` for per-UID Binder filtering. The APK provides a dashboard (module status, version checks, LSPosed config validation, install recommendations), the Hiding tab for Java / Native / Apps / Ports roles, and diagnostics. ([details](lsposed/README.md)) |
 | **[portshide/](portshide/)** | Ports module (Shell + iptables) | Blocks selected apps from reaching `127.0.0.1` / `::1`, hiding locally bound VPN / proxy daemons from localhost port probes. ([details](portshide/README.md)) |
 | **[zygisk/](zygisk/)** | Zygisk module (Rust) | Inline-hooks `libc.so` in the target app's process. Fallback when a kernel-level backend is unavailable. ([details](zygisk/README.md)) |
@@ -218,7 +218,7 @@ it in Settings and reboot; when disabled its global VFS probes are not installed
 
 Important: `ioctl` and netlink dumps are available to a regular app without help from SELinux; on Linux 5.7+, so is the first socket-interface bind. This is how detectors such as RKNHardering bypass the `/proc/net/route` denial through netlink (see [issue #86](https://github.com/okhsunrog/vpnhide/issues/86)). Kernel-level backends (kmod/KPM) cover the native paths marked above with no target-process footprint. Zygisk covers libc-routed calls only; a direct raw syscall bypasses its hooks. On older kernels, the kernel itself rejects an unprivileged interface bind. Everything else is either often SELinux-blocked on stock (device-dependent) or goes through Java APIs and is covered by LSPosed.
 
-KPM is beta: it implements the same 11 logical kernel hooks as the `.ko`, while the full vector map documents the remaining ABI and behavior differences on older kernels.
+KPM implements the same 11 logical kernel hooks as the `.ko`, while the full vector map documents the remaining ABI and behavior differences on older kernels.
 
 The full vector map — per-layer breakdown, SELinux caveats, and known gaps — lives in [docs/detection-vectors.md](docs/detection-vectors.md).
 
@@ -274,7 +274,7 @@ vpnhide hides an active VPN from specific apps. It is NOT designed for:
 ## Known limitations
 
 - `kmod` requires a supported GKI kernel with `CONFIG_KPROBES=y` (standard on Android 12+ devices)
-- KPM is beta and requires a KernelPatch runtime (APatch or KPatch-Next-Module); do not install KPM together with the `.ko`
+- KPM requires a KernelPatch runtime (APatch or KPatch-Next-Module); do not install KPM together with the `.ko`
 - `lsposed` requires LSPosed, LSPosed-Next, or Vector
 - `zygisk` is arm64 only
 - Direct `svc #0` syscalls bypass Zygisk's libc hooks — use a kernel-level backend (kmod or KPM) for that

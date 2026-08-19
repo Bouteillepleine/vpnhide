@@ -28,7 +28,7 @@ vpnhide решает обе проблемы многослойной архит
 
 **Уровень 2 — нативный (kmod, KPM или Zygisk):** покрывает нативные пути обнаружения. Активным должен быть ровно один Native-бэкенд:
 - **kmod** (рекомендуется для поддерживаемых GKI-ядер) — хуки `kprobe`/`kretprobe` на уровне ядра. Фильтрует `ioctl`, `getifaddrs`/netlink-дампы интерфейсов, адресов, маршрутов и policy rules, а также отклоняет `SO_BINDTODEVICE` / `SO_BINDTOIFINDEX` для скрытых интерфейсов до изменения состояния сокета. Нулевой след в процессе приложения: никаких инъекций библиотек, нечего обнаруживать.
-- **KPM** (бета) — KernelPatch Module с теми же 11 логическими kernel-хуками, но без привязки к GKI-варианту `.ko`. Полезен для старых/non-GKI ядер 4.9 / 4.14 / 4.19 / 5.4 и ситуаций, где `.ko` не может загрузиться. Требует KernelPatch runtime: APatch или KPatch-Next-Module.
+- **KPM** — KernelPatch Module с теми же 11 логическими kernel-хуками, но без привязки к GKI-варианту `.ko`. Полезен для старых/non-GKI ядер 4.9 / 4.14 / 4.19 / 5.4 и ситуаций, где `.ko` не может загрузиться. Требует KernelPatch runtime: APatch или KPatch-Next-Module.
 - **Zygisk** — запасной вариант, если kernel-level backend поставить нельзя. Inline-хуки `libc.so`, включая best-effort фильтрацию `setsockopt`, работают внутри процесса приложения и обходятся прямыми системными вызовами, поэтому банковские и anti-fraud приложения могут их обнаруживать. Для таких приложений лучше оставлять Native выключенным и полагаться на Java-уровень.
 
 **Уровень 3 — модуль скрытия портов (portshide):** отдельный Magisk-модуль. Через iptables блокирует выбранным приложениям доступ к `127.0.0.1` / `::1`, чтобы они не могли обнаружить локально запущенный VPN / proxy-демон по открытому порту (роль Ports).
@@ -48,7 +48,7 @@ vpnhide скрывает от выбранных приложений три в�
 Всегда нужно **приложение VPN Hide** (`vpnhide.apk`) + LSPosed/Vector для Java-уровня + ровно один Native-бэкенд для нативного скрытия. Дополнительно приложение может использовать необязательный Ports-модуль для блокировки localhost-портов:
 
 - **`kmod`** (стабильный вариант по умолчанию) — полностью out-of-process, невидим для anti-tamper. Требуется поддерживаемое GKI-ядро: 5.10, 5.15, 6.1, 6.6 или 6.12.
-- **`KPM`** (бета) — kernel-level backend для 4.9 / 4.14 / 4.19 / 5.4 и других случаев, где `.ko` не подходит. Нужен APatch или KPatch-Next-Module.
+- **`KPM`** — kernel-level backend для 4.9 / 4.14 / 4.19 / 5.4 и других случаев, где `.ko` не подходит. Нужен APatch или KPatch-Next-Module.
 - **`Zygisk`** — fallback, если kmod/KPM недоступны или вы не хотите ставить KernelPatch runtime.
 - **`portshide`** (необязательно) — установите, если хотите блокировать выбранным приложениям доступ к localhost-портам.
 
@@ -72,7 +72,7 @@ vpnhide скрывает от выбранных приложений три в�
 Откройте приложение VPN Hide. На вкладке **«Обзор»** приложение определит устройство и ядро и покажет, какой Native-бэкенд лучше установить:
 
 - Для поддерживаемого GKI-ядра будет рекомендован конкретный файл kmod, например `vpnhide-kmod-android14-6.1.zip`.
-- Для non-GKI/старых ядер 4.9 / 4.14 / 4.19 / 5.4 будет рекомендован `vpnhide-kpm.zip` (бета). Если KernelPatch runtime ещё не найден, приложение попросит сначала установить KPatch-Next-Module или использовать Zygisk как fallback.
+- Для non-GKI/старых ядер 4.9 / 4.14 / 4.19 / 5.4 будет рекомендован `vpnhide-kpm.zip`. Если KernelPatch runtime ещё не найден, приложение попросит сначала установить KPatch-Next-Module или использовать Zygisk как fallback.
 - Для остальных ядер будет рекомендован `vpnhide-zygisk.zip`.
 
 Установите рекомендованный модуль:
@@ -171,7 +171,7 @@ su -c /data/adb/modules/vpnhide_ports/activator
 
 | Директория | Что | Как |
 |---|---|---|
-| **[kmod/](kmod/)** | Модуль ядра `.ko` + KPM backend (C) | Два kernel-level Native-бэкенда: стабильный GKI `.ko` на `kretprobe` и KPM-бета на KernelPatch inline hooks. Оба дают нулевой след в процессе приложения; активным должен быть только один. ([подробнее](kmod/README.md), [KPM](kmod/kpm/README.md)) |
+| **[kmod/](kmod/)** | Модуль ядра `.ko` + KPM backend (C) | Два kernel-level Native-бэкенда: стабильный GKI `.ko` на `kretprobe` и KPM на KernelPatch inline hooks. Оба дают нулевой след в процессе приложения; активным должен быть только один. ([подробнее](kmod/README.md), [KPM](kmod/kpm/README.md)) |
 | **[lsposed/](lsposed/)** | LSPosed-модуль + приложение (Kotlin + Rust) | Хуки `writeToParcel` в `system_server` для per-UID фильтрации Binder. APK предоставляет обзорную панель (статус модулей, проверка версий, валидация конфигурации LSPosed, рекомендации по установке), вкладку «Скрытие» для ролей Java / Native / Apps / Ports и диагностику. ([подробнее](lsposed/README.md)) |
 | **[portshide/](portshide/)** | Модуль скрытия портов (Shell + iptables) | Блокирует выбранным приложениям доступ к `127.0.0.1` / `::1`, скрывая локально запущенные VPN / proxy-демоны от проверок localhost-портов. ([подробнее](portshide/README.md)) |
 | **[zygisk/](zygisk/)** | Zygisk-модуль (Rust) | Inline-хуки `libc.so` в процессе приложения. Fallback, когда kernel-level backend недоступен. ([подробнее](zygisk/README.md)) |
@@ -275,7 +275,7 @@ vpnhide скрывает активный VPN от конкретных прил
 ## Известные ограничения
 
 - `kmod` требует поддерживаемое GKI-ядро с `CONFIG_KPROBES=y` (стандарт на устройствах Android 12+)
-- KPM — бета и требует KernelPatch runtime (APatch или KPatch-Next-Module); не ставьте KPM одновременно с `.ko`
+- KPM требует KernelPatch runtime (APatch или KPatch-Next-Module); не ставьте KPM одновременно с `.ko`
 - `lsposed` требует LSPosed, LSPosed-Next или Vector
 - `zygisk` — только arm64
 - Прямые системные вызовы `svc #0` обходят хуки libc в Zygisk — для этого нужен kernel-level backend (kmod или KPM)

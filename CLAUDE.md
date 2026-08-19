@@ -10,7 +10,7 @@ tooling that follows the AGENTS-convention picks it up automatically.
 
 Monorepo for hiding VPN interfaces from selected Android apps. Runtime components plus tooling:
 
-- `kmod/` — kernel-level native backends: `.ko` kretprobe module per GKI generation, plus KPM beta for KernelPatch
+- `kmod/` — kernel-level native backends: `.ko` kretprobe module per GKI generation, plus KPM for KernelPatch
 - `zygisk/` — Rust Zygisk module, inline `libc` hooks via shadowhook
 - `lsposed/` — LSPosed module + Compose target-picker app
 - `portshide/` — localhost port blocker (shell + iptables)
@@ -66,4 +66,4 @@ So when you need diagnostics in the logs and Debug logging is off: **stop and as
 
 ## Design notes
 
-- **KPM backend:** `kmod/kpm/` ships a KernelPatch Module beta packaged as `vpnhide-kpm.zip`. It is a kernel-level Native backend like the `.ko`, but uses KernelPatch inline hooks and one cross-version artifact for the tested Android kernel families 4.9, 4.14, 4.19, 5.4, 5.10, 5.15, 6.1, 6.6, and 6.12. Other minor families are rejected rather than assigned a guessed layout. It requires APatch or KPatch-Next-Module, and must not be active together with the `.ko`; supported GKI devices should still prefer the QEMU-tested `.ko` unless there is a real load/signing problem.
+- **KPM backend:** `kmod/kpm/` ships a KernelPatch Module packaged as `vpnhide-kpm.zip`. It is a kernel-level Native backend like the `.ko`, but uses KernelPatch inline hooks and one cross-version artifact for the tested Android kernel families 4.9, 4.14, 4.19, 5.4, 5.10, 5.15, 6.1, 6.6, and 6.12. Other minor families are rejected rather than assigned a guessed layout. It requires APatch or KPatch-Next-Module, and must not be active together with the `.ko`; on supported GKI devices the QEMU-tested `.ko` is still the default, but KPM is a stable alternative when the `.ko` can't load or the kernel enforces module signatures.

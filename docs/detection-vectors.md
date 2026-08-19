@@ -52,7 +52,7 @@ Key consequences:
 - **The kernel backends (kmod `.ko` and KPM) are the bypass-proof native layers.**
   A detector reading `/proc/net/route` with a raw `openat` syscall, or driving
   netlink without libc, defeats Zygisk but not a kernel backend. kmod is the
-  stable default for supported GKI kernels; KPM is the beta KernelPatch path for
+  stable default for supported GKI kernels; KPM is the KernelPatch path for
   old/non-GKI kernels and `.ko` load failures.
 - **lsposed is the only layer that can fake the high-level Java network model**
   (`ConnectivityManager`, `LinkProperties`, capabilities, callbacks) and
