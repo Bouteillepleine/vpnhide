@@ -44,7 +44,13 @@ internal suspend fun exportDebug(
             if (attachKernelImage) {
                 writeKernelBundleZip(context, timestamp, state.toJson())
             } else {
-                File(context.cacheDir, "vpnhide_debug_$timestamp.json").apply { writeText(state.toJson()) }
+                // Bundle the single state.json in a .zip too: forums/messengers (4pda,
+                // the main report channel) whitelist .zip but reject a bare .json, and
+                // the JSON compresses ~10x. Every export kind is now a .zip carrying
+                // state.json, so the caller has one format to handle.
+                File(context.cacheDir, "vpnhide_debug_$timestamp.zip").also {
+                    writeDiagnosticZip(it, mapOf("state.json" to state.toJson()))
+                }
             }
         } catch (c: CancellationException) {
             throw c
@@ -139,11 +145,11 @@ private suspend fun buildDebugState(
 internal fun isoNow(): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.US).format(Date())
 
 /**
- * Pack a small ZIP: named text entries + raw file entries. Retained for the two
- * captures with a non-text payload — the full-logcat recorder (a multi-MB raw log)
- * and the kernel-image export (binary partition images) — each of which carries the
- * canonical `state.json` alongside its payload. The plain debug export is a single
- * `.json` and does not use this.
+ * Pack a ZIP: named text entries + raw file entries. The one packaging primitive for
+ * every debug export — the plain debug export (just `state.json`), the kernel-image
+ * export (+ binary partition images), and the full-logcat recorder (+ a multi-MB raw
+ * log). Every bundle is a `.zip` carrying the canonical `state.json`; the heavy
+ * variants add their payload alongside it.
  */
 internal fun writeDiagnosticZip(
     zipFile: File,

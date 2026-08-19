@@ -90,7 +90,7 @@
     <string name="debug_export_modal_title">What to include</string>
     <string name="debug_export_modal_confirm">Export</string>
     <string name="debug_export_collect_again">Collect again</string>
-    <string name="debug_export_opt_forensics">Forensic logs</string>
+    <string name="debug_export_opt_forensics">Verbose logs</string>
     <string name="debug_export_opt_forensics_desc">dmesg, logcat and raw kernel/network probes. Bigger file; usually what a bug report needs.</string>
     <string name="debug_export_opt_applist">Installed-app list</string>
     <string name="debug_export_opt_applist_desc">Reveals which apps you have installed. Off by default; enable only when the developer asks.</string>

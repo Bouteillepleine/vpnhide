@@ -218,15 +218,14 @@ fun DebugToolsSection(
     var exporting by remember { mutableStateOf(false) }
     var showModal by remember { mutableStateOf(false) }
     var resultFile by remember { mutableStateOf<File?>(null) }
-    var resultIsZip by remember { mutableStateOf(false) }
 
     // One export recipe, shared with the agent bridge's getState.
     var optForensics by remember { mutableStateOf(true) }
     var optAppList by remember { mutableStateOf(false) }
     var optKernelImage by remember { mutableStateOf(false) }
 
-    val mime = if (resultIsZip) "application/zip" else "application/json"
-    val saveLauncher = rememberZipSaveLauncher("debug-export", mimeType = mime) { resultFile }
+    // Every export kind is now a .zip (carrying state.json), so one MIME type fits all.
+    val saveLauncher = rememberZipSaveLauncher("debug-export") { resultFile }
 
     Column(modifier = modifier.fillMaxWidth()) {
         EnhancedCard(
@@ -324,7 +323,6 @@ fun DebugToolsSection(
                         exporting = true
                         scope.launch {
                             resultFile = exportDebug(cm, context, restartState, options, kernel)
-                            resultIsZip = kernel
                             exporting = false
                         }
                     }
@@ -361,7 +359,7 @@ fun DebugToolsSection(
                             shareLabel = stringResource(R.string.btn_share_debug),
                             sharePrimary = true,
                             onSave = { saveLauncher.launch(file.name) },
-                            onShare = { shareFileViaProvider(context, file, mime) },
+                            onShare = { shareFileViaProvider(context, file, "application/zip") },
                         )
                         TextButton(
                             onClick = doExport,
