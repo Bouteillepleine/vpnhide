@@ -75,11 +75,11 @@ internal object AgentControl {
                 context.getSystemService(ConnectivityManager::class.java)
                     ?: error("ConnectivityManager unavailable")
             val file =
-                exportDebugZip(
+                exportDebugJson(
                     cm = connectivityManager,
                     context = context,
                     selfNeedsRestart = selfNeedsRestart == true,
-                ) ?: error("Debug ZIP export failed")
+                ) ?: error("Debug export failed")
             file.toAgentDebugZipExport()
         }
 
@@ -667,6 +667,7 @@ private fun LayerStatus.toAgentStatus(): String =
     when (this) {
         LayerStatus.Absent -> "absent"
         LayerStatus.Inactive -> "inactive"
+        LayerStatus.Unverified -> "unverified"
         is LayerStatus.Active -> verdict.name.lowercase()
     }
 

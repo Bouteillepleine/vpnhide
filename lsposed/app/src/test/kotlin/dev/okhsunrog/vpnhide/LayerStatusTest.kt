@@ -53,6 +53,15 @@ class LayerStatusTest {
         assertEquals(LayerStatus.Inactive, summarizeNativeLayer(kmod(installed(active = false)), outcomes))
     }
 
+    @Test
+    fun `native layer is Unverified when a non-root shell could not confirm liveness`() {
+        // Installed, not active, but the liveness read was untrustworthy (runtimeCheckable
+        // = false). Reporting "Inactive" here would be the false negative that made a
+        // fully-working kmod look dead on some KernelSU devices — report Unverified.
+        val backend = kmod(ModuleState.Installed(version = "1.0", active = false, runtimeCheckable = false))
+        assertEquals(LayerStatus.Unverified, summarizeNativeLayer(backend, emptyMap()))
+    }
+
     // ── the tile is judged only on OWNED vectors ───────────────────────────
 
     @Test

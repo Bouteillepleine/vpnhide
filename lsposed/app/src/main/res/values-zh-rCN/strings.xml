@@ -84,8 +84,8 @@
     <string name="btn_share_debug">分享</string>
     <string name="diag_debug_logging_title">调试日志</string>
     <string name="settings_debug_logging_sub">默认关闭，以保持 logcat 干净并避免额外开销。“调试”里的抓取工具会自动开启它——只有当你需要覆盖所有组件的持续日志时，才手动打开。</string>
-    <string name="kernel_images_card_title">内核镜像</string>
-    <string name="kernel_images_card_description">单独生成一个 ZIP，包含当前的 boot/init_boot/vendor_boot/vendor_kernel_boot 镜像以及分区元数据。文件可能很大且敏感，只在开发者要求时再发送。</string>
+    <string name="kernel_images_card_title">诊断 + 内核镜像</string>
+    <string name="kernel_images_card_description">一个 ZIP，包含当前的 boot/init_boot/vendor_boot/vendor_kernel_boot 镜像以及完整诊断（state.json）——单个自包含文件，无需再单独导出诊断。文件可能很大且敏感，只在开发者要求时再发送。</string>
     <string name="kernel_images_btn_export">导出内核镜像</string>
     <string name="kernel_images_btn_export_running">正在导出镜像…</string>
     <string name="logcat_card_title">完整系统 logcat</string>
@@ -130,6 +130,7 @@
     <string name="dashboard_backend_line">%1$s · %2$s</string>
     <string name="dashboard_not_installed">未安装</string>
     <string name="dashboard_installed_inactive">已安装，未启用</string>
+    <string name="dashboard_installed_not_verified">已安装，状态未验证</string>
     <string name="dashboard_installed_restart_app">已安装，重启 VPN Hide 后生效</string>
     <string name="dashboard_module_installed_reboot_needed">已安装，需要重启</string>
     <string name="dashboard_kmod_broken_wrong_variant">已安装，GKI 变体不匹配</string>
@@ -160,6 +161,7 @@
     <string name="dashboard_protection_unknown">未检查</string>
     <string name="dashboard_protection_no_module">无模块</string>
     <string name="dashboard_protection_not_active">未启用</string>
+    <string name="dashboard_protection_not_verified">未验证</string>
     <string name="dashboard_needs_restart">VPN Hide 刚刚为自身启用了隐藏。请重启 VPN Hide（强制停止后重新打开）来检查隐藏效果——无需重启设备。</string>
     <string name="vpn_off_prompt">当前没有已开启的 VPN。请先开启 VPN，再点按“重试”运行隐藏检查。</string>
     <string name="self_not_routed_prompt">VPN 已开启，但 VPN Hide 的流量没有走这条 VPN。请把 VPN Hide 加入 VPN 隧道（不要用分应用代理把它排除），再点按“重试”；否则这些检查没有需要隐藏的内容。</string>

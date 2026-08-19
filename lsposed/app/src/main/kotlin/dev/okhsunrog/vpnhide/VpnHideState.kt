@@ -1,0 +1,229 @@
+package dev.okhsunrog.vpnhide
+
+import android.content.Context
+import android.os.Build
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+
+/**
+ * The one canonical, fully-serializable app-state snapshot.
+ *
+ * This is the whole point of the debug pipeline: the exact domain objects the UI
+ * renders (the [DiagnosticReport], the per-module [ModuleState]s, the active
+ * backend) are @Serializable, so the debug dump is `Json.encodeToString(state)` —
+ * complete by construction, never a hand-written text projection that drifts out
+ * of sync with what the app shows. Everything a bug report needs travels in one
+ * object: the derived state, the raw shell sections it was derived from, the
+ * captured logs, and the root-shell self-diagnosis.
+ *
+ * Compatibility is intentionally NOT a concern: nothing consumes this format but
+ * an operator (or an AI) reading the file, so fields may be added/removed freely.
+ * The invariant that matters is completeness.
+ */
+internal const val VPNHIDE_STATE_SCHEMA: Int = 1
+
+@Serializable
+internal data class VpnHideState(
+    val schema: Int = VPNHIDE_STATE_SCHEMA,
+    // ISO-8601, stamped by the caller (the serializer has no clock).
+    val generatedAt: String,
+    // "debug" | "full_system_logcat" | "kernel_images"
+    val captureKind: String,
+    val app: AppInfo,
+    val device: DeviceInfo,
+    val selfNeedsRestart: Boolean,
+    // The measured diagnostics run. Null when the capture did not run checks
+    // (e.g. the full-logcat recorder just bundles state, no probe run).
+    val gate: DiagnosticGate?,
+    // Verdicts are gate-checked getters on the report (not stored fields), so they
+    // would not otherwise serialize — surface them explicitly, computed once here.
+    val nativeVerdict: Verdict?,
+    val javaVerdict: Verdict?,
+    val report: DiagnosticReport?,
+    // Per-module state, exactly as the detectors compute it for the dashboard.
+    val backends: NativeBackendStates,
+    val activeBackend: DisplayNativeBackend,
+    val ports: ModuleState,
+    val kmodLoadStatus: KmodLoadStatus?,
+    // Root-shell self-diagnosis: who the snapshot shell ran as, and whether its
+    // liveness probes are trustworthy. This is what tells a "not verified" module
+    // apart from a genuinely inactive one.
+    val rootShell: RootShellDiag,
+    // Every raw shell-probe section verbatim — the ground truth the typed fields
+    // above were derived from, plus all forensic captures (network, proc/net,
+    // kernel symbols, module inventory, …). Lossless.
+    val sections: Map<String, String>,
+    val dmesg: String,
+    val logcat: String,
+    val bootLsposedLogcat: String,
+    val lsposedConfigDb: String,
+    // Hook install/counter diagnostics (installed-hook mask, counter deltas across
+    // the forced check run). Null for captures that don't take a counter baseline.
+    val hookReport: String?,
+    val debugCapture: DebugCaptureInfo?,
+    // Non-fatal capture failures (a probe that threw, a truncated section). The
+    // document always serializes; partial data is flagged here rather than lost.
+    val errors: List<String> = emptyList(),
+)
+
+@Serializable
+internal data class AppInfo(
+    val packageName: String,
+    val version: String,
+)
+
+@Serializable
+internal data class DeviceInfo(
+    val manufacturer: String,
+    val model: String,
+    val androidRelease: String,
+    val sdk: Int,
+    val abis: List<String>,
+)
+
+@Serializable
+internal data class DebugCaptureInfo(
+    val forced: Boolean,
+    val applyExit: Int?,
+    val restoreExit: Int?,
+    val detail: String?,
+)
+
+/**
+ * The snapshot shell's identity + liveness-probe trust. Parsed from the
+ * `snapshot_shell_uid` probe. When [uid] != 0 the shell lacked the privilege to
+ * read the 0600 `/proc/vpnhide_ctl` or run iptables, so a negative liveness read
+ * is unreliable and [runtimeCheckable] is false.
+ */
+@Serializable
+internal data class RootShellDiag(
+    val uid: Int?,
+    val idLine: String,
+    val context: String,
+    // "ok" | "eacces" | "enoent" | "other:<msg>"
+    val errnoCtl: String,
+    val runtimeCheckable: Boolean,
+) {
+    companion object {
+        fun from(sections: Map<String, String>): RootShellDiag {
+            val raw = sections["snapshot_shell_uid"].orEmpty()
+
+            fun line(prefix: String): String =
+                raw
+                    .lineSequence()
+                    .firstOrNull { it.startsWith(prefix) }
+                    ?.substringAfter(prefix)
+                    ?.trim()
+                    .orEmpty()
+            return RootShellDiag(
+                uid = snapshotShellUid(sections),
+                idLine = line("id="),
+                context = line("context="),
+                errnoCtl = line("errno_ctl=").ifEmpty { "unknown" },
+                runtimeCheckable = snapshotRuntimeCheckable(sections),
+            )
+        }
+    }
+}
+
+private val stateJson =
+    Json {
+        prettyPrint = true
+        encodeDefaults = true
+        // Sealed-type discriminator; "kind" avoids colliding with any real "type"
+        // key that might live inside a raw shell section rendered as a string map.
+        classDiscriminator = "kind"
+    }
+
+internal fun VpnHideState.toJson(): String = stateJson.encodeToString(this)
+
+/**
+ * Fold one capture into the canonical [VpnHideState]. The module/liveness state is
+ * derived from [rootSnapshot] — the SAME snapshot the live dashboard uses — so the
+ * dump can never disagree with the on-screen state the way the old separate-shell
+ * export path did. [shellSnapshot] contributes forensic-only sections (network,
+ * proc/net, kernel symbols). Both section maps are preserved verbatim.
+ *
+ * Pure and non-suspending: every input is captured by the caller. [gate] +
+ * [checkResults] are non-null only for a real diagnostics run (the debug export);
+ * the logcat/kernel captures pass null and carry no [report].
+ */
+@Suppress("LongParameterList")
+internal fun buildVpnHideState(
+    context: Context,
+    captureKind: String,
+    generatedAt: String,
+    selfNeedsRestart: Boolean,
+    rootSnapshot: RootSnapshot,
+    shellSnapshot: DebugShellSnapshot?,
+    gate: DiagnosticGate?,
+    checkResults: CheckResults?,
+    dmesg: String,
+    logcat: String,
+    hookReport: String?,
+    debugCapture: DebugCaptureInfo?,
+    errors: List<String>,
+): VpnHideState {
+    val rootSections = rootSnapshot.sections
+    val currentBootId = rootSections["current_boot_id"].orEmpty()
+    val kpmLoadStatus = parseKpmLoadStatus(rootSections["kpm_load_status"].orEmpty())
+    val backends = detectNativeBackendStates(rootSections, currentBootId, kpmLoadStatus)
+    val activeBackend = displayNativeBackend(backends)
+    val ports = detectPortsModule(rootSections)
+    val kmodLoadStatus =
+        readKmodLoadStatus(
+            currentBootId.trim(),
+            rootSections["kmod_load_status"].orEmpty(),
+            rootSections["kmod_load_dmesg"].orEmpty(),
+        )
+    val installedOptionalHooks = installedNativeOptionalHooks(activeBackend.id, rootSections, currentBootId)
+
+    val report =
+        if (gate != null && checkResults != null) {
+            buildDiagnosticReport(
+                gate = gate,
+                results = checkResults,
+                backend = activeBackend,
+                lsposedActive = lsposedHooksActiveThisBoot(rootSections["lsposed_state"].orEmpty(), currentBootId),
+                complete = true,
+                installedOptionalHooks = installedOptionalHooks,
+            )
+        } else {
+            null
+        }
+
+    return VpnHideState(
+        generatedAt = generatedAt,
+        captureKind = captureKind,
+        app = AppInfo(context.packageName, appVersionText(context)),
+        device =
+            DeviceInfo(
+                manufacturer = Build.MANUFACTURER,
+                model = Build.MODEL,
+                androidRelease = Build.VERSION.RELEASE.orEmpty(),
+                sdk = Build.VERSION.SDK_INT,
+                abis = Build.SUPPORTED_ABIS.orEmpty().toList(),
+            ),
+        selfNeedsRestart = selfNeedsRestart,
+        gate = report?.gate,
+        nativeVerdict = report?.nativeVerdict,
+        javaVerdict = report?.javaVerdict,
+        report = report,
+        backends = backends,
+        activeBackend = activeBackend,
+        ports = ports,
+        kmodLoadStatus = kmodLoadStatus,
+        rootShell = RootShellDiag.from(rootSections),
+        // Forensic sections on top of the authoritative root sections. Root sections
+        // win on key collisions (they carry the liveness ground truth).
+        sections = shellSnapshot?.sections.orEmpty() + rootSections,
+        dmesg = dmesg,
+        logcat = logcat,
+        bootLsposedLogcat = captureBootLsposedLogcat(),
+        lsposedConfigDb = buildLsposedConfigText(context),
+        hookReport = hookReport,
+        debugCapture = debugCapture,
+        errors = errors,
+    )
+}

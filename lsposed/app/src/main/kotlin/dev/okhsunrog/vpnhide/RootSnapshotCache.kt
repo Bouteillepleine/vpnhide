@@ -60,6 +60,7 @@ internal val REQUIRED_ROOT_SNAPSHOT_SECTIONS =
         "kpatch_runtime",
         "pm_packages",
         "pm_users",
+        "snapshot_shell_uid",
         "proc_exists",
         "ports_chain",
         "lsposed_framework",
@@ -340,6 +341,32 @@ internal fun buildRootShellSnapshotCommand(
       phase_end
     }
     __VPNHIDE_PM_PACKAGES_FUNCTION__
+    phase_shell_identity() {
+      phase_start shell_probe_identity
+      # Who is the snapshot shell, really? The liveness probes below read
+      # root-only runtime resources (0600 /proc/vpnhide_ctl; iptables needs
+      # CAP_NET_ADMIN). If this shell is not uid 0 — e.g. a KernelSU grant that
+      # raced or degraded — those probes read a false negative, and a "0" from
+      # proc_exists/ports_chain must NOT be rendered as "inactive". The detectors
+      # gate runtimeCheckable on this uid; errno_ctl distinguishes EACCES (no
+      # access) from ENOENT (truly absent) for the bundle.
+      emit_eval snapshot_shell_uid '
+        echo "uid=${'$'}(id -u 2>/dev/null)"
+        echo "id=${'$'}(id 2>/dev/null)"
+        echo "context=${'$'}(cat /proc/self/attr/current 2>/dev/null | tr -d "\0")"
+        if [ -e $PROC_CTL ]; then
+          echo "errno_ctl=ok"
+        else
+          ERR=${'$'}(ls $PROC_CTL 2>&1 1>/dev/null)
+          case "${'$'}ERR" in
+            *[Pp]ermission*) echo "errno_ctl=eacces" ;;
+            *o\ such*) echo "errno_ctl=enoent" ;;
+            *) echo "errno_ctl=other:${'$'}ERR" ;;
+          esac
+        fi
+      '
+      phase_end
+    }
     phase_proc_exists() {
       phase_start shell_probe_proc_exists
       emit_eval proc_exists '[ -e $PROC_CTL ] && echo 1 || echo 0'
@@ -372,6 +399,7 @@ internal fun buildRootShellSnapshotCommand(
       phase_kmod_status_files
       phase_runtime_status_files
       __VPNHIDE_PM_PACKAGES_PHASE__
+      phase_shell_identity
       phase_proc_exists
       phase_ports_chain
       phase_lsposed_framework

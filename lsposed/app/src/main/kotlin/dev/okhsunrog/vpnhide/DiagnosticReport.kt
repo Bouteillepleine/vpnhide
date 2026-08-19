@@ -1,6 +1,7 @@
 package dev.okhsunrog.vpnhide
 
 import dev.okhsunrog.vpnhide.generated.HookIds
+import kotlinx.serialization.Serializable
 
 /**
  * Schema version for the serialized report (the debug bundle's `diagnostics.json`
@@ -8,6 +9,7 @@ import dev.okhsunrog.vpnhide.generated.HookIds
  */
 internal const val DIAGNOSTIC_REPORT_SCHEMA: Int = 1
 
+@Serializable
 internal enum class CheckLayer { NATIVE, JAVA }
 
 /**
@@ -17,6 +19,7 @@ internal enum class CheckLayer { NATIVE, JAVA }
  * out of the VPN, or a pending self-restart), which a consumer must surface
  * instead of a misleading clean/Ok result.
  */
+@Serializable
 internal enum class DiagnosticGate { VPN_OFF, SELF_NOT_ROUTED, NEEDS_RESTART, ROUTED }
 
 /**
@@ -47,6 +50,7 @@ internal fun resolveDiagnosticGate(
  * probes run as root), and, for native probes, the hooks that should cover the
  * vector and whether the active backend [owned] it.
  */
+@Serializable
 internal data class DiagnosticCheck(
     val id: String,
     val label: String,
@@ -62,6 +66,7 @@ internal data class DiagnosticCheck(
  * Ok/Partial/Broken verdict is deliberately NOT exposed here — it is only valid
  * for a measured run, so it is reachable only through the gate-checked
  * [DiagnosticReport.nativeVerdict] / [DiagnosticReport.javaVerdict]. */
+@Serializable
 internal data class LayerReport(
     val layer: CheckLayer,
     val backend: NativeBackendId?,
@@ -82,6 +87,7 @@ internal data class LayerReport(
  * every consumer is a pure render of this object, so no two views can disagree
  * and the debug bundle carries exactly what the UI shows.
  */
+@Serializable
 internal data class DiagnosticReport(
     val gate: DiagnosticGate,
     val native: LayerReport,

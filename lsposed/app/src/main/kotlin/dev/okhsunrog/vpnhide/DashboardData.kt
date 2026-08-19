@@ -7,13 +7,20 @@ import android.os.SystemClock
 import dev.okhsunrog.vpnhide.generated.HookIds
 import dev.okhsunrog.vpnhide.settings.SettingsRepository
 import kotlinx.coroutines.flow.first
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import java.io.File
 
 // ── Domain types — invalid states are unrepresentable ────────────────────
 
+@Serializable
 sealed interface ModuleState {
+    @Serializable
+    @SerialName("not_installed")
     data object NotInstalled : ModuleState
 
+    @Serializable
+    @SerialName("installed")
     data class Installed(
         val version: String?,
         val active: Boolean,
@@ -29,12 +36,20 @@ sealed interface ModuleState {
         // take effect. UI colors the card orange, not red, and the dashboard
         // surfaces a reboot warning rather than a corruption error.
         val pendingReboot: Boolean = false,
+        // False when the liveness probe for this module reads a runtime resource
+        // the snapshot shell could not access (e.g. the 0600-root /proc/vpnhide_ctl
+        // or an iptables query when the shell lacked root). Then `active=false` is
+        // NOT trustworthy — the module may well be running — so the UI renders
+        // "not verified", never a false "inactive". True when the probe was
+        // authoritative. See [snapshotRuntimeCheckable].
+        val runtimeCheckable: Boolean = true,
     ) : ModuleState
 }
 
 // Shared across every flashable module kind (kmod, KPM, ...) that stamps
 // ModuleState.Installed.brokenReason — not just kmod, despite the name
 // prefixes on the individual kmod-only cases below.
+@Serializable
 enum class ModuleBrokenReason {
     WrongVariant,
     UnsupportedKernel,
@@ -64,28 +79,35 @@ internal data class ModuleProblem(
     val downloadArtifact: String? = null,
 )
 
+@Serializable
 sealed interface LsposedState {
+    @Serializable
     data object NotInstalled : LsposedState
 
+    @Serializable
     data class InstalledInactive(
         val version: String?,
     ) : LsposedState
 
+    @Serializable
     data class NeedsReboot(
         val version: String?,
     ) : LsposedState
 
+    @Serializable
     data class Active(
         val version: String?,
         val targetCount: Int,
     ) : LsposedState
 }
 
+@Serializable
 internal sealed interface ProtectionCheck {
     // The gate stopped the run before anything could be measured — VPN off, this app
     // split-tunnelled out (hiding is moot for us → "add to tunnel"), or a pending
     // self-restart. Carries the shared [DiagnosticGate] so the hero/agent explain
     // which without a second enum. Never [DiagnosticGate.ROUTED] — that is [Checked].
+    @Serializable
     data class Blocked(
         val gate: DiagnosticGate,
     ) : ProtectionCheck {
@@ -97,8 +119,10 @@ internal sealed interface ProtectionCheck {
     // The run threw (root dropped, shell exec failure) — the VPN may well be up, we
     // just couldn't measure. Distinct from a VPN-off gate so the hero doesn't tell an
     // active-VPN user to turn their VPN on.
+    @Serializable
     data object Failed : ProtectionCheck
 
+    @Serializable
     data class Checked(
         val native: LayerStatus,
         val java: LayerStatus,
@@ -253,13 +277,16 @@ internal sealed interface LsposedConfig {
     ) : LsposedConfig
 }
 
+@Serializable
 internal enum class DashboardMessageSeverity { ERROR, WARNING, INFO }
 
 // Optional call-to-action rendered on a message banner. ContactAuthor opens the
 // shared community/feedback modal (GitHub / Telegram / 4PDA); OpenDiagnostics
 // opens the detailed diagnostics screen.
+@Serializable
 internal enum class DashboardMessageAction { ContactAuthor, OpenDiagnostics }
 
+@Serializable
 internal data class DashboardMessage(
     val severity: DashboardMessageSeverity,
     val text: String,
@@ -269,6 +296,7 @@ internal data class DashboardMessage(
     val downloadArtifact: String? = null,
 )
 
+@Serializable
 internal data class DashboardState(
     val kmod: ModuleState,
     val kpm: ModuleState,
@@ -305,6 +333,10 @@ private fun LayerStatus.heroRank(): Int =
         }
 
         LayerStatus.Inactive -> {
+            1
+        }
+
+        LayerStatus.Unverified -> {
             1
         }
 
@@ -366,6 +398,27 @@ internal fun activeModuleCount(state: DashboardState): Int =
 
 internal fun moduleActive(state: ModuleState): Boolean = (state as? ModuleState.Installed)?.active == true
 
+/** uid the root-snapshot shell actually ran as, parsed from the `snapshot_shell_uid`
+ * probe. Null when the probe is absent (older snapshot) — treated as trusted (0). */
+internal fun snapshotShellUid(sections: Map<String, String>): Int? =
+    sections["snapshot_shell_uid"]
+        .orEmpty()
+        .lineSequence()
+        .firstOrNull { it.startsWith("uid=") }
+        ?.substringAfter("uid=")
+        ?.trim()
+        ?.toIntOrNull()
+
+/** Whether the snapshot shell had the privilege to trust its runtime-liveness
+ * probes (0600 /proc/vpnhide_ctl, iptables). A shell that isn't uid 0 reads a
+ * false negative from those, so a negative liveness result is "not verified",
+ * not "inactive". A missing probe (older snapshot) defaults to trusted. */
+internal fun snapshotRuntimeCheckable(sections: Map<String, String>): Boolean {
+    val uid = snapshotShellUid(sections) ?: return true
+    return uid == 0
+}
+
+@Serializable
 internal data class NativeInstallRecommendation(
     val androidVersion: String,
     val kernelVersion: String,
@@ -398,6 +451,7 @@ internal data class NativeInstallRecommendation(
 // /data/adb/vpnhide_kmod/load_status. Stays valid across reboots,
 // so bootId is compared against the current boot to know if the
 // record is fresh.
+@Serializable
 internal data class KmodLoadStatus(
     val timestamp: Long?,
     val bootId: String?,
@@ -907,6 +961,10 @@ internal fun detectKmodModule(sections: Map<String, String>): ModuleState {
         version = prop.version,
         active = active,
         gkiVariant = prop.gkiVariant,
+        // A negative liveness read from a non-root snapshot shell is untrustworthy
+        // (0600 /proc/vpnhide_ctl → EACCES → false "0"). Mark it unverified so the
+        // UI never shows a false "inactive". A positive read is self-verifying.
+        runtimeCheckable = active || snapshotRuntimeCheckable(sections),
     )
 }
 
@@ -952,6 +1010,9 @@ internal fun detectPortsModule(sections: Map<String, String>): ModuleState {
     return ModuleState.Installed(
         version = prop.version,
         active = active,
+        // `ports_chain` runs iptables, which needs CAP_NET_ADMIN; a non-root
+        // snapshot shell reads a false "0". Mark unverified rather than inactive.
+        runtimeCheckable = active || snapshotRuntimeCheckable(sections),
     )
 }
 

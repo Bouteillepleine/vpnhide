@@ -185,12 +185,13 @@ fun DiagnosticsScreen(
 @Composable
 private fun rememberZipSaveLauncher(
     errorLabel: String,
+    mimeType: String = "application/zip",
     source: () -> File?,
 ): ManagedActivityResultLauncher<String, Uri?> {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     return rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/zip"),
+        ActivityResultContracts.CreateDocument(mimeType),
     ) { uri: Uri? ->
         val src = source() ?: return@rememberLauncherForActivityResult
         if (uri != null) {
@@ -214,30 +215,27 @@ fun DebugToolsSection(
     val cm = context.getSystemService(ConnectivityManager::class.java)
     val scope = rememberCoroutineScope()
     var exporting by remember { mutableStateOf(false) }
-    var debugZipFile by remember { mutableStateOf<File?>(null) }
+    var debugJsonFile by remember { mutableStateOf<File?>(null) }
 
-    val saveLauncher = rememberZipSaveLauncher("debug-zip") { debugZipFile }
+    // The plain diagnostics export is a single state.json (the logcat/kernel cards
+    // still produce zips with their own launchers).
+    val saveLauncher = rememberZipSaveLauncher("debug-json", mimeType = "application/json") { debugJsonFile }
 
     Column(
         modifier = modifier.fillMaxWidth(),
     ) {
-        LogcatRecordCard(selfNeedsRestart = selfNeedsRestart)
-
-        Spacer(Modifier.height(16.dp))
-
-        KernelImageExportCard()
-
-        Spacer(Modifier.height(16.dp))
-
+        // The two diagnostics exports sit together: the plain state.json, then the
+        // same diagnostics bundled with the kernel image. The full-logcat recorder
+        // (a separate, heavier capture) follows.
         // Collect button
-        val zip = debugZipFile
-        if (zip == null) {
+        val jsonFile = debugJsonFile
+        if (jsonFile == null) {
             EnhancedButton(
                 onClick = {
                     val restartState = selfNeedsRestart ?: return@EnhancedButton
                     exporting = true
                     scope.launch {
-                        debugZipFile = exportDebugZip(cm, context, restartState)
+                        debugJsonFile = exportDebugJson(cm, context, restartState)
                         exporting = false
                     }
                 },
@@ -261,10 +259,18 @@ fun DebugToolsSection(
                 saveLabel = stringResource(R.string.btn_save_debug),
                 shareLabel = stringResource(R.string.btn_share_debug),
                 sharePrimary = true,
-                onSave = { saveLauncher.launch(zip.name) },
-                onShare = { shareFileViaProvider(context, zip, "application/zip") },
+                onSave = { saveLauncher.launch(jsonFile.name) },
+                onShare = { shareFileViaProvider(context, jsonFile, "application/json") },
             )
         }
+
+        Spacer(Modifier.height(16.dp))
+
+        KernelImageExportCard()
+
+        Spacer(Modifier.height(16.dp))
+
+        LogcatRecordCard(selfNeedsRestart = selfNeedsRestart)
     }
 }
 

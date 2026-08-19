@@ -58,7 +58,9 @@ internal suspend fun exportKernelImagesZip(context: Context): File? =
             writeDiagnosticZip(
                 zipFile = zipFile,
                 textEntries = kernelExportTextEntries(appContext, partsDir, exit),
-                fileEntries = imageFiles.map { file -> DiagnosticFileEntry("images/${file.name}", file) },
+                fileEntries =
+                    imageFiles.map { file -> DiagnosticFileEntry("images/${file.name}", file) } +
+                        DiagnosticFileEntry("state.json", writeKernelStateJson(appContext, partsDir)),
             )
             zipFile
         } catch (c: CancellationException) {
@@ -73,6 +75,36 @@ internal suspend fun exportKernelImagesZip(context: Context): File? =
             runCatching { partsDir.deleteRecursively() }
         }
     }
+
+// A kernel-image bug report always needs the app-state context too (which .ko is
+// loaded, kernel version, root manager). Bundling the canonical state.json here
+// means the user sends one file, not two. Written into [partsDir] so the caller's
+// finally cleans it up with the rest.
+private suspend fun writeKernelStateJson(
+    context: Context,
+    partsDir: File,
+): File {
+    val rootSnapshot = runCatching { RootSnapshotCache.refresh() }.getOrElse { RootSnapshot(emptyMap()) }
+    val shellSnapshot = collectDebugShellSnapshot()
+    val dmesg = suExec("dmesg 2>/dev/null").second
+    val state =
+        buildVpnHideState(
+            context = context,
+            captureKind = "kernel_images",
+            generatedAt = isoNow(),
+            selfNeedsRestart = false,
+            rootSnapshot = rootSnapshot,
+            shellSnapshot = shellSnapshot,
+            gate = null,
+            checkResults = null,
+            dmesg = dmesg,
+            logcat = "",
+            hookReport = null,
+            debugCapture = null,
+            errors = emptyList(),
+        )
+    return partsDir.resolve("state.json").apply { writeText(state.toJson()) }
+}
 
 private fun kernelExportTextEntries(
     appContext: Context,

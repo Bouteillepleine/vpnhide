@@ -97,6 +97,7 @@
     <string name="dashboard_backend_line">%1$s · %2$s</string>
     <string name="dashboard_not_installed">Не установлен</string>
     <string name="dashboard_installed_inactive">Установлен, неактивен</string>
+    <string name="dashboard_installed_not_verified">Установлен, статус не проверен</string>
     <string name="dashboard_installed_restart_app">Установлен, перезапустите VPN Hide</string>
     <string name="dashboard_module_installed_reboot_needed">Установлен, нужна перезагрузка</string>
     <string name="dashboard_kmod_broken_wrong_variant">Установлен, неподходящий вариант GKI</string>
@@ -127,6 +128,7 @@
     <string name="dashboard_protection_unknown">Не проверено</string>
     <string name="dashboard_protection_no_module">Нет модуля</string>
     <string name="dashboard_protection_not_active">Не активен</string>
+    <string name="dashboard_protection_not_verified">Не проверено</string>
     <string name="dashboard_needs_restart">VPN Hide только что включил скрытие для самого себя. Принудительно остановите VPN Hide и откройте снова, чтобы проверить скрытие — перезагрузка устройства не нужна.</string>
     <string name="vpn_off_prompt">VPN не активен. Включите его и нажмите «Повторить», чтобы проверить скрытие.</string>
     <string name="self_not_routed_prompt">VPN активен, но VPN Hide через него не идёт. Добавьте VPN Hide в туннель вашего VPN (не исключайте его сплит-туннелем) и нажмите «Повторить» — иначе этим проверкам нечего скрывать.</string>
@@ -378,8 +380,8 @@
     <string name="btn_share_debug">Поделиться</string>
     <string name="diag_debug_logging_title">Отладочные логи</string>
     <string name="settings_debug_logging_sub">По умолчанию выключено, чтобы не засорять logcat и не тратить ресурсы. Инструменты захвата в «Отладке» включают его автоматически — вручную нужен только для постоянных логов во всех компонентах.</string>
-    <string name="kernel_images_card_title">Образы ядра</string>
-    <string name="kernel_images_card_description">Создаёт отдельный ZIP с активными boot/init_boot/vendor_boot/vendor_kernel_boot и метаданными разделов. Файл может быть большим и чувствительным; отправляйте его только по запросу разработчика.</string>
+    <string name="kernel_images_card_title">Диагностика с образом ядра</string>
+    <string name="kernel_images_card_description">ZIP с активными образами boot/init_boot/vendor_boot/vendor_kernel_boot и полной диагностикой (state.json) — один самодостаточный файл, отдельно диагностику собирать не нужно. Может быть большим и чувствительным; отправляйте только по запросу разработчика.</string>
     <string name="kernel_images_btn_export">Экспортировать образы</string>
     <string name="kernel_images_btn_export_running">Экспортирую образы&#8230;</string>
     <string name="logcat_card_title">Полный системный logcat</string>

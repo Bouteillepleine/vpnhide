@@ -179,27 +179,14 @@ internal object LogcatRecorder {
             stopLogcatProcess(recording)
             processStopped = true
 
-            val dmesg = suExec("dmesg 2>/dev/null").second
-            val shellSnapshot = collectDebugShellSnapshot()
-            val restore = restoreDebugCaptureLogging(recording.loggingSession)
+            val stateJson = captureLogcatState(context, recording, stopMs, duration)
             restoreAttempted = true
-            val completedLoggingSession = recording.loggingSession.withRestore(restore)
 
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(stopMs))
             zipFile = File(context.cacheDir, "vpnhide_logcat_$timestamp.zip")
-
             writeDiagnosticZip(
                 zipFile = zipFile,
-                textEntries =
-                    buildFullSystemLogcatTextEntries(
-                        context = context,
-                        recording = recording,
-                        stopMs = stopMs,
-                        duration = duration,
-                        shellSnapshot = shellSnapshot,
-                        loggingSession = completedLoggingSession,
-                        dmesg = dmesg,
-                    ),
+                textEntries = mapOf("state.json" to stateJson),
                 fileEntries = listOf(DiagnosticFileEntry("logcat_full.txt", recording.rawLogFile)),
             )
             _state.value = State.Stopped(zipFile, duration)
@@ -223,47 +210,6 @@ internal object LogcatRecorder {
                 runCatching { recording.rawLogFile.delete() }
             }
         }
-    }
-
-    private fun buildFullSystemLogcatTextEntries(
-        context: Context,
-        recording: ActiveRecording,
-        stopMs: Long,
-        duration: Long,
-        shellSnapshot: DebugShellSnapshot,
-        loggingSession: DebugCaptureLoggingSession,
-        dmesg: String,
-    ): LinkedHashMap<String, String> {
-        val files =
-            linkedMapOf(
-                "summary.txt" to
-                    buildDiagnosticSummaryText(
-                        context = context,
-                        selfNeedsRestart = recording.selfNeedsRestart,
-                        report = null,
-                        shellSnapshot = shellSnapshot,
-                        loggingSession = loggingSession,
-                        captureKind = "full_system_logcat",
-                    ),
-                "recording.txt" to buildRecordingText(recording, stopMs, duration),
-            )
-        files.putAll(
-            buildCommonDiagnosticTextFiles(
-                context = context,
-                selfNeedsRestart = recording.selfNeedsRestart,
-                shellSnapshot = shellSnapshot,
-                loggingSession = loggingSession,
-            ),
-        )
-        files["hook_report.txt"] =
-            buildHookDiagnosticsText(
-                context = context,
-                shellSnapshot = shellSnapshot,
-            )
-        files["dmesg_vpnhide.txt"] = filterVpnHideDmesg(dmesg)
-        files["dmesg_full.txt"] = dmesg.ifBlank { "(no dmesg entries)" }
-        files["logcat_vpnhide.txt"] = filterVpnHideLogcat(recording.rawLogFile).ifBlank { "(no VpnHide logcat entries)" }
-        return files
     }
 
     private fun startLogcatProcess(logcatSince: String): Process? =
@@ -330,6 +276,41 @@ internal object LogcatRecorder {
             "log -t $TAG \"full-system-logcat $phase id=$id\" >/dev/null 2>&1",
             timeoutSec = 2,
         )
+    }
+
+    // Build the canonical state.json for this recording: the same authoritative
+    // root snapshot the dashboard uses, plus forensic sections, minus a diagnostics
+    // run (the payload is the raw log). Restores debug logging as part of the flow.
+    private suspend fun captureLogcatState(
+        context: Context,
+        recording: ActiveRecording,
+        stopMs: Long,
+        duration: Long,
+    ): String {
+        val dmesg = suExec("dmesg 2>/dev/null").second
+        val rootSnapshot =
+            runCatching { RootSnapshotCache.refresh() }.getOrElse { RootSnapshot(emptyMap()) }
+        val shellSnapshot = collectDebugShellSnapshot()
+        val session = recording.loggingSession.withRestore(restoreDebugCaptureLogging(recording.loggingSession))
+        return buildVpnHideState(
+            context = context,
+            captureKind = "full_system_logcat",
+            generatedAt = isoNow(),
+            selfNeedsRestart = recording.selfNeedsRestart,
+            rootSnapshot =
+                RootSnapshot(
+                    rootSnapshot.sections +
+                        ("logcat_recording" to buildRecordingText(recording, stopMs, duration)),
+                ),
+            shellSnapshot = shellSnapshot,
+            gate = null,
+            checkResults = null,
+            dmesg = dmesg,
+            logcat = filterVpnHideLogcat(recording.rawLogFile),
+            hookReport = buildHookDiagnosticsText(context, shellSnapshot),
+            debugCapture = session.toDebugCaptureInfo(),
+            errors = emptyList(),
+        ).toJson()
     }
 
     private fun buildRecordingText(

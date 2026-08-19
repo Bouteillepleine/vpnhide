@@ -1,5 +1,7 @@
 package dev.okhsunrog.vpnhide
 
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -136,17 +138,13 @@ class DiagnosticReportTest {
     }
 
     @Test
-    fun `a blocked gate exposes no verdict and never renders a placeholder ok`() {
+    fun `a blocked gate exposes no verdict`() {
         // A gated run's active layers carry a placeholder Active(0,0). The
-        // gate-checked accessors must return null and the renderers must show
-        // "not-measured", never a false "ok" folded off the zero counts.
+        // gate-checked accessors must return null, so no consumer (dashboard tile,
+        // exported VpnHideState.nativeVerdict) can fold a false "ok" off the zeros.
         val r = report(gate = DiagnosticGate.VPN_OFF, results = null)
         assertNull(r.nativeVerdict)
         assertNull(r.javaVerdict)
-        val text = r.toDiagnosticsText()
-        assertTrue("gated layers render not-measured", text.contains("not-measured"))
-        assertFalse("no placeholder ok verdict", text.contains("ok (hidden 0, leaks 0"))
-        assertFalse("json verdict stays null for a gated run", r.toJson().contains("\"verdict\": \"ok\""))
     }
 
     @Test
@@ -165,25 +163,28 @@ class DiagnosticReportTest {
         assertEquals(DiagnosticGate.ROUTED, resolveDiagnosticGate(vpnActive = true, selfRouted = null, selfNeedsRestart = false))
     }
 
-    // ── renderers carry the attribution the old bundle dropped ─────────────
+    // ── the @Serializable report carries the attribution the old bundle dropped ──
 
     private fun leakReport() = report(results = CheckResults(native = ioctlFlagsLeakNative()))
 
     @Test
-    fun `diagnostics text carries the outcome, the ground truth and the verdict`() {
-        val text = leakReport().toDiagnosticsText()
-        assertTrue("gate is recorded", text.contains("gate: routed"))
-        assertTrue("outcome token, not a PASS/FAIL badge", text.contains("[leak] ioctl SIOCGIFFLAGS tun0"))
-        assertTrue("the root ground truth is included", text.contains("root: tun0 up"))
-        assertTrue("the native verdict is Broken", text.contains("broken"))
+    fun `the report computes the measured verdict from a routed run`() {
+        val r = leakReport()
+        assertEquals(DiagnosticGate.ROUTED, r.gate)
+        // A leak on an owned vector with nothing hidden = Broken (active yet dead).
+        assertEquals(Verdict.Broken, r.nativeVerdict)
+        val leak = r.native.checks.first { it.id == "ioctl_flags" }
+        assertEquals(CheckOutcome.Leak, leak.outcome)
+        assertEquals("root: tun0 up", leak.groundTruthDetail)
     }
 
     @Test
-    fun `diagnostics json serializes outcome and verdict`() {
-        val json = leakReport().toJson()
-        assertTrue(json.contains("\"outcome\": \"leak\""))
-        assertTrue(json.contains("\"verdict\": \"broken\""))
-        assertTrue(json.contains("\"groundTruthDetail\": \"root: tun0 up\""))
-        assertTrue(json.contains("\"id\": \"ioctl_flags\""))
+    fun `the report serializes straight to JSON with its outcome and ground truth`() {
+        // No hand-written DTO: the domain report IS the serialized form. @SerialName
+        // gives the outcome a compact token discriminator, not a fully-qualified name.
+        val json = Json { prettyPrint = true }.encodeToString(leakReport())
+        assertTrue("compact outcome discriminator", json.contains("\"leak\""))
+        assertTrue("ground truth carried", json.contains("\"root: tun0 up\""))
+        assertTrue("check id carried", json.contains("\"ioctl_flags\""))
     }
 }
