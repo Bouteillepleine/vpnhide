@@ -190,6 +190,7 @@ internal fun buildCommonDiagnosticTextFiles(
         "device_info.txt" to buildDeviceInfoText(context, selfNeedsRestart, shellSnapshot),
         "backends.txt" to buildBackendsText(context, shellSnapshot),
         "modules.txt" to buildModulesText(shellSnapshot),
+        "profiles.txt" to buildProfilesText(shellSnapshot),
         "config.txt" to buildConfigText(shellSnapshot),
         "interfaces.txt" to buildInterfacesText(shellSnapshot),
         "proc_net.txt" to buildProcNetText(shellSnapshot),
@@ -282,6 +283,15 @@ private fun buildConfigText(shellSnapshot: DebugShellSnapshot): String =
     buildString {
         appendDebugSection("canonical config", shellSnapshot.section("canonical_config"))
         appendDebugSection("Ports load_status", shellSnapshot.section("ports_load_status"))
+    }
+
+// Android users/profiles and the per-user app-scan result (exit codes, package
+// counts, format flags). Names and the full package list are deliberately
+// redacted/omitted — this is enough to diagnose "couldn't read all profiles"
+// failures without exposing which apps a user has installed.
+private fun buildProfilesText(shellSnapshot: DebugShellSnapshot): String =
+    buildString {
+        appendDebugSection("App scan diagnostics", shellSnapshot.section("app_scan_diagnostics"))
     }
 
 private fun buildInterfacesText(shellSnapshot: DebugShellSnapshot): String =

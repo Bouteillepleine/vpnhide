@@ -328,6 +328,32 @@ internal fun buildDebugShellSnapshotCommand(): String =
         )
     }
 
+    # Privacy-safe summary of the per-user app scan: profile list with names
+    # redacted, then per-user exit code / package counts / format flags / first
+    # stderr line — NO package names or paths. This is what diagnoses "couldn't
+    # read all profiles" cases (which user fails, and whether it is a non-zero
+    # exit, an empty list, or a `-U`/`-f` format the parser misses). The full
+    # package inventory is intentionally never written to the bundle.
+    emit_eval app_scan_diagnostics '
+      PLAIN=${'$'}(pm list users 2>/dev/null)
+      echo "--- pm list users (names redacted) ---"
+      printf "%s\n" "${'$'}PLAIN" | sed -E "s/(UserInfo\{[0-9]+:)[^:]*(:[0-9a-fA-F]*\})/\1<name>\2/"
+      IDS=${'$'}(printf "%s\n" "${'$'}PLAIN" | sed -n "s/.*UserInfo{\([0-9][0-9]*\):.*/\1/p")
+      [ -z "${'$'}IDS" ] && IDS=0
+      echo "--- per-user pm list packages -U -f (counts only, no names) ---"
+      for U in ${'$'}IDS; do
+        RUN=0
+        printf "%s\n" "${'$'}PLAIN" | grep "UserInfo{${'$'}U:" | grep -qw running && RUN=1
+        ERR=${'$'}(pm list packages -U -f --user "${'$'}U" 2>&1 1>/dev/null | head -2 | tr "\n" " ")
+        OUT=${'$'}(pm list packages -U -f --user "${'$'}U" 2>/dev/null)
+        EX=${'$'}?
+        TOTAL=${'$'}(printf "%s\n" "${'$'}OUT" | grep -c "^package:")
+        WUID=${'$'}(printf "%s\n" "${'$'}OUT" | grep -c "^package:.* uid:")
+        WPATH=${'$'}(printf "%s\n" "${'$'}OUT" | grep -c "^package:[^ ]*=")
+        echo "user=${'$'}U running=${'$'}RUN exit=${'$'}EX package_lines=${'$'}TOTAL with_uid=${'$'}WUID with_path=${'$'}WPATH stderr=[${'$'}ERR]"
+      done
+    '
+
     emit_cmd network_addr ip -d addr
     emit_eval network_operstate 'for IFACE in /sys/class/net/*; do echo "${'$'}(basename "${'$'}IFACE"): ${'$'}(cat "${'$'}IFACE/operstate" 2>/dev/null)"; done'
     emit_cmd network_routes ip route show table all
