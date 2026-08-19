@@ -1,6 +1,37 @@
 {
   "history": [
     {
+      "version": "1.2.4",
+      "sections": [
+        {
+          "type": "changed",
+          "items": [
+            {
+              "en": "The debug export now bundles a single self-contained diagnostics file (state.json) in the .zip, replacing the old pile of separate text files — one file has everything.",
+              "ru": "Экспорт диагностики теперь кладёт в .zip один самодостаточный файл (state.json) вместо прежнего набора отдельных текстовых файлов — в одном файле всё."
+            }
+          ]
+        },
+        {
+          "type": "fixed",
+          "items": [
+            {
+              "en": "A hiding module could show a false \"inactive\" on some KernelSU devices when the status probe couldn't read the module's liveness; it now reads \"status not verified\" instead of claiming the module is off.",
+              "ru": "Модуль скрытия мог ложно показываться «неактивным» на некоторых устройствах с KernelSU, когда проба не могла считать состояние; теперь отображается «статус не проверен», а не ложное «неактивен»."
+            },
+            {
+              "en": "KPM: on some kernels built with Clang LTO the IPv6 `/proc/net/ipv6_route` hook could silently fail to install, leaving native hiding partial. It now installs.",
+              "ru": "KPM: на части ядер, собранных с Clang LTO, хук на IPv6 `/proc/net/ipv6_route` мог молча не установиться, из-за чего нативное скрытие было частичным. Теперь ставится."
+            },
+            {
+              "en": "SO_BINDTODEVICE hiding could fail on GKI kernels where the compiler dropped setsockopt's unused level argument, letting a target app still bind a socket to the VPN interface",
+              "ru": "Скрытие SO_BINDTODEVICE могло не срабатывать на части GKI-ядер, где компилятор выкидывал неиспользуемый аргумент level у setsockopt — приложение всё ещё могло привязать сокет к VPN-интерфейсу"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.2.3",
       "sections": [
         {

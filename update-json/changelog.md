@@ -1,3 +1,13 @@
+## v1.2.4
+
+### Changed
+- The debug export now bundles a single self-contained diagnostics file (state.json) in the .zip, replacing the old pile of separate text files — one file has everything.
+
+### Fixed
+- A hiding module could show a false "inactive" on some KernelSU devices when the status probe couldn't read the module's liveness; it now reads "status not verified" instead of claiming the module is off.
+- KPM: on some kernels built with Clang LTO the IPv6 `/proc/net/ipv6_route` hook could silently fail to install, leaving native hiding partial. It now installs.
+- SO_BINDTODEVICE hiding could fail on GKI kernels where the compiler dropped setsockopt's unused level argument, letting a target app still bind a socket to the VPN interface
+
 ## v1.2.3
 
 ### Fixed
@@ -65,8 +75,3 @@
 ### Removed
 - The obsolete decimal KPM load-argument format is gone; load-time configuration now uses the control v2 snapshot.
 - The retired pre-v1.0 per-backend storage migration is gone; the canonical JSON config is now the only configuration source.
-
-## v1.1.1
-
-### Fixed
-- Fixed incomplete VPN hiding on some devices and firmwares (notably many MediaTek-based and custom OEM ROMs), where several app-side checks could still detect the tunnel through legacy connectivity APIs.
