@@ -40,19 +40,42 @@ internal fun classifyModuleIntegrity(
     return ModuleIntegrityProblem(kind, activatorState, activatorPath)
 }
 
+private fun sectionPrefix(kind: FlashableModuleKind): String =
+    when (kind) {
+        FlashableModuleKind.Kmod -> "kmod"
+        FlashableModuleKind.Kpm -> "kpm"
+        FlashableModuleKind.Zygisk -> "zygisk"
+        FlashableModuleKind.Ports -> "ports"
+    }
+
+/**
+ * True when the module's activator is absent/non-executable only because a
+ * complete install is staged in modules_update/ awaiting the next reboot (the
+ * root manager swaps it into modules/ on boot). This is "installed, reboot
+ * needed", not a corrupt install — callers suppress the integrity error and
+ * surface a reboot warning instead. Absent snapshot field ⇒ false.
+ */
+internal fun modulePendingReboot(
+    kind: FlashableModuleKind,
+    module: ModuleState,
+    sections: Map<String, String>,
+): Boolean {
+    val prefix = sectionPrefix(kind)
+    if (module !is ModuleState.Installed || sections["${prefix}_disabled"]?.trim() == "1") return false
+    val activatorState = parseActivatorState(sections["${prefix}_activator_state"].orEmpty())
+    if (activatorState !in ACTIVATOR_FAILURE_STATES) return false
+    return sections["${prefix}_pending_update"]?.trim() == "1"
+}
+
 internal fun moduleIntegrityProblem(
     kind: FlashableModuleKind,
     module: ModuleState,
     sections: Map<String, String>,
     activatorPath: String,
 ): ModuleIntegrityProblem? {
-    val prefix =
-        when (kind) {
-            FlashableModuleKind.Kmod -> "kmod"
-            FlashableModuleKind.Kpm -> "kpm"
-            FlashableModuleKind.Zygisk -> "zygisk"
-            FlashableModuleKind.Ports -> "ports"
-        }
+    // A staged install pending reboot is not an integrity failure.
+    if (modulePendingReboot(kind, module, sections)) return null
+    val prefix = sectionPrefix(kind)
     return classifyModuleIntegrity(
         kind = kind,
         module = module,
@@ -113,5 +136,8 @@ internal fun renderModuleIntegrityProblem(
 
 internal fun ModuleState.withBrokenReason(reason: ModuleBrokenReason?): ModuleState =
     if (this is ModuleState.Installed && reason != null) copy(brokenReason = reason) else this
+
+internal fun ModuleState.withPendingReboot(pending: Boolean): ModuleState =
+    if (this is ModuleState.Installed && pending) copy(pendingReboot = true) else this
 
 private val ACTIVATOR_FAILURE_STATES = setOf(ActivatorState.Missing, ActivatorState.NotExecutable)

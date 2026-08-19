@@ -746,6 +746,7 @@ private fun installedVisual(
     return InstalledVisual(
         subtitle =
             when {
+                state.pendingReboot -> stringResource(R.string.dashboard_module_installed_reboot_needed)
                 brokenSubtitleRes != null -> stringResource(brokenSubtitleRes)
                 active -> stringResource(R.string.dashboard_active_targets, targetCount) + variantSuffix
                 selfNeedsRestart -> stringResource(R.string.dashboard_installed_restart_app)
@@ -753,12 +754,14 @@ private fun installedVisual(
             },
         accentColor =
             when {
+                state.pendingReboot -> StatusColors.warningAccent
                 broken != null -> StatusColors.errorDot
                 active -> StatusColors.successDot
                 else -> StatusColors.warningAccent
             },
         accentContainerColor =
             when {
+                state.pendingReboot -> StatusColors.warningContainer()
                 broken != null -> StatusColors.errorContainer()
                 active -> StatusColors.successContainer()
                 else -> StatusColors.warningContainer()
