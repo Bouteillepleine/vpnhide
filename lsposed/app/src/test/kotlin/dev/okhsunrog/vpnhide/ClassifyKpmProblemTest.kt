@@ -11,7 +11,8 @@ class ClassifyKpmProblemTest {
         kpm: ModuleState,
         rawStatus: String,
         currentBootId: String,
-    ): KpmProblemKind? = classifyKpmProblem(kpm, parseKpmLoadStatus(rawStatus), currentBootId)
+        hasKpatchRuntime: Boolean = true,
+    ): KpmProblemKind? = classifyKpmProblem(kpm, parseKpmLoadStatus(rawStatus), currentBootId, hasKpatchRuntime)
 
     @Test
     fun `not installed produces no problem`() {
@@ -41,6 +42,21 @@ class ClassifyKpmProblemTest {
         val kind = classify(installed(active = false), status, "boot-1")
         assertEquals(KpmProblemKind.LoadFailed("rc=1 supercall failed: ENOENT"), kind)
         assertNull(kind?.reason)
+    }
+
+    @Test
+    fun `no KernelPatch runtime is diagnosed as a missing-runtime problem, not a generic failure`() {
+        val status = "runtime=activator\nloaded=0\nboot_id=boot-1\nreason=activation_failed\ndetail=kpatch CLI not found\n"
+        val kind = classify(installed(active = false), status, "boot-1", hasKpatchRuntime = false)
+        assertEquals(KpmProblemKind.NoKernelPatchRuntime, kind)
+        assertNull(kind?.reason)
+    }
+
+    @Test
+    fun `same failure with a runtime present stays a generic load failure`() {
+        val status = "runtime=activator\nloaded=0\nboot_id=boot-1\nreason=activation_failed\ndetail=kpatch CLI not found\n"
+        val kind = classify(installed(active = false), status, "boot-1", hasKpatchRuntime = true)
+        assertEquals(KpmProblemKind.LoadFailed("kpatch CLI not found"), kind)
     }
 
     @Test

@@ -241,6 +241,19 @@ class NativeBackendTest {
         assertEquals(false, kpatchRuntimeAvailable(runtime))
     }
 
+    @Test
+    fun `kpatch runtime unavailable when KPatch-Next is installed but the kernel is not patched`() {
+        // Binary present but `kpatch hello` failed — the module is installed yet
+        // the boot image was never patched from its UI, so no live runtime.
+        val runtime =
+            """
+            apatch_dir=0
+            kpatch_bin=/data/adb/modules/KPatch-Next/bin/kpatch
+            hello_exit=1
+            """.trimIndent()
+        assertEquals(false, kpatchRuntimeAvailable(runtime))
+    }
+
     // ── detectKpmModule ──────────────────────────────────────────────────
 
     @Test

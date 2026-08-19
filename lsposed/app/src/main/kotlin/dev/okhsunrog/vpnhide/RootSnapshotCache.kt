@@ -311,14 +311,32 @@ internal fun buildRootShellSnapshotCommand(
         fi'
       emit_file lsposed_state $LSPOSED_STATE_FILE
       emit_cmd getenforce getenforce
-      # Is a KPM runtime present? Either APatch's native KernelPatch (loads KPMs
-      # via supercall — detected by its /data/adb/ap dir; no kpatch CLI needed,
-      # APatch keeps it in the manager app's private libs), or the
-      # KPatch-Next-Module on any manager (Magisk / KSU / KSU-Next — ships the
-      # kpatch CLI at a fixed module path). Verified on a Pixel 4a (APatch) and a
-      # Pixel 8 Pro (KSU-Next + KPatch-Next-Module). Drives whether the install
-      # recommendation can suggest KPM.
-      emit_eval kpatch_runtime 'if [ -d /data/adb/ap ] || [ -x /data/adb/modules/KPatch-Next/bin/kpatch ] || [ -x /data/adb/modules/kpatch-next/bin/kpatch ]; then echo 1; else echo 0; fi'
+      # Is a *live* KPM runtime present (kernel actually patched, able to load
+      # KPMs)? Two runtimes qualify:
+      #   - APatch native KernelPatch: loads KPMs via supercall, detected by its
+      #     /data/adb/ap dir (no kpatch CLI on disk — APatch keeps it in the
+      #     manager app's private libs).
+      #   - KPatch-Next-Module on any manager (Magisk / KSU / KSU-Next): ships
+      #     the kpatch CLI at a fixed module path. Installing the module is not
+      #     enough — the boot image must be patched from its UI first, so probe
+      #     liveness the same way KPatch-Next's own status.sh does: `kpatch
+      #     hello` succeeds only when the kernel is patched.
+      # kpatchRuntimeAvailable() reads apatch_dir/hello_exit from this. Verified
+      # on a Pixel 4a (APatch) and a Pixel 8 Pro (KSU-Next + KPatch-Next).
+      emit_eval kpatch_runtime '
+        [ -d /data/adb/ap ] && echo "apatch_dir=1" || echo "apatch_dir=0"
+        KP=""
+        for CAND in kpatch /data/adb/modules/KPatch-Next/bin/kpatch /data/adb/modules/kpatch-next/bin/kpatch; do
+          if command -v "${'$'}CAND" >/dev/null 2>&1; then KP="${'$'}CAND"; break; fi
+          [ -x "${'$'}CAND" ] && { KP="${'$'}CAND"; break; }
+        done
+        if [ -n "${'$'}KP" ]; then
+          echo "kpatch_bin=${'$'}KP"
+          "${'$'}KP" hello >/dev/null 2>&1
+          echo "hello_exit=${'$'}?"
+        else
+          echo "kpatch_bin="
+        fi'
       phase_end
     }
     __VPNHIDE_PM_PACKAGES_FUNCTION__
