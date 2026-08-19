@@ -850,11 +850,25 @@ typedef struct file *(*do_filp_open_fn)(int dfd, struct filename *name,
 typedef int (*vfs_getattr_fn)(const struct path *path, struct kstat *stat,
 			      u32 request_mask, unsigned int query_flags);
 typedef int (*iterate_dir_fn)(struct file *file, struct dir_context *ctx);
+typedef void (*path_put_fn)(const struct path *path);
 
 static filename_lookup_fn original_filename_lookup;
 static do_filp_open_fn original_do_filp_open;
 static vfs_getattr_fn original_vfs_getattr;
 static iterate_dir_fn original_iterate_dir;
+
+/*
+ * path_put() is exported in kallsyms but not on every OEM's GKI KMI module
+ * symbol table — some OnePlus android14-6.1 kernels omit it — so a direct
+ * call turns into an "Unknown symbol path_put" load failure that takes the
+ * whole .ko down, including the core VPN-hiding hooks that never touch the
+ * filesystem. Resolve it at runtime through a throwaway kprobe (kprobes walk
+ * kallsyms, not the module export table) so the .ko links with no hard
+ * reference, and call it only through call_resolved_path_put() below —
+ * calling a kprobe-resolved address directly trips jump-table CFI on
+ * android12/13-era kernels, exactly like the other VFS redirect originals.
+ */
+static path_put_fn resolved_path_put;
 
 static bool qstr_equals(const struct qstr *name, const char *literal)
 {
@@ -985,6 +999,16 @@ static noinline __nocfi int call_original_filename_lookup(int dfd,
 	return ret;
 }
 
+/* __nocfi: resolved_path_put holds a kallsyms address recovered through a
+ * kprobe, which is not a CFI jump-table entry — a checked indirect call to it
+ * faults on android12/13-era jump-table CFI kernels, so bypass the check the
+ * same way the VFS redirect originals do. */
+static noinline __nocfi void call_resolved_path_put(const struct path *path)
+{
+	resolved_path_put(path);
+	barrier();
+}
+
 static noinline int vpnhide_filename_lookup(int dfd, struct filename *name,
 					    unsigned int flags,
 					    struct path *path,
@@ -992,9 +1016,12 @@ static noinline int vpnhide_filename_lookup(int dfd, struct filename *name,
 {
 	int ret = call_original_filename_lookup(dfd, name, flags, path, root);
 
-	if (!ret && filesystem_filter_active() && path &&
+	/* resolved_path_put may be NULL on kernels that neither export nor
+	 * expose path_put; leave the resolved path intact rather than leak its
+	 * reference — the interception is skipped, not the whole hook. */
+	if (!ret && resolved_path_put && filesystem_filter_active() && path &&
 	    dentry_is_hidden_iface_path(path->dentry)) {
-		path_put(path);
+		call_resolved_path_put(path);
 		path->mnt = NULL;
 		path->dentry = NULL;
 		record_hook_hit(VPNHIDE_HOOK_FILESYSTEM_IFACE_PATHS);
@@ -1215,9 +1242,34 @@ static void rollback_filesystem_hooks(void)
 	filesystem_hooks_registered = false;
 }
 
+/*
+ * Recover a kernel symbol's address through a throwaway kprobe — the same
+ * addr-grab the VFS redirect hooks use for their non-exported originals.
+ * kprobes resolve through kallsyms, so this reaches symbols the running
+ * kernel does not export to modules (e.g. path_put on some OnePlus KMIs).
+ */
+static void *resolve_kernel_symbol(const char *name)
+{
+	struct kprobe kp = { .symbol_name = name };
+	void *addr = NULL;
+
+	if (register_kprobe(&kp) == 0) {
+		addr = kp.addr;
+		unregister_kprobe(&kp);
+	}
+	return addr;
+}
+
 static int register_filesystem_hooks(void)
 {
 	int i, ret;
+
+	/* Best-effort: if path_put cannot be resolved, the other filesystem
+	 * hooks still register and vpnhide_filename_lookup simply skips its one
+	 * interception (guarded on resolved_path_put). */
+	if (!resolved_path_put)
+		resolved_path_put =
+			(path_put_fn)resolve_kernel_symbol("path_put");
 
 	for (i = 0; i < ARRAY_SIZE(filesystem_kprobe_hooks); i++) {
 		struct filesystem_kprobe_hook *hook =
