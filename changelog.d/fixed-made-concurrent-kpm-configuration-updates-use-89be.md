@@ -2,8 +2,8 @@ _2026-08-11_
 
 ## English
 
-Made concurrent KPM configuration updates use a sound, race-free snapshot protocol.
+Concurrent KPM configuration updates now use a race-free snapshot protocol.
 
 ## Русский
 
-Исправлена синхронизация одновременных обновлений конфигурации KPM: снимок теперь применяется без гонок.
+Одновременные обновления конфигурации KPM теперь применяются через снимок без гонок.

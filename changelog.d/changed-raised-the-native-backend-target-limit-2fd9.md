@@ -2,8 +2,8 @@ _2026-08-11_
 
 ## English
 
-Raised the native backend target limit from 64 to 160 UIDs while keeping oversized KPM control payloads fail-safe.
+The native backend target limit is raised from 64 to 160 UIDs, while oversized KPM control payloads stay fail-safe.
 
 ## Русский
 
-Лимит целей нативных бэкендов увеличен с 64 до 160 UID, при этом слишком большие управляющие сообщения KPM по-прежнему безопасно отклоняются.
+Лимит целей нативных бэкендов поднят с 64 до 160 UID; слишком большие управляющие сообщения KPM по-прежнему безопасно отклоняются.

@@ -2,7 +2,7 @@ _2026-08-15_
 
 ## English
 
-Diagnostics no longer treats detection vectors that no active backend can cover on this device as errors: the dashboard stays clean when the active module hides everything it can, and such vectors are shown neutrally ("not covered") in the detailed breakdown instead of as red leaks.
+Diagnostics no longer treats detection vectors that no active backend can cover on this device as errors: the Dashboard stays clean when the active module hides everything it can, and such vectors are shown neutrally ("not covered") in the detailed breakdown instead of as red leaks.
 
 ## Русский
 

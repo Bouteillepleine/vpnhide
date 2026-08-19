@@ -2,7 +2,7 @@ _2026-08-12_
 
 ## English
 
-Made experimental filesystem hiding an explicit, status-aware opt-in with performance warnings and reboot feedback.
+Experimental filesystem hiding is now an explicit, status-aware opt-in, with performance warnings and reboot feedback.
 
 ## Русский
 
