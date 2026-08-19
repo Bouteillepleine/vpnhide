@@ -89,6 +89,7 @@
     <string name="debug_export_card_description">Collect diagnostics into one file to send the developer. Choose what to include (logs, app list, kernel image).</string>
     <string name="debug_export_modal_title">What to include</string>
     <string name="debug_export_modal_confirm">Export</string>
+    <string name="debug_export_collect_again">Collect again</string>
     <string name="debug_export_opt_forensics">Forensic logs</string>
     <string name="debug_export_opt_forensics_desc">dmesg, logcat and raw kernel/network probes. Bigger file; usually what a bug report needs.</string>
     <string name="debug_export_opt_applist">Installed-app list</string>

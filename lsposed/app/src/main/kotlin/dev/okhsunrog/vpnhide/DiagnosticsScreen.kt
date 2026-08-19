@@ -315,9 +315,9 @@ fun DebugToolsSection(
                     },
                 )
                 Spacer(Modifier.height(16.dp))
-                EnhancedButton(
-                    onClick = {
-                        val restartState = selfNeedsRestart ?: return@EnhancedButton
+
+                val doExport = {
+                    selfNeedsRestart?.let { restartState ->
                         val options =
                             StateContentOptions(forensics = optForensics, appList = optAppList && optForensics)
                         val kernel = optKernelImage
@@ -327,33 +327,49 @@ fun DebugToolsSection(
                             resultIsZip = kernel
                             exporting = false
                         }
-                    },
-                    enabled = !exporting && selfNeedsRestart != null,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (exporting) {
-                        ButtonSpinner()
-                        Spacer(Modifier.width(8.dp))
                     }
-                    Text(
-                        if (exporting) {
-                            stringResource(R.string.btn_export_debug_running)
-                        } else {
-                            stringResource(R.string.debug_export_modal_confirm)
-                        },
-                    )
+                    Unit
                 }
 
                 val file = resultFile
-                if (file != null) {
-                    Spacer(Modifier.height(12.dp))
-                    FileSaveShareRow(
-                        saveLabel = stringResource(R.string.btn_save_debug),
-                        shareLabel = stringResource(R.string.btn_share_debug),
-                        sharePrimary = true,
-                        onSave = { saveLauncher.launch(file.name) },
-                        onShare = { shareFileViaProvider(context, file, mime) },
-                    )
+                when {
+                    // In-progress: a disabled progress button, no competing actions.
+                    exporting -> {
+                        EnhancedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
+                            ButtonSpinner()
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(R.string.btn_export_debug_running))
+                        }
+                    }
+
+                    // Configure phase: the one primary action.
+                    file == null -> {
+                        EnhancedButton(
+                            onClick = doExport,
+                            enabled = selfNeedsRestart != null,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(stringResource(R.string.debug_export_modal_confirm))
+                        }
+                    }
+
+                    // Result phase: Save/Share are primary; re-running is a de-emphasized
+                    // secondary action, so there is no ambiguous "Export" to double-tap.
+                    else -> {
+                        FileSaveShareRow(
+                            saveLabel = stringResource(R.string.btn_save_debug),
+                            shareLabel = stringResource(R.string.btn_share_debug),
+                            sharePrimary = true,
+                            onSave = { saveLauncher.launch(file.name) },
+                            onShare = { shareFileViaProvider(context, file, mime) },
+                        )
+                        TextButton(
+                            onClick = doExport,
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                        ) {
+                            Text(stringResource(R.string.debug_export_collect_again))
+                        }
+                    }
                 }
             }
         }
