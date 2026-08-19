@@ -251,15 +251,12 @@
     <string name="dashboard_install_recommendation_kmod_ambiguous">推荐使用内核模块。无法从 uname -r 判断内核的 GKI 分支，因此请先试 %1$s；若重启后仍未加载进内核，再改装 %2$s。</string>
     <string name="dashboard_install_recommendation_zygisk">当前设备不支持内核模块，请安装 %1$s。</string>
     <string name="dashboard_install_recommendation_zygisk_warning">为银行和支付类应用开启原生时，它们可能会察觉到 Zygisk 钩子。对这类应用请关闭原生，依赖 LSPosed（Java 层）隐藏。</string>
-    <string name="dashboard_install_recommendation_kpm">针对当前内核，推荐使用 KPM（测试版）——单个通用模块，在内核级隐藏，对防篡改检测不可见。请下载 %1$s。</string>
-    <string name="dashboard_install_recommendation_kpm_needs_runtime">针对当前内核，推荐使用 KPM（测试版）——内核级隐藏，对防篡改检测不可见。它需要先装好 KPatch-Next-Module。若不想装，可改用 vpnhide-zygisk.zip。KPM 文件：%1$s。</string>
-    <string name="dashboard_install_recommendation_kpm_beta_note">KPM 为实验性（测试版）。若有问题，可回退到 Zygisk 并联系作者。</string>
-    <string name="dashboard_install_recommendation_kmod_kpm_alt">内核模块是最稳定、测试最充分的选择。KPM（测试版）是备选方案——单个通用模块，不用去匹配 GKI 变体——当内核模块加载不进内核时（变体不匹配，或内核强制模块签名）会很有用。</string>
+    <string name="dashboard_install_recommendation_kpm">针对当前内核，推荐使用 KPM——单个通用模块，在内核级隐藏，对防篡改检测不可见。请下载 %1$s。</string>
+    <string name="dashboard_install_recommendation_kpm_needs_runtime">针对当前内核，推荐使用 KPM——内核级隐藏，对防篡改检测不可见。它需要先装好 KPatch-Next-Module。若不想装，可改用 vpnhide-zygisk.zip。KPM 文件：%1$s。</string>
+    <string name="dashboard_install_recommendation_kmod_kpm_alt">内核模块是最稳定、测试最充分的选择。KPM 是备选方案——单个通用模块，不用去匹配 GKI 变体——当内核模块加载不进内核时（变体不匹配，或内核强制模块签名）会很有用。</string>
     <string name="dashboard_install_recommendation_download">下载 %1$s</string>
     <string name="dashboard_install_recommendation_all_releases">全部发行版</string>
-    <string name="dashboard_issue_kpm_capable_but_zygisk">当前内核支持更隐蔽的 KPM（测试版），但目前只装了 Zygisk。Zygisk 会被银行/支付类应用检测到；KPM 则在内核级隐藏。可考虑安装 %1$s。</string>
-    <string name="dashboard_issue_kpm_experimental_kmod">KPM 后端为实验性（测试版），当前正在生效。若遇到问题，请改用内核模块（kmod），并联系作者。</string>
-    <string name="dashboard_issue_kpm_experimental_zygisk">KPM 后端为实验性（测试版），当前正在生效。若遇到问题，请改用 Zygisk，并联系作者。</string>
+    <string name="dashboard_issue_kpm_capable_but_zygisk">当前内核支持更隐蔽的 KPM，但目前只装了 Zygisk。Zygisk 会被银行/支付类应用检测到；KPM 则在内核级隐藏。可考虑安装 %1$s。</string>
     <!-- Community / contact modal -->
     <string name="contact_title">社区与反馈</string>
     <string name="contact_body">有疑问、Bug 反馈或建议？可在此联系作者。</string>

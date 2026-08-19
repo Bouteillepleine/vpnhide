@@ -63,7 +63,7 @@ CI builds are provided for all 7 GKI generations: `android12-5.10` through `andr
 
 For old/non-GKI kernels or devices where the `.ko` cannot load, see the
 [KPM backend](kpm/README.md). It covers the same kernel-level Native role through
-KernelPatch inline hooks and is packaged as `vpnhide-kpm.zip` (beta).
+KernelPatch inline hooks and is packaged as `vpnhide-kpm.zip`.
 
 ## Build
 

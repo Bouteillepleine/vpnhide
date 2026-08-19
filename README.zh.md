@@ -30,7 +30,7 @@ vpnhide 用分层架构同时解决这两个问题：
 
 **第 2 层 —— 原生（kmod、KPM 或 Zygisk）：** 覆盖原生检测路径。同一时间应恰好有一个原生后端处于活动状态：
 - **kmod**（推荐用于受支持的 GKI 内核）—— 内核级 `kprobe`/`kretprobe` 钩子。过滤 `ioctl`、`getifaddrs`/netlink 的接口、地址、路由和策略规则转储，并在套接字状态改变前对隐藏接口拒绝 `SO_BINDTODEVICE` / `SO_BINDTOIFINDEX`。在目标进程中零足迹：无库注入，无可检测之物。
-- **KPM**（测试版）—— 一个 KernelPatch 模块，实现与之相同的 11 个逻辑内核钩子，无需针对特定 GKI 变体的 `.ko`。适用于旧的/非 GKI 的 4.14 / 4.19 / 5.4 内核，以及 `.ko` 无法加载的情况。需要 KernelPatch 运行时：APatch 或 KPatch-Next-Module。
+- **KPM** —— 一个 KernelPatch 模块，实现与之相同的 11 个逻辑内核钩子，无需针对特定 GKI 变体的 `.ko`。适用于旧的/非 GKI 的 4.14 / 4.19 / 5.4 内核，以及 `.ko` 无法加载的情况。需要 KernelPatch 运行时：APatch 或 KPatch-Next-Module。
 - **Zygisk** —— 当无法使用内核级后端时的回退方案。它的 `libc.so` 内联钩子包含尽力而为的 `setsockopt` 过滤，运行在目标进程内部，可被直接系统调用绕过，因此银行和反欺诈应用可能会检测到它。对于这类应用，请关闭原生并依赖 Java 层。
 
 **第 3 层 —— 端口模块（portshide）：** 一个独立的 Magisk 模块。它阻止选定应用访问 `127.0.0.1` / `::1`（通过 iptables），使其无法通过本地绑定的 VPN / 代理守护进程的开放端口来检测它们（**Ports** 角色）。
@@ -50,7 +50,7 @@ vpnhide 对选定应用隐藏三样东西，全部通过四个 **J / N / A / P**
 你始终需要 **VPN Hide 应用**（`vpnhide.apk`）+ 用于 Java 层的 LSPosed/Vector + 恰好一个用于原生隐藏的原生后端。若你想要本地回环端口拦截，应用还可选用可选的端口模块：
 
 - **`kmod`**（稳定默认）—— 完全在进程外，对防篡改不可见。需要受支持的 GKI 内核：5.10、5.15、6.1、6.6 或 6.12。
-- **`KPM`**（测试版）—— 用于 4.14 / 4.19 / 5.4 以及 `.ko` 不适配的其他情况的内核级后端。需要 APatch 或 KPatch-Next-Module。
+- **`KPM`** —— 用于 4.14 / 4.19 / 5.4 以及 `.ko` 不适配的其他情况的内核级后端。需要 APatch 或 KPatch-Next-Module。
 - **`Zygisk`** —— 当 kmod/KPM 不可用，或你不想安装 KernelPatch 运行时时的回退方案。
 - **`portshide`**（可选）—— 若你想阻止选定应用探测本地回环端口，请安装它。
 
@@ -74,7 +74,7 @@ vpnhide 对选定应用隐藏三样东西，全部通过四个 **J / N / A / P**
 打开 VPN Hide 应用。**概览**标签页会检测你的设备和内核，并告诉你应安装哪个原生后端：
 
 - 对于受支持的 GKI 内核，它会推荐特定的 kmod 文件，例如 `vpnhide-kmod-android14-6.1.zip`。
-- 对于旧的/非 GKI 的 4.14 / 4.19 / 5.4 内核，它会推荐 `vpnhide-kpm.zip`（测试版）。若尚未检测到 KernelPatch 运行时，应用会要求你先安装 KPatch-Next-Module，或使用 Zygisk 作为回退。
+- 对于旧的/非 GKI 的 4.14 / 4.19 / 5.4 内核，它会推荐 `vpnhide-kpm.zip`。若尚未检测到 KernelPatch 运行时，应用会要求你先安装 KPatch-Next-Module，或使用 Zygisk 作为回退。
 - 对于其他内核，它会推荐 `vpnhide-zygisk.zip`。
 
 安装推荐的模块：
@@ -173,7 +173,7 @@ su -c /data/adb/modules/vpnhide_ports/activator
 
 | 目录 | 是什么 | 如何工作 |
 |---|---|---|
-| **[kmod/](kmod/)** | `.ko` 内核模块 + KPM 后端（C） | 两个内核级原生后端：使用 `kretprobe` 的稳定 GKI `.ko`，以及使用 KernelPatch 内联钩子的 KPM 测试版。两者在目标应用进程中均零足迹；只应有一个处于活动状态。（[详情](kmod/README.md)，[KPM](kmod/kpm/README.md)） |
+| **[kmod/](kmod/)** | `.ko` 内核模块 + KPM 后端（C） | 两个内核级原生后端：使用 `kretprobe` 的稳定 GKI `.ko`，以及使用 KernelPatch 内联钩子的 KPM。两者在目标应用进程中均零足迹；只应有一个处于活动状态。（[详情](kmod/README.md)，[KPM](kmod/kpm/README.md)） |
 | **[lsposed/](lsposed/)** | LSPosed 模块 + 应用（Kotlin + Rust） | 在 `system_server` 中挂钩 `writeToParcel`，实现按 UID 的 Binder 过滤。APK 提供概览（模块状态、版本检查、LSPosed 配置校验、安装建议）、用于 Java / Native / Apps / Ports 角色的隐藏标签页，以及诊断。（[详情](lsposed/README.md)） |
 | **[portshide/](portshide/)** | 端口模块（Shell + iptables） | 阻止选定应用访问 `127.0.0.1` / `::1`，使本地绑定的 VPN / 代理守护进程免于本地回环端口探测。（[详情](portshide/README.md)） |
 | **[zygisk/](zygisk/)** | Zygisk 模块（Rust） | 在目标应用进程中内联挂钩 `libc.so`。当内核级后端不可用时的回退方案。（[详情](zygisk/README.md)） |
@@ -219,7 +219,7 @@ su -c /data/adb/modules/vpnhide_ports/activator
 
 重要：`ioctl` 和 netlink 转储对普通应用无需 SELinux 帮助即可使用；在 Linux 5.7+ 上，首次套接字接口绑定也是如此。这正是 RKNHardering 等检测器通过 netlink 绕过 `/proc/net/route` 拒绝的方式（见 [issue #86](https://github.com/okhsunrog/vpnhide/issues/86)）。内核级后端（kmod/KPM）覆盖上表标注的原生路径，且在目标进程中无足迹。Zygisk 仅覆盖经 libc 路由的调用；直接的原始系统调用会绕过其钩子。在较旧的内核上，内核本身会拒绝非特权的接口绑定。其余的要么在原厂上常被 SELinux 阻断（视设备而定），要么经由 Java API 并由 LSPosed 覆盖。
 
-KPM 为测试版：它实现与 `.ko` 相同的 11 个逻辑内核钩子，而完整的向量图记录了在较旧内核上剩余的 ABI 与行为差异。
+KPM 实现与 `.ko` 相同的 11 个逻辑内核钩子，而完整的向量图记录了在较旧内核上剩余的 ABI 与行为差异。
 
 完整的向量图 —— 按层细分、SELinux 注意事项和已知缺口 —— 位于 [docs/detection-vectors.md](docs/detection-vectors.md)。
 
@@ -275,7 +275,7 @@ vpnhide 对特定应用隐藏活动的 VPN。它并非为以下用途设计：
 ## 已知限制
 
 - `kmod` 需要带 `CONFIG_KPROBES=y` 的受支持 GKI 内核（Android 12+ 设备上为标准配置）
-- KPM 为测试版，需要 KernelPatch 运行时（APatch 或 KPatch-Next-Module）；不要将 KPM 与 `.ko` 一起安装
+- KPM 需要 KernelPatch 运行时（APatch 或 KPatch-Next-Module）；不要将 KPM 与 `.ko` 一起安装
 - `lsposed` 需要 LSPosed、LSPosed-Next 或 Vector
 - `zygisk` 仅支持 arm64
 - 直接的 `svc #0` 系统调用会绕过 Zygisk 的 libc 钩子 —— 为此请使用内核级后端（kmod 或 KPM）

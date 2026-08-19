@@ -33,7 +33,7 @@ The Rust crate at `lsposed/native/` is built via cargo-ndk by the `buildRustProb
 |---|---|
 | `zygisk/` | Zygisk native module (Rust, inline `libc` hooks) |
 | `lsposed/` | LSPosed module + target-picker Android app (Kotlin, Compose) |
-| `kmod/` | Kernel-level native backends: GKI `.ko` (C, kretprobes) and KPM beta (KernelPatch inline hooks) |
+| `kmod/` | Kernel-level native backends: GKI `.ko` (C, kretprobes) and KPM (KernelPatch inline hooks) |
 | `portshide/` | Localhost port blocker (shell + iptables) |
 | `scripts/` | Release & changelog tooling |
 | `update-json/` | Magisk/KSU update metadata |

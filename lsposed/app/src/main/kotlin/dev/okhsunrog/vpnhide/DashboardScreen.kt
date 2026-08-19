@@ -1122,21 +1122,23 @@ private fun NativeInstallRecommendationCard(recommendation: NativeInstallRecomme
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
             )
-            // Trailing note per backend: zygisk's detectability caveat, kmod's
-            // "stable; KPM is a universal beta alternative" mention, or KPM's
-            // beta disclaimer.
+            // Trailing note per backend: zygisk's detectability caveat, or kmod's
+            // "stable; KPM is a universal alternative" mention. KPM itself needs
+            // no caveat note.
             val note =
                 when (recommendation.recommended) {
                     NativeBackendId.Zygisk -> R.string.dashboard_install_recommendation_zygisk_warning
                     NativeBackendId.Kmod -> R.string.dashboard_install_recommendation_kmod_kpm_alt
-                    NativeBackendId.Kpm -> R.string.dashboard_install_recommendation_kpm_beta_note
+                    NativeBackendId.Kpm -> null
                 }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = stringResource(note),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
-            )
+            if (note != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = stringResource(note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                )
+            }
             // Bright primary: one-tap download of the exact recommended zip.
             // Plain secondary: the full releases page, for the ambiguous-variant
             // case (grab the alternative) or picking anything else.

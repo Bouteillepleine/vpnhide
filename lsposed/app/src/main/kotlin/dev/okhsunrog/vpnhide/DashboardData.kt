@@ -452,7 +452,7 @@ internal fun parseKernelAndroidBranch(raw: String): String? =
  *         primary plus an alternative via `variantAmbiguous=true`;
  *         the UI shows "try primary, if it doesn't load try alt".
  *  3. Non-GKI kernels that KernelPatch covers (4.9 / 4.14 / 4.19 / 5.4 —
- *     no GKI KMI, no DDK kmod build) → KPM (beta), the single
+ *     no GKI KMI, no DDK kmod build) → KPM, the single
  *     universal binary. [kpatchRuntimeAvailable] decides whether the
  *     UI also asks the user to install the KPatch-Next-Module first.
  *  4. Any other series or an unparseable kernel version → fall back to
@@ -550,7 +550,7 @@ internal fun buildNativeInstallRecommendation(
 
     // Non-GKI kernels KernelPatch supports (4.9 / 4.14 / 4.19 / 5.4) — no GKI KMI and
     // no DDK kmod build, but they're in the KPM kver offset table
-    // (kmod/kpm/kver_offsets.h). Recommend the universal KPM (beta).
+    // (kmod/kpm/kver_offsets.h). Recommend the universal KPM.
     if (kernelSeries in KPM_NON_GKI_SERIES) {
         return NativeInstallRecommendation(
             androidVersion = deviceAndroidLabel,
@@ -1560,20 +1560,6 @@ internal suspend fun loadDashboardState(
 
             else -> {}
         }
-    }
-
-    // The KPM backend is experimental (beta). When it's the active native
-    // backend, surface a neutral note with a contact-author action so users can
-    // reach the author if something misbehaves, and point them at the more
-    // battle-tested alternative for their kernel (kmod on GKI, else Zygisk).
-    if (moduleActive(kpm)) {
-        val experimentalText =
-            if (kernelRecommendation?.recommended == NativeBackendId.Kmod) {
-                res.getString(R.string.dashboard_issue_kpm_experimental_kmod)
-            } else {
-                res.getString(R.string.dashboard_issue_kpm_experimental_zygisk)
-            }
-        info(experimentalText, action = DashboardMessageAction.ContactAuthor)
     }
 
     // More than one native backend active. Disabled / inactive modules may

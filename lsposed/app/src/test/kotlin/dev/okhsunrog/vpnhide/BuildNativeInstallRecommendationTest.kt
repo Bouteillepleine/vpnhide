@@ -150,7 +150,7 @@ class BuildNativeInstallRecommendationTest {
     @Test
     fun `non-GKI 4_14 recommends KPM, not zygisk`() {
         // 4.14 has no GKI KMI and no DDK kmod build, but it's in the KPM kver
-        // offset table — recommend the universal KPM (beta) instead of the
+        // offset table — recommend the universal KPM instead of the
         // detectable zygisk fallback.
         val r = buildNativeInstallRecommendation("4.14.302-g92e0d94b6cba", "Android 13")!!
         assertEquals(NativeBackendId.Kpm, r.recommended)
