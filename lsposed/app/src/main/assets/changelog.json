@@ -1,6 +1,46 @@
 {
   "history": [
     {
+      "version": "1.2.5",
+      "sections": [
+        {
+          "type": "added",
+          "items": [
+            {
+              "en": "Warn before collecting a debug log or logcat recording while the VPN is off or VPN Hide is not routed through the tunnel — such captures are incomplete and hard to diagnose. Offers to re-check or proceed anyway.",
+              "ru": "Предупреждение перед сбором отладочного лога или записью logcat, если VPN выключен или VPN Hide не пропущен через туннель — такие логи неполные и плохо помогают диагностике. Можно перепроверить или всё равно собрать."
+            }
+          ]
+        },
+        {
+          "type": "changed",
+          "items": [
+            {
+              "en": "The VPN-tunnel check is now shared across the whole app — re-checking in one place updates every screen, and Diagnostics now reacts automatically when you turn the VPN on or off.",
+              "ru": "Проверка VPN-туннеля теперь общая для всего приложения: повтор в одном месте обновляет все экраны, а диагностика сама реагирует на включение и выключение VPN."
+            }
+          ]
+        },
+        {
+          "type": "fixed",
+          "items": [
+            {
+              "en": "Fixed the kernel module failing to load on some OEM kernels with a trimmed module symbol table (e.g. Xiaomi HyperOS android12-5.10), where dev_get_by_index_rcu was reported as an unknown symbol; it is now resolved at runtime via kallsyms like path_put, so the module links without a hard reference.",
+              "ru": "Исправлена загрузка модуля ядра на некоторых прошивках производителей с урезанной таблицей символов (например, Xiaomi HyperOS android12-5.10), где символ dev_get_by_index_rcu считался неизвестным: теперь он разрешается во время работы через kallsyms, как и path_put, поэтому модуль компонуется без жёсткой ссылки."
+            },
+            {
+              "en": "Settings switches no longer flicker off/on while a debug log is being collected, and the debug-export sheet no longer keeps a stale collected file when reopened.",
+              "ru": "Переключатели в настройках больше не мигают во время сбора отладочного лога, а окно экспорта при повторном открытии не сохраняет прошлый собранный файл."
+            },
+            {
+              "en": "The app list now loads reliably on devices with many installed apps and/or multiple profiles (common on MIUI/HyperOS). It no longer fails on huge app counts or blocks the whole list demanding you unlock a profile — it shows what it can read and flags any profile it couldn't; settings for un-scanned profiles are preserved.",
+              "ru": "Список приложений теперь надёжно загружается на устройствах с большим числом приложений и/или несколькими профилями (часто на MIUI/HyperOS). Он больше не падает на огромном количестве приложений и не блокирует весь список с требованием разблокировать профиль — показывает то, что удалось прочитать, и помечает непрочитанные профили; их настройки сохраняются."
+            }
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.2.4",
       "sections": [
         {

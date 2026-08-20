@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v1.2.5
+
+### Added
+- Warn before collecting a debug log or logcat recording while the VPN is off or VPN Hide is not routed through the tunnel — such captures are incomplete and hard to diagnose. Offers to re-check or proceed anyway.
+
+### Changed
+- The VPN-tunnel check is now shared across the whole app — re-checking in one place updates every screen, and Diagnostics now reacts automatically when you turn the VPN on or off.
+
+### Fixed
+- Fixed the kernel module failing to load on some OEM kernels with a trimmed module symbol table (e.g. Xiaomi HyperOS android12-5.10), where dev_get_by_index_rcu was reported as an unknown symbol; it is now resolved at runtime via kallsyms like path_put, so the module links without a hard reference.
+- Settings switches no longer flicker off/on while a debug log is being collected, and the debug-export sheet no longer keeps a stale collected file when reopened.
+- The app list now loads reliably on devices with many installed apps and/or multiple profiles (common on MIUI/HyperOS). It no longer fails on huge app counts or blocks the whole list demanding you unlock a profile — it shows what it can read and flags any profile it couldn't; settings for un-scanned profiles are preserved.
+
 ## v1.2.4
 
 ### Changed
