@@ -164,10 +164,16 @@ internal fun buildPerUserPackageInventoryShell(
       PM_USER_IDS=0
     fi
     for PM_USER_ID in ${'$'}PM_USER_IDS; do
-      PM_USER_PACKAGES="${'$'}(pm list packages -U -f --user "${'$'}PM_USER_ID" $stderrRedirect)"
-      PM_USER_STATUS=${'$'}?
       echo "$PM_USER_BEGIN_PREFIX${'$'}PM_USER_ID"
-      [ -n "${'$'}PM_USER_PACKAGES" ] && printf '%s\n' "${'$'}PM_USER_PACKAGES"
+      # Stream pm's stdout straight into the section instead of staging it in a
+      # shell variable and re-emitting it. A device with a very large app list
+      # (bloatware-heavy MIUI/HyperOS) produces a package list bigger than the
+      # kernel's single-argument limit (MAX_ARG_STRLEN, ~128 KiB); passing it as
+      # one argv word to printf/echo fails with "Argument list too long" and
+      # emits nothing, so an exit-0 scan looked like an empty inventory. pm is
+      # the last command in the section, so ${'$'}? below is pm's own exit status.
+      pm list packages -U -f --user "${'$'}PM_USER_ID" $stderrRedirect
+      PM_USER_STATUS=${'$'}?
       echo "$PM_USER_END_PREFIX${'$'}PM_USER_ID:${'$'}PM_USER_STATUS"
     done
     echo "${sectionEndPrefix}pm_packages"
