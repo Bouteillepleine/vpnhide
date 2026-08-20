@@ -123,6 +123,24 @@ fun DashboardScreen(
         return
     }
 
+    // Routed but no tiles yet: the app was opened with the VPN off (checks never ran),
+    // then the VPN came up. We have no routed protection to show, so refresh and render
+    // the same full-screen skeleton as the initial load — ABOVE the scrolling Column,
+    // because the skeleton scrolls itself and must not nest inside another vertical
+    // scroll. Never flash the now-wrong "VPN off" hero. (The common toggle case keeps
+    // its Checked tiles via the sticky DiagnosticsCache, so it never lands here.)
+    val gateState = state
+    if (gateState != null && loadError == null &&
+        liveGate == DiagnosticGate.ROUTED && gateState.protection !is ProtectionCheck.Checked
+    ) {
+        LaunchedEffect(Unit) {
+            DashboardCache.refresh(scope, context, selfNeedsRestart)
+            DiagnosticsCache.retry(scope, context, selfNeedsRestart)
+        }
+        DashboardLoadingState(modifier = modifier)
+        return
+    }
+
     Column(
         modifier =
             modifier
@@ -171,23 +189,13 @@ fun DashboardScreen(
         val loadedState = s ?: return@Column
 
         // Overlay the live gate onto the cached protection: a live block (VPN off /
-        // self-not-routed / needs-restart) always wins over whatever DashboardCache
-        // last measured. When the live gate says ROUTED, fall back to the cached
-        // protection — either it's already Checked (the common case), or it's a stale
-        // Blocked/Failed left over from before the VPN came up, in which case the
-        // effect below refreshes it and the cached value updates in place once the
-        // refresh lands (no separate "refreshing" placeholder needed: the stale
-        // banner/hero just holds for the brief refresh window, matching the existing
-        // loading/skeleton treatment elsewhere in this screen).
+        // self-not-routed / needs-restart) always wins over whatever DashboardCache last
+        // measured, so the hero/prompt react to a VPN toggle immediately. The ROUTED-but-
+        // no-tiles-yet case is handled above the scroll container (full-screen skeleton),
+        // so here the live gate is either a block or ROUTED with Checked tiles.
         val effectiveProtection: ProtectionCheck =
             liveGate?.blockedOrNull()?.let { ProtectionCheck.Blocked(it) } ?: loadedState.protection
         val effectiveState = loadedState.copy(protection = effectiveProtection)
-        LaunchedEffect(liveGate) {
-            if (liveGate == DiagnosticGate.ROUTED && loadedState.protection !is ProtectionCheck.Checked) {
-                DashboardCache.refresh(scope, context, selfNeedsRestart)
-                DiagnosticsCache.retry(scope, context, selfNeedsRestart)
-            }
-        }
 
         // Messages split by severity. Only errors/warnings affect the hero:
         // info messages are neutral notes rendered below without changing the
