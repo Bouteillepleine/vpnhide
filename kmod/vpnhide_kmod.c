@@ -2467,8 +2467,9 @@ static int __init vpnhide_init(void)
 	 * so it must not be a hard link-time reference. If it stays NULL,
 	 * classify_bind_ifindex fails closed rather than crashing. */
 	if (!resolved_dev_get_by_index_rcu)
-		resolved_dev_get_by_index_rcu = (dev_get_by_index_rcu_fn)
-			resolve_kernel_symbol("dev_get_by_index_rcu");
+		resolved_dev_get_by_index_rcu =
+			(dev_get_by_index_rcu_fn)resolve_kernel_symbol(
+				"dev_get_by_index_rcu");
 
 	/* Activate execution redirection last. No fallible initialization may run
 	 * after module text becomes reachable outside the kprobe handler. The module
