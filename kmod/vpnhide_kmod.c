@@ -594,9 +594,41 @@ static const char *socket_bind_action_str(enum socket_bind_action action)
 	return "?";
 }
 
+typedef struct net_device *(*dev_get_by_index_rcu_fn)(struct net *net,
+						      int ifindex);
+
+/*
+ * dev_get_by_index_rcu() is exported in kallsyms but, like path_put() above,
+ * is absent from some OEMs' trimmed GKI KMI module symbol table — a Xiaomi
+ * HyperOS android12-5.10 build reports "Unknown symbol dev_get_by_index_rcu"
+ * and refuses to load the whole .ko, taking down the core VPN-hiding hooks
+ * that never touch this bind path. Resolve it at load time through a throwaway
+ * kprobe (kprobes walk kallsyms, not the module export table) so the .ko links
+ * with no hard reference, and call it only through the __nocfi trampoline
+ * below. Stays NULL on kernels that neither export nor expose it, in which case
+ * classify_bind_ifindex() fails closed.
+ */
+static dev_get_by_index_rcu_fn resolved_dev_get_by_index_rcu;
+
+/* __nocfi: resolved_dev_get_by_index_rcu holds a kallsyms address recovered
+ * through a kprobe, which is not a CFI jump-table entry — a checked indirect
+ * call to it faults on android12/13-era jump-table CFI kernels, so bypass the
+ * check the same way the VFS redirect originals do. Caller holds rcu_read_lock;
+ * the returned net_device is only valid within that section. */
+static noinline __nocfi struct net_device *
+call_resolved_dev_get_by_index_rcu(struct net *net, int ifindex)
+{
+	struct net_device *dev = resolved_dev_get_by_index_rcu(net, ifindex);
+
+	barrier();
+	return dev;
+}
+
 /* 1 = VPN interface, 0 = physical/non-VPN, -1 = unknown. Unknown positive
  * indexes fail closed: sock_bindtoindex accepts a non-existent positive index,
- * which would otherwise leave observable state on the socket. */
+ * which would otherwise leave observable state on the socket. An unresolved
+ * dev_get_by_index_rcu (NULL pointer) also falls through to the fail-closed
+ * unknown path rather than dereferencing it. */
 static int classify_bind_ifindex(struct sock *sk, int ifindex)
 {
 	struct net_device *dev;
@@ -604,8 +636,10 @@ static int classify_bind_ifindex(struct sock *sk, int ifindex)
 
 	if (!sk || ifindex <= 0)
 		return ifindex == 0 ? 0 : -1;
+	if (!resolved_dev_get_by_index_rcu)
+		return -1;
 	rcu_read_lock();
-	dev = dev_get_by_index_rcu(sock_net(sk), ifindex);
+	dev = call_resolved_dev_get_by_index_rcu(sock_net(sk), ifindex);
 	if (dev)
 		result = is_vpn_ifname(dev->name) ? 1 : 0;
 	rcu_read_unlock();
@@ -2427,6 +2461,15 @@ static int __init vpnhide_init(void)
 				unregister_kretprobe(probes[i].krp);
 		return -ENOMEM;
 	}
+
+	/* Resolve dev_get_by_index_rcu through a kprobe before the bind hooks go
+	 * live: the symbol is missing from some OEMs' trimmed GKI KMI module table,
+	 * so it must not be a hard link-time reference. If it stays NULL,
+	 * classify_bind_ifindex fails closed rather than crashing. */
+	if (!resolved_dev_get_by_index_rcu)
+		resolved_dev_get_by_index_rcu =
+			(dev_get_by_index_rcu_fn)resolve_kernel_symbol(
+				"dev_get_by_index_rcu");
 
 	/* Activate execution redirection last. No fallible initialization may run
 	 * after module text becomes reachable outside the kprobe handler. The module
