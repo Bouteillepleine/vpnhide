@@ -199,7 +199,7 @@ internal object AgentControl {
     /**
      * Import canonical JSON and immediately activate native/ports runtime state.
      *
-     * @param json Canonical JSON as produced by exportCanonicalConfig.
+     * @param json Canonical config JSON (the `/data/system/vpnhide_config.json` format).
      */
     suspend fun importCanonicalConfig(
         context: Context,

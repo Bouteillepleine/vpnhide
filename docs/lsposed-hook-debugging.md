@@ -67,18 +67,18 @@ vpnhide 1 stats         # per-uid per-hook fire counters
 0x27fe 0xa:0x1 0xb:0x1 0xd:0x1 0xe:0x1 0x10:0xc
 ```
 
-It reaches a debug bundle **two ways**, both via a root read (`emit_file` in
-`DebugShellSnapshot.kt`):
+It reaches a debug bundle **two ways** (the bundle is a single `state.json`
+packed in the export zip; the state file is read as root into the snapshot):
 
-- **`hook_report.txt`** — parsed and rendered (status mask, `metadata:` block,
-  installed/missing hooks, counter deltas). This is what you normally read.
-- **`debug_capture.txt`** — the raw file verbatim, under "LSPosed hook state".
+- the **`hookReport`** field — parsed and rendered (status mask, `metadata:`
+  block, installed/missing hooks, counter deltas). This is what you normally read.
+- the raw file verbatim, in the **`sections.lsposed_state`** entry.
 
 Because the read is root-backed and the file is always written, `cs_*` telemetry
 lands in the bundle **even with debug logging off**. Debug logging only enriches
 the *logcat* portions of the bundle.
 
-## 3. Reading `hook_report.txt` (the LSPOSED section)
+## 3. Reading the `hookReport` field (the LSPOSED section)
 
 ```
 LSPOSED:
@@ -163,7 +163,7 @@ The install runs at early boot with debug logging **off** (the flag is read that
 early and defaults false), so the `HookLog.i` install lines are never emitted;
 and even when emitted they are gone by report time (ring-buffer rotation). This
 was confirmed on a *working* device: debug on, zero install lines in logcat, yet
-hooks attached. Always use the state file / `hook_report.txt`, not logcat, to
+hooks attached. Always use the state file / the `hookReport` field, not logcat, to
 answer "did the hooks attach".
 
 ## 7. Collecting a report (users / testers)
@@ -182,7 +182,7 @@ Steps:
 3. Diagnostics → **Collect debug logs** → send the zip.
 
 Debug logging does **not** need to be on for `cs_*` — it only adds the logcat
-sections. Open `hook_report.txt` and read §3–§5.
+sections. Open the bundle's `hookReport` field and read §3–§5.
 
 ## 8. The attach mechanism (developers)
 

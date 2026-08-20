@@ -146,6 +146,7 @@ ordinary libc-routed probes but not raw syscalls or aliases. Full hiding matrix 
 | `ioctl_flags`, `ioctl_mtu` | `SIOCGIF*` by name | `dev_ioctl` | ENODEV for tun0 |
 | `ioctl_conf` | `SIOCGIFCONF` | `sock_ioctl` | tun0 absent from ifconf |
 | `getifaddrs`, `netlink_getlink` | RTM_GETLINK / getifaddrs | `rtnl_fill_ifinfo`, `inet*_fill_ifaddr` | |
+| `so_bindtodevice` | `setsockopt(SO_BINDTODEVICE, tun0)` | `socket_bind_interface` | ENODEV = hidden; a bind that succeeds *and* `getsockopt` echoes `tun0` = leak |
 | `netlink_getroute` | RTM_GETROUTE v4/v6 | `fib_dump_info`, `rt6_fill_node` | |
 | `netlink_getrule` | RTM_GETRULE policy rules | `fib_nl_fill_rule` | v4+v6; kernel-only vector |
 | `proc_route` | `/proc/net/route` | `fib_route_seq_show` | main table — empty for split-tunnel VPN |
@@ -155,16 +156,20 @@ ordinary libc-routed probes but not raw syscalls or aliases. Full hiding matrix 
 | `sys_class_net` | `/sys/class/net` | `filesystem_iface_paths` (`.ko`/KPM/Zygisk, optional) | kernel: resolved-dentry and reboot-gated; Zygisk: best-effort libc and restart-gated |
 | `proc_sys_net` | `/proc/sys/net/*/{conf,neigh}` | `filesystem_iface_paths` (`.ko`/KPM/Zygisk, optional) | kernel: resolved-dentry and reboot-gated; Zygisk: best-effort libc and restart-gated |
 
-`socket_bind_interface` intentionally has no app-process root-differential row
-yet. An honest test needs the hidden interface name/index from the root view,
-must pass that exact value into the already-targeted app process, and then must
-inspect the socket from a non-target UID; simply checking the returned errno
-would bless the broken return-only implementation this hook was designed to
-avoid. The QEMU `bind-probe` performs that full state-level test with a raw
-syscall and an inherited socket. Runtime hits still appear in Statistics.
-The Zygisk fallback has a separate `zygisk_setsockopt` hook for libc-routed
-calls, but the raw diagnostic probe bypasses it by design; Zygisk does not emit
-per-hook statistics yet.
+The `so_bindtodevice` check probes this vector from the app process —
+`setsockopt(SO_BINDTODEVICE, "tun0")`, classified by the same root differential.
+To avoid blessing a broken return-only implementation on errno alone, a bind is a
+leak **only** when it takes: `getsockopt` must echo `tun0` back (so a hook that
+returns 0 without binding — or the kernel's own capability block — is not a false
+positive), while `ENODEV` is the backend's pre-mutation denial. This catches the
+common failure (a bindable VPN interface), but a single process cannot verify the
+*pre-mutation* property itself — that the socket was never bound before `ENODEV`.
+The QEMU `bind-probe` still performs that full state-level test with a raw syscall
+and a second, non-target UID inspecting the inherited socket. Runtime deny hits
+also appear in Statistics. Zygisk has its own libc-routed `zygisk_setsockopt` hook
+but does not claim this vector in its owned-hook mask (so a leak here reads as an
+unowned surface under Zygisk, not a tile failure) and emits no per-hook statistics
+yet.
 
 Java-level checks (LSPosed) cover the framework side — `hasTransport(VPN)`,
 `NET_CAPABILITY_NOT_VPN`, `VpnTransportInfo`, `getAllNetworks`, `LinkProperties`,
