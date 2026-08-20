@@ -72,6 +72,11 @@ class MainActivity : ComponentActivity() {
             RootSnapshotCache.setRuntimeProbeSource(GroundTruthProbe.prepare(this)?.absolutePath)
             // Load canonical debug state before runtime work so first suExec and dashboard bootstrap agree.
             VpnHideLog.init()
+            // Process-scoped, registered once: auto-refreshes RoutingGateCache on VPN
+            // up/down so Diagnostics/Dashboard/export/logcat react without a manual
+            // re-check. Safe before RoutingGateCache has ever loaded — its trigger is
+            // a no-op refreshInPlace guarded by runCatching until a screen seeds it.
+            VpnTransportWatcher.start(this)
         }
         setContent {
             VpnHideApp(mainProfile)
@@ -440,6 +445,11 @@ private fun MainScreen() {
             LifecycleEventObserver { _, event ->
                 if (event == Lifecycle.Event.ON_RESUME) {
                     startupCoordinator.ensureUpdateFresh(scope)
+                    // Belt-and-suspenders re-probe of the routing gate on foreground
+                    // return (throttled), covering the case where the background VPN
+                    // transport callback was frozen/missed while we were away — e.g. the
+                    // user left to toggle their VPN in another app and came back.
+                    RoutingGateCache.refreshIfStale(scope)
                 }
             }
         lifecycleOwner.lifecycle.addObserver(observer)

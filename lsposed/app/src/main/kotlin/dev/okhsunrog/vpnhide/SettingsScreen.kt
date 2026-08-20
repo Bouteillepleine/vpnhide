@@ -842,7 +842,7 @@ private fun SuperkeySettingsSection() {
     }
 }
 
-private fun writeSuperkeySetting(
+private suspend fun writeSuperkeySetting(
     remember: Boolean,
     superkey: String,
 ): Int {
@@ -853,7 +853,7 @@ private fun writeSuperkeySetting(
     val canonical = base.copy(settings = base.settings.copy(rememberSuperkey = remember))
     val secretCommand = if (remember) buildSuperkeyWriteCommand(superkey) else buildSuperkeyClearCommand()
     return CanonicalConfigRepository
-        .persist(
+        .commit(
             canonical,
             coupledCommands = listOf(secretCommand),
             activation = CanonicalActivation(native = remember),
@@ -893,7 +893,7 @@ private fun writeTextToUri(
         } ?: error("openOutputStream returned null")
     }.isSuccess
 
-private fun importConfigFromUri(
+private suspend fun importConfigFromUri(
     context: android.content.Context,
     uri: Uri,
 ): ConfigImportResult {
@@ -906,7 +906,7 @@ private fun importConfigFromUri(
         }.getOrNull() ?: return ConfigImportResult.InvalidJson
     val canonical = parseImportedCanonicalConfig(raw, context.packageName) ?: return ConfigImportResult.InvalidJson
     val result =
-        CanonicalConfigRepository.persist(
+        CanonicalConfigRepository.commit(
             canonical,
             activation = CanonicalActivation(native = true, ports = true),
         )
@@ -1154,7 +1154,7 @@ private fun UnavailableConfiguredAppRow(
     }
 }
 
-private fun writeAutoHideSetting(
+private suspend fun writeAutoHideSetting(
     context: android.content.Context,
     apps: List<AppSummary>,
     transform: (CanonicalSettings) -> CanonicalSettings,
@@ -1169,10 +1169,10 @@ private fun writeAutoHideSetting(
             selfPkg = context.packageName,
             signals = apps.map(AppSummary::toAutoHideSignal),
         )
-    return CanonicalConfigRepository.persist(canonical).exitCode
+    return CanonicalConfigRepository.commit(canonical).exitCode
 }
 
-private fun writeRemoveUnavailableConfiguredApps(
+private suspend fun writeRemoveUnavailableConfiguredApps(
     context: android.content.Context,
     packages: Set<String>,
 ): Int {
@@ -1181,7 +1181,7 @@ private fun writeRemoveUnavailableConfiguredApps(
     val base = buildCanonicalConfigFromTargetsSnapshot(snapshot)
     val canonical = removeConfiguredPackages(base, packages, context.packageName)
     return CanonicalConfigRepository
-        .persist(
+        .commit(
             canonical,
             activation = CanonicalActivation(native = true, ports = true),
         ).exitCode

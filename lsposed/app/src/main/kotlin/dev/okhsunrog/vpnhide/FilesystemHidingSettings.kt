@@ -189,7 +189,7 @@ private fun filesystemHidingStatusText(state: FilesystemHidingState): String =
         }
     }
 
-private fun writeFilesystemHidingSetting(enabled: Boolean): Int {
+private suspend fun writeFilesystemHidingSetting(enabled: Boolean): Int {
     val snapshot = TargetsCache.snapshot.value ?: return 1
     val base = buildCanonicalConfigFromTargetsSnapshot(snapshot)
     val canonical =
@@ -205,6 +205,6 @@ private fun writeFilesystemHidingSetting(enabled: Boolean): Int {
                 ),
         )
     return CanonicalConfigRepository
-        .persist(canonical, activation = CanonicalActivation(native = false))
+        .commit(canonical, activation = CanonicalActivation(native = false))
         .exitCode
 }

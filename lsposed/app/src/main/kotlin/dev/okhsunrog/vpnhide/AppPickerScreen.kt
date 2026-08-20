@@ -374,7 +374,7 @@ private fun HelpInfoBlock(
  * running the installed activator; LSPosed reads the JSON directly; the ports
  * activator derives its observer set from the same JSON.
  */
-private fun persistUnifiedSelection(
+private suspend fun persistUnifiedSelection(
     ctx: SaveContext,
     selections: Collection<AppRoleSelection>,
     autoHideSignals: Collection<AppAutoHideSignal>,
@@ -387,7 +387,7 @@ private fun persistUnifiedSelection(
             snapshot = TargetsCache.snapshot.value,
             autoHideSignals = autoHideSignals,
         )
-    return CanonicalConfigRepository.persist(
+    return CanonicalConfigRepository.commit(
         canonical,
         activation = CanonicalActivation(native = true, ports = true),
     )

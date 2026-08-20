@@ -254,7 +254,7 @@ internal fun cleanupStaleZygiskStatus(
  * applied to the current process, restart needed for zygisk).
  * Called once at app startup; result is shared with all screens.
  */
-internal fun ensureSelfInTargets(
+internal suspend fun ensureSelfInTargets(
     selfPkg: String,
     timeoutSec: Long = SELF_TARGETS_TIMEOUT_SEC,
 ): SelfTargetPreparation {
@@ -333,12 +333,12 @@ private fun buildCanonicalSelfUpdate(
     )
 }
 
-private fun writeStartupCanonical(
+private suspend fun writeStartupCanonical(
     canonical: CanonicalConfig,
     timeoutSec: Long,
 ): String? {
     val result =
-        CanonicalConfigRepository.persist(
+        CanonicalConfigRepository.commit(
             canonical,
             activation = CanonicalActivation(native = true, ports = true),
             timeoutSec = timeoutSec,

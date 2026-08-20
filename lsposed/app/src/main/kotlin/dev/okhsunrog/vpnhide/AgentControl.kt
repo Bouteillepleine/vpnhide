@@ -457,14 +457,14 @@ private suspend fun currentCanonicalConfig(refresh: Boolean): CanonicalConfig {
         ?: buildCanonicalConfigFromTargetsSnapshot(snapshot)
 }
 
-private fun applyCanonicalConfig(
+private suspend fun applyCanonicalConfig(
     context: Context,
     canonical: CanonicalConfig,
     targetRestartRecommended: Boolean = true,
 ): AgentMutationResult {
     val next = canonicalConfigWithSelfTarget(canonical, context.packageName)
     val write =
-        CanonicalConfigRepository.persist(
+        CanonicalConfigRepository.commit(
             next,
             activation = CanonicalActivation(native = true, ports = true),
         )

@@ -37,7 +37,7 @@ internal suspend fun setDebugLoggingEnabled(enabled: Boolean) {
             )
             ?: return
 
-    val result = CanonicalConfigRepository.persist(canonical)
+    val result = CanonicalConfigRepository.commit(canonical)
     if (!result.succeeded) {
         VpnHideLog.e(
             TAG,
