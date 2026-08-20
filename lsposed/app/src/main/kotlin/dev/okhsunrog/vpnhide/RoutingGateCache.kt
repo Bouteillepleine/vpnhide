@@ -3,7 +3,9 @@ package dev.okhsunrog.vpnhide
 import android.content.Context
 import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.withContext
 
 /** Foreground-return re-probes are coalesced to at most one per this window. */
 private const val RESUME_REFRESH_THROTTLE_MS = 4_000L
@@ -80,10 +82,15 @@ internal object RoutingGateCache : StateCache<DiagnosticGate>(
         forceRefresh(scope)
     }
 
-    override suspend fun load(force: Boolean): DiagnosticGate {
-        lastLoadAtMs = SystemClock.elapsedRealtime()
-        val context = requireNotNull(appContext) { "RoutingGateCache.load before ensureLoaded/refresh" }
-        val snapshot = if (force) RootSnapshotCache.refresh() else RootSnapshotCache.getOrLoad()
-        return captureGateFrom(snapshot, context, selfNeedsRestart)
-    }
+    // Always on IO: captureGateFrom runs the blocking `su` self-routing probe, so a
+    // caller that awaits a refresh from the main dispatcher (e.g. a card's
+    // rememberCaptureGate scrolling into view) must not run it on the UI thread. The
+    // old measureCaptureGate wrapped this; keep it wrapped here so no caller has to.
+    override suspend fun load(force: Boolean): DiagnosticGate =
+        withContext(Dispatchers.IO) {
+            lastLoadAtMs = SystemClock.elapsedRealtime()
+            val context = requireNotNull(appContext) { "RoutingGateCache.load before ensureLoaded/refresh" }
+            val snapshot = if (force) RootSnapshotCache.refresh() else RootSnapshotCache.getOrLoad()
+            captureGateFrom(snapshot, context, selfNeedsRestart)
+        }
 }
