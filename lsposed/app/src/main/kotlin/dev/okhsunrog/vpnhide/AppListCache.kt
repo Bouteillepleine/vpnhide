@@ -42,6 +42,17 @@ internal fun AppSummary.toAutoHideSignal(): AppAutoHideSignal =
 internal fun looksLikeVpnAppName(label: String): Boolean = label.uppercase(Locale.ROOT).contains("VPN")
 
 /**
+ * Surfaced by [AppListCache.scanWarning] when the merged inventory is
+ * [PackageInventory.partial] — some profile other than user 0 (the
+ * in-process backstop covers user 0) didn't scan cleanly. Distinct from
+ * [StateCache.error]: the app list itself loaded fine, this only flags that
+ * part of it may be missing.
+ */
+internal data class PackageScanWarning(
+    val failedUserIds: Set<Int>,
+)
+
+/**
  * Append a profile list to an app label so users can tell that
  * Telegram-in-Second-Space and Telegram-in-main are the same target.
  * Suppresses the suffix when the app is only in the current profile —
@@ -92,6 +103,14 @@ internal object AppListCache : StateCache<List<AppSummary>>(
     private val _userNames = MutableStateFlow<Map<Int, String>>(emptyMap())
     val userNames: StateFlow<Map<Int, String>> = _userNames.asStateFlow()
 
+    /** Non-null when the last load's inventory was partial for a profile
+     * other than user 0. `StateCache.error` conflates "load failed" with
+     * "load succeeded", so partiality needs its own flow — the picker keeps
+     * showing the list and renders a soft banner instead of the hard-fail
+     * card. */
+    private val _scanWarning = MutableStateFlow<PackageScanWarning?>(null)
+    val scanWarning: StateFlow<PackageScanWarning?> = _scanWarning.asStateFlow()
+
     @Volatile private var appContext: Context? = null
 
     /** Kick off an initial load if not already loaded or loading. */
@@ -109,8 +128,14 @@ internal object AppListCache : StateCache<List<AppSummary>>(
         context: Context,
     ) {
         appContext = context.applicationContext
+        _scanWarning.value = null
         RootSnapshotCache.invalidate()
         forceRefresh(scope)
+    }
+
+    override fun invalidate() {
+        _scanWarning.value = null
+        super.invalidate()
     }
 
     suspend fun loadForAgent(
@@ -133,9 +158,24 @@ internal object AppListCache : StateCache<List<AppSummary>>(
         return withContext(Dispatchers.IO) {
             val pm = appContext.packageManager
             val vpnServicePkgs = queryVpnServiceProviders(pm)
-            val inventory = requireCompletePackageInventory(RootSnapshotCache.getOrLoad().sections)
+            val sections = RootSnapshotCache.getOrLoad().sections
+            val rawInventory =
+                parsePackageInventory(
+                    packagesRaw = sections["pm_packages"].orEmpty(),
+                    usersRaw = sections["pm_users"].orEmpty(),
+                )
+            // 100_000: Android's per-user UID stride (also used by labelWithUsers below).
+            val currentUserId = Process.myUid() / 100_000
+            val mergedPackages =
+                mergeUser0Backstop(
+                    packages = rawInventory.packages,
+                    user0Packages = queryUser0Backstop(pm),
+                    currentUserId = currentUserId,
+                )
+            val inventory = rawInventory.copy(packages = mergedPackages).requireNonEmpty()
             _userNames.value =
                 inventory.profiles.mapValues { (_, profile) -> profileDisplayName(appContext, profile) }
+            updateScanWarning(inventory, currentUserId, _userNames.value)
             inventory.packages.entries
                 .map { (pkg, meta) ->
                     val info = runCatching { pm.getApplicationInfo(pkg, 0) }.getOrNull()
@@ -164,6 +204,44 @@ internal object AppListCache : StateCache<List<AppSummary>>(
                         nameContainsVpn = !isSystem && looksLikeVpnAppName(label),
                     )
                 }.sortedBy { it.label.lowercase() }
+        }
+    }
+
+    /**
+     * Log-only + [scanWarning] surface for [PackageInventory.partial]. The
+     * backstop already covers user 0, so only failures for other profiles
+     * are worth flagging — those are the ones the app genuinely couldn't
+     * enumerate this run.
+     */
+    private fun updateScanWarning(
+        inventory: PackageInventory,
+        user0Id: Int,
+        profileNames: Map<Int, String>,
+    ) {
+        val otherProfileFailures = inventory.failedUserIds - user0Id
+        if (otherProfileFailures.isNotEmpty()) {
+            VpnHideLog.w(LogTags.APP_LIST, inventory.partialMessage(profileNames))
+        }
+        _scanWarning.value = otherProfileFailures.takeIf { it.isNotEmpty() }?.let(::PackageScanWarning)
+    }
+
+    /**
+     * Cheap in-process backstop so the picker still shows *something* even
+     * when the per-user root scan comes back completely empty for user 0 —
+     * e.g. a total root-shell failure. Root can still see more (other
+     * profiles, apps hidden from this process), which is why the per-user
+     * scan stays primary; this only fills the user-0 gap.
+     */
+    private fun queryUser0Backstop(pm: PackageManager): List<BackstopPackage> {
+        val infos =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0L))
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getInstalledApplications(0)
+            }
+        return infos.map { info ->
+            BackstopPackage(packageName = info.packageName, apkPath = info.sourceDir, uid = info.uid)
         }
     }
 

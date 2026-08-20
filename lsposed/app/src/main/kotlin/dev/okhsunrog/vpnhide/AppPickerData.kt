@@ -136,6 +136,7 @@ internal fun buildCanonicalConfigForAppPickerSave(
     selections: Collection<AppRoleSelection>,
     snapshot: TargetsSnapshot?,
     autoHideSignals: Collection<AppAutoHideSignal> = emptyList(),
+    partial: Boolean = false,
 ): CanonicalConfig {
     val base = canonicalBaseForSave(debug, snapshot)
     val visiblePkgs = selections.mapTo(mutableSetOf()) { it.packageName }
@@ -177,17 +178,31 @@ internal fun buildCanonicalConfigForAppPickerSave(
         config = canonical,
         selfPkg = selfPkg,
         signals = autoHideSignals,
+        partial = partial,
     )
 }
 
+/**
+ * [partial] is true when the picker's app-list scan (see
+ * [PackageInventory.partial]) was partial — some profile other than user 0
+ * didn't scan this run. [signals] then covers only the packages the picker
+ * could see, so a package auto-hidden in a previous save but absent from
+ * [signals] gets its `autoHiddenPackages` membership preserved (decision A:
+ * a VPN app that lives only in an un-scanned profile must not get un-hidden
+ * by a partial-scan Save) instead of being recomputed away.
+ */
 internal fun applyAutoHiddenPackages(
     config: CanonicalConfig,
     selfPkg: String,
     signals: Collection<AppAutoHideSignal>,
+    partial: Boolean = false,
 ): CanonicalConfig {
     val observerPkgs = config.apps.filterValues { it.appHiding }.keys
     val manualHiddenPkgs = config.apps.filterValues { it.hidden }.keys - config.settings.autoHiddenPackages
-    val autoHiddenPkgs = resolveAutoHiddenPackages(signals, config.settings, selfPkg)
+    val signalPkgs = signals.mapTo(mutableSetOf()) { it.packageName }
+    val preservedAutoHiddenPkgs =
+        if (partial) config.settings.autoHiddenPackages - signalPkgs else emptySet()
+    val autoHiddenPkgs = resolveAutoHiddenPackages(signals, config.settings, selfPkg) + preservedAutoHiddenPkgs
     val hiddenPkgs =
         resolveHiddenPackages(
             existing = manualHiddenPkgs + autoHiddenPkgs,

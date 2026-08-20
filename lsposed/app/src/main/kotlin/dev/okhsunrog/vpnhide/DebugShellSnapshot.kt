@@ -359,6 +359,7 @@ internal fun buildDebugShellSnapshotCommand(): String =
         rm -f "${'$'}OUT_FILE"
         echo "user=${'$'}U running=${'$'}RUN exit=${'$'}EX package_lines=${'$'}TOTAL with_uid=${'$'}WUID with_path=${'$'}WPATH stderr=[${'$'}ERR]"
       done
+      echo "inprocess_backstop=app also unions getInstalledApplications(0) into user 0"
     '
 
     emit_cmd network_addr ip -d addr

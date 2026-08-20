@@ -296,8 +296,15 @@ zygisk/                     # cdylib — the injected .so. deps: protocol (+ sha
   wait so the UI cannot hang forever. It lists Android users first and
   resolves every user separately instead of relying on the OEM-dependent
   `--user all` aggregation. If any user scan fails, activation stops before
-  replacing runtime state with a partial target set. Then it reads the
-  canonical and writes its channel.
+  replacing runtime state with a partial target set — this is the native
+  activator's own (Rust/C) runtime save-safety and is unrelated to the app
+  UI below. Then it reads the canonical and writes its channel.
+  The app-side target picker enumerates the same way but is fail-soft: a
+  failed profile scan (other than user 0, which also gets an in-process
+  `getInstalledApplications(0)` backstop) shows a banner instead of blocking
+  the whole app list, and Save preserves settings for packages it couldn't
+  see. Root can read every profile regardless of lock state, so the picker
+  only hard-fails when nothing could be enumerated from any source at all.
 - **Bundle integrity:** the app's batched root snapshot checks each installed
   module's `activator` directly and distinguishes an absent file from a
   non-executable one. Enabled modules with either failure are marked broken on
