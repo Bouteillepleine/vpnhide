@@ -233,10 +233,14 @@ Since Linux 5.7, an unprivileged process can perform the first interface
 bind, so `curl --interface tun0 ...` or a raw `setsockopt` syscall is a real
 local oracle even without root. The kernel backends deny VPN names and indices
 with `ENODEV` **before** `sk_bound_dev_if` changes. The `.ko` redirects
-`sock_setsockopt` (and `sk_setsockopt` on 6.1+) to a typed wrapper because a
+`sock_setsockopt` **and** `sk_setsockopt` (6.1+) to a typed wrapper because a
 return-only kretprobe would be too late; KPM uses KernelPatch's pre-hook
-`skip_origin`. Both freeze the 5.9+ `sockptr_t` input before validation to close
-userspace TOCTOU. On 5.7-5.8, KPM instead hooks the resolved-ifindex mutation
+`skip_origin`. Both symbols are hooked because a whole-kernel-LTO build can inline
+`sock_setsockopt` into `__sys_setsockopt`, leaving `sk_setsockopt` the only symbol
+on the syscall path — and the wrapper must not trust the ABI `level` argument
+(LTO drops it as dead, since `sk_setsockopt` never reads it), because reaching
+either function already proves the call is `SOL_SOCKET`. Both freeze the 5.9+
+`sockptr_t` input before validation to close userspace TOCTOU. On 5.7-5.8, KPM instead hooks the resolved-ifindex mutation
 helper; if LTO removes that static symbol, status is deliberately partial.
 Before 5.7, the kernel itself rejects the first interface bind without
 `CAP_NET_RAW`, and KPM preserves that native result exactly rather than adding

@@ -209,8 +209,8 @@ internal object LsposedStats {
             meta[LsposedStateMetadata.INSTALL_FAILURES] = failures.joinToString("; ")
         }
         // cs_* connectivity attach telemetry (resolved class, classloader chain,
-        // path, per-method hooked counts, attempt log). hook_report.txt renders
-        // every meta key, so these appear automatically in a debug bundle.
+        // path, per-method hooked counts, attempt log). The rendered hookReport
+        // emits every meta key, so these appear automatically in a debug bundle.
         meta.putAll(connectivityMeta)
         return meta
     }
