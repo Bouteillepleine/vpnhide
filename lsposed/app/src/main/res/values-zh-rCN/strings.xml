@@ -27,9 +27,10 @@
     <string name="profile_kind_private">隐私空间</string>
     <string name="profile_kind_secondary">用户 %d</string>
     <string name="profile_kind_unknown">资料 %d</string>
-    <string name="profile_scan_failed_title">未能扫描全部 Android 用户资料</string>
-    <string name="profile_scan_failed_message">VPN Hide 没有从一个或多个用户资料拿到完整的应用列表，也没有加载不完整的列表。如有需要，请先解锁或启动对应资料，再点按“重试”。</string>
+    <string name="profile_scan_failed_title">未能读取任何已安装应用</string>
+    <string name="profile_scan_failed_message">VPN Hide 没有拿到任何应用列表。没有删除任何设置。请点按“重试”。</string>
     <string name="profile_scan_stale_message">未能刷新全部 Android 用户资料。正在显示上一次的完整应用列表；没有删除任何设置。</string>
+    <string name="profile_scan_partial_message">未能扫描：%1$s。已显示 VPN Hide 能读取到的全部应用；%1$s 的设置予以保留。</string>
     <string name="apps_help_title">工作原理</string>
     <string name="java_hooks_title">Java 钩子</string>
     <string name="native_hooks_title">原生钩子</string>

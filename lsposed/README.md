@@ -40,8 +40,11 @@ re-entering them.
 The APK includes a Compose UI for managing target apps across all vpnhide modules:
 
 - Lists installed apps from every Android user/profile with icons, names, and
-  package names. Each user is queried separately; an incomplete profile scan is
-  rejected instead of being presented as a complete app list.
+  package names. Each user is queried separately, plus an in-process backstop
+  for user 0. A profile that didn't scan cleanly is shown as a soft banner
+  instead of blocking the whole list — root can read every profile regardless
+  of lock state, so the picker only hard-fails when nothing could be read at
+  all. Settings for un-scanned profiles are preserved on Save.
 - Text search filter
 - System apps toggle (selected system apps always visible)
 - One row per app with the current roles:

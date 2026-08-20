@@ -386,6 +386,7 @@ private suspend fun persistUnifiedSelection(
             selections = selections,
             snapshot = TargetsCache.snapshot.value,
             autoHideSignals = autoHideSignals,
+            partial = ctx.partial,
         )
     return CanonicalConfigRepository.commit(
         canonical,

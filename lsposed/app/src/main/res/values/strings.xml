@@ -26,9 +26,10 @@
     <string name="profile_kind_private">Private space</string>
     <string name="profile_kind_secondary">User %d</string>
     <string name="profile_kind_unknown">Profile %d</string>
-    <string name="profile_scan_failed_title">Couldn’t scan every Android profile</string>
-    <string name="profile_scan_failed_message">VPN Hide did not receive a complete app list from one or more profiles. No partial list was loaded. Unlock or start the profile if needed, then tap Retry.</string>
+    <string name="profile_scan_failed_title">Couldn’t read any installed apps</string>
+    <string name="profile_scan_failed_message">VPN Hide did not receive any app list. No settings were removed. Tap Retry.</string>
     <string name="profile_scan_stale_message">Couldn’t refresh every Android profile. Showing the previous complete app list; no settings were removed.</string>
+    <string name="profile_scan_partial_message">Couldn’t scan %1$s. Showing every app VPN Hide could read; settings for %1$s are kept.</string>
     <string name="apps_help_title">How it works</string>
     <string name="chip_java" translatable="false">J</string>
     <string name="chip_native" translatable="false">N</string>

@@ -110,7 +110,7 @@ internal object TargetsCache : StateCache<TargetsSnapshot>(
         @Suppress("UNUSED_PARAMETER") force: Boolean,
     ): TargetsSnapshot {
         val rootSnapshot = RootSnapshotCache.getOrLoad()
-        requireCompletePackageInventory(rootSnapshot.sections)
+        requireNonEmptyPackageInventory(rootSnapshot.sections)
         return parseTargetsSnapshot(rootSnapshot)
     }
 }

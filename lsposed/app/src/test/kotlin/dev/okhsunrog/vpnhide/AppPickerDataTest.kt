@@ -581,6 +581,84 @@ class AppPickerDataTest {
         assertEquals(setOf("com.happproxy"), result.settings.autoHiddenPackages)
     }
 
+    @Test
+    fun `save does not drop targets for un-scanned profiles`() {
+        // Simulates a partial scan: com.unscanned lives only in a profile
+        // that didn't come back this run, so it's absent from both the
+        // visible selections and the auto-hide signals — same shape as the
+        // existing "missing from current picker list" case, just under a
+        // partial save.
+        val snapshot =
+            snapshotWithCanonical(
+                "com.unscanned" to
+                    CanonicalApp(java = true, native = NativeRole.All, appHiding = true, ports = true),
+            )
+
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections = emptyList(),
+                snapshot = snapshot,
+                partial = true,
+            )
+
+        val unscanned = cfg.apps.getValue("com.unscanned")
+        assertEquals(true, unscanned.java)
+        assertEquals(NativeRole.All, unscanned.native)
+        assertEquals(true, unscanned.appHiding)
+        assertEquals(true, unscanned.ports)
+    }
+
+    @Test
+    fun `partial save preserves an auto hidden package missing from the scan`() {
+        // com.happproxy was auto-hidden on a previous (complete) save. This
+        // save's signals don't include it because its profile didn't scan —
+        // decision A: a partial save must not un-hide it just because it's
+        // not visible this run.
+        val snapshot =
+            snapshotWithCanonical(
+                "com.happproxy" to CanonicalApp(hidden = true),
+                settings = CanonicalSettings(autoHiddenPackages = setOf("com.happproxy")),
+            )
+
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections = emptyList(),
+                snapshot = snapshot,
+                autoHideSignals = emptyList(),
+                partial = true,
+            )
+
+        assertEquals(true, cfg.apps.getValue("com.happproxy").hidden)
+        assertEquals(setOf("com.happproxy"), cfg.settings.autoHiddenPackages)
+    }
+
+    @Test
+    fun `non partial save still drops an auto hidden package missing from the scan`() {
+        // Baseline: without `partial`, behavior is unchanged from before this
+        // feature — an auto-hidden package absent from signals gets dropped.
+        val snapshot =
+            snapshotWithCanonical(
+                "com.happproxy" to CanonicalApp(hidden = true),
+                settings = CanonicalSettings(autoHiddenPackages = setOf("com.happproxy")),
+            )
+
+        val cfg =
+            buildCanonicalConfigForAppPickerSave(
+                debug = false,
+                selfPkg = self,
+                selections = emptyList(),
+                snapshot = snapshot,
+                autoHideSignals = emptyList(),
+            )
+
+        assertEquals(false, cfg.apps.containsKey("com.happproxy"))
+        assertEquals(emptySet<String>(), cfg.settings.autoHiddenPackages)
+    }
+
     private fun snapshotWithCanonical(
         vararg apps: Pair<String, CanonicalApp>,
         settings: CanonicalSettings = CanonicalSettings(),

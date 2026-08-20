@@ -103,11 +103,16 @@ internal data class MergeResult<T : TargetEntry>(
 /**
  * Everything a Save needs beyond the row entries themselves. The scaffold
  * supplies the self package (always a hidden Java/native target) and current
- * debug flag; UID resolution happens in the native activator.
+ * debug flag; UID resolution happens in the native activator. [partial] is
+ * true when [AppListCache.scanWarning] is set at Save time — some profile
+ * other than user 0 didn't scan this run, so the visible entries don't cover
+ * every previously-configured package; screens use it to avoid dropping
+ * settings for packages the picker simply couldn't see.
  */
 internal data class SaveContext(
     val selfPkg: String,
     val debug: Boolean,
+    val partial: Boolean = false,
 )
 
 /**
@@ -161,6 +166,7 @@ internal fun <T : TargetEntry> TargetPickerScreen(
     val cachedApps by AppListCache.apps.collectAsState()
     val appListError by AppListCache.error.collectAsState()
     val userNames by AppListCache.userNames.collectAsState()
+    val scanWarning by AppListCache.scanWarning.collectAsState()
     val targets by TargetsCache.snapshot.collectAsState()
     val targetsError by TargetsCache.error.collectAsState()
 
@@ -191,6 +197,10 @@ internal fun <T : TargetEntry> TargetPickerScreen(
 
     // Surface either cache's failure: a failed app-list scan used to leave
     // the picker stuck on an endless spinner (it had no error state at all).
+    // AppListCache now only throws (appListError != null) when the merged
+    // inventory is globally empty — a partial scan (some profile other than
+    // user 0 failed) still yields a value and is surfaced separately via
+    // `scanWarning` below, not as a hard block.
     if ((targetsError != null && targets == null) || (appListError != null && cachedApps == null)) {
         val packageScanFailed = appListError != null && cachedApps == null
         TargetsLoadErrorCard(
@@ -264,6 +274,21 @@ internal fun <T : TargetEntry> TargetPickerScreen(
         if (appListError != null && cachedApps != null) {
             StatusBanner(
                 text = stringResource(R.string.profile_scan_stale_message),
+                containerColor = StatusColors.warningContainer(),
+                contentColor = StatusColors.warningHeader(),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        }
+        // Some profile other than user 0 didn't scan cleanly this run — the
+        // list below is still everything that could be read (root scan +
+        // the user-0 backstop). Name it instead of blocking the whole list;
+        // no "unlock/start" wording since root doesn't need the profile
+        // unlocked to read it.
+        scanWarning?.let { warning ->
+            val profileNames =
+                warning.failedUserIds.sorted().joinToString { userNames[it] ?: it.toString() }
+            StatusBanner(
+                text = stringResource(R.string.profile_scan_partial_message, profileNames),
                 containerColor = StatusColors.warningContainer(),
                 contentColor = StatusColors.warningHeader(),
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -378,8 +403,9 @@ internal fun <T : TargetEntry> TargetPickerScreen(
             val selfPkg = context.packageName
             val ctx =
                 SaveContext(
-                    selfPkg,
-                    targets?.canonicalConfig?.debugSwitch ?: (targets?.canonicalConfig?.debug ?: false),
+                    selfPkg = selfPkg,
+                    debug = targets?.canonicalConfig?.debugSwitch ?: (targets?.canonicalConfig?.debug ?: false),
+                    partial = scanWarning != null,
                 )
             try {
                 val result = persist(entries, ctx)
