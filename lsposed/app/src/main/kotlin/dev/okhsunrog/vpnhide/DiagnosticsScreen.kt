@@ -72,6 +72,11 @@ fun DiagnosticsScreen(
     // so each check can be shown against the vectors the backend actually OWNS. Null
     // until the dashboard has loaded (then we fall back to the raw, ownership-less list).
     val dashState by DashboardCache.state.collectAsState()
+    // The LIVE gate — kept fresh by VpnTransportWatcher on every VPN transport change —
+    // decides which blocking banner to show. DiagnosticsCache's own gate (inside
+    // State.Blocked) is process-sticky and only re-derived on an explicit retry, so it
+    // must not drive the banner here (see the module doc on RoutingGateCache).
+    val liveGate by RoutingGateCache.gate.collectAsState()
     val tallyFmt = stringResource(R.string.diag_summary_tally)
 
     // Kick off the diagnostics run once per process. The cache parks at
@@ -82,10 +87,23 @@ fun DiagnosticsScreen(
         // Ensure the backend/ownership state is available even when the user opens
         // Diagnostics without visiting the Dashboard first (cheap no-op if cached).
         DashboardCache.ensureLoaded(scope, context, selfNeedsRestart)
+        // Same belt-and-suspenders init as DashboardCache above: usually already
+        // seeded by StartupCoordinator.ensureInitialCaches, but a cheap no-op here
+        // guarantees the shared gate is ready even if Diagnostics is opened first.
+        RoutingGateCache.ensureLoaded(scope, context, selfNeedsRestart)
+    }
+    // The live gate is the trigger to (re)compute the frozen check results: once the
+    // VPN comes up (or this app becomes routed), the results must be measured even if
+    // DiagnosticsCache is still sitting on a stale Blocked/Failed from before. run() is
+    // idempotent — a no-op on an already-complete Ready — so this is cheap on every
+    // recomposition where liveGate hasn't changed.
+    LaunchedEffect(liveGate) {
+        if (liveGate == DiagnosticGate.ROUTED) {
+            DiagnosticsCache.run(scope, context, selfNeedsRestart)
+        }
     }
 
     val results = (diagState as? DiagnosticsCache.State.Ready)?.results
-    val blockedGate = (diagState as? DiagnosticsCache.State.Blocked)?.gate
     // Native probes that couldn't run (ECONNREFUSED from socket()) classify as
     // NotMeasured(NoNetworkPermission). Java-level checks never produce that state,
     // so this isolates the "app has no network permission" banner from everything else.
@@ -100,12 +118,27 @@ fun DiagnosticsScreen(
     ) {
         Spacer(Modifier.height(8.dp))
 
+        // One re-check drives every surface: RoutingGateCache.refresh so the export
+        // sheet / logcat card banners update immediately too, plus the two caches
+        // that actually re-derive their own state off the (now shared) gate.
         val onRetry = {
+            RoutingGateCache.refresh(scope, context, selfNeedsRestart)
             DiagnosticsCache.retry(scope, context, selfNeedsRestart)
             DashboardCache.refresh(scope, context, selfNeedsRestart)
         }
         when {
-            blockedGate == DiagnosticGate.NEEDS_RESTART -> {
+            // Still probing (first load, or a re-check in flight before the shared gate
+            // has a value yet).
+            liveGate == null -> {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator()
+                }
+            }
+
+            liveGate == DiagnosticGate.NEEDS_RESTART -> {
                 StatusBanner(
                     text = stringResource(R.string.banner_added_self),
                     containerColor = MaterialTheme.colorScheme.tertiaryContainer,
@@ -113,20 +146,25 @@ fun DiagnosticsScreen(
                 )
             }
 
-            blockedGate == DiagnosticGate.VPN_OFF -> {
+            liveGate == DiagnosticGate.VPN_OFF -> {
                 VpnOffPrompt(onRetry = onRetry)
             }
 
-            blockedGate == DiagnosticGate.SELF_NOT_ROUTED -> {
+            liveGate == DiagnosticGate.SELF_NOT_ROUTED -> {
                 SelfNotRoutedPrompt(onRetry = onRetry)
             }
 
+            // ROUTED: the live gate says the measurement is meaningful — render from
+            // DiagnosticsCache's own (frozen, process-scoped) results exactly as before.
             diagState is DiagnosticsCache.State.Failed -> {
                 DiagnosticsFailedPrompt(onRetry = onRetry)
             }
 
             diagState is DiagnosticsCache.State.Running ||
-                diagState is DiagnosticsCache.State.NotRun -> {
+                diagState is DiagnosticsCache.State.NotRun ||
+                diagState is DiagnosticsCache.State.Blocked -> {
+                // Transitional: the LaunchedEffect(liveGate) above already kicked off
+                // (or will kick off) a run now that the gate is ROUTED.
                 Box(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
                     contentAlignment = Alignment.Center,
@@ -206,26 +244,12 @@ private fun rememberZipSaveLauncher(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DebugToolsSection(
     selfNeedsRestart: Boolean?,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
-    val cm = context.getSystemService(ConnectivityManager::class.java)
-    val scope = rememberCoroutineScope()
-    var exporting by remember { mutableStateOf(false) }
     var showModal by remember { mutableStateOf(false) }
-    var resultFile by remember { mutableStateOf<File?>(null) }
-
-    // One export recipe, shared with the agent bridge's getState.
-    var optForensics by remember { mutableStateOf(true) }
-    var optAppList by remember { mutableStateOf(false) }
-    var optKernelImage by remember { mutableStateOf(false) }
-
-    // Every export kind is now a .zip (carrying state.json), so one MIME type fits all.
-    val saveLauncher = rememberZipSaveLauncher("debug-export") { resultFile }
 
     Column(modifier = modifier.fillMaxWidth()) {
         EnhancedCard(
@@ -263,110 +287,186 @@ fun DebugToolsSection(
 
         Spacer(Modifier.height(16.dp))
 
+        // The logcat card measures its own gate (persistent while the card is shown).
         LogcatRecordCard(selfNeedsRestart = selfNeedsRestart)
     }
 
     if (showModal) {
-        // Changing any toggle invalidates a result produced with the old recipe.
-        val clearResult = { resultFile = null }
-        ModalBottomSheet(onDismissRequest = { if (!exporting) showModal = false }) {
-            Column(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp)
-                        .padding(bottom = 24.dp),
-            ) {
-                Text(
-                    text = stringResource(R.string.debug_export_modal_title),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
+        DebugExportSheet(selfNeedsRestart = selfNeedsRestart, onDismiss = { showModal = false })
+    }
+}
+
+/**
+ * The debug-export bottom sheet's own composable, so every piece of its state — the
+ * collected file, the option toggles, and the capture gate — lives in the sheet's own
+ * composition scope instead of the section's. Called only from `if (showModal)`, it is
+ * torn down on dismiss and rebuilt fresh on the next open: a reopened sheet never shows
+ * a stale collected file, a stale Save/Share row, or stale toggle choices left over from
+ * the previous run.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DebugExportSheet(
+    selfNeedsRestart: Boolean?,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val cm = context.getSystemService(ConnectivityManager::class.java)
+    val scope = rememberCoroutineScope()
+    var exporting by remember { mutableStateOf(false) }
+    var resultFile by remember { mutableStateOf<File?>(null) }
+
+    // One export recipe, shared with the agent bridge's getState.
+    var optForensics by remember { mutableStateOf(true) }
+    var optAppList by remember { mutableStateOf(false) }
+    var optKernelImage by remember { mutableStateOf(false) }
+
+    // Every export kind is now a .zip (carrying state.json), so one MIME type fits all.
+    val saveLauncher = rememberZipSaveLauncher("debug-export") { resultFile }
+
+    // Changing any toggle invalidates a result produced with the old recipe.
+    val clearResult = { resultFile = null }
+    // Recreated with this composable, so a reopened sheet never flashes the previous
+    // verdict while a fresh probe runs (e.g. user closed the blocked sheet, turned the
+    // VPN on, reopened). rememberCaptureGate re-measures on first composition = on open.
+    val gate = rememberCaptureGate(selfNeedsRestart)
+    val incompleteGate = gate.incompleteGate
+    val rechecking = gate.rechecking
+    val onRecheck = gate.recheck
+    ModalBottomSheet(onDismissRequest = { if (!exporting) onDismiss() }) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 24.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.debug_export_modal_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.height(12.dp))
+            ExportToggle(
+                title = stringResource(R.string.debug_export_opt_forensics),
+                description = stringResource(R.string.debug_export_opt_forensics_desc),
+                checked = optForensics,
+                enabled = !exporting,
+                onCheckedChange = {
+                    optForensics = it
+                    clearResult()
+                },
+            )
+            ExportToggle(
+                title = stringResource(R.string.debug_export_opt_applist),
+                description = stringResource(R.string.debug_export_opt_applist_desc),
+                checked = optAppList && optForensics,
+                enabled = optForensics && !exporting,
+                onCheckedChange = {
+                    optAppList = it
+                    clearResult()
+                },
+            )
+            ExportToggle(
+                title = stringResource(R.string.debug_export_opt_kernel),
+                description = stringResource(R.string.debug_export_opt_kernel_desc),
+                checked = optKernelImage,
+                enabled = !exporting,
+                onCheckedChange = {
+                    optKernelImage = it
+                    clearResult()
+                },
+            )
+            Spacer(Modifier.height(16.dp))
+
+            val doExport = {
+                selfNeedsRestart?.let { restartState ->
+                    val options =
+                        StateContentOptions(forensics = optForensics, appList = optAppList && optForensics)
+                    val kernel = optKernelImage
+                    exporting = true
+                    scope.launch {
+                        resultFile = exportDebug(cm, context, restartState, options, kernel)
+                        exporting = false
+                    }
+                }
+                Unit
+            }
+
+            val file = resultFile
+
+            // Configure phase only: warn that a VPN-off / not-in-tunnel capture
+            // will be incomplete. The encouraged action (Re-check) rides on the
+            // banner; collecting anyway becomes a de-emphasized escape hatch below.
+            if (incompleteGate != null && !exporting && file == null) {
+                CaptureIncompleteWarning(
+                    gate = incompleteGate,
+                    rechecking = rechecking,
+                    onRecheck = onRecheck,
                 )
                 Spacer(Modifier.height(12.dp))
-                ExportToggle(
-                    title = stringResource(R.string.debug_export_opt_forensics),
-                    description = stringResource(R.string.debug_export_opt_forensics_desc),
-                    checked = optForensics,
-                    enabled = !exporting,
-                    onCheckedChange = {
-                        optForensics = it
-                        clearResult()
-                    },
-                )
-                ExportToggle(
-                    title = stringResource(R.string.debug_export_opt_applist),
-                    description = stringResource(R.string.debug_export_opt_applist_desc),
-                    checked = optAppList && optForensics,
-                    enabled = optForensics && !exporting,
-                    onCheckedChange = {
-                        optAppList = it
-                        clearResult()
-                    },
-                )
-                ExportToggle(
-                    title = stringResource(R.string.debug_export_opt_kernel),
-                    description = stringResource(R.string.debug_export_opt_kernel_desc),
-                    checked = optKernelImage,
-                    enabled = !exporting,
-                    onCheckedChange = {
-                        optKernelImage = it
-                        clearResult()
-                    },
-                )
-                Spacer(Modifier.height(16.dp))
+            }
 
-                val doExport = {
-                    selfNeedsRestart?.let { restartState ->
-                        val options =
-                            StateContentOptions(forensics = optForensics, appList = optAppList && optForensics)
-                        val kernel = optKernelImage
-                        exporting = true
-                        scope.launch {
-                            resultFile = exportDebug(cm, context, restartState, options, kernel)
-                            exporting = false
-                        }
+            when {
+                // In-progress: a disabled progress button, no competing actions.
+                exporting -> {
+                    EnhancedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
+                        ButtonSpinner()
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.btn_export_debug_running))
                     }
-                    Unit
                 }
 
-                val file = resultFile
-                when {
-                    // In-progress: a disabled progress button, no competing actions.
-                    exporting -> {
-                        EnhancedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
+                // Configure phase, capture would be incomplete: no prominent primary
+                // (that would invite a blind tap) — only "collect anyway" + Cancel.
+                file == null && incompleteGate != null -> {
+                    TextButton(onClick = doExport, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.capture_collect_anyway))
+                    }
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.btn_cancel))
+                    }
+                }
+
+                // Configure phase: the one primary action. Held disabled while a
+                // fresh gate re-check is in flight so the user can't collect on a
+                // stale "routed" verdict before the VPN-off warning resolves.
+                file == null -> {
+                    EnhancedButton(
+                        onClick = doExport,
+                        enabled = selfNeedsRestart != null && !rechecking,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        if (rechecking) {
                             ButtonSpinner()
                             Spacer(Modifier.width(8.dp))
-                            Text(stringResource(R.string.btn_export_debug_running))
                         }
-                    }
-
-                    // Configure phase: the one primary action.
-                    file == null -> {
-                        EnhancedButton(
-                            onClick = doExport,
-                            enabled = selfNeedsRestart != null,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(stringResource(R.string.debug_export_modal_confirm))
-                        }
-                    }
-
-                    // Result phase: Save/Share are primary; re-running is a de-emphasized
-                    // secondary action, so there is no ambiguous "Export" to double-tap.
-                    else -> {
-                        FileSaveShareRow(
-                            saveLabel = stringResource(R.string.btn_save_debug),
-                            shareLabel = stringResource(R.string.btn_share_debug),
-                            sharePrimary = true,
-                            onSave = { saveLauncher.launch(file.name) },
-                            onShare = { shareFileViaProvider(context, file, "application/zip") },
+                        Text(
+                            stringResource(
+                                if (rechecking) R.string.capture_checking_vpn else R.string.debug_export_modal_confirm,
+                            ),
                         )
-                        TextButton(
-                            onClick = doExport,
-                            modifier = Modifier.align(Alignment.CenterHorizontally),
-                        ) {
-                            Text(stringResource(R.string.debug_export_collect_again))
-                        }
+                    }
+                }
+
+                // Result phase: Save/Share are primary; re-running is a de-emphasized
+                // secondary action, so there is no ambiguous "Export" to double-tap.
+                else -> {
+                    FileSaveShareRow(
+                        saveLabel = stringResource(R.string.btn_save_debug),
+                        shareLabel = stringResource(R.string.btn_share_debug),
+                        sharePrimary = true,
+                        onSave = { saveLauncher.launch(file.name) },
+                        onShare = { shareFileViaProvider(context, file, "application/zip") },
+                    )
+                    TextButton(
+                        onClick = doExport,
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                    ) {
+                        Text(stringResource(R.string.debug_export_collect_again))
                     }
                 }
             }
@@ -407,6 +507,13 @@ private fun LogcatRecordCard(selfNeedsRestart: Boolean?) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state by LogcatRecorder.state.collectAsState()
+
+    // Own gate: the card is always visible, so it holds its VPN-off/not-in-tunnel
+    // verdict until re-checked (re-measured on entry and on the banner's re-check).
+    val gate = rememberCaptureGate(selfNeedsRestart)
+    val incompleteGate = gate.incompleteGate
+    val rechecking = gate.rechecking
+    val onRecheck = gate.recheck
 
     // Tick every second while recording so the elapsed counter updates
     // even when sizeBytes happens to hold steady.
@@ -496,26 +603,143 @@ private fun LogcatRecordCard(selfNeedsRestart: Boolean?) {
                         )
                         Spacer(Modifier.height(8.dp))
                     }
-                    EnhancedButton(
-                        onClick = {
-                            val restartState = selfNeedsRestart ?: return@EnhancedButton
-                            scope.launch { LogcatRecorder.start(context, restartState) }
-                        },
-                        enabled = selfNeedsRestart != null,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(
-                            Icons.Default.FiberManualRecord,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
+                    if (incompleteGate != null) {
+                        // Same VPN-off / not-in-tunnel guard as the debug export: a
+                        // recording started now captures nothing worth diagnosing.
+                        CaptureIncompleteWarning(
+                            gate = incompleteGate,
+                            rechecking = rechecking,
+                            onRecheck = onRecheck,
                         )
-                        Spacer(Modifier.width(8.dp))
-                        Text(stringResource(R.string.logcat_btn_start))
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(
+                            onClick = {
+                                val restartState = selfNeedsRestart ?: return@TextButton
+                                scope.launch { LogcatRecorder.start(context, restartState) }
+                            },
+                            enabled = selfNeedsRestart != null,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(stringResource(R.string.logcat_start_anyway))
+                        }
+                    } else {
+                        EnhancedButton(
+                            onClick = {
+                                val restartState = selfNeedsRestart ?: return@EnhancedButton
+                                scope.launch { LogcatRecorder.start(context, restartState) }
+                            },
+                            enabled = selfNeedsRestart != null,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(
+                                Icons.Default.FiberManualRecord,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(R.string.logcat_btn_start))
+                        }
                     }
                 }
             }
         }
     }
+}
+
+/** Composition-scoped capture-gate state: [incompleteGate] non-null when a capture
+ * now would be incomplete, [rechecking] while a probe is in flight, [recheck] to
+ * re-measure. Lifetime follows the call site — see [rememberCaptureGate]. */
+private data class CaptureGate(
+    val incompleteGate: DiagnosticGate?,
+    val rechecking: Boolean,
+    val recheck: () -> Unit,
+)
+
+/**
+ * Reads the shared [RoutingGateCache] — the same cheap probe (VPN-iface read +
+ * self-routing) the export used to run privately via the now-removed
+ * `measureCaptureGate` — so a re-check from any surface (this sheet, the logcat
+ * card, Dashboard, Diagnostics' own retry) updates every other one through the one
+ * underlying [StateFlow].
+ *
+ * [awaitingFreshSinceOpen] preserves the old per-open freshness guarantee on top of
+ * that shared state: a reopened sheet must never flash a stale verdict left over from
+ * before it was closed (e.g. the sheet was dismissed VPN-off, the user turns the VPN
+ * on, then reopens it — the shared cache still holds the old VPN_OFF gate until this
+ * composition's own recheck lands). It starts true and flips to false only once THIS
+ * composition's own triggered reload has completed, so [CaptureGate.incompleteGate]
+ * reports null (show "checking", not a banner) until then.
+ *
+ * Scope follows the call site: called under `if (showModal)` the state is recreated
+ * on every open, so a reopened sheet always re-measures; called in the always-visible
+ * logcat card it persists until re-checked.
+ */
+@Composable
+private fun rememberCaptureGate(selfNeedsRestart: Boolean?): CaptureGate {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val sharedGate by RoutingGateCache.gate.collectAsState()
+    val sharedLoading by RoutingGateCache.loading.collectAsState()
+    var awaitingFreshSinceOpen by remember { mutableStateOf(true) }
+
+    val recheck: () -> Unit = {
+        selfNeedsRestart?.let { needsRestart ->
+            awaitingFreshSinceOpen = true
+            scope.launch {
+                RoutingGateCache.ensureLoaded(scope, context, needsRestart)
+                RoutingGateCache.refreshInPlace(force = true)
+                awaitingFreshSinceOpen = false
+            }
+        }
+        Unit
+    }
+    LaunchedEffect(selfNeedsRestart) { recheck() }
+    return CaptureGate(
+        incompleteGate =
+            sharedGate
+                ?.takeUnless { awaitingFreshSinceOpen }
+                ?.takeIf { it == DiagnosticGate.VPN_OFF || it == DiagnosticGate.SELF_NOT_ROUTED },
+        rechecking = awaitingFreshSinceOpen || sharedLoading,
+        recheck = recheck,
+    )
+}
+
+/**
+ * Red banner shown before a debug export or a logcat recording when the freshly
+ * measured gate says the capture would be incomplete (VPN off, or this app not routed
+ * through the tunnel). The encouraged action is a Re-check (re-measures the gate);
+ * collecting anyway stays available as a de-emphasized button next to this banner.
+ * Message adapts to the gate so the fix is actionable.
+ */
+@Composable
+private fun CaptureIncompleteWarning(
+    gate: DiagnosticGate,
+    rechecking: Boolean,
+    onRecheck: () -> Unit,
+) {
+    val message =
+        when (gate) {
+            DiagnosticGate.SELF_NOT_ROUTED -> stringResource(R.string.capture_incomplete_not_routed)
+            else -> stringResource(R.string.capture_incomplete_vpn_off)
+        }
+    StatusBanner(
+        text = message,
+        containerColor = StatusColors.errorContainer(),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        action = {
+            EnhancedButton(
+                onClick = onRecheck,
+                enabled = !rechecking,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (rechecking) {
+                    ButtonSpinner()
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(stringResource(R.string.capture_incomplete_recheck))
+            }
+        },
+    )
 }
 
 private fun formatElapsed(seconds: Long): String {

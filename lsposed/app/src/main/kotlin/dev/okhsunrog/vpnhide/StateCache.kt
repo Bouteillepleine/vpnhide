@@ -59,6 +59,22 @@ internal abstract class StateCache<T>(
         inflight = scope.launch { reload(force = true) }
     }
 
+    /**
+     * Reload the value in place and await it: recompute via [load] and swap the result in
+     * one assignment, so subscribers keep the current value until the fresh one is ready —
+     * no null gap, hence no UI flicker. For suspend callers (a config write) that must
+     * leave the cache coherent before returning. On failure the stale value is kept and
+     * the error surfaced. Contrast [invalidate], which drops to null and defers the reload.
+     *
+     * @param force forwarded to [load]; pass false to reuse an already-refreshed upstream
+     *   (e.g. the root snapshot) instead of busting it again.
+     */
+    suspend fun refreshInPlace(force: Boolean = true) {
+        inflight?.cancel()
+        inflight = null
+        reload(force)
+    }
+
     /** Drop the cached value/error so the next [ensure] reloads. */
     open fun invalidate() {
         _value.value = null

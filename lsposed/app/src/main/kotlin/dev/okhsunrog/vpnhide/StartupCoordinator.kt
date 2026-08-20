@@ -26,12 +26,12 @@ internal sealed interface StartupSelfTargetState {
 internal class StartupCoordinator(
     private val appContext: Context,
     private val appVersionName: String = BuildConfig.VERSION_NAME,
-    private val prepareSelfTargetsCommand: (String) -> SelfTargetPreparation = ::ensureSelfInTargets,
+    private val prepareSelfTargetsCommand: suspend (String) -> SelfTargetPreparation = ::ensureSelfInTargets,
     private val cleanupZygiskStatus: (Context, String?) -> Unit = ::cleanupStaleZygiskStatus,
     private val seedRootSnapshotInventory: (PackageInventorySeed?) -> Unit = RootSnapshotCache::seedPackageInventory,
     private val markStartupEvent: (String) -> Unit = StartupTrace::mark,
     private val reconcileRuntimeConfig: () -> Unit = { runRuntimeConfigReconcile() },
-    private val reconcileAutoHidden: (CanonicalConfig, List<AppAutoHideSignal>) -> Unit =
+    private val reconcileAutoHidden: suspend (CanonicalConfig, List<AppAutoHideSignal>) -> Unit =
         { config, signals -> reconcileAutoHiddenPackages(appContext, config, signals) },
     private val loadCanonicalConfig: suspend () -> CanonicalConfig? =
         { parseTargetsSnapshot(RootSnapshotCache.getOrLoad()).canonicalConfig },
@@ -93,6 +93,10 @@ internal class StartupCoordinator(
     ) {
         AppListCache.ensureLoaded(scope, appContext)
         DashboardCache.ensureLoaded(scope, appContext, selfNeedsRestart)
+        // Seed the shared routing gate as early as selfNeedsRestart is known — this is
+        // also the earliest point the process-scoped VPN transport watcher (Phase 3)
+        // can find inputs to refresh against.
+        RoutingGateCache.ensureLoaded(scope, appContext, selfNeedsRestart)
         // The cache parks at Blocked(NEEDS_RESTART) itself when selfNeedsRestart — this
         // is also the first run() call, so it stamps the process-constant flag.
         DiagnosticsCache.run(scope, appContext, selfNeedsRestart)
@@ -134,7 +138,7 @@ internal class StartupCoordinator(
         }
     }
 
-    private fun reconcileRuntimeConfigNow(rootSnapshot: RootSnapshot) {
+    private suspend fun reconcileRuntimeConfigNow(rootSnapshot: RootSnapshot) {
         val canonicalConfig = parseTargetsSnapshot(rootSnapshot).canonicalConfig
         val reconciled = canonicalConfig?.let { canonicalConfigForStartupDebugReconcile(it) }
         // A capture interrupted mid-flight left effective `debug` out of sync with
@@ -145,7 +149,7 @@ internal class StartupCoordinator(
             reconcileRuntimeConfig()
             return
         }
-        val result = CanonicalConfigRepository.persist(reconciled)
+        val result = CanonicalConfigRepository.commit(reconciled)
         if (!result.succeeded) {
             VpnHideLog.w(
                 LogTags.STARTUP,

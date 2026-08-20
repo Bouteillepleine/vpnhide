@@ -448,7 +448,7 @@ private fun HiddenAppsSaveBar(
     }
 }
 
-private fun writeHiddenApps(
+private suspend fun writeHiddenApps(
     context: android.content.Context,
     base: CanonicalConfig,
     visiblePackages: Set<String>,
@@ -465,5 +465,5 @@ private fun writeHiddenApps(
             excludedPackages = excludedPackages,
             signals = signals,
         )
-    return CanonicalConfigRepository.persist(canonical).exitCode
+    return CanonicalConfigRepository.commit(canonical).exitCode
 }

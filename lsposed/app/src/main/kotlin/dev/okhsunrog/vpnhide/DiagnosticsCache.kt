@@ -168,24 +168,23 @@ internal object DiagnosticsCache {
         _state.value = State.Running
         try {
             StartupTrace.mark("diagnostics_cache_start")
-            // Probe lazily and fold each decision through the one shared classifier
-            // ([resolveDiagnosticGate]) so the live path, the debug export, and the
-            // dashboard all order the gate identically. selfNeedsRestart is false
-            // here — callers pre-gate on it, so this path is only reached when it is.
-            val vpnActive = withContext(Dispatchers.IO) { isVpnActive() }
-            if (!vpnActive) {
-                _state.value = State.Blocked(resolveDiagnosticGate(vpnActive = false, selfRouted = null, selfNeedsRestart = false))
-                StartupTrace.mark("diagnostics_cache_vpn_off")
-                return
+            // The gate now comes from the shared RoutingGateCache (folded through the
+            // same resolveDiagnosticGate / captureGateFrom every other surface uses),
+            // so the live path, the debug export, and the dashboard can never disagree
+            // about VPN-off / self-not-routed / routed. selfNeedsRestart=false below is
+            // safe — run()'s restartPending guard already ensures doRun is only reached
+            // once every caller reporting into this cache has reported false.
+            RoutingGateCache.ensureLoaded(cacheScope, appContext, selfNeedsRestart = false)
+            withContext(Dispatchers.IO) { RoutingGateCache.refreshInPlace(force = true) }
+            val gate = RoutingGateCache.gate.value
+            if (gate == null) {
+                throw IllegalStateException(RoutingGateCache.error.value ?: "routing gate unavailable")
             }
-            // Self-in-tunnel gate: a VPN is up, but is *this* app routed through it?
-            // A null answer (no root to tell) does not block — a no-root device is
-            // already handled as VPN-off above.
-            val selfRouted = withContext(Dispatchers.IO) { GroundTruthProbe.selfRoutedThroughVpn(appContext) }
-            val gate = resolveDiagnosticGate(vpnActive = true, selfRouted = selfRouted, selfNeedsRestart = false)
             if (gate != DiagnosticGate.ROUTED) {
                 _state.value = State.Blocked(gate)
-                StartupTrace.mark("diagnostics_cache_self_not_routed")
+                StartupTrace.mark(
+                    if (gate == DiagnosticGate.VPN_OFF) "diagnostics_cache_vpn_off" else "diagnostics_cache_self_not_routed",
+                )
                 return
             }
             val cm = appContext.getSystemService(ConnectivityManager::class.java)

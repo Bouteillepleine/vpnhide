@@ -73,7 +73,7 @@ internal fun runRuntimeConfigReconcile() {
  * nothing. Best-effort, blocking; call from a background dispatcher. Returns
  * true when it wrote (and re-activated) a new config.
  */
-internal fun reconcileAutoHiddenPackages(
+internal suspend fun reconcileAutoHiddenPackages(
     context: Context,
     config: CanonicalConfig,
     signals: Collection<AppAutoHideSignal>,
@@ -81,7 +81,7 @@ internal fun reconcileAutoHiddenPackages(
     val selfPkg = context.packageName
     if (!autoHiddenPackagesNeedReconcile(config, selfPkg, signals)) return false
     val next = applyAutoHiddenPackages(config, selfPkg, signals)
-    val result = CanonicalConfigRepository.persist(next)
+    val result = CanonicalConfigRepository.commit(next)
     if (!result.succeeded) {
         VpnHideLog.w(
             LogTags.STARTUP,

@@ -159,7 +159,7 @@ private suspend fun applyCanonicalDebugToggle(
     val canonical = debugToggledCanonicalConfig(resolvedSnapshot, enabled)
     if (canonical == null) {
         VpnHideLog.enabled = enabled
-        invalidateDebugCaptureState()
+        refreshDebugCaptureState()
         delay(DEBUG_CAPTURE_OBSERVER_DELAY_MS)
         return DebugCaptureLoggingStep(
             requestedEnabled = enabled,
@@ -170,10 +170,10 @@ private suspend fun applyCanonicalDebugToggle(
         )
     }
 
-    val result = CanonicalConfigRepository.persist(canonical)
+    val result = CanonicalConfigRepository.commit(canonical)
 
     VpnHideLog.enabled = enabled
-    invalidateDebugCaptureState()
+    refreshDebugCaptureState()
     delay(DEBUG_CAPTURE_OBSERVER_DELAY_MS)
     return DebugCaptureLoggingStep(
         requestedEnabled = enabled,
@@ -200,8 +200,10 @@ internal fun debugToggledCanonicalConfig(
             runCatching { parseCanonicalConfig(it) }.getOrNull()
         }?.copy(debug = enabled)
 
-private fun invalidateDebugCaptureState() {
-    RootSnapshotCache.invalidate()
-    TargetsCache.invalidate()
-    DashboardCache.invalidate()
+// Atomic refresh (not invalidate): after commit() already refreshed the caches in
+// place, dropping to null here would just re-open the flicker window this whole
+// change exists to close. In the canonical == null fallback path (no persist ran)
+// this refresh is the coherence step instead.
+private suspend fun refreshDebugCaptureState() {
+    CanonicalConfigRepository.refreshDerivedCaches()
 }

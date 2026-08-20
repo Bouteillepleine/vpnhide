@@ -1,5 +1,10 @@
 package dev.okhsunrog.vpnhide
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+
 /** Runtime channels that must be re-derived after the canonical config changes. */
 internal data class CanonicalActivation(
     val native: Boolean = true,
@@ -40,23 +45,32 @@ internal fun buildCanonicalPersistenceCommand(
  * system_server and native readers.
  */
 internal object CanonicalConfigRepository {
-    @Synchronized
-    fun persist(
+    private val writeMutex = Mutex()
+
+    suspend fun commit(
         config: CanonicalConfig,
         coupledCommands: List<String> = emptyList(),
         activation: CanonicalActivation = CanonicalActivation(),
         timeoutSec: Long = SU_DEFAULT_TIMEOUT_SEC,
-    ): CanonicalWriteResult {
-        val command = buildCanonicalPersistenceCommand(config, coupledCommands, activation)
-        val (exit, output) = suExec(command, timeoutSec)
-        if (exit == 0) invalidateCanonicalConfigCaches()
-        return CanonicalWriteResult(exit, output)
-    }
-}
+    ): CanonicalWriteResult =
+        writeMutex.withLock {
+            val command = buildCanonicalPersistenceCommand(config, coupledCommands, activation)
+            val (exit, output) = withContext(Dispatchers.IO) { suExec(command, timeoutSec) }
+            if (exit == 0) refreshDerivedCaches()
+            CanonicalWriteResult(exit, output)
+        }
 
-private fun invalidateCanonicalConfigCaches() {
-    RootSnapshotCache.invalidate()
-    TargetsCache.invalidate()
-    DashboardCache.invalidate()
-    StatisticsCache.invalidate()
+    // Reload each derived cache in place — swap old→new, so no observer sees a null blank
+    // between the write and the reload (the toggle-flicker fix). Root first: the others
+    // derive from it and reuse it via force=false. Failures keep the stale value.
+    internal suspend fun refreshDerivedCaches() {
+        runCatching { RootSnapshotCache.refresh() }
+        runCatching { TargetsCache.refreshInPlace(force = false) }
+        runCatching { DashboardCache.refreshInPlace(force = false) }
+        runCatching { StatisticsCache.refreshInPlace(force = false) }
+        // Tolerates RoutingGateCache not being initialized yet (load() throws on a
+        // null appContext before any screen has called ensureLoaded/refresh) — a
+        // config write racing app startup should not crash the write itself.
+        runCatching { RoutingGateCache.refreshInPlace(force = false) }
+    }
 }

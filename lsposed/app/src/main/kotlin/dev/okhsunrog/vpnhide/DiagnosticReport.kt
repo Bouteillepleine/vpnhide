@@ -44,6 +44,10 @@ internal fun resolveDiagnosticGate(
         else -> DiagnosticGate.ROUTED
     }
 
+/** The blocking gate to surface, or null when ROUTED (measurement is meaningful). */
+internal fun DiagnosticGate.blockedOrNull(): DiagnosticGate? =
+    takeIf { it == DiagnosticGate.VPN_OFF || it == DiagnosticGate.SELF_NOT_ROUTED || it == DiagnosticGate.NEEDS_RESTART }
+
 /**
  * One fully-classified check: the root-differential [outcome] plus the evidence
  * behind it — the app-view [appDetail], the root [groundTruthDetail] (native

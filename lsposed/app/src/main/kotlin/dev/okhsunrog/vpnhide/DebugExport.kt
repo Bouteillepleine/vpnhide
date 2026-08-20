@@ -102,12 +102,8 @@ private suspend fun buildDebugState(
         val session = loggingSession?.let { it.withRestore(restoreDebugCaptureLogging(it)) }
         restoreAttempted = true
 
-        val gate =
-            resolveDiagnosticGate(
-                vpnActive = isVpnActive(),
-                selfRouted = GroundTruthProbe.selfRoutedThroughVpn(context),
-                selfNeedsRestart = selfNeedsRestart,
-            )
+        // Same gate the collect-warning shows, off the snapshot just refreshed above.
+        val gate = captureGateFrom(rootSnapshot, context, selfNeedsRestart)
         buildVpnHideState(
             context = context,
             captureKind = "debug",
@@ -143,6 +139,26 @@ private suspend fun buildDebugState(
 
 /** ISO-8601 timestamp for [VpnHideState.generatedAt] (the serializer has no clock). */
 internal fun isoNow(): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.US).format(Date())
+
+/**
+ * The gate that decides whether a debug/logcat capture taken *right now* would be
+ * meaningful, computed from a root snapshot. The ONE place both the export and the
+ * pre-collect warning derive it, so they can never disagree. Cheap and stateless —
+ * a VPN-iface read plus one self-routing probe — and independent of the
+ * once-per-process [DiagnosticsCache]; that cache freezes its verdict on the first
+ * run (typically with the VPN up), which is exactly why it must NOT back a "is a
+ * capture worth taking now" check.
+ */
+internal fun captureGateFrom(
+    snapshot: RootSnapshot,
+    context: Context,
+    selfNeedsRestart: Boolean,
+): DiagnosticGate =
+    resolveDiagnosticGate(
+        vpnActive = isVpnActiveFromSnapshot(snapshot.sections["vpn_ifaces"].orEmpty()),
+        selfRouted = GroundTruthProbe.selfRoutedThroughVpn(context),
+        selfNeedsRestart = selfNeedsRestart,
+    )
 
 /**
  * Pack a ZIP: named text entries + raw file entries. The one packaging primitive for

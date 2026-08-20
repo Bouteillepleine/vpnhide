@@ -108,11 +108,6 @@ internal fun Iterable<CheckResult>.protectionScore(): CheckScore {
     return CheckScore(passed = measured.count { it.outcome !is CheckOutcome.Leak }, total = measured.size)
 }
 
-internal suspend fun isVpnActive(): Boolean {
-    val snapshot = RootSnapshotCache.getOrLoad()
-    return isVpnActiveFromSnapshot(snapshot.sections["vpn_ifaces"].orEmpty())
-}
-
 // ==========================================================================
 //  Check runner — runs directly in the main process
 // ==========================================================================

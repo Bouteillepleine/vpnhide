@@ -90,6 +90,12 @@
     <string name="debug_export_modal_title">What to include</string>
     <string name="debug_export_modal_confirm">Export</string>
     <string name="debug_export_collect_again">Collect again</string>
+    <string name="capture_incomplete_vpn_off">VPN is off. This log will contain incomplete information and is little help for diagnosis. Turn the VPN on and re-check.</string>
+    <string name="capture_incomplete_not_routed">A VPN is up, but VPN Hide is not routed through it (split tunneling). This log will be incomplete. Add VPN Hide to the tunnel and re-check.</string>
+    <string name="capture_incomplete_recheck">Re-check VPN</string>
+    <string name="capture_checking_vpn">Checking VPN tunnel</string>
+    <string name="capture_collect_anyway">Collect an incomplete log anyway</string>
+    <string name="logcat_start_anyway">Record an incomplete log anyway</string>
     <string name="debug_export_opt_forensics">Verbose logs</string>
     <string name="debug_export_opt_forensics_desc">dmesg, logcat and raw kernel/network probes. Bigger file; usually what a bug report needs.</string>
     <string name="debug_export_opt_applist">Installed-app list</string>

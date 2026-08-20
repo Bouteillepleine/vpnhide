@@ -379,6 +379,12 @@
     <string name="debug_export_modal_title">Что включить</string>
     <string name="debug_export_modal_confirm">Экспорт</string>
     <string name="debug_export_collect_again">Собрать заново</string>
+    <string name="capture_incomplete_vpn_off">VPN выключен. В логе не будет главного, и диагностировать по нему почти нечего. Включите VPN и проверьте ещё раз.</string>
+    <string name="capture_incomplete_not_routed">VPN включён, но VPN Hide не пропущен через туннель (split tunneling) — скрывать нечего, и лог выйдет неполным. Добавьте VPN Hide в туннель и проверьте ещё раз.</string>
+    <string name="capture_incomplete_recheck">Проверить VPN ещё раз</string>
+    <string name="capture_checking_vpn">Проверяю VPN туннель</string>
+    <string name="capture_collect_anyway">Всё равно собрать неполный лог</string>
+    <string name="logcat_start_anyway">Всё равно записать неполный лог</string>
     <string name="debug_export_opt_forensics">Расширенный лог</string>
     <string name="debug_export_opt_forensics_desc">dmesg, logcat и сырые пробы ядра/сети. Файл больше; обычно именно это и нужно для баг-репорта.</string>
     <string name="debug_export_opt_applist">Список приложений</string>

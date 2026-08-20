@@ -65,6 +65,10 @@ fun DashboardScreen(
     val state by DashboardCache.state.collectAsState()
     val loadError by DashboardCache.error.collectAsState()
     val updateInfo by UpdateCheckCache.info.collectAsState()
+    // The LIVE gate — kept fresh by VpnTransportWatcher on every VPN transport change —
+    // overlays onto the cached DashboardCache.state.protection below so the hero and the
+    // blocked-prompt react to a VPN toggling on/off without waiting for a manual refresh.
+    val liveGate by RoutingGateCache.gate.collectAsState()
     var showChangelog by remember { mutableStateOf(false) }
     var changelogData by remember { mutableStateOf<ChangelogData?>(null) }
     var showContact by remember { mutableStateOf(false) }
@@ -166,6 +170,25 @@ fun DashboardScreen(
         }
         val loadedState = s ?: return@Column
 
+        // Overlay the live gate onto the cached protection: a live block (VPN off /
+        // self-not-routed / needs-restart) always wins over whatever DashboardCache
+        // last measured. When the live gate says ROUTED, fall back to the cached
+        // protection — either it's already Checked (the common case), or it's a stale
+        // Blocked/Failed left over from before the VPN came up, in which case the
+        // effect below refreshes it and the cached value updates in place once the
+        // refresh lands (no separate "refreshing" placeholder needed: the stale
+        // banner/hero just holds for the brief refresh window, matching the existing
+        // loading/skeleton treatment elsewhere in this screen).
+        val effectiveProtection: ProtectionCheck =
+            liveGate?.blockedOrNull()?.let { ProtectionCheck.Blocked(it) } ?: loadedState.protection
+        val effectiveState = loadedState.copy(protection = effectiveProtection)
+        LaunchedEffect(liveGate) {
+            if (liveGate == DiagnosticGate.ROUTED && loadedState.protection !is ProtectionCheck.Checked) {
+                DashboardCache.refresh(scope, context, selfNeedsRestart)
+                DiagnosticsCache.retry(scope, context, selfNeedsRestart)
+            }
+        }
+
         // Messages split by severity. Only errors/warnings affect the hero:
         // info messages are neutral notes rendered below without changing the
         // overall "Protected" state or issue count.
@@ -174,7 +197,7 @@ fun DashboardScreen(
         val infos = loadedState.messages.filter { it.severity == DashboardMessageSeverity.INFO }
 
         // Hero: the whole setup's health at a glance.
-        DashboardHeroCard(state = loadedState, errorCount = errors.size, warningCount = warnings.size)
+        DashboardHeroCard(state = effectiveState, errorCount = errors.size, warningCount = warnings.size)
 
         // Critical protection states sit right under the hero (not in a separate
         // mid-screen section): the VPN needs turning on, or a self-restart is
@@ -184,11 +207,15 @@ fun DashboardScreen(
         // Per-layer verdict (Checked) renders in the cards below; only a blocked gate
         // shows a hero banner. Retry re-reads dashboard state (re-runs its own VPN +
         // protection probes) and re-runs the diag cache so both screens recover together.
+        // One re-check drives every surface: RoutingGateCache.refresh so the export
+        // sheet / logcat card banners update immediately too, plus the two caches
+        // that actually re-derive their own state off the (now shared) gate.
         val onRetry = {
+            RoutingGateCache.refresh(scope, context, selfNeedsRestart)
             DashboardCache.refresh(scope, context, selfNeedsRestart)
             DiagnosticsCache.retry(scope, context, selfNeedsRestart)
         }
-        val protection = loadedState.protection
+        val protection = effectiveProtection
         when {
             (protection as? ProtectionCheck.Blocked)?.gate == DiagnosticGate.VPN_OFF -> {
                 Spacer(Modifier.height(12.dp))
