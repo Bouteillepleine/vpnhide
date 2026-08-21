@@ -56,13 +56,18 @@ the settings. `LegacyConfigImport.kt` reads them again:
   `service.sh`; deleted with the rest, never read back.
 
 The import runs silently at startup when the canonical config holds no
-user-configured app, and is offered as a Dashboard banner (merge / replace /
-hide) plus a Settings → Configuration entry when it does. Either way it deletes
-every file above — and `rmdir`s `/data/adb/vpnhide_zygisk` and
-`/data/adb/vpnhide_lsposed`, which hold nothing else — in the same root
-transaction as the config write. Absence of the files is the "already imported"
-marker; declining only sets `legacyImportDismissed` in the app's `ui_settings`
-DataStore, which silences the banner and nothing else.
+user-configured app. When it does hold one, a Dashboard banner and a Settings →
+Configuration entry offer three actions: merge, replace, or **delete without
+importing** (for the user who has already reconfigured by hand and only wants
+the leftovers gone — nothing else on the device removes them). All three delete
+every file above and `rmdir` `/data/adb/vpnhide_zygisk` and
+`/data/adb/vpnhide_lsposed`, which hold nothing else; merge and replace do it in
+the same root transaction as the config write, delete runs on its own (no config
+write, no activator — the running config does not change).
+
+Absence of the files is the "already imported" marker. The banner's *Hide*
+button only sets `legacyImportDismissed` in the app's `ui_settings` DataStore:
+files stay, and the Settings entry keeps every action reachable.
 
 `/data/adb/vpnhide_kmod`, `…_kpm` and `…_ports` survive: they carry live
 `load_status` / `load_dmesg` / `ctl.lock`.

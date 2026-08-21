@@ -261,11 +261,35 @@ internal fun LegacyConfigCandidate.toPrompt(): LegacyImportPrompt =
         unresolvedObserverUids = unresolvedObserverUids,
     )
 
-/** Outcome of a user-driven import, mapped to a message by the caller. */
+/** What the user chose to do with the pre-1.0 files. */
+internal enum class LegacyImportAction {
+    Merge,
+    Replace,
+
+    /**
+     * Delete the files without importing anything. The point of the whole flow
+     * for a user who has already reconfigured the app by hand and just wants the
+     * leftovers off the device.
+     */
+    Discard,
+    ;
+
+    val mode: LegacyImportMode?
+        get() =
+            when (this) {
+                Merge -> LegacyImportMode.Merge
+                Replace -> LegacyImportMode.Replace
+                Discard -> null
+            }
+}
+
+/** Outcome of a user-driven action, mapped to a message by the caller. */
 internal sealed interface LegacyImportOutcome {
     data class Imported(
         val packages: Int,
     ) : LegacyImportOutcome
+
+    data object Discarded : LegacyImportOutcome
 
     /** The files disappeared between rendering the card and confirming it. */
     data object NothingToImport : LegacyImportOutcome
@@ -276,13 +300,13 @@ internal sealed interface LegacyImportOutcome {
 }
 
 /**
- * Runs a user-confirmed import. Re-reads the current state rather than trusting
+ * Runs a user-confirmed action. Re-reads the current state rather than trusting
  * the card's snapshot: the config may have been edited on another screen (or by
  * the startup importer) since the card was built.
  */
 internal object LegacyConfigImporter {
-    suspend fun import(
-        mode: LegacyImportMode,
+    suspend fun run(
+        action: LegacyImportAction,
         selfPkg: String,
     ): LegacyImportOutcome {
         val snapshot =
@@ -292,6 +316,7 @@ internal object LegacyConfigImporter {
         val candidate =
             parseLegacyConfigCandidate(snapshot.sections, targets.uidToPkg)
                 ?: return LegacyImportOutcome.NothingToImport
+        val mode = action.mode ?: return discard()
         val updated =
             applyLegacyImport(targets.canonicalConfig ?: CanonicalConfig(), candidate, mode, selfPkg)
         val result =
@@ -309,6 +334,23 @@ internal object LegacyConfigImporter {
         }
         VpnHideLog.i(LogTags.APP, "legacy import ($mode) applied for ${candidate.roles.size} packages")
         return LegacyImportOutcome.Imported(candidate.roles.size)
+    }
+
+    /**
+     * Delete only. No canonical write and no activator run: the config the
+     * backends are already using does not change, just the dead files go away.
+     * The caches still need a reload so the banner and the Settings entry
+     * disappear without a manual refresh.
+     */
+    private suspend fun discard(): LegacyImportOutcome {
+        val (exit, output) = suExecAsync(buildLegacyConfigDeleteCommand())
+        if (exit != 0) {
+            VpnHideLog.w(LogTags.APP, "legacy discard failed (exit=$exit): ${output.trim()}")
+            return LegacyImportOutcome.Failed("exit=$exit")
+        }
+        CanonicalConfigRepository.refreshDerivedCaches()
+        VpnHideLog.i(LogTags.APP, "legacy config files deleted without importing")
+        return LegacyImportOutcome.Discarded
     }
 }
 

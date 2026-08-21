@@ -3,6 +3,9 @@ package dev.okhsunrog.vpnhide
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -14,6 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -28,8 +32,8 @@ import kotlinx.coroutines.launch
  * (see [LegacyConfigImport]).
  *
  * "Hide" only silences the banner ([AppSettings.legacyImportDismissed]); the
- * files stay on disk and Settings → Configuration keeps the import available,
- * so a mis-tap costs nothing.
+ * files stay on disk and Settings → Configuration keeps every action — import
+ * and delete alike — reachable, so a mis-tap costs nothing.
  */
 @Composable
 internal fun LegacyImportBanner(
@@ -67,12 +71,17 @@ private sealed interface LegacyImportUiState {
 }
 
 /**
- * Merge / replace picker for the pending import.
+ * What to do with the pre-1.0 files: merge, replace, or delete them unread.
  *
- * Merge is offered first because it cannot lose anything: roles are unioned per
- * package. Replace exists for the user who wants the old list verbatim and
- * drops the current app roles — `settings` (auto-hide, superkey, optional
- * features) and VPN Hide's own entry survive either way.
+ * Merge leads because it cannot lose anything: roles are unioned per package.
+ * Replace is for the user who wants the old list verbatim and drops the current
+ * app roles — `settings` (auto-hide, superkey, optional features) and VPN Hide's
+ * own entry survive either way. Delete is the exit for everyone who has already
+ * reconfigured by hand and only wants the leftovers gone; without it the files
+ * would sit in `/data/adb` forever, since nothing else removes them.
+ *
+ * The three actions are full-width rows in the body rather than dialog buttons:
+ * three labels side by side overflow the button row on narrow screens.
  */
 @Composable
 internal fun LegacyImportDialog(
@@ -83,10 +92,10 @@ internal fun LegacyImportDialog(
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<LegacyImportUiState>(LegacyImportUiState.Choosing) }
 
-    fun run(mode: LegacyImportMode) {
+    fun run(action: LegacyImportAction) {
         state = LegacyImportUiState.Running
         scope.launch {
-            state = LegacyImportUiState.Done(LegacyConfigImporter.import(mode, context.packageName))
+            state = LegacyImportUiState.Done(LegacyConfigImporter.run(action, context.packageName))
         }
     }
 
@@ -111,6 +120,10 @@ internal fun LegacyImportDialog(
                         when (val outcome = current.outcome) {
                             is LegacyImportOutcome.Imported -> {
                                 stringResource(R.string.legacy_import_done, outcome.packages)
+                            }
+
+                            LegacyImportOutcome.Discarded -> {
+                                stringResource(R.string.legacy_import_discarded)
                             }
 
                             LegacyImportOutcome.NothingToImport -> {
@@ -153,16 +166,22 @@ internal fun LegacyImportDialog(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        Spacer(Modifier.height(2.dp))
+                        ActionRow(R.string.legacy_import_merge) { run(LegacyImportAction.Merge) }
+                        ActionRow(R.string.legacy_import_replace) { run(LegacyImportAction.Replace) }
+                        ActionRow(
+                            textRes = R.string.legacy_import_discard,
+                            color = MaterialTheme.colorScheme.error,
+                        ) { run(LegacyImportAction.Discard) }
                     }
                 }
             }
         },
         confirmButton = {
             when (state) {
-                LegacyImportUiState.Choosing -> {
-                    TextButton(onClick = { run(LegacyImportMode.Merge) }) {
-                        Text(stringResource(R.string.legacy_import_merge))
-                    }
+                // The three choices live in the body; nothing to confirm here.
+                LegacyImportUiState.Choosing, LegacyImportUiState.Running -> {
+                    Unit
                 }
 
                 is LegacyImportUiState.Done -> {
@@ -170,23 +189,25 @@ internal fun LegacyImportDialog(
                         Text(stringResource(R.string.reset_close))
                     }
                 }
-
-                LegacyImportUiState.Running -> {
-                    Unit
-                }
             }
         },
         dismissButton = {
             if (state is LegacyImportUiState.Choosing) {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = { run(LegacyImportMode.Replace) }) {
-                        Text(stringResource(R.string.legacy_import_replace))
-                    }
-                    TextButton(onClick = onDismiss) {
-                        Text(stringResource(R.string.btn_cancel))
-                    }
+                TextButton(onClick = onDismiss) {
+                    Text(stringResource(R.string.btn_cancel))
                 }
             }
         },
     )
+}
+
+@Composable
+private fun ActionRow(
+    textRes: Int,
+    color: Color = MaterialTheme.colorScheme.primary,
+    onClick: () -> Unit,
+) {
+    EnhancedOutlinedButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Text(stringResource(textRes), color = color)
+    }
 }
