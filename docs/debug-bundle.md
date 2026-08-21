@@ -195,7 +195,7 @@ to an `emit_*` line in
 
 **LSPosed / Java layer** — `lsposed_state`, `lsposed_framework` (which framework: LSPosed/Vector), `lsposed_files` (config DB perms).
 
-**Config / targets** — `canonical_config` (the desired-state JSON, mirrored into top-level `config`).
+**Config / targets** — `canonical_config` (the desired-state JSON, mirrored into top-level `config`). `legacy_kmod_targets` / `legacy_kpm_targets` / `legacy_zygisk_targets` / `legacy_lsposed_targets` / `legacy_ports_observers` / `legacy_hidden_pkgs` / `legacy_observer_uids` — the pre-1.0 config files ([state.md §1](state.md)). Non-empty only on an install that upgraded across 1.2.0 without importing yet: the import deletes them, so a bundle showing both these and a populated `canonical_config` means the user was offered the merge/replace banner and hasn't answered.
 
 **App enumeration** — `app_scan_diagnostics` (privacy-safe: per-user exit code + package counts + first stderr line, **no names/paths** — diagnoses "couldn't read all profiles" / the ARG_MAX overflow). `pm_users` / `pm_packages` carry the real names/paths and are **redacted out unless `appList` was opted in** (§10).
 

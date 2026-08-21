@@ -73,12 +73,19 @@ fun DashboardScreen(
     var changelogData by remember { mutableStateOf<ChangelogData?>(null) }
     var showContact by remember { mutableStateOf(false) }
     var showDonate by remember { mutableStateOf(false) }
+    // Captured when the banner is tapped, not read live: a successful import
+    // refreshes the dashboard (prompt → null) while the dialog is still showing
+    // its result.
+    var legacyImportDialog by remember { mutableStateOf<LegacyImportPrompt?>(null) }
 
     if (showContact) {
         ContactModal(onDismiss = { showContact = false })
     }
     if (showDonate) {
         DonateModal(onDismiss = { showDonate = false })
+    }
+    legacyImportDialog?.let { prompt ->
+        LegacyImportDialog(prompt = prompt, onDismiss = { legacyImportDialog = null })
     }
 
     // Both caches are reactive to tab switches without re-doing work:
@@ -269,6 +276,21 @@ fun DashboardScreen(
         updateInfo?.let { info ->
             Spacer(Modifier.height(8.dp))
             UpdateAvailableCard(info)
+        }
+
+        // A pre-1.0 config is still on disk and this install already has roles,
+        // so the startup importer left the call to the user.
+        val legacyPrompt = loadedState.legacyImport
+        if (legacyPrompt != null && !LocalSettingsState.current.legacyImportDismissed) {
+            val interactor = LocalSettingsInteractor.current
+            Spacer(Modifier.height(8.dp))
+            LegacyImportBanner(
+                prompt = legacyPrompt,
+                containerColor = infoBg,
+                contentColor = onBannerColor,
+                onImport = { legacyImportDialog = legacyPrompt },
+                onHide = { interactor.setLegacyImportDismissed(true) },
+            )
         }
 
         val onContact = { showContact = true }

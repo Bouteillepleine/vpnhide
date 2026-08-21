@@ -38,6 +38,35 @@ The app writes it atomically via temp-file + `mv`. If it is absent, native
 activators treat it as an empty config and app startup creates a new config
 containing the mandatory VPN Hide self-target.
 
+### Pre-1.0 Config Files (import inputs)
+
+Nothing writes these; up to 0.7.1 they *were* the user's config. 1.0.0 folded
+them into the canonical JSON on first launch, 1.2.0 dropped that fold (and the
+cleanup with it), so a device upgrading 0.7.x → 1.2.x kept the files and lost
+the settings. `LegacyConfigImport.kt` reads them again:
+
+- `/data/adb/vpnhide_kmod/targets.txt`, `…_kpm/targets.txt`,
+  `…_zygisk/targets.txt` — native role, package names.
+- `/data/adb/vpnhide_lsposed/targets.txt` — Java role, package names.
+- `/data/adb/vpnhide_ports/observers.txt` — ports role, package names.
+- `/data/system/vpnhide_hidden_pkgs.txt` — hidden packages, package names.
+- `/data/system/vpnhide_observer_uids.txt` — app-hiding role, **UIDs**, mapped
+  back through the current `pm list packages -U` inventory.
+- `/data/system/vpnhide_uids.txt` — derived from the LSPosed list by the old
+  `service.sh`; deleted with the rest, never read back.
+
+The import runs silently at startup when the canonical config holds no
+user-configured app, and is offered as a Dashboard banner (merge / replace /
+hide) plus a Settings → Configuration entry when it does. Either way it deletes
+every file above — and `rmdir`s `/data/adb/vpnhide_zygisk` and
+`/data/adb/vpnhide_lsposed`, which hold nothing else — in the same root
+transaction as the config write. Absence of the files is the "already imported"
+marker; declining only sets `legacyImportDismissed` in the app's `ui_settings`
+DataStore, which silences the banner and nothing else.
+
+`/data/adb/vpnhide_kmod`, `…_kpm` and `…_ports` survive: they carry live
+`load_status` / `load_dmesg` / `ctl.lock`.
+
 ---
 
 ## 2. Module Install Dirs
@@ -353,5 +382,6 @@ zygote app fork:
 | Persistent root-managed | `/data/system/vpnhide_config.json`, `/data/adb/vpnhide/superkey` |
 | Module-dir derived state | `/data/adb/modules/vpnhide_zygisk/targets.txt` |
 | Removed on module uninstall | `/data/adb/vpnhide_kmod/`, `/data/adb/vpnhide_kpm/`, `/data/adb/vpnhide_ports/` when empty after deleting module-specific files |
+| Removed on pre-1.0 config import (or Full Reset) | the import inputs in section 1, plus `/data/adb/vpnhide_zygisk/`, `/data/adb/vpnhide_lsposed/` |
 | Wiped on module reinstall | files under `/data/adb/modules/vpnhide_*/` |
 | Wiped on app reinstall | app SharedPreferences, except Vector redirects the physical path under `/data/misc/<uuid>/prefs/` |

@@ -265,7 +265,7 @@ internal suspend fun ensureSelfInTargets(
     }
     val update = buildCanonicalSelfUpdate(sections, selfPkg)
     if (update.writeRequired) {
-        writeStartupCanonical(update.canonical, timeoutSec)?.let {
+        writeStartupCanonical(update.canonical, update.legacyImported, timeoutSec)?.let {
             return selfTargetPreparationFailure(SelfTargetFailureKind.ConfigWriteFailed, it)
         }
         RootSnapshotCache.invalidate()
@@ -287,6 +287,9 @@ private data class CanonicalSelfUpdate(
     val canonical: CanonicalConfig,
     val selfNeedsRestart: Boolean,
     val writeRequired: Boolean,
+    /** Non-null when [canonical] already carries a silently imported pre-1.0
+     *  config, so the same write must retire the legacy files. */
+    val legacyImported: LegacyConfigCandidate? = null,
 )
 
 private data class SelfTargetFailureDetail(
@@ -319,27 +322,50 @@ private fun buildCanonicalSelfUpdate(
 ): CanonicalSelfUpdate {
     val targets = parseTargetsSnapshot(RootSnapshot(sections))
     val baseCanonical = targets.canonicalConfig ?: CanonicalConfig()
+    // Nothing configured yet + a pre-1.0 config still on disk: fold it in without
+    // asking, the way 1.0.0 did. There is no user choice to conflict with, and
+    // the alternative — a device that upgraded from 0.7.x showing an empty list —
+    // reads as "the update wiped my settings". A config that DOES carry roles is
+    // left alone here; the Dashboard offers merge/replace/skip instead.
+    val legacy =
+        parseLegacyConfigCandidate(sections, targets.uidToPkg)
+            ?.takeIf { !hasUserConfiguredApps(baseCanonical, selfPkg) }
+    val imported =
+        legacy?.let { applyLegacyImport(baseCanonical, it, LegacyImportMode.Merge, selfPkg) }
+            ?: baseCanonical
+    if (legacy != null) {
+        VpnHideLog.i(
+            TAG,
+            "ensureSelfInTargets: importing pre-1.0 config (${legacy.roles.size} packages, " +
+                "${legacy.unresolvedObserverUids} unresolved observer uids)",
+        )
+    }
     val previousSelf = baseCanonical.apps[selfPkg]
     val selfNeedsRestart =
         previousSelf == null ||
             !previousSelf.java ||
             previousSelf.javaHooks != null ||
             previousSelf.native != NativeRole.All
-    val updatedCanonical = canonicalConfigWithSelfTarget(baseCanonical, selfPkg)
+    val updatedCanonical = canonicalConfigWithSelfTarget(imported, selfPkg)
     return CanonicalSelfUpdate(
         canonical = updatedCanonical,
         selfNeedsRestart = selfNeedsRestart,
-        writeRequired = targets.canonicalConfig == null || updatedCanonical != baseCanonical,
+        writeRequired = targets.canonicalConfig == null || updatedCanonical != baseCanonical || legacy != null,
+        legacyImported = legacy,
     )
 }
 
 private suspend fun writeStartupCanonical(
     canonical: CanonicalConfig,
+    legacyImported: LegacyConfigCandidate?,
     timeoutSec: Long,
 ): String? {
     val result =
         CanonicalConfigRepository.commit(
             canonical,
+            // Same transaction as the config write: the legacy files are only
+            // retired once their contents are safely in the canonical JSON.
+            coupledCommands = if (legacyImported != null) listOf(buildLegacyConfigDeleteCommand()) else emptyList(),
             activation = CanonicalActivation(native = true, ports = true),
             timeoutSec = timeoutSec,
         )

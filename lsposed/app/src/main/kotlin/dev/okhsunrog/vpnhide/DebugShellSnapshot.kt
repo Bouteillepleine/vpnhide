@@ -320,6 +320,14 @@ internal fun buildDebugShellSnapshotCommand(): String =
     '
 
     emit_file canonical_config $CANONICAL_CONFIG_FILE
+    # Pre-1.0 lists. Present only on an install that upgraded across the 1.2.0
+    # gap without importing yet, so a bundle still shows what the import would
+    # have folded in (it deletes them once it runs).
+    ${
+        LEGACY_CONFIG_SECTIONS.entries.joinToString("\n    ") { (section, path) ->
+            "emit_file $section $path"
+        }
+    }
     ${
         buildPerUserPackageInventoryShell(
             sectionBeginPrefix = DEBUG_SNAPSHOT_BEGIN_PREFIX,

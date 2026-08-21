@@ -41,6 +41,7 @@ class SettingsRepository(
         val SETTINGS_HINT_SEEN = booleanPreferencesKey("settings_hint_seen")
         val SUPPRESS_VERSION_WARNINGS = booleanPreferencesKey("suppress_version_warnings")
         val DONATE_PROMPT_DISMISSED = booleanPreferencesKey("donate_prompt_dismissed")
+        val LEGACY_IMPORT_DISMISSED = booleanPreferencesKey("legacy_import_dismissed")
 
         // Worker-internal state (not a user-facing setting, so not surfaced in
         // AppSettings): the last release the background update worker already
@@ -71,6 +72,8 @@ class SettingsRepository(
                     p[Keys.SUPPRESS_VERSION_WARNINGS] ?: defaults.suppressVersionWarnings,
                 donatePromptDismissed =
                     p[Keys.DONATE_PROMPT_DISMISSED] ?: defaults.donatePromptDismissed,
+                legacyImportDismissed =
+                    p[Keys.LEGACY_IMPORT_DISMISSED] ?: defaults.legacyImportDismissed,
             )
         }
 
@@ -101,6 +104,8 @@ class SettingsRepository(
     suspend fun setSuppressVersionWarnings(value: Boolean) = edit { it[Keys.SUPPRESS_VERSION_WARNINGS] = value }
 
     suspend fun setDonatePromptDismissed(value: Boolean) = edit { it[Keys.DONATE_PROMPT_DISMISSED] = value }
+
+    suspend fun setLegacyImportDismissed(value: Boolean) = edit { it[Keys.LEGACY_IMPORT_DISMISSED] = value }
 
     /** Last release the background update worker has already notified about, if any. */
     suspend fun lastNotifiedUpdateVersion(): String? =

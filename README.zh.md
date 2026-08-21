@@ -121,7 +121,7 @@ su -c /data/adb/modules/vpnhide_zygisk/activator
 su -c /data/adb/modules/vpnhide_ports/activator
 ```
 
-只运行实际已安装模块的激活器。LSPosed 直接从 `system_server` 读取该 JSON；它不需要激活器。旧的 `/data/adb/vpnhide_*` `targets.txt` 文件不再是用户配置，仅用于从旧版本迁移。
+只运行实际已安装模块的激活器。LSPosed 直接从 `system_server` 读取该 JSON；它不需要激活器。旧的 `/data/adb/vpnhide_*` `targets.txt` 文件是 1.0 之前版本的配置。它们不再是用户配置：应用会将其一次性导入该 JSON 并删除。
 
 </details>
 

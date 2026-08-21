@@ -119,7 +119,7 @@ su -c /data/adb/modules/vpnhide_zygisk/activator
 su -c /data/adb/modules/vpnhide_ports/activator
 ```
 
-Run only activators for modules that are actually installed. LSPosed reads the JSON directly from `system_server`; it does not need an activator. Old `/data/adb/vpnhide_*` `targets.txt` files are no longer user config and are only used for migration from older releases.
+Run only activators for modules that are actually installed. LSPosed reads the JSON directly from `system_server`; it does not need an activator. Old `/data/adb/vpnhide_*` `targets.txt` files are the pre-1.0 config. They are no longer user config: the app imports them into the JSON once and deletes them.
 
 </details>
 

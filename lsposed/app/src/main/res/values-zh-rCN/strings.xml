@@ -301,6 +301,21 @@
     <string name="donate_banner">VPN Hide 免费且无广告。如果它对你有用，可以支持它的开发。</string>
     <string name="donate_banner_support">支持</string>
     <string name="donate_banner_hide">隐藏</string>
+
+    <!-- 导入 1.0 之前版本遗留在设备上的配置 -->
+    <string name="legacy_import_banner">在设备上找到了 1.0 之前版本的配置，其中包含 %1$d 个应用。当前配置中已有设置好的应用，因此没有自动导入。</string>
+    <string name="legacy_import_banner_action">导入</string>
+    <string name="legacy_import_banner_hide">隐藏</string>
+    <string name="legacy_import_title">导入旧配置</string>
+    <string name="legacy_import_summary">共找到 %1$d 个应用：Java %2$d，Native %3$d，Apps %4$d，Ports %5$d，隐藏 %6$d。</string>
+    <string name="legacy_import_unresolved">Apps 角色是以 UID 保存的，其中 %1$d 个已不对应任何已安装的应用，将被跳过。</string>
+    <string name="legacy_import_explain">「合并」保留当前的全部设置，并在其上加入旧的角色。「替换」丢弃当前的应用列表，改用旧的列表。两种方式都会保留自动隐藏设置以及 VPN Hide 自身的条目。导入成功后旧文件会被删除。</string>
+    <string name="legacy_import_merge">合并</string>
+    <string name="legacy_import_replace">替换</string>
+    <string name="legacy_import_running">正在导入…</string>
+    <string name="legacy_import_done">已导入 %1$d 个应用。</string>
+    <string name="legacy_import_nothing">没有可导入的内容 — 旧文件已不存在。</string>
+    <string name="legacy_import_failed">导入失败（%1$s）。可能是未授予 root 权限。</string>
     <!-- Full reset / leftover cleanup -->
     <string name="settings_reset_section">重置</string>
     <string name="reset_button">移除残留文件</string>
@@ -477,6 +492,8 @@
     <string name="settings_config_import_done">配置已导入。</string>
     <string name="settings_config_import_invalid">导入失败：配置 JSON 无效。</string>
     <string name="settings_config_import_root_failed">导入失败：Root 写入配置失败。</string>
+    <string name="settings_legacy_import_title">导入 1.0 之前版本的配置</string>
+    <string name="settings_legacy_import_sub">设备上仍保留着旧版本的配置，其中包含 %1$d 个应用</string>
     <string name="settings_package_list_title">软件包列表导出</string>
     <string name="settings_package_list_sub">复制或保存 VPN 客户端的软件包 ID</string>
     <string name="settings_package_list_dialog_body">从已保存的隐藏配置导出软件包 ID。上方的 JSON 备份仍是完整的 VPN Hide 配置。</string>
