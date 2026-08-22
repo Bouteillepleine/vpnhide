@@ -1895,6 +1895,20 @@ static int fib_route_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 }
 
 /*
+ * seq_file signals "this record did not fit" by setting count == size — that is
+ * all seq_has_overflowed() checks, and seq_read_iter reacts by growing the
+ * buffer and replaying the same record from the start. Compacting in that state
+ * lowers count below size, erases the signal, and makes seq_file treat the
+ * truncated, half-written record as complete: userspace gets a mangled
+ * /proc/net line and the iterator advances, silently dropping routes. The
+ * replay after the buffer grows filters correctly, so declining costs nothing.
+ */
+static bool seq_record_overflowed(const struct seq_file *seq)
+{
+	return seq->count >= seq->size;
+}
+
+/*
  * We access seq->buf and seq->count without seq_file's internal mutex.
  * This is safe because seq_read() drives the ->show() callback
  * synchronously under its own fd context — no concurrent access to
@@ -1909,6 +1923,8 @@ static int fib_route_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 	if (!data->target || !seq || !seq->buf)
 		return 0;
 	if (seq->count <= data->start_count)
+		return 0;
+	if (seq_record_overflowed(seq))
 		return 0;
 
 	/*
@@ -1970,6 +1986,8 @@ static int ipv6_route_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 	if (!data->target || !seq || !seq->buf)
 		return 0;
 	if (seq->count <= data->start_count)
+		return 0;
+	if (seq_record_overflowed(seq))
 		return 0;
 
 	/* Same as fib_route_ret but the iface name is the LAST whitespace field
