@@ -16,6 +16,36 @@ use crate::{
 
 pub const OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS: &str = Hook::FilesystemIfacePaths.name();
 
+/// Hide the VPN from *every* app rather than from a chosen few.
+///
+/// This rides the control protocol's `default` hookmask, which both kernel
+/// backends already implement and nothing has ever emitted: non-zero flips
+/// `targets` from "the apps to act on" into "the apps to leave alone". Carried
+/// as an optional feature rather than a new settings field on purpose — both
+/// parsers already round-trip `optionalFeatures` verbatim, so the app preserves
+/// this across its own saves instead of quietly dropping a key it doesn't know.
+///
+/// The kernel's unconditional uid floor still applies underneath, so "every app"
+/// means every *app* — platform AIDs like `system_server` and `netd` are never
+/// targeted and cannot be, whatever the default says.
+pub const OPTIONAL_FEATURE_HIDE_FROM_ALL_APPS: &str = "hide_from_all_apps";
+
+/// Whether this config asks for the hide-from-everything mode, for a backend
+/// that can express it.
+///
+/// Zygisk cannot: it only installs hooks in processes it was told about by uid,
+/// so "act on every uid not listed" would mean injecting into every app on the
+/// device. Its delivery path already refuses a non-zero default; excluding it
+/// here means the rest of the config still applies to Zygisk normally instead of
+/// being rejected wholesale.
+pub(crate) fn hides_from_all_apps(cfg: &CanonicalConfig, family: NativeHookFamily) -> bool {
+    family != NativeHookFamily::Zygisk
+        && cfg
+            .settings
+            .optional_features
+            .contains(OPTIONAL_FEATURE_HIDE_FROM_ALL_APPS)
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CanonicalConfig {
@@ -389,7 +419,10 @@ pub(crate) fn project_native_with_pm_wait(
     wait: PmReadyWait,
 ) -> Result<String> {
     let cfg = parse_canonical(json)?;
-    if !has_native_targets(&cfg, family) {
+    // In hide-from-all mode an empty app list is not "nothing to do" — it is the
+    // strongest possible request, every app and no exemptions. Only the ordinary
+    // mode can short-circuit here.
+    if !has_native_targets(&cfg, family) && !hides_from_all_apps(&cfg, family) {
         return Ok(format_config(cfg.debug, NO_DEFAULT_MASK, &[]));
     }
     let resolver = PackageUidMap::from_pm_with_wait(wait, &cfg.apps.keys().cloned().collect())?;
@@ -407,11 +440,29 @@ pub(crate) fn project_native_with_resolver_for_family(
         .settings
         .optional_features
         .contains(OPTIONAL_FEATURE_FILESYSTEM_IFACE_PATHS);
+    let hide_all = hides_from_all_apps(cfg, family);
     let mut by_uid = BTreeMap::<u32, HookSet>::new();
     for (pkg, app) in &cfg.apps {
         let Some(mut hooks) = app.native.hooks(family) else {
+            // Ordinary mode: an app with the backend switched off is simply not
+            // a target. Hide-from-all mode: it is the whole point of the list —
+            // an explicit exemption, carried as an empty mask so the kernel
+            // prefers it over the blanket default for that uid.
+            if hide_all {
+                for uid in resolver.uids_for(pkg) {
+                    if is_app_uid(*uid) {
+                        by_uid.entry(*uid).or_insert(HookSet::from_bits(0));
+                    }
+                }
+            }
             continue;
         };
+        // Hide-from-all mode: the default already covers every app, so listing
+        // an enabled one would spend a target slot to say what is already true.
+        // Slots are finite and exemptions are what actually need them.
+        if hide_all {
+            continue;
+        }
         // Kernel backends receive the per-app desired bit independently from
         // whether their load-time hook group is present; their runtime status
         // reports the installed capability. Zygisk has no separate loader ABI,
@@ -476,7 +527,12 @@ pub(crate) fn project_native_with_resolver_for_family(
             hookmask: hooks.bits(),
         })
         .collect::<Vec<_>>();
-    format_config(cfg.debug, NO_DEFAULT_MASK, &targets)
+    let default_mask = if hide_all {
+        family.full_set().bits()
+    } else {
+        NO_DEFAULT_MASK
+    };
+    format_config(cfg.debug, default_mask, &targets)
 }
 
 pub(crate) fn native_target_capacity_warning(total: usize) -> String {

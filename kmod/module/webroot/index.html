@@ -118,6 +118,13 @@
 </section>
 
 <section id="tab-apps">
+  <div class="card">
+    <div class="row">
+      <span class="k">Hide from every app</span>
+      <span class="v"><input type="checkbox" id="hideall" style="width:19px;height:19px;accent-color:var(--acc)"></span>
+    </div>
+    <div class="note" id="hideall-note"></div>
+  </div>
   <input class="search" id="search" placeholder="Filter packages…" autocomplete="off" />
   <div class="cnt" id="app-count">—</div>
   <div class="card" id="app-list"></div>
@@ -303,6 +310,36 @@ async function saveConfig() {
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
+// "Hide from every app" rides the control protocol's default hookmask. It is
+// carried as an optional feature because both this and the app round-trip
+// settings.optionalFeatures verbatim — a bespoke key would survive here and be
+// dropped the first time someone saved from the app.
+const HIDE_ALL_FEATURE = "hide_from_all_apps";
+
+function features() {
+  if (!config.settings || typeof config.settings !== "object") config.settings = {};
+  if (!Array.isArray(config.settings.optionalFeatures)) config.settings.optionalFeatures = [];
+  return config.settings.optionalFeatures;
+}
+
+function hideAll() {
+  return config !== null && features().includes(HIDE_ALL_FEATURE);
+}
+
+function setHideAll(on) {
+  const f = features();
+  const at = f.indexOf(HIDE_ALL_FEATURE);
+  if (on && at < 0) f.push(HIDE_ALL_FEATURE);
+  if (!on && at >= 0) f.splice(at, 1);
+}
+
+// With the blanket default on, a listed app means the opposite: it is the one
+// still allowed to see the VPN.
+function isExempt(pkg) {
+  const entry = config.apps[pkg];
+  return !!entry && !nativeOn(entry);
+}
+
 function nativeOn(entry) {
   if (!entry) return false;
   const n = entry.native;
@@ -320,13 +357,26 @@ function renderApps() {
     list.innerHTML = '<div class="row"><span class="bad">Config file is unreadable — refusing to overwrite it.</span></div>';
     return;
   }
+  const all = hideAll();
+  const ticked = (pkg) => (all ? isExempt(pkg) : nativeOn(config.apps[pkg]));
+  const count = () => {
+    const n = packages.filter((p) => ticked(p.pkg)).length;
+    $("app-count").textContent = all
+      ? `${n} still allowed to see the VPN · ${shown.length} of ${packages.length} shown`
+      : `${n} selected · ${shown.length} of ${packages.length} shown`;
+  };
+
+  $("hideall").checked = all;
+  $("hideall-note").textContent = all
+    ? "Every app is hidden from. Tick an app below to let it keep seeing the VPN — your VPN client almost certainly belongs there."
+    : "Off: only the apps you tick below are hidden from.";
+
   const shown = packages.filter((p) => !q || p.pkg.toLowerCase().includes(q));
-  const on = packages.filter((p) => nativeOn(config.apps[p.pkg])).length;
-  $("app-count").textContent = `${on} selected · ${shown.length} of ${packages.length} shown`;
+  count();
 
   if (!shown.length) { list.innerHTML = '<div class="row"><span class="k">No packages match.</span></div>'; return; }
   list.innerHTML = shown.map((p) =>
-    `<label class="app"><input type="checkbox" data-pkg="${esc(p.pkg)}"${nativeOn(config.apps[p.pkg]) ? " checked" : ""}>` +
+    `<label class="app"><input type="checkbox" data-pkg="${esc(p.pkg)}"${ticked(p.pkg) ? " checked" : ""}>` +
     `<span><span class="pkg">${esc(p.pkg)}</span><br><span class="uid">uid ${p.uid}</span></span></label>`
   ).join("");
 
@@ -334,14 +384,17 @@ function renderApps() {
     cb.addEventListener("change", () => {
       const pkg = cb.dataset.pkg;
       const entry = config.apps[pkg] || {};
-      entry.native = cb.checked;
-      // An app with nothing selected anywhere is noise in the config; drop it so
-      // the file stays a description of what is actually being hidden.
-      if (!cb.checked && !entry.java && !entry.ports && !entry.appHiding) delete config.apps[pkg];
+      // Same checkbox, opposite meaning per mode: normally "hide from this
+      // app", and under the blanket default "leave this app alone". An
+      // exemption has to stay in the file as an explicit native:false — that is
+      // what the projection turns into a zero mask outranking the default.
+      entry.native = all ? false : cb.checked;
+      const keep = all ? cb.checked : cb.checked || entry.java || entry.ports || entry.appHiding;
+      if (keep) config.apps[pkg] = entry;
+      else if (!entry.java && !entry.ports && !entry.appHiding) delete config.apps[pkg];
       else config.apps[pkg] = entry;
       markDirty(true);
-      const sel = packages.filter((x) => nativeOn(config.apps[x.pkg])).length;
-      $("app-count").textContent = `${sel} selected · ${shown.length} of ${packages.length} shown`;
+      count();
     });
   }
 }
@@ -362,9 +415,15 @@ async function renderStatus() {
     html += statusRow("Hooks", hooksOk ? "all registered" : `partial (${parsed.status.hooks || "?"})`, hooksOk ? "ok" : "warn");
     if (parsed.status.hooks) html += statusRow("Hook mask", parsed.status.hooks);
   }
-  const targeted = config && config.apps
-    ? Object.keys(config.apps).filter((p) => nativeOn(config.apps[p])).length : 0;
-  html += statusRow("Apps targeted", String(targeted), targeted ? "ok" : "warn");
+  if (config !== null && hideAll()) {
+    const exempt = Object.keys(config.apps).filter((p) => !nativeOn(config.apps[p])).length;
+    html += statusRow("Mode", "hidden from every app", "ok");
+    html += statusRow("Exempted", String(exempt), exempt ? "warn" : "ok");
+  } else {
+    const targeted = config && config.apps
+      ? Object.keys(config.apps).filter((p) => nativeOn(config.apps[p])).length : 0;
+    html += statusRow("Apps targeted", String(targeted), targeted ? "ok" : "warn");
+  }
   $("status-card").innerHTML = html;
   $("sub").textContent = present ? "kernel module active" : "kernel module not loaded";
 
@@ -423,6 +482,15 @@ for (const b of document.querySelectorAll("nav button")) {
 }
 
 $("search").addEventListener("input", renderApps);
+
+$("hideall").addEventListener("change", () => {
+  if (config === null) { $("hideall").checked = hideAll(); return; }
+  setHideAll($("hideall").checked);
+  markDirty(true);
+  // The list means the opposite now, so redraw rather than leave stale ticks
+  // standing for the previous mode.
+  renderApps();
+});
 
 $("dbg").addEventListener("change", () => {
   if (!config) return;

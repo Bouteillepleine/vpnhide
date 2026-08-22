@@ -143,6 +143,81 @@ fn parses_the_config_the_kmod_webui_writes() {
     assert!(cfg.settings.optional_features.is_empty());
 }
 
+/// Hide-from-every-app rides the protocol's `default` mask, which inverts what
+/// the app list means: a listed app is an *exemption*, carried as an empty mask
+/// so the kernel prefers it over the blanket default for that uid.
+#[test]
+fn hide_from_all_apps_emits_a_default_mask_and_inverts_the_list() {
+    let cfg = parse_canonical(
+        r#"{
+          "version": 1,
+          "settings": { "optionalFeatures": ["hide_from_all_apps"] },
+          "apps": {
+            "com.example.vpnclient": { "native": false },
+            "com.example.redundant": { "native": true }
+          }
+        }"#,
+    )
+    .unwrap();
+    let resolver = parse_pm_packages(
+        "package:com.example.vpnclient uid:10123\n\
+         package:com.example.redundant uid:10234\n",
+    );
+
+    let wire = project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Kmod);
+    // The exemption gets a slot with mask 0; the redundant "enabled" app does
+    // not, because the default already covers it and slots are finite.
+    assert_eq!(
+        wire,
+        "vpnhide 2 config\n\
+         debug 0\n\
+         default a0003ff\n\
+         targets 0 278b\n\
+         end 1\n",
+    );
+}
+
+/// With the mode on and nothing listed, there is still something to say — every
+/// app, no exemptions. The ordinary "no targets, nothing to do" short-circuit
+/// must not swallow it.
+#[test]
+fn hide_from_all_apps_survives_an_empty_app_list() {
+    let cfg = parse_canonical(
+        r#"{ "version": 1, "settings": { "optionalFeatures": ["hide_from_all_apps"] } }"#,
+    )
+    .unwrap();
+    let wire = project_native_with_resolver_for_family(
+        &cfg,
+        &parse_pm_packages(""),
+        NativeHookFamily::Kmod,
+    );
+    assert_eq!(wire, "vpnhide 2 config\ndebug 0\ndefault a0003ff\nend 0\n");
+}
+
+/// Zygisk installs hooks per-process by uid, so "act on every uid not listed"
+/// would mean injecting into every app on the device. It must keep projecting
+/// the ordinary way rather than being handed a wire its own delivery path
+/// rejects outright.
+#[test]
+fn hide_from_all_apps_does_not_apply_to_zygisk() {
+    let cfg = parse_canonical(
+        r#"{
+          "version": 1,
+          "settings": { "optionalFeatures": ["hide_from_all_apps"] },
+          "apps": { "com.example.target": { "native": true } }
+        }"#,
+    )
+    .unwrap();
+    let resolver = parse_pm_packages("package:com.example.target uid:10123\n");
+
+    let wire = project_native_with_resolver_for_family(&cfg, &resolver, NativeHookFamily::Zygisk);
+    assert!(
+        !wire.contains("default "),
+        "zygisk wire must carry no default mask, got:\n{wire}"
+    );
+    assert!(validate_zygisk_config_wire(&wire).is_ok());
+}
+
 #[test]
 fn projects_native_roles_to_wire() {
     let cfg = parse_canonical(
