@@ -210,6 +210,11 @@ jobs:
               required = {
                   "vpnhide_kmod.ko", "activator", "module.prop",
                   "post-fs-data.sh", "service.sh", "customize.sh",
+                  # Without this the module still installs and works, but the
+                  # root manager shows no WebUI and there is nothing in the zip
+                  # to explain why — so assert it rather than discover it on a
+                  # device.
+                  "webroot/index.html", "webroot/config.json",
               }
               if missing := sorted(required - names):
                   sys.exit(f"::error::{zip_name} is missing {', '.join(missing)}")

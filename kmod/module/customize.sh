@@ -17,5 +17,15 @@ set_perm "$MODPATH/service.sh" 0 0 0755
 set_perm "$MODPATH/vpnhide_kmod.ko" 0 0 0644
 set_perm "$MODPATH/uninstall.sh" 0 0 0755
 
-ui_print "- Config: /data/system/vpnhide_config.json (managed by the app)"
-ui_print "- Pick target apps via the VPN Hide app."
+# WebUI: the root manager serves webroot/ to a WebView, so it has to be
+# world-readable and its directory traversable — otherwise the manager shows an
+# empty page with no explanation.
+if [ -d "$MODPATH/webroot" ]; then
+    set_perm_recursive "$MODPATH/webroot" 0 0 0755 0644
+    ui_print "- WebUI: open this module in your root manager to pick target apps"
+fi
+
+ui_print "- Config: /data/system/vpnhide_config.json"
+ui_print "- Pick target apps in the WebUI, or in the VPN Hide app."
+ui_print "- The app additionally hides the VPN from Java network APIs;"
+ui_print "  this module covers the kernel level only."

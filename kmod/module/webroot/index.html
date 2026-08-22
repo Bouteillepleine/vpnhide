@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>VPN Hide (kernel)</title>
+<style>
+  :root {
+    --bg:    #080a11;
+    --card:  rgba(255,255,255,0.045);
+    --brd:   rgba(255,255,255,0.085);
+    --txt:   #eaeef7;
+    --muted: #8a93a9;
+    --ok:    #4ade80;
+    --warn:  #fbbf24;
+    --bad:   #f87171;
+    --acc:   #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 0 88px;
+    background: var(--bg); color: var(--txt);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding-top: env(safe-area-inset-top);
+  }
+  header { padding: 18px 16px 10px; }
+  h1 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  #banner {
+    display: none; margin: 12px 16px; padding: 11px 13px; border-radius: 11px;
+    background: rgba(248,113,113,0.12); border: 1px solid rgba(248,113,113,0.3);
+    color: #fecaca; font-size: 13px;
+  }
+  nav { display: flex; gap: 6px; padding: 4px 12px 12px; overflow-x: auto; }
+  nav button {
+    flex: 0 0 auto; padding: 8px 14px; border-radius: 999px; cursor: pointer;
+    background: var(--card); border: 1px solid var(--brd); color: var(--muted);
+    font-size: 13px; font-family: inherit;
+  }
+  nav button.on { color: var(--txt); border-color: rgba(96,165,250,0.5); background: rgba(96,165,250,0.13); }
+  section { display: none; padding: 0 16px; }
+  section.on { display: block; }
+  .card {
+    background: var(--card); border: 1px solid var(--brd);
+    border-radius: 13px; padding: 13px 14px; margin-bottom: 11px;
+  }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; }
+  .row + .row { border-top: 1px solid rgba(255,255,255,0.05); }
+  .k { color: var(--muted); flex: 0 0 auto; }
+  .v { text-align: right; word-break: break-word; font-variant-numeric: tabular-nums; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+  pre {
+    margin: 0; padding: 11px; border-radius: 9px; background: rgba(0,0,0,0.34);
+    border: 1px solid var(--brd); color: var(--muted);
+    font: 11.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word; max-height: 46vh; overflow: auto;
+  }
+  button.act {
+    width: 100%; padding: 12px; border-radius: 11px; cursor: pointer;
+    background: rgba(96,165,250,0.15); border: 1px solid rgba(96,165,250,0.45);
+    color: #bfdbfe; font-size: 14px; font-family: inherit; font-weight: 550;
+  }
+  button.act:disabled { opacity: 0.45; }
+  button.ghost { background: var(--card); border-color: var(--brd); color: var(--muted); }
+  .search {
+    width: 100%; padding: 10px 12px; border-radius: 10px; margin-bottom: 10px;
+    background: rgba(0,0,0,0.3); border: 1px solid var(--brd);
+    color: var(--txt); font-size: 14px; font-family: inherit;
+  }
+  label.app {
+    display: flex; align-items: center; gap: 11px; padding: 9px 4px;
+    border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer;
+  }
+  label.app:last-child { border-bottom: none; }
+  label.app input { width: 19px; height: 19px; accent-color: var(--acc); flex: 0 0 auto; }
+  .pkg { font-size: 13px; word-break: break-all; }
+  .uid { color: var(--muted); font-size: 11px; }
+  .bar {
+    position: fixed; left: 0; right: 0; bottom: 0; padding: 11px 16px;
+    padding-bottom: calc(11px + env(safe-area-inset-bottom));
+    background: rgba(8,10,17,0.94); border-top: 1px solid var(--brd);
+    backdrop-filter: blur(9px);
+  }
+  .note { color: var(--muted); font-size: 12px; margin: 9px 2px 0; }
+  .cnt { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>VPN Hide <span style="color:var(--muted);font-weight:400">kernel</span></h1>
+  <div class="sub" id="sub">loading…</div>
+</header>
+
+<div id="banner">Not running inside a root manager's WebUI — nothing here can read or change anything.</div>
+
+<nav>
+  <button class="on" data-tab="status">Status</button>
+  <button data-tab="apps">Apps</button>
+  <button data-tab="stats">Stats</button>
+  <button data-tab="raw">Raw</button>
+</nav>
+
+<section id="tab-status" class="on">
+  <div class="card" id="status-card"><div class="row"><span class="k">reading…</span></div></div>
+  <div class="card">
+    <div class="row"><span class="k">Boot load</span><span class="v" id="boot-loaded">—</span></div>
+    <div class="row"><span class="k">Kernel</span><span class="v" id="boot-uname">—</span></div>
+    <div class="row"><span class="k">Built for</span><span class="v" id="boot-gki">—</span></div>
+    <div class="row"><span class="k">Module</span><span class="v" id="boot-ver">—</span></div>
+  </div>
+  <button class="act ghost" id="btn-refresh">Refresh</button>
+  <p class="note">
+    This module hides VPN interfaces from the apps you tick under <b>Apps</b>, at
+    the kernel level. It cannot hide the VPN from an app that asks Android's Java
+    networking APIs instead — that needs the LSPosed module from the app.
+  </p>
+</section>
+
+<section id="tab-apps">
+  <input class="search" id="search" placeholder="Filter packages…" autocomplete="off" />
+  <div class="cnt" id="app-count">—</div>
+  <div class="card" id="app-list"></div>
+</section>
+
+<section id="tab-stats">
+  <div class="card" id="stats-card"><div class="row"><span class="k">reading…</span></div></div>
+  <p class="note">Counts are per UID, since boot, and only for hooks that actually fired.</p>
+</section>
+
+<section id="tab-raw">
+  <div class="card">
+    <div class="row">
+      <span class="k">Debug logging</span>
+      <span class="v"><input type="checkbox" id="dbg" style="width:19px;height:19px;accent-color:var(--acc)"></span>
+    </div>
+  </div>
+  <pre id="raw">reading…</pre>
+</section>
+
+<div class="bar">
+  <button class="act" id="btn-apply" disabled>Apply</button>
+</div>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------------
+// Root-manager bridge. Same shape the other modules here use: ksu.exec takes a
+// command, a JSON options blob, and the NAME of a global callback it invokes.
+// ---------------------------------------------------------------------------
+const KSU = window.ksu;
+let execId = 0;
+
+function exec(cmd, opts = {}) {
+  return new Promise((resolve) => {
+    if (!KSU || !KSU.exec) { resolve({ errno: -1, stdout: "", stderr: "no webui env" }); return; }
+    const name = "__vhcb" + (execId++);
+    window[name] = (errno, stdout, stderr) => {
+      delete window[name];
+      resolve({ errno: Number(errno), stdout: stdout || "", stderr: stderr || "" });
+    };
+    try { KSU.exec(cmd, JSON.stringify(opts), name); }
+    catch (e) { delete window[name]; resolve({ errno: -1, stdout: "", stderr: String(e) }); }
+  });
+}
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+document.getElementById("banner").style.display = (KSU && KSU.exec) ? "none" : "block";
+
+const CONFIG   = "/data/system/vpnhide_config.json";
+const CTL      = "/proc/vpnhide_ctl";
+const MODDIR   = "/data/adb/modules/vpnhide_kmod";
+const STATUS   = "/data/adb/vpnhide_kmod/load_status";
+// Android hands the first ordinary app this uid; everything below is a platform
+// identity shared by many components and is never a hiding target — the kernel
+// enforces the same floor, so offering those here would just mislead.
+const FIRST_APP_UID = 10000;
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let config   = null;   // parsed canonical JSON, or a fresh skeleton
+let packages = [];     // [{pkg, uid}]
+let dirty    = false;
+
+function markDirty(on) {
+  dirty = on;
+  $("btn-apply").disabled = !on;
+  $("btn-apply").textContent = on ? "Apply" : "Applied";
+}
+
+// ---------------------------------------------------------------------------
+// Reading device state
+// ---------------------------------------------------------------------------
+
+// The canonical config is the SAME file the app writes. Read-modify-write, never
+// replace: it also carries the LSPosed (`java`), port and app-hiding selections,
+// and clobbering those would silently switch off half of someone's setup.
+async function loadConfig() {
+  const r = await exec(`cat ${CONFIG} 2>/dev/null`);
+  const raw = r.stdout.trim();
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        if (!parsed.apps || typeof parsed.apps !== "object") parsed.apps = {};
+        config = parsed;
+        return;
+      }
+    } catch (e) {
+      // A config we cannot parse is one the activator cannot parse either, so
+      // the safe move is to say so rather than quietly overwrite it.
+      config = null;
+      return;
+    }
+  }
+  config = { version: 1, debug: false, apps: {}, settings: { optionalFeatures: [] } };
+}
+
+// /data/system/packages.list is the map the backends themselves resolve UIDs
+// through (`pkg uid …`, space separated), so a package listed here is exactly a
+// package the activator can target.
+async function loadPackages() {
+  const r = await exec(`cat /data/system/packages.list 2>/dev/null`);
+  const seen = new Map();
+  for (const line of r.stdout.split("\n")) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length < 2) continue;
+    const uid = parseInt(parts[1], 10);
+    if (!parts[0] || !Number.isFinite(uid) || uid < FIRST_APP_UID) continue;
+    if (!seen.has(parts[0])) seen.set(parts[0], uid);
+  }
+  packages = [...seen.entries()].map(([pkg, uid]) => ({ pkg, uid }))
+    .sort((a, b) => a.pkg.localeCompare(b.pkg));
+}
+
+function parseCtl(text) {
+  const out = { status: {}, stats: [], banner: "" };
+  let mode = "";
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    if (t.startsWith("#")) { out.banner = t.replace(/^#\s*/, ""); continue; }
+    const m = /^vpnhide\s+\d+\s+(\w+)$/.exec(t);
+    if (m) { mode = m[1]; continue; }
+    if (mode === "status") {
+      const kv = t.split(/\s+/);
+      if (kv.length >= 2) out.status[kv[0]] = kv[1];
+    } else if (mode === "stats") {
+      const parts = t.split(/\s+/);
+      if (!parts.length) continue;
+      const hooks = parts.slice(1)
+        .map((p) => p.split(":"))
+        .filter((p) => p.length === 2)
+        .map(([id, n]) => ({ id, n: parseInt(n, 16) || 0 }));
+      out.stats.push({ uid: parts[0], hooks });
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Writing
+// ---------------------------------------------------------------------------
+
+// base64 so no byte of the JSON is ever interpreted by the shell. Same approach
+// the app takes (ShellCommandBuilders.kt) — and the same ownership, mode and
+// SELinux label, because system_server reads this file directly and will not
+// see one it has no access to.
+function b64(text) {
+  const bytes = new TextEncoder().encode(text);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+async function saveConfig() {
+  const json = JSON.stringify(config, null, 2) + "\n";
+  const enc = b64(json);
+  const cmd = [
+    `TMP=${CONFIG}.tmp.$$`,
+    `echo '${enc}' | base64 -d > "$TMP"`,
+    `chmod 640 "$TMP"`,
+    `chown root:system "$TMP"`,
+    `(chcon u:object_r:system_data_file:s0 "$TMP" 2>/dev/null || true)`,
+    `mv "$TMP" ${CONFIG}`,
+  ].join(" && ");
+
+  const w = await exec(cmd);
+  if (w.errno !== 0) return { ok: false, msg: w.stderr || "write failed" };
+
+  // The activator with no arguments is the "project the config into the running
+  // kernel" entry point — same binary the module runs at boot.
+  const a = await exec(`${MODDIR}/activator`);
+  if (a.errno !== 0) return { ok: false, msg: a.stderr || a.stdout || "activator failed" };
+  return { ok: true, msg: a.stdout.trim() };
+}
+
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
+function nativeOn(entry) {
+  if (!entry) return false;
+  const n = entry.native;
+  // `native` is a bool for all-hooks, or an array for a per-hook selection made
+  // in the app. Either way a non-empty selection means this app is targeted.
+  if (Array.isArray(n)) return n.length > 0;
+  if (n && typeof n === "object") return true;
+  return n === true;
+}
+
+function renderApps() {
+  const q = $("search").value.trim().toLowerCase();
+  const list = $("app-list");
+  if (config === null) {
+    list.innerHTML = '<div class="row"><span class="bad">Config file is unreadable — refusing to overwrite it.</span></div>';
+    return;
+  }
+  const shown = packages.filter((p) => !q || p.pkg.toLowerCase().includes(q));
+  const on = packages.filter((p) => nativeOn(config.apps[p.pkg])).length;
+  $("app-count").textContent = `${on} selected · ${shown.length} of ${packages.length} shown`;
+
+  if (!shown.length) { list.innerHTML = '<div class="row"><span class="k">No packages match.</span></div>'; return; }
+  list.innerHTML = shown.map((p) =>
+    `<label class="app"><input type="checkbox" data-pkg="${esc(p.pkg)}"${nativeOn(config.apps[p.pkg]) ? " checked" : ""}>` +
+    `<span><span class="pkg">${esc(p.pkg)}</span><br><span class="uid">uid ${p.uid}</span></span></label>`
+  ).join("");
+
+  for (const cb of list.querySelectorAll("input[type=checkbox]")) {
+    cb.addEventListener("change", () => {
+      const pkg = cb.dataset.pkg;
+      const entry = config.apps[pkg] || {};
+      entry.native = cb.checked;
+      // An app with nothing selected anywhere is noise in the config; drop it so
+      // the file stays a description of what is actually being hidden.
+      if (!cb.checked && !entry.java && !entry.ports && !entry.appHiding) delete config.apps[pkg];
+      else config.apps[pkg] = entry;
+      markDirty(true);
+      const sel = packages.filter((x) => nativeOn(config.apps[x.pkg])).length;
+      $("app-count").textContent = `${sel} selected · ${shown.length} of ${packages.length} shown`;
+    });
+  }
+}
+
+function statusRow(k, v, cls) {
+  return `<div class="row"><span class="k">${esc(k)}</span><span class="v ${cls || ""}">${esc(v)}</span></div>`;
+}
+
+async function renderStatus() {
+  const ctl = await exec(`cat ${CTL} 2>/dev/null`);
+  const present = ctl.errno === 0 && ctl.stdout.includes("vpnhide");
+  const parsed = present ? parseCtl(ctl.stdout) : null;
+
+  let html = statusRow("Kernel module", present ? "loaded" : "not loaded", present ? "ok" : "bad");
+  if (parsed) {
+    const err = parsed.status.error;
+    const hooksOk = err === "0x0";
+    html += statusRow("Hooks", hooksOk ? "all registered" : `partial (${parsed.status.hooks || "?"})`, hooksOk ? "ok" : "warn");
+    if (parsed.status.hooks) html += statusRow("Hook mask", parsed.status.hooks);
+  }
+  const targeted = config && config.apps
+    ? Object.keys(config.apps).filter((p) => nativeOn(config.apps[p])).length : 0;
+  html += statusRow("Apps targeted", String(targeted), targeted ? "ok" : "warn");
+  $("status-card").innerHTML = html;
+  $("sub").textContent = present ? "kernel module active" : "kernel module not loaded";
+
+  const st = await exec(`cat ${STATUS} 2>/dev/null`);
+  const kv = {};
+  for (const line of st.stdout.split("\n")) {
+    const i = line.indexOf("=");
+    if (i > 0) kv[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  }
+  $("boot-loaded").textContent = kv.loaded === "1" ? "ok" : (kv.insmod_stderr || kv.loaded || "—");
+  $("boot-loaded").className = "v " + (kv.loaded === "1" ? "ok" : "bad");
+  $("boot-uname").textContent = kv.uname_r || "—";
+  $("boot-gki").textContent = kv.gki_variant || "—";
+  $("boot-ver").textContent = kv.kmod_version || "—";
+}
+
+async function renderStats() {
+  const ctl = await exec(`cat ${CTL} 2>/dev/null`);
+  if (ctl.errno !== 0 || !ctl.stdout.includes("vpnhide")) {
+    $("stats-card").innerHTML = statusRow("Kernel module", "not loaded", "bad");
+    return;
+  }
+  const parsed = parseCtl(ctl.stdout);
+  if (!parsed.stats.length) {
+    $("stats-card").innerHTML = statusRow("Interceptions", "none yet", "warn");
+    return;
+  }
+  const uidName = new Map(packages.map((p) => [String(p.uid), p.pkg]));
+  $("stats-card").innerHTML = parsed.stats.map((row) => {
+    const uid = parseInt(row.uid, 16);
+    const total = row.hooks.reduce((a, h) => a + h.n, 0);
+    const name = uidName.get(String(uid)) || `uid ${uid}`;
+    return statusRow(name, `${total} across ${row.hooks.length} hook${row.hooks.length === 1 ? "" : "s"}`, "ok");
+  }).join("");
+}
+
+async function renderRaw() {
+  const ctl = await exec(`cat ${CTL} 2>/dev/null`);
+  $("raw").textContent = ctl.errno === 0 && ctl.stdout.trim()
+    ? ctl.stdout.trim()
+    : "/proc/vpnhide_ctl is not readable — the module is not loaded.";
+  if (config) $("dbg").checked = config.debug === true;
+}
+
+// ---------------------------------------------------------------------------
+// Wiring
+// ---------------------------------------------------------------------------
+for (const b of document.querySelectorAll("nav button")) {
+  b.addEventListener("click", async () => {
+    for (const o of document.querySelectorAll("nav button")) o.classList.toggle("on", o === b);
+    for (const s of document.querySelectorAll("section")) s.classList.remove("on");
+    $("tab-" + b.dataset.tab).classList.add("on");
+    if (b.dataset.tab === "stats") await renderStats();
+    if (b.dataset.tab === "raw") await renderRaw();
+  });
+}
+
+$("search").addEventListener("input", renderApps);
+
+$("dbg").addEventListener("change", () => {
+  if (!config) return;
+  config.debug = $("dbg").checked;
+  markDirty(true);
+});
+
+$("btn-refresh").addEventListener("click", () => refresh());
+
+$("btn-apply").addEventListener("click", async () => {
+  if (!config) return;
+  const btn = $("btn-apply");
+  btn.disabled = true;
+  btn.textContent = "Applying…";
+  const r = await saveConfig();
+  btn.textContent = r.ok ? "Applied" : "Failed — tap to retry";
+  btn.disabled = r.ok;
+  if (!r.ok) { dirty = true; alert("Could not apply: " + r.msg); }
+  else { dirty = false; await renderStatus(); }
+});
+
+async function refresh() {
+  await loadConfig();
+  await loadPackages();
+  renderApps();
+  await renderStatus();
+  markDirty(false);
+  $("btn-apply").textContent = "Applied";
+}
+
+refresh();
+</script>
+</body>
+</html>

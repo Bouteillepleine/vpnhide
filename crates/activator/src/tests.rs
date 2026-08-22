@@ -82,6 +82,43 @@ fn merges_repeated_per_user_rows_and_accepts_apk_paths() {
     assert_eq!(map.uids_for("com.example"), &[10123, 1010123]);
 }
 
+/// The kmod module's WebUI writes this same canonical file, so its output has to
+/// stay parseable by the activator that reads it moments later. This is the exact
+/// shape it produces after a round of ticking and unticking: an app it turned off
+/// but left alone otherwise (`java` preserved — the WebUI must never clobber the
+/// LSPosed half of someone's setup) and an app it added.
+#[test]
+fn parses_the_config_the_kmod_webui_writes() {
+    let cfg = parse_canonical(
+        r#"{
+          "version": 1,
+          "debug": false,
+          "apps": {
+            "com.example.bank": { "native": false, "java": true, "ports": false },
+            "com.zeta.games": { "native": true }
+          },
+          "settings": { "optionalFeatures": [] }
+        }"#,
+    )
+    .unwrap();
+
+    assert_eq!(cfg.version, 1);
+    assert!(!cfg.debug);
+    assert!(
+        cfg.apps["com.example.bank"].java,
+        "java must survive the WebUI"
+    );
+    assert_eq!(
+        cfg.apps["com.example.bank"].native,
+        NativeSelection::Enabled(false)
+    );
+    assert_eq!(
+        cfg.apps["com.zeta.games"].native,
+        NativeSelection::Enabled(true)
+    );
+    assert!(cfg.settings.optional_features.is_empty());
+}
+
 #[test]
 fn projects_native_roles_to_wire() {
     let cfg = parse_canonical(
