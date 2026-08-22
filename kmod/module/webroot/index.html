@@ -88,6 +88,9 @@
   }
   .note { color: var(--muted); font-size: 12px; margin: 9px 2px 0; }
   .cnt { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .grp { font-size: 13px; font-weight: 600; margin: 4px 2px 7px; }
+  .why { color: var(--muted); font-size: 11px; }
+  .badge { font-size: 10px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--brd); color: var(--muted); }
 </style>
 </head>
 <body>
@@ -102,6 +105,7 @@
 <nav>
   <button class="on" data-tab="status">Status</button>
   <button data-tab="apps">Apps</button>
+  <button data-tab="scan">Scan</button>
   <button data-tab="stats">Stats</button>
   <button data-tab="raw">Raw</button>
 </nav>
@@ -141,6 +145,14 @@
     <span><i>J</i> Java APIs — needs the LSPosed module</span>
   </div>
   <div class="card" id="app-list"></div>
+</section>
+
+<section id="tab-scan">
+  <div class="card">
+    <div class="note" id="scan-note">Scanning…</div>
+  </div>
+  <div id="scan-groups"></div>
+  <button class="act ghost" id="btn-scan">Rescan</button>
 </section>
 
 <section id="tab-stats">
@@ -424,36 +436,7 @@ function renderApps() {
   ).join("");
 
   for (const cb of list.querySelectorAll("input[type=checkbox]")) {
-    cb.addEventListener("change", () => {
-      const pkg = cb.dataset.pkg;
-      const entry = config.apps[pkg] || {};
-
-      if (cb.dataset.layer === "java") {
-        // The LSPosed hook self-reads this same file from system_server and
-        // re-reads it when it changes, so setting the flag here is the whole
-        // handoff — nothing else has to run, and the app never has to be opened.
-        entry.java = cb.checked;
-      } else {
-        // Same checkbox, opposite meaning per mode: normally "hide from this
-        // app", and under the blanket default "leave this app alone". An
-        // exemption has to stay in the file as an explicit native:false — that
-        // is what the projection turns into a zero mask outranking the default.
-        entry.native = all ? false : cb.checked;
-      }
-
-      // Keep the entry while it still says something: a kernel role, a Java
-      // role, an exemption under the blanket default, or a role this UI does
-      // not manage (ports / app hiding) that must not be dropped on its behalf.
-      const kernelTick = cb.dataset.layer === "native" ? cb.checked : ticked(pkg);
-      const meaningful =
-        entry.java || entry.ports || entry.appHiding ||
-        (all ? kernelTick : nativeOn(entry));
-      if (meaningful) config.apps[pkg] = entry;
-      else delete config.apps[pkg];
-
-      markDirty(true);
-      count();
-    });
+    cb.addEventListener("change", () => { applyTick(cb); count(); });
   }
 }
 
@@ -508,6 +491,169 @@ async function renderStatus() {
   $("boot-ver").textContent = kv.kmod_version || "—";
 }
 
+// ---------------------------------------------------------------------------
+// Applying one tick. Shared by the Apps list and the Scanner so both write the
+// config the same way — the scanner is a different view of the same decision,
+// not a second code path that could drift from it.
+// ---------------------------------------------------------------------------
+function applyTick(cb) {
+  if (config === null) return;
+  const pkg = cb.dataset.pkg;
+  const all = hideAll();
+  const entry = config.apps[pkg] || {};
+
+  if (cb.dataset.layer === "java") {
+    // The LSPosed hook self-reads this file from system_server and re-reads it
+    // on change, so setting the flag is the whole handoff.
+    entry.java = cb.checked;
+  } else {
+    // Same checkbox, opposite meaning per mode: normally "hide from this app",
+    // and under the blanket default "leave this app alone". An exemption has to
+    // stay as an explicit native:false — that is what becomes a zero mask
+    // outranking the default.
+    entry.native = all ? false : cb.checked;
+  }
+
+  const kernelTick = cb.dataset.layer === "native" ? cb.checked
+    : (all ? isExempt(pkg) : nativeOn(entry));
+  // Keep the entry while it still says something — including roles this UI does
+  // not manage (ports / app hiding), which must never be dropped on its behalf.
+  const meaningful =
+    entry.java || entry.ports || entry.appHiding ||
+    (all ? kernelTick : nativeOn(entry));
+  if (meaningful) config.apps[pkg] = entry;
+  else delete config.apps[pkg];
+
+  markDirty(true);
+}
+
+// ---------------------------------------------------------------------------
+// Scanner
+//
+// Ranks apps by how much good hiding them would actually do. The strongest
+// signal is not a keyword list — it is that the module has ALREADY watched each
+// app ask. Every hook records hits per uid, so an app that repeatedly queries
+// interfaces, routes or the framework's network model has proven it cares.
+// Categories are only a fallback for apps that have not run yet.
+// ---------------------------------------------------------------------------
+
+// Package-name fragments, used only when an app has never been observed.
+// Deliberately short: guessing from a name is the weak signal here.
+const CATEGORIES = [
+  { tag: "finance", why: "banking / payments — commonly refuse to run over a VPN",
+    pat: /bank|banque|paypal|revolut|wise|n26|boursorama|caisse|epargne|amundi|citi|hsbc|barclays|chase|coinbase|binance|kraken|trading|broker|atws|assur|impots|amendes/i },
+  { tag: "streaming", why: "geo-licensed video — blocks known VPN ranges",
+    pat: /netflix|disney|primevideo|avod|canal|molotov|dazn|hulu|peacock|paramount|crunchyroll|iplayer|showmax/i },
+  { tag: "shopping", why: "regional pricing and fraud checks",
+    pat: /amazon\.mshop|takealot|shein|temu|aliexpress|ebay|vinted/i },
+];
+
+// Never propose hiding from these. The tunnel has to stay visible to whatever
+// manages it; and Play Services runs the attestation engine that fingerprints
+// this device, so handing it a network view contradicting its own sockets is a
+// risk with no upside.
+const KEEP_VISIBLE = [
+  { pat: /protonvpn|vpn|wireguard|openvpn|tailscale|mullvad|nordvpn|surfshark/i,
+    why: "manages the tunnel — hiding it from itself is how this breaks" },
+  { pat: /^com\.google\.android\.gms|^com\.android\.vending|^com\.google\.android\.gsf/i,
+    why: "Play Services / Store — attestation, push, connectivity brokering" },
+];
+
+function classify(pkg) {
+  for (const k of KEEP_VISIBLE) if (k.pat.test(pkg)) return { group: "keep", why: k.why };
+  for (const c of CATEGORIES) if (c.pat.test(pkg)) return { group: "likely", why: c.why };
+  return null;
+}
+
+// uid -> total hook hits, from whichever layer recorded them.
+function hitsByUid(text) {
+  const out = new Map();
+  for (const line of text.split("\n")) {
+    const parts = line.trim().split(/\s+/);
+    if (!parts[0] || !/^0x[0-9a-f]+$/i.test(parts[0])) continue;
+    const uid = parseInt(parts[0], 16);
+    let total = 0;
+    for (const p of parts.slice(1)) {
+      const n = p.split(":")[1];
+      total += parseInt(n, 16) || 0;
+    }
+    out.set(uid, (out.get(uid) || 0) + total);
+  }
+  return out;
+}
+
+async function renderScan() {
+  const note = $("scan-note");
+  const box = $("scan-groups");
+  if (config === null) {
+    note.textContent = "Config is unreadable — nothing to propose.";
+    box.innerHTML = "";
+    return;
+  }
+  note.textContent = "Scanning…";
+
+  const kernel = hitsByUid((await exec(`cat ${CTL} 2>/dev/null`)).stdout);
+  const java = hitsByUid((await exec(`cat ${LSPOSED_STATE} 2>/dev/null`)).stdout);
+
+  const seen = [], likely = [], keep = [];
+  for (const p of packages) {
+    const cls = classify(p.pkg);
+    if (cls && cls.group === "keep") { keep.push({ ...p, why: cls.why }); continue; }
+    const k = kernel.get(p.uid) || 0;
+    const j = java.get(p.uid) || 0;
+    if (k || j) {
+      seen.push({ ...p,
+        score: k + j,
+        why: j && k ? `asked ${j}× via Java and ${k}× via the kernel`
+           : j ? `asked ${j}× via the framework's network APIs`
+               : `asked ${k}× about interfaces / routes` });
+    } else if (cls) {
+      likely.push({ ...p, why: cls.why });
+    }
+  }
+  // Most active first — the apps that ask most are where hiding pays off most.
+  seen.sort((a, b) => b.score - a.score);
+  likely.sort((a, b) => a.pkg.localeCompare(b.pkg));
+
+  const all = hideAll();
+  const row = (e, layer) => {
+    const on = layer === "java" ? javaOn(config.apps[e.pkg])
+             : (all ? isExempt(e.pkg) : nativeOn(config.apps[e.pkg]));
+    return `<label class="app"><span class="cols">` +
+      `<input type="checkbox" class="${layer === "java" ? "j" : "k"}" data-pkg="${esc(e.pkg)}" data-layer="${layer}"${on ? " checked" : ""}>` +
+      `</span><span><span class="pkg">${esc(e.pkg)}</span><br>` +
+      `<span class="why">${esc(e.why)}</span></span></label>`;
+  };
+
+  let html = "";
+  if (seen.length) {
+    html += `<div class="grp">Observed asking · ${seen.length}</div>` +
+      `<div class="note" style="margin:0 2px 8px">Caught by the module itself. Ticking sets the Java layer` +
+      (all ? " — the kernel already covers these under the blanket default." : ".") + `</div>` +
+      `<div class="card">${seen.map((e) => row(e, "java")).join("")}</div>`;
+  }
+  if (likely.length) {
+    html += `<div class="grp">Likely to care · ${likely.length}</div>` +
+      `<div class="note" style="margin:0 2px 8px">Never seen asking — proposed from what they are, which is the weaker signal.</div>` +
+      `<div class="card">${likely.map((e) => row(e, "java")).join("")}</div>`;
+  }
+  if (keep.length) {
+    html += `<div class="grp">Keep visible · ${keep.length}</div>` +
+      `<div class="note" style="margin:0 2px 8px">` +
+      (all ? "Tick to exempt from the blanket default." : "Not targeted in this mode.") + `</div>` +
+      `<div class="card">${keep.map((e) => row(e, "native")).join("")}</div>`;
+  }
+  box.innerHTML = html || '<div class="card"><div class="row"><span class="k">Nothing to propose yet.</span></div></div>';
+
+  note.textContent =
+    `${seen.length} observed asking · ${likely.length} proposed by category · ${keep.length} to keep visible. ` +
+    `Observed beats guessed — those apps have already been caught looking.`;
+
+  for (const cb of box.querySelectorAll("input[type=checkbox]")) {
+    cb.addEventListener("change", () => { applyTick(cb); });
+  }
+}
+
 async function renderStats() {
   const ctl = await exec(`cat ${CTL} 2>/dev/null`);
   if (ctl.errno !== 0 || !ctl.stdout.includes("vpnhide")) {
@@ -557,6 +703,7 @@ for (const b of document.querySelectorAll("nav button")) {
     for (const o of document.querySelectorAll("nav button")) o.classList.toggle("on", o === b);
     for (const s of document.querySelectorAll("section")) s.classList.remove("on");
     $("tab-" + b.dataset.tab).classList.add("on");
+    if (b.dataset.tab === "scan") await renderScan();
     if (b.dataset.tab === "stats") await renderStats();
     if (b.dataset.tab === "raw") await renderRaw();
   });
@@ -585,6 +732,8 @@ $("dbg").addEventListener("change", () => {
   config.debug = $("dbg").checked;
   markDirty(true);
 });
+
+$("btn-scan").addEventListener("click", () => renderScan());
 
 $("btn-refresh").addEventListener("click", () => refresh());
 
