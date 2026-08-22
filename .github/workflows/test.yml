@@ -1,0 +1,155 @@
+# The fork's test gate. Upstream's `ci.yml` carries the same checks, but every
+# one of its jobs runs inside `ghcr.io/<owner>/vpnhide/ci` — an image a fork has
+# to publish for itself first — so gating that workflow to dispatch-only left
+# this fork with no automatic testing at all. This restores the checks that need
+# nothing but a stock runner.
+#
+# Deliberately not here: the per-KMI QEMU runtime gates. Those need the
+# `ddk-qemu` / `kpm-qemu-legacy` images from the same private-to-the-owner
+# registry, and they are the only checks that prove the hooks still HIDE
+# anything rather than merely compile. Rebase onto upstream and let their CI
+# speak before trusting a change to hook behaviour.
+name: Test
+
+on:
+  push:
+    branches: ['fork', 'fix/**', 'feat/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Same pin as upstream's ci.yml: ruff's formatter output is version-specific,
+  # so an unpinned version turns `--check` into a coin flip.
+  RUFF_VERSION: '0.16.3'
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/ruff-action@v4.0.0
+        with:
+          version: ${{ env.RUFF_VERSION }}
+          args: format --check
+      - uses: astral-sh/ruff-action@v4.0.0
+        with:
+          version: ${{ env.RUFF_VERSION }}
+          args: check
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The list is explicit so vendored .sh under zygisk/third_party can't be
+      # picked up. SC2034: Magisk reads SKIPUNZIP externally and loop counters
+      # aren't read by name. SC3043: `local` is not POSIX but Android's
+      # /system/bin/sh supports it, and these scripts only ever run there.
+      - name: shellcheck
+        run: |
+          shellcheck -x -e SC2034,SC3043 \
+            kmod/module/customize.sh kmod/module/post-fs-data.sh kmod/module/service.sh kmod/module/uninstall.sh \
+            kmod/kpm/module/customize.sh kmod/kpm/module/post-fs-data.sh kmod/kpm/module/service.sh kmod/kpm/module/uninstall.sh \
+            zygisk/module/customize.sh zygisk/module/service.sh zygisk/module/uninstall.sh \
+            portshide/module/customize.sh portshide/module/service.sh \
+            portshide/module/uninstall.sh \
+            scripts/clean-device.sh scripts/update-json.sh \
+            kmod/test/run.sh kmod/test/build-kernel.sh kmod/test/init.sh \
+            kmod/test/run-kpm.sh kmod/test/init-kpm.sh kmod/test/build-source-kernel.sh
+
+  c:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: clang-format
+        run: scripts/clang-format-c.sh --check
+
+      - name: kmod iface-list test (host build)
+        run: |
+          cd kmod
+          gcc -O2 -Wall -Werror -o /tmp/test_iface_lists test_iface_lists.c
+          /tmp/test_iface_lists
+
+      # The protocol harness runs the language-independent golden vectors
+      # (kmod/shared/protocol_vectors.tsv) — the C half of the cross-language
+      # parity check in docs/protocol.md §8.
+      - name: shared-logic + protocol host tests
+        run: |
+          cd kmod/shared
+          gcc -O2 -Wall -Wextra -Werror -I.. -o /tmp/test_vpnhide_logic test_vpnhide_logic.c
+          /tmp/test_vpnhide_logic
+          gcc -O2 -Wall -Wextra -Werror -I.. -o /tmp/test_protocol test_protocol.c
+          /tmp/test_protocol protocol_vectors.tsv
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install toolchain components
+        run: rustup component add rustfmt clippy
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-test-
+
+      - name: rustfmt
+        run: cargo fmt --all --check
+
+      # --all-targets so the test modules are linted too, matching upstream.
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: test
+        run: cargo test --workspace
+
+  kotlin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Gradle drives cargo-ndk for the native probe, and android.ndkVersion
+      # pins an exact NDK, so the runner's default one will not do.
+      - uses: ./.github/actions/rust-android
+        with:
+          ndk-version: 28.2.13676358
+          cache-key: kotlin-lint
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: ktlint
+        run: |
+          set -euo pipefail
+          # Same pin as .github/docker/ci/Dockerfile — ktlint's rules change
+          # between releases, so an unpinned version fails on formatting the
+          # repo considers correct. Bump both together.
+          KTLINT_VERSION=1.8.0
+          curl -fsSL -o /tmp/ktlint \
+            "https://github.com/pinterest/ktlint/releases/download/${KTLINT_VERSION}/ktlint"
+          chmod +x /tmp/ktlint
+          /tmp/ktlint "lsposed/app/src/**/*.kt"
+
+      # One Gradle invocation: detekt + CPD + Lint + unit tests share a
+      # configuration phase and a warm daemon, and buildRustProbe (cargo-ndk)
+      # runs once instead of four times.
+      - name: detekt + CPD + Android lint + Kotlin unit tests
+        run: cd lsposed && ./gradlew :app:detekt cpdCheck :app:lintDebug :app:testDebugUnitTest

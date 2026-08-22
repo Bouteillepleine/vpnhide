@@ -609,8 +609,10 @@ static void fib_route_before(hook_fargs2_t *fargs, void *udata)
  */
 static bool seq_record_overflowed(void *seq)
 {
-	unsigned long size = *(unsigned long *)((char *)seq + off->seqfile_size);
-	unsigned long count = *(unsigned long *)((char *)seq + off->seqfile_count);
+	unsigned long size =
+		*(unsigned long *)((char *)seq + off->seqfile_size);
+	unsigned long count =
+		*(unsigned long *)((char *)seq + off->seqfile_count);
 
 	return count >= size;
 }
