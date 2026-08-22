@@ -1020,7 +1020,21 @@ unsafe fn open_filtered_proc_net(
     }
 
     PROC_NET_BUF.with(|cell| {
-        let mut buf = cell.borrow_mut();
+        // try_borrow_mut, not borrow_mut: this closure calls apply_filter, which
+        // for the socket tables calls collect_vpn_addrs -> getifaddrs. bionic
+        // resolves that over netlink today, but a libc that consulted
+        // /proc/net/if_inet6 instead would re-enter this very function on this
+        // very thread, and a second borrow_mut is a panic — which, with
+        // `panic = "abort"`, kills whatever app we are injected into. The
+        // netlink scratch buffer below already takes this precaution.
+        //
+        // Handing back the real descriptor on re-entry is also the correct
+        // answer rather than merely the safe one: the inner read is ours, and
+        // our own machinery wants the unfiltered truth. The outer call still
+        // filters what the app actually sees.
+        let Ok(mut buf) = cell.try_borrow_mut() else {
+            return fd;
+        };
         buf.clear();
 
         // Read until EOF or error, growing the Vec as needed. Reserves
@@ -1035,6 +1049,12 @@ unsafe fn open_filtered_proc_net(
             let cap = buf.capacity();
             let n =
                 unsafe { libc::read(fd, buf.as_mut_ptr().add(len).cast::<c_void>(), cap - len) };
+            // A signal arriving mid-read is not end-of-file. Breaking here
+            // truncated the file and shipped a short /proc/net table as if it
+            // were complete.
+            if n < 0 && get_errno() == libc::EINTR {
+                continue;
+            }
             if n <= 0 {
                 break;
             }
@@ -1066,7 +1086,13 @@ unsafe fn open_filtered_proc_net(
                         filtered_len - written,
                     )
                 };
-                if n < 0 {
+                // Retry a signal-interrupted write instead of failing the open
+                // with EIO. A zero-length write would make no progress, so treat
+                // it as failure too rather than spinning forever.
+                if n < 0 && get_errno() == libc::EINTR {
+                    continue;
+                }
+                if n <= 0 {
                     unsafe { libc::close(memfd) };
                     set_errno(libc::EIO);
                     return -1;
@@ -1821,6 +1847,49 @@ mod iovec_tests {
         actual.extend(rest);
         assert_eq!(filtered, expected.len());
         assert_eq!(&actual[..filtered], expected.as_slice());
+    }
+}
+
+#[cfg(test)]
+mod proc_net_reentrancy_tests {
+    use super::{PROC_NET_BUF, ProcNetFile, open_filtered_proc_net};
+    use core::ffi::c_int;
+
+    const SENTINEL_FD: c_int = 4242;
+
+    unsafe extern "C" fn fake_openat(
+        _dirfd: c_int,
+        _pathname: *const libc::c_char,
+        _flags: c_int,
+        _mode: libc::mode_t,
+    ) -> c_int {
+        SENTINEL_FD
+    }
+
+    /// A /proc/net open that arrives while this thread is already filtering one
+    /// must hand back the real descriptor. It used to take a second
+    /// `borrow_mut()` on the shared scratch buffer, which panics — and with
+    /// `panic = "abort"` a panic inside an injected library takes the host app
+    /// down with it.
+    #[test]
+    fn reentrant_open_returns_the_real_descriptor() {
+        PROC_NET_BUF.with(|cell| {
+            let _outer = cell.borrow_mut();
+            let fd = unsafe {
+                open_filtered_proc_net(
+                    fake_openat,
+                    libc::AT_FDCWD,
+                    c"/proc/net/tcp".as_ptr(),
+                    0,
+                    0,
+                    ProcNetFile::Tcp,
+                )
+            };
+            assert_eq!(
+                fd, SENTINEL_FD,
+                "re-entry must fall back to the unfiltered descriptor"
+            );
+        });
     }
 }
 
