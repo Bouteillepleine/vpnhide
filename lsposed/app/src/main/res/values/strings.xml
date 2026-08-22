@@ -312,6 +312,23 @@
     <string name="donate_banner">VPN Hide is free and has no ads. If it is useful to you, you can support its development.</string>
     <string name="donate_banner_support">Support</string>
     <string name="donate_banner_hide">Hide</string>
+
+    <!-- Import of a pre-1.0 configuration left on disk -->
+    <string name="legacy_import_banner">A configuration from a version before 1.0 was found on this device: %1$d apps. Your current setup already has apps configured, so it was not imported automatically.</string>
+    <string name="legacy_import_banner_action">Review</string>
+    <string name="legacy_import_banner_hide">Hide</string>
+    <string name="legacy_import_title">Import old configuration</string>
+    <string name="legacy_import_summary">Found %1$d apps: Java %2$d, Native %3$d, Apps %4$d, Ports %5$d, hidden %6$d.</string>
+    <string name="legacy_import_unresolved">%1$d app-hiding entries were saved as UIDs that no longer match an installed app and will be skipped.</string>
+    <string name="legacy_import_explain">Merge keeps everything configured now and adds the old roles on top. Replace drops the current app list and uses the old one instead; auto-hide settings and VPN Hide\'s own entry are kept either way. Delete removes the old files without reading them — pick it if you have already set everything up again and just want them off the device. All three delete the files; this cannot be undone.</string>
+    <string name="legacy_import_merge">Merge</string>
+    <string name="legacy_import_replace">Replace</string>
+    <string name="legacy_import_discard">Delete without importing</string>
+    <string name="legacy_import_running">Working…</string>
+    <string name="legacy_import_done">Imported %1$d apps.</string>
+    <string name="legacy_import_discarded">The old files were deleted. Nothing was imported.</string>
+    <string name="legacy_import_nothing">Nothing left to import — the old files are already gone.</string>
+    <string name="legacy_import_failed">Import failed (%1$s). Root access may have been denied.</string>
     <!-- Full reset / leftover cleanup -->
     <string name="settings_reset_section">Reset</string>
     <string name="reset_button">Remove leftover files</string>
@@ -519,6 +536,8 @@
     <string name="settings_config_import_done">Config imported.</string>
     <string name="settings_config_import_invalid">Import failed: invalid config JSON.</string>
     <string name="settings_config_import_root_failed">Import failed: root config write failed.</string>
+    <string name="settings_legacy_import_title">Pre-1.0 configuration</string>
+    <string name="settings_legacy_import_sub">%1$d apps left by an older version — import or delete</string>
     <string name="settings_package_list_title">Package list export</string>
     <string name="settings_package_list_sub">Copy or save package IDs for VPN clients</string>
     <string name="settings_package_list_dialog_body">Export package IDs from the saved hiding config. The JSON backup above remains the full VPN Hide config.</string>

@@ -20,8 +20,14 @@ class FullResetTest {
         listOf("kmod", "kpm", "ports").forEach {
             assertTrue("missing /data/adb/vpnhide_$it", cmd.contains("rm -rf /data/adb/vpnhide_$it"))
         }
+        // Pre-1.0 lists too: leaving them behind is what "leftover files" means,
+        // and a reset device would otherwise come back offering to import the
+        // config it just wiped (LegacyConfigImport).
         listOf("vpnhide_uids.txt", "vpnhide_hidden_pkgs.txt", "vpnhide_observer_uids.txt").forEach {
-            assertFalse("retired migration path remains: $it", cmd.contains(it))
+            assertTrue("pre-1.0 path not cleaned: $it", cmd.contains(it))
+        }
+        listOf("vpnhide_zygisk", "vpnhide_lsposed").forEach {
+            assertTrue("missing /data/adb/$it", cmd.contains("rm -rf /data/adb/$it"))
         }
     }
 

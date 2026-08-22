@@ -460,7 +460,16 @@ private fun ConfigBackupSection() {
     var pendingExport by remember { mutableStateOf<String?>(null) }
     var pendingPackageListExport by remember { mutableStateOf<String?>(null) }
     var packageListDialogOpen by remember { mutableStateOf(false) }
+    var legacyImportDialog by remember { mutableStateOf<LegacyImportPrompt?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
+    val rootSnapshot by RootSnapshotCache.snapshot.collectAsState()
+    // Pre-1.0 config still on disk (see LegacyConfigImport). Derived from the
+    // shared root snapshot TargetsCache already loads — no extra su round-trip.
+    val legacyPrompt =
+        remember(rootSnapshot, targets) {
+            val uidToPkg = targets?.uidToPkg ?: return@remember null
+            rootSnapshot?.let { parseLegacyConfigCandidate(it.sections, uidToPkg)?.toPrompt() }
+        }
     val exportDone = stringResource(R.string.settings_config_export_done)
     val exportFailed = stringResource(R.string.settings_config_export_failed)
     val importDone = stringResource(R.string.settings_config_import_done)
@@ -597,7 +606,28 @@ private fun ConfigBackupSection() {
             enabled = targets != null && operation == ConfigOperation.Idle,
             onClick = { packageListDialogOpen = true },
         )
+        // Only rendered while pre-1.0 files are actually on disk — the import
+        // deletes them, so this row disappears once it has run. Keeps the option
+        // reachable for anyone who hid the Dashboard banner.
+        legacyPrompt?.let { prompt ->
+            PreferenceRow(
+                title = stringResource(R.string.settings_legacy_import_title),
+                subtitle = stringResource(R.string.settings_legacy_import_sub, prompt.packages),
+                icon = Icons.Default.FileUpload,
+                enabled = operation == ConfigOperation.Idle,
+                onClick = { legacyImportDialog = prompt },
+            )
+        }
         SettingsStatusLine(status)
+    }
+
+    // Captured on tap: the import clears the on-disk files, so reading the
+    // prompt live would tear the dialog down before it shows its result.
+    legacyImportDialog?.let { prompt ->
+        LegacyImportDialog(
+            prompt = prompt,
+            onDismiss = { legacyImportDialog = null },
+        )
     }
 
     val packageListConfig = targets?.let(::buildConfigExportCanonical)

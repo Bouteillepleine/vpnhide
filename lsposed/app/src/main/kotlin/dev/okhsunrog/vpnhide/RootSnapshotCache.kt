@@ -275,6 +275,18 @@ internal fun buildRootShellSnapshotCommand(
       emit_eval superkey_saved '[ -s $SUPERKEY_FILE ] && echo 1 || echo 0'
       phase_end
     }
+    # Pre-1.0 per-component lists. Nothing writes them today, so a non-empty
+    # section means an install that skipped the 1.0.x migration window and can
+    # still have its choices recovered (LegacyConfigImport).
+    phase_legacy_config() {
+      phase_start legacy_config
+      ${
+        LEGACY_CONFIG_SECTIONS.entries.joinToString("\n      ") { (section, path) ->
+            "emit_file $section $path"
+        }
+    }
+      phase_end
+    }
     phase_kmod_status_files() {
       phase_start kmod_status_files
       emit_file current_boot_id /proc/sys/kernel/random/boot_id
@@ -396,6 +408,7 @@ internal fun buildRootShellSnapshotCommand(
     run_all_phases_sequential() {
       phase_module_props
       phase_target_files
+      phase_legacy_config
       phase_kmod_status_files
       phase_runtime_status_files
       __VPNHIDE_PM_PACKAGES_PHASE__

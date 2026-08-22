@@ -65,6 +65,12 @@ data class AppSettings(
      * reaction and never again.
      */
     val donatePromptDismissed: Boolean = false,
+    /**
+     * The user declined importing a pre-1.0 config found on disk. The files stay
+     * where they are, so Settings → Advanced can still run the import later; this
+     * only stops the Dashboard card from asking again.
+     */
+    val legacyImportDismissed: Boolean = false,
 ) {
     companion object {
         /** Brand seed — a crisp blue-teal, used as the non-dynamic fallback palette. */

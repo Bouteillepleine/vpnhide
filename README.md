@@ -119,7 +119,7 @@ su -c /data/adb/modules/vpnhide_zygisk/activator
 su -c /data/adb/modules/vpnhide_ports/activator
 ```
 
-Запускайте только activator тех модулей, которые действительно установлены. LSPosed читает JSON напрямую из `system_server`, отдельный activator для него не нужен. Старые `targets.txt` в `/data/adb/vpnhide_*` больше не являются пользовательской настройкой и используются только для миграции старых конфигов.
+Запускайте только activator тех модулей, которые действительно установлены. LSPosed читает JSON напрямую из `system_server`, отдельный activator для него не нужен. Старые `targets.txt` в `/data/adb/vpnhide_*` — это конфиг версий до 1.0. Пользовательской настройкой они больше не являются: приложение один раз переносит их в JSON и удаляет.
 
 </details>
 

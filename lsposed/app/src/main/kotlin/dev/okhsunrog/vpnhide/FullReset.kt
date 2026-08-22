@@ -14,13 +14,16 @@ package dev.okhsunrog.vpnhide
 //  - the app's own /data/data (SharedPreferences, zygisk heartbeat) — wiped
 //    when the APK is uninstalled.
 
-// Plain files under /data/system (rm -f).
+// Plain files under /data/system (rm -f). The pre-1.0 lists are included so a
+// reset device doesn't come back offering to import the config it just wiped.
 internal val FULL_RESET_FILES =
-    listOf(
-        CANONICAL_CONFIG_FILE,
-        LSPOSED_STATE_FILE,
-        LEGACY_HOOK_STATUS_FILE,
-    )
+    (
+        listOf(
+            CANONICAL_CONFIG_FILE,
+            LSPOSED_STATE_FILE,
+            LEGACY_HOOK_STATUS_FILE,
+        ) + LEGACY_FILES
+    ).distinct()
 
 // Data directories under /data/adb (rm -rf — covers load status, the APatch
 // superkey, and other backend state). Each is an explicit path — never a
@@ -31,7 +34,7 @@ internal val FULL_RESET_DIRS =
         "/data/adb/vpnhide_kmod",
         "/data/adb/vpnhide_kpm",
         "/data/adb/vpnhide_ports",
-    )
+    ) + LEGACY_ORPHAN_DIRS
 
 /** Single su command that removes every leftover service file/dir. Idempotent:
  *  paths a module's uninstall.sh already removed are simply no-ops. */

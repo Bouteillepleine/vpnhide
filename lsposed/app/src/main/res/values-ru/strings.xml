@@ -268,6 +268,23 @@
     <string name="donate_banner">VPN Hide бесплатный и без рекламы. Если он вам полезен — можно поддержать разработку.</string>
     <string name="donate_banner_support">Поддержать</string>
     <string name="donate_banner_hide">Скрыть</string>
+
+    <!-- Перенос настроек, оставшихся от версий до 1.0 -->
+    <string name="legacy_import_banner">На устройстве найдены настройки от версии до 1.0. Приложений в них: %1$d. Сейчас у вас уже есть настроенные приложения, поэтому автоматически ничего не переносилось.</string>
+    <string name="legacy_import_banner_action">Разобраться</string>
+    <string name="legacy_import_banner_hide">Скрыть</string>
+    <string name="legacy_import_title">Перенос старых настроек</string>
+    <string name="legacy_import_summary">Найдено приложений: %1$d. Java — %2$d, Native — %3$d, Apps — %4$d, Ports — %5$d, скрываемых — %6$d.</string>
+    <string name="legacy_import_unresolved">Роль Apps хранилась в виде UID, и %1$d из них уже не принадлежат ни одному установленному приложению — они будут пропущены.</string>
+    <string name="legacy_import_explain">«Объединить» — оставить всё, что настроено сейчас, и добавить к нему старые роли. «Заменить» — отбросить текущий список приложений и взять старый; настройки автоскрытия и запись самого VPN Hide сохраняются в обоих случаях. «Удалить» — стереть старые файлы, не читая: выбирайте, если вы уже всё настроили заново и хотите просто убрать их с устройства. Во всех трёх случаях старые файлы удаляются, вернуть их будет нельзя.</string>
+    <string name="legacy_import_merge">Объединить</string>
+    <string name="legacy_import_replace">Заменить</string>
+    <string name="legacy_import_discard">Удалить, ничего не перенося</string>
+    <string name="legacy_import_running">Работаем…</string>
+    <string name="legacy_import_done">Перенесено приложений: %1$d.</string>
+    <string name="legacy_import_discarded">Старые файлы удалены. Ничего не перенесено.</string>
+    <string name="legacy_import_nothing">Переносить нечего — старых файлов на устройстве больше нет.</string>
+    <string name="legacy_import_failed">Не удалось перенести (%1$s). Возможно, не выдан root-доступ.</string>
     <!-- Full reset / leftover cleanup -->
     <string name="settings_reset_section">Сброс</string>
     <string name="reset_button">Удалить оставшиеся файлы</string>
@@ -489,6 +506,8 @@
     <string name="settings_config_import_done">Конфиг импортирован.</string>
     <string name="settings_config_import_invalid">Импорт не удался: некорректный JSON-конфиг.</string>
     <string name="settings_config_import_root_failed">Импорт не удался: не получилось записать root-конфиг.</string>
+    <string name="settings_legacy_import_title">Настройки от версии до 1.0</string>
+    <string name="settings_legacy_import_sub">Приложений в них: %1$d — перенести или удалить</string>
     <string name="settings_package_list_title">Экспорт списка пакетов</string>
     <string name="settings_package_list_sub">Скопировать или сохранить ID пакетов для VPN-клиентов</string>
     <string name="settings_package_list_dialog_body">Экспортирует ID пакетов из сохранённого конфига скрытия. JSON-резервная копия выше остаётся полным конфигом VPN Hide.</string>

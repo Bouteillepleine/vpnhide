@@ -47,6 +47,8 @@ interface SettingsInteractor {
     fun setSuppressVersionWarnings(value: Boolean)
 
     fun setDonatePromptDismissed(value: Boolean)
+
+    fun setLegacyImportDismissed(value: Boolean)
 }
 
 /**
@@ -84,6 +86,8 @@ class RepositorySettingsInteractor(
     override fun setSuppressVersionWarnings(value: Boolean) = launch { repository.setSuppressVersionWarnings(value) }
 
     override fun setDonatePromptDismissed(value: Boolean) = launch { repository.setDonatePromptDismissed(value) }
+
+    override fun setLegacyImportDismissed(value: Boolean) = launch { repository.setLegacyImportDismissed(value) }
 
     private inline fun launch(crossinline block: suspend () -> Unit) {
         scope.launch { block() }

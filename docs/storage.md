@@ -68,6 +68,12 @@ shared canonical file nor consume extra native target slots.
 - **Import / export = copy this one file.** It contains no device-specific secret,
   so it is safe to back up / move / share. (This is *why* the superkey is **not**
   stored here — §6.)
+- **Pre-1.0 configs are imported into it, not read alongside it.** Installs older
+  than 1.0.0 kept per-component `targets.txt`/observer files; the app folds them
+  into this JSON and deletes them (silently at startup when nothing is configured
+  yet, otherwise via a Dashboard banner offering merge / replace). Paths and
+  exact behaviour: [state.md §1](state.md), code in `LegacyConfigImport.kt`.
+  Nothing outside that importer reads them — no backend has a legacy read path.
 
 ### 2.1 Canonical JSON schema
 

@@ -315,6 +315,9 @@ internal data class DashboardState(
     // diagnostics screen can rebuild the canonical DiagnosticReport (which vectors
     // the active backend owns) rather than deriving ownership a second way.
     val installedOptionalHooks: Set<HookIds.Hook> = emptySet(),
+    // A pre-1.0 config still on disk next to a config that already has roles —
+    // the startup importer leaves that case to the user (LegacyConfigImport).
+    val legacyImport: LegacyImportPrompt? = null,
 )
 
 internal enum class HeroStatus { Protected, Attention, Unprotected, VpnOff }
@@ -1814,5 +1817,6 @@ internal suspend fun loadDashboardState(
         protection = protection,
         messages = messages,
         installedOptionalHooks = installedOptionalHooks,
+        legacyImport = parseLegacyConfigCandidate(shellSnapshot, targetsSnapshot.uidToPkg)?.toPrompt(),
     )
 }
