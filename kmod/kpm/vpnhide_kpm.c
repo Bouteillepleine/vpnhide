@@ -598,6 +598,23 @@ static void fib_route_before(hook_fargs2_t *fargs, void *udata)
 	fargs->local.data0 = (uint64_t)count;
 }
 
+/*
+ * seq_file signals "this record did not fit" by setting count == size (that is
+ * all seq_has_overflowed() checks). seq_read_iter reacts by growing the buffer
+ * and replaying the same record from the start. Compacting in that state lowers
+ * count below size, erases the signal, and makes seq_file treat the truncated,
+ * half-written record as complete — userspace gets a mangled /proc/net line and
+ * the iterator moves on, silently dropping routes. The replay after the buffer
+ * grows filters correctly, so declining here costs nothing.
+ */
+static bool seq_record_overflowed(void *seq)
+{
+	unsigned long size = *(unsigned long *)((char *)seq + off->seqfile_size);
+	unsigned long count = *(unsigned long *)((char *)seq + off->seqfile_count);
+
+	return count >= size;
+}
+
 static void fib_route_after(hook_fargs2_t *fargs, void *udata)
 {
 	void *seq = (void *)fargs->arg0;
@@ -606,6 +623,8 @@ static void fib_route_after(hook_fargs2_t *fargs, void *udata)
 	unsigned long start = (unsigned long)fargs->local.data0;
 
 	if (!seq || !hook_active(VPNHIDE_HOOK_FIB_ROUTE_SEQ_SHOW))
+		return;
+	if (seq_record_overflowed(seq))
 		return;
 
 	buf = *(char **)((char *)seq + off->seqfile_buf);
@@ -631,6 +650,8 @@ static void ipv6_route_after(hook_fargs2_t *fargs, void *udata)
 	unsigned long start = (unsigned long)fargs->local.data0;
 
 	if (!seq || !hook_active(VPNHIDE_HOOK_IPV6_ROUTE_SEQ_SHOW))
+		return;
+	if (seq_record_overflowed(seq))
 		return;
 
 	buf = *(char **)((char *)seq + off->seqfile_buf);

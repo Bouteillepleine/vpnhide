@@ -43,8 +43,11 @@ struct vpnhide_offsets {
 	unsigned int socket_sk;
 	unsigned int sock_net;
 
-	/* seq_file.{buf,count} — stable across the seq_file lifetime. */
+	/* seq_file.{buf,size,count} — stable across the seq_file lifetime.
+	 * `size` is needed to recognise the overflow state (count == size),
+	 * which the /proc/net compaction must not clear; see fib_route_after. */
 	unsigned int seqfile_buf;
+	unsigned int seqfile_size;
 	unsigned int seqfile_count;
 
 	/* in_ifaddr.ifa_dev (-> in_device.dev -> net_device). */
@@ -146,6 +149,7 @@ static const struct vpnhide_offsets vpnhide_off_6_1 = {
 	.socket_sk = 24,
 	.sock_net = 48,
 	.seqfile_buf = 0,
+	.seqfile_size = 8,
 	.seqfile_count = 24,
 	.in_ifaddr_ifa_dev = 24,
 	.in_device_dev = 0,
@@ -186,6 +190,7 @@ static const struct vpnhide_offsets vpnhide_off_6_12 = {
 	.socket_sk = 24,
 	.sock_net = 48,
 	.seqfile_buf = 0,
+	.seqfile_size = 8,
 	.seqfile_count = 24,
 	.in_ifaddr_ifa_dev = 24,
 	.in_device_dev = 0,
@@ -219,6 +224,7 @@ static const struct vpnhide_offsets vpnhide_off_5_x = {
 	.socket_sk = 24,
 	.sock_net = 48,
 	.seqfile_buf = 0,
+	.seqfile_size = 8,
 	.seqfile_count = 24,
 	/* in_ifaddr: hash(16)+ifa_next(8) -> ifa_dev@24; in_device.dev@0. */
 	.in_ifaddr_ifa_dev = 24,
@@ -264,6 +270,7 @@ static const struct vpnhide_offsets vpnhide_off_5_15 = {
 	.socket_sk = 24,
 	.sock_net = 48,
 	.seqfile_buf = 0,
+	.seqfile_size = 8,
 	.seqfile_count = 24,
 	.in_ifaddr_ifa_dev = 24,
 	.in_device_dev = 0,
@@ -302,6 +309,7 @@ static const struct vpnhide_offsets vpnhide_off_5_4 = {
 	.socket_sk = 24,
 	.sock_net = 48,
 	.seqfile_buf = 0,
+	.seqfile_size = 8,
 	.seqfile_count = 24,
 	.in_ifaddr_ifa_dev = 24, /* hash(16)+ifa_next(8) — same as 5.10 */
 	.in_device_dev = 0,
@@ -347,6 +355,7 @@ static const struct vpnhide_offsets vpnhide_off_4_19 = {
 	.socket_sk = 32,
 	.sock_net = 48,
 	.seqfile_buf = 0,
+	.seqfile_size = 8,
 	.seqfile_count = 24,
 	.in_ifaddr_ifa_dev = 24,
 	.in_device_dev = 0,
@@ -391,6 +400,7 @@ static const struct vpnhide_offsets vpnhide_off_4_14 = {
 	.socket_sk = 32,
 	.sock_net = 48,
 	.seqfile_buf = 0,
+	.seqfile_size = 8,
 	.seqfile_count = 24,
 	.in_ifaddr_ifa_dev =
 		24, /* in_ifaddr: hash(16)+ifa_next(8) — same as 5.x */
@@ -437,6 +447,7 @@ static const struct vpnhide_offsets vpnhide_off_4_9 = {
 	.socket_sk = 32,
 	.sock_net = 48,
 	.seqfile_buf = 0,
+	.seqfile_size = 8,
 	.seqfile_count = 24,
 	.in_ifaddr_ifa_dev = 24,
 	.in_device_dev = 0,
