@@ -73,6 +73,11 @@
   }
   label.app:last-child { border-bottom: none; }
   label.app input { width: 19px; height: 19px; accent-color: var(--acc); flex: 0 0 auto; }
+  .cols { display: flex; gap: 9px; flex: 0 0 auto; }
+  .cols input.j { accent-color: #a78bfa; }
+  .legend { display: flex; gap: 9px; color: var(--muted); font-size: 11px; margin: 0 4px 6px; }
+  .legend b { color: var(--acc); font-weight: 600; }
+  .legend i { color: #a78bfa; font-style: normal; font-weight: 600; }
   .pkg { font-size: 13px; word-break: break-all; }
   .uid { color: var(--muted); font-size: 11px; }
   .bar {
@@ -111,9 +116,13 @@
   </div>
   <button class="act ghost" id="btn-refresh">Refresh</button>
   <p class="note">
-    This module hides VPN interfaces from the apps you tick under <b>Apps</b>, at
-    the kernel level. It cannot hide the VPN from an app that asks Android's Java
-    networking APIs instead — that needs the LSPosed module from the app.
+    <b>K</b> hides VPN interfaces, routes and sockets at the kernel level — that
+    is this module, and it works on its own.
+    <b>J</b> hides Android's Java network APIs, which live in system_server and
+    are out of the kernel's reach. Ticking J writes the setting here; it only
+    takes effect once the VPN Hide APK is installed and enabled in LSPosed with
+    <b>System Framework</b> scope. You never have to open that app — the hook
+    reads this same file itself.
   </p>
 </section>
 
@@ -127,6 +136,10 @@
   </div>
   <input class="search" id="search" placeholder="Filter packages…" autocomplete="off" />
   <div class="cnt" id="app-count">—</div>
+  <div class="legend">
+    <span><b>K</b> kernel — interfaces, routes, sockets</span>
+    <span><i>J</i> Java APIs — needs the LSPosed module</span>
+  </div>
   <div class="card" id="app-list"></div>
 </section>
 
@@ -141,6 +154,11 @@
       <span class="k">Debug logging</span>
       <span class="v"><input type="checkbox" id="dbg" style="width:19px;height:19px;accent-color:var(--acc)"></span>
     </div>
+    <div class="row">
+      <span class="k">Hide interface files<br><span class="uid">/sys/class/net, /proc/sys/net</span></span>
+      <span class="v"><input type="checkbox" id="fshide" style="width:19px;height:19px;accent-color:var(--acc)"></span>
+    </div>
+    <div class="note" id="fshide-note"></div>
   </div>
   <pre id="raw">reading…</pre>
 </section>
@@ -182,6 +200,7 @@ const CONFIG   = "/data/system/vpnhide_config.json";
 const CTL      = "/proc/vpnhide_ctl";
 const MODDIR   = "/data/adb/modules/vpnhide_kmod";
 const STATUS   = "/data/adb/vpnhide_kmod/load_status";
+const LSPOSED_STATE = "/data/system/vpnhide_lsposed_state";
 // Android hands the first ordinary app this uid; everything below is a platform
 // identity shared by many components and is never a hiding target — the kernel
 // enforces the same floor, so offering those here would just mislead.
@@ -315,6 +334,11 @@ async function saveConfig() {
 // settings.optionalFeatures verbatim — a bespoke key would survive here and be
 // dropped the first time someone saved from the app.
 const HIDE_ALL_FEATURE = "hide_from_all_apps";
+// The .ko installs its VFS probes only when insmod is given
+// filesystem_hiding=1, and the module is deliberately non-unloadable — so this
+// one is read at load time and a change needs a reboot, unlike everything else
+// here which applies immediately.
+const FS_HIDE_FEATURE = "filesystem_iface_paths";
 
 function features() {
   if (!config.settings || typeof config.settings !== "object") config.settings = {};
@@ -323,14 +347,22 @@ function features() {
 }
 
 function hideAll() {
-  return config !== null && features().includes(HIDE_ALL_FEATURE);
+  return hasFeature(HIDE_ALL_FEATURE);
+}
+
+function hasFeature(name) {
+  return config !== null && features().includes(name);
+}
+
+function setFeature(name, on) {
+  const f = features();
+  const at = f.indexOf(name);
+  if (on && at < 0) f.push(name);
+  if (!on && at >= 0) f.splice(at, 1);
 }
 
 function setHideAll(on) {
-  const f = features();
-  const at = f.indexOf(HIDE_ALL_FEATURE);
-  if (on && at < 0) f.push(HIDE_ALL_FEATURE);
-  if (!on && at >= 0) f.splice(at, 1);
+  setFeature(HIDE_ALL_FEATURE, on);
 }
 
 // With the blanket default on, a listed app means the opposite: it is the one
@@ -338,6 +370,15 @@ function setHideAll(on) {
 function isExempt(pkg) {
   const entry = config.apps[pkg];
   return !!entry && !nativeOn(entry);
+}
+
+// `java` is a bool for all-hooks, or an array when the app made a per-hook
+// selection. Either way a non-empty selection means the Java layer is on.
+function javaOn(entry) {
+  if (!entry) return false;
+  const j = entry.java;
+  if (Array.isArray(j)) return j.length > 0;
+  return j === true;
 }
 
 function nativeOn(entry) {
@@ -376,23 +417,40 @@ function renderApps() {
 
   if (!shown.length) { list.innerHTML = '<div class="row"><span class="k">No packages match.</span></div>'; return; }
   list.innerHTML = shown.map((p) =>
-    `<label class="app"><input type="checkbox" data-pkg="${esc(p.pkg)}"${ticked(p.pkg) ? " checked" : ""}>` +
-    `<span><span class="pkg">${esc(p.pkg)}</span><br><span class="uid">uid ${p.uid}</span></span></label>`
+    `<label class="app"><span class="cols">` +
+    `<input type="checkbox" class="k" data-pkg="${esc(p.pkg)}" data-layer="native"${ticked(p.pkg) ? " checked" : ""}>` +
+    `<input type="checkbox" class="j" data-pkg="${esc(p.pkg)}" data-layer="java"${javaOn(config.apps[p.pkg]) ? " checked" : ""}>` +
+    `</span><span><span class="pkg">${esc(p.pkg)}</span><br><span class="uid">uid ${p.uid}</span></span></label>`
   ).join("");
 
   for (const cb of list.querySelectorAll("input[type=checkbox]")) {
     cb.addEventListener("change", () => {
       const pkg = cb.dataset.pkg;
       const entry = config.apps[pkg] || {};
-      // Same checkbox, opposite meaning per mode: normally "hide from this
-      // app", and under the blanket default "leave this app alone". An
-      // exemption has to stay in the file as an explicit native:false — that is
-      // what the projection turns into a zero mask outranking the default.
-      entry.native = all ? false : cb.checked;
-      const keep = all ? cb.checked : cb.checked || entry.java || entry.ports || entry.appHiding;
-      if (keep) config.apps[pkg] = entry;
-      else if (!entry.java && !entry.ports && !entry.appHiding) delete config.apps[pkg];
-      else config.apps[pkg] = entry;
+
+      if (cb.dataset.layer === "java") {
+        // The LSPosed hook self-reads this same file from system_server and
+        // re-reads it when it changes, so setting the flag here is the whole
+        // handoff — nothing else has to run, and the app never has to be opened.
+        entry.java = cb.checked;
+      } else {
+        // Same checkbox, opposite meaning per mode: normally "hide from this
+        // app", and under the blanket default "leave this app alone". An
+        // exemption has to stay in the file as an explicit native:false — that
+        // is what the projection turns into a zero mask outranking the default.
+        entry.native = all ? false : cb.checked;
+      }
+
+      // Keep the entry while it still says something: a kernel role, a Java
+      // role, an exemption under the blanket default, or a role this UI does
+      // not manage (ports / app hiding) that must not be dropped on its behalf.
+      const kernelTick = cb.dataset.layer === "native" ? cb.checked : ticked(pkg);
+      const meaningful =
+        entry.java || entry.ports || entry.appHiding ||
+        (all ? kernelTick : nativeOn(entry));
+      if (meaningful) config.apps[pkg] = entry;
+      else delete config.apps[pkg];
+
       markDirty(true);
       count();
     });
@@ -424,6 +482,16 @@ async function renderStatus() {
       ? Object.keys(config.apps).filter((p) => nativeOn(config.apps[p])).length : 0;
     html += statusRow("Apps targeted", String(targeted), targeted ? "ok" : "warn");
   }
+  // The Java layer is a separate hook living in system_server. It reads this
+  // same config file itself, so this UI configures it — but it can only report
+  // whether it is actually running, which is LSPosed's business, not ours. The
+  // hook stamps the boot it came up in; a stale boot_id means it is not live.
+  const ls = await exec(`cat ${LSPOSED_STATE} 2>/dev/null`);
+  const bootId = (await exec("cat /proc/sys/kernel/random/boot_id 2>/dev/null")).stdout.trim();
+  const lsBoot = /^meta boot_id (.+)$/m.exec(ls.stdout)?.[1]?.trim();
+  const lsLive = ls.errno === 0 && !!lsBoot && !!bootId && lsBoot === bootId;
+  html += statusRow("Java layer (LSPosed)", lsLive ? "active" : "not active", lsLive ? "ok" : "warn");
+
   $("status-card").innerHTML = html;
   $("sub").textContent = present ? "kernel module active" : "kernel module not loaded";
 
@@ -465,7 +533,20 @@ async function renderRaw() {
   $("raw").textContent = ctl.errno === 0 && ctl.stdout.trim()
     ? ctl.stdout.trim()
     : "/proc/vpnhide_ctl is not readable — the module is not loaded.";
-  if (config) $("dbg").checked = config.debug === true;
+  if (config) {
+    $("dbg").checked = config.debug === true;
+    const want = hasFeature(FS_HIDE_FEATURE);
+    $("fshide").checked = want;
+    // Compare intent against what the running module was actually loaded with,
+    // so "on" that has not taken effect yet is visible rather than implied.
+    const live = (await exec("dmesg | grep -o 'filesystem_hiding=[01]' | tail -1")).stdout.trim();
+    const loadedOn = live.endsWith("=1");
+    $("fshide-note").textContent = live === ""
+      ? "Applies at module load — reboot after changing it."
+      : want === loadedOn
+        ? (want ? "Active since boot." : "Off. Applies at module load — reboot after changing it.")
+        : "Changed — reboot for this to take effect.";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -490,6 +571,13 @@ $("hideall").addEventListener("change", () => {
   // The list means the opposite now, so redraw rather than leave stale ticks
   // standing for the previous mode.
   renderApps();
+});
+
+$("fshide").addEventListener("change", () => {
+  if (config === null) { $("fshide").checked = hasFeature(FS_HIDE_FEATURE); return; }
+  setFeature(FS_HIDE_FEATURE, $("fshide").checked);
+  markDirty(true);
+  renderRaw();
 });
 
 $("dbg").addEventListener("change", () => {
