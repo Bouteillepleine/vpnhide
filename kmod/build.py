@@ -164,22 +164,21 @@ def native_build_one(
         content = re.sub(r"^gkiVariant=.*", f"gkiVariant={kmi}", content, flags=re.MULTILINE)
     else:
         content = content.rstrip() + f"\ngkiVariant={kmi}\n"
-    # A .ko only loads on the exact kernel it was built against (vermagic +
-    # symbol CRCs). The default updateJson advertises the upstream prebuilt
-    # for this KMI, which is correct for a stock GKI kernel and actively wrong
-    # for a module built against a custom tree: the manager would offer an
-    # "update" that replaces a matching .ko with one that cannot insmod. Pass
-    # --update-json none (or UPDATE_JSON_URL=none) for those builds.
+    # updateJson tells a root manager where to look for a newer module, so it
+    # has to name the repository that published THIS zip. Whoever builds sets
+    # UPDATE_JSON_URL — the same convention kpm/zygisk/portshide already use,
+    # where an unset variable means "ship no update URL". Defaulting to a
+    # baked-in repository instead would make every fork's build advertise
+    # someone else's releases, and would offer a stock prebuilt as an "update"
+    # to a module built against a custom kernel, where it cannot load at all
+    # (a .ko is tied to its kernel by vermagic and symbol CRCs). `none`
+    # suppresses it explicitly even when the environment sets a URL.
     update_json_url = update_json
     if update_json_url is None:
         update_json_url = os.environ.get("UPDATE_JSON_URL")
-    if update_json_url is None:
-        update_json_url = (
-            f"https://raw.githubusercontent.com/okhsunrog/vpnhide/main/update-json/"
-            f"update-kmod-{kmi}.json"
-        )
 
-    if update_json_url == "none":
+    if not update_json_url or update_json_url == "none":
+        update_json_url = "none"
         content = re.sub(r"^updateJson=.*\n?", "", content, flags=re.MULTILINE)
     elif re.search(r"^updateJson=", content, flags=re.MULTILINE):
         content = re.sub(
