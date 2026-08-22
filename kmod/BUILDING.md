@@ -45,6 +45,33 @@ If you prefer building against a local kernel source tree (e.g. for development 
 
 You can also drop a `kmod/.env` file with `KDIR=` / `KERNEL_SRC=` / `CLANG_DIR=` (see `.env.example`) and use [`direnv`](https://direnv.net/) to load it automatically. The script picks those up via env, no flag needed.
 
+## Build against a custom kernel
+
+A `.ko` only loads on the kernel it was built against — the vermagic string and the symbol CRCs both have to match. A kernel with its own `LOCALVERSION`, or one carrying out-of-tree patches, therefore can't use the published prebuilt for its KMI: `insmod` fails with `Exec format error` or `Invalid module format`. The fix is to build the module from that kernel's own tree.
+
+Most kernel builders configure and build out-of-tree (`make O=out ...`), which leaves `.config`, `Module.symvers` and the generated headers under the output directory rather than in the source. Kbuild needs the same `O=` for the external-module build, so pass it as `--kout`:
+
+```bash
+./kmod/build.py --kmi android16-6.12 \
+  --kdir  /path/to/kernel/common \
+  --kout  /path/to/kernel/common/out \
+  --clang-dir /path/to/clang/bin \
+  --update-json none
+```
+
+`--kout` must be the output directory of an already-configured, already-built tree, and it requires `--kdir`. It's equally settable as `KERNEL_OUT` (or `KBUILD_OUTPUT`) in the environment. Leave it out for a tree built in place, including the DDK images — the build is then exactly as before.
+
+`--update-json none` (or `UPDATE_JSON_URL=none`) drops the `updateJson` line from `module.prop`. Use it for these builds: the default URL advertises the upstream prebuilt for that KMI, so a root manager would otherwise offer an "update" that replaces your matching module with one that can't load.
+
+Two config symbols are checked against the target kernel's `.config` before anything is compiled, because getting either wrong produces a module that installs cleanly and then does nothing:
+
+- `CONFIG_MODULES=y` — the backend ships as a loadable module.
+- `CONFIG_KPROBES=y` — every hook is a kprobe or kretprobe.
+
+A missing `CONFIG_KRETPROBES=y` is reported as a warning (most hooks are return probes). If the tree exposes no `.config` at all, the check is skipped with a warning rather than failing.
+
+To reuse a prebuilt activator instead of having the script build it with cargo-ndk — worth doing in CI, where the Rust toolchain may not be present — point `VPNHIDE_KMOD_ACTIVATOR` at the binary.
+
 ## Install and test
 
 ```bash

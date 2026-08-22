@@ -28,6 +28,11 @@ Examples:
     ./kmod/build.py --all                          # every GKI variant
     ./kmod/build.py --kdir ~/k/android14-6.1 --kmi android14-6.1
                                                     # local kernel source
+    ./kmod/build.py --kmi android16-6.12 \
+        --kdir /w/kernel/common --kout /w/kernel/common/out \
+        --clang-dir /w/clang/bin --update-json none
+                                                    # against a kernel builder's
+                                                    # out-of-tree build
 
 The DDK container tag (`DDK_IMAGE_TAG`) is the single source of truth for
 both this script and `.github/workflows/ci.yml`'s kmod matrix — keep them
@@ -119,13 +124,18 @@ def native_build_one(
     kdir: str,
     clang_dir: str | None,
     out: Path | None,
+    kout: str | None = None,
+    update_json: str | None = None,
 ) -> int:
     """Compile + package one .ko into one zip, in the current process."""
     print(f"[{kmi}] kdir={kdir}")
+    print(f"[{kmi}] kout={kout or '(in-tree build)'}")
     print(f"[{kmi}] clang-dir={clang_dir or '(system PATH)'}")
 
     env = os.environ.copy()
     env["KERNEL_SRC"] = kdir
+    if kout:
+        env["KERNEL_OUT"] = kout
     if clang_dir:
         env["CLANG_DIR"] = clang_dir
 
@@ -154,18 +164,34 @@ def native_build_one(
         content = re.sub(r"^gkiVariant=.*", f"gkiVariant={kmi}", content, flags=re.MULTILINE)
     else:
         content = content.rstrip() + f"\ngkiVariant={kmi}\n"
-    update_json_url = (
-        f"https://raw.githubusercontent.com/okhsunrog/vpnhide/main/update-json/"
-        f"update-kmod-{kmi}.json"
-    )
-    if re.search(r"^updateJson=", content, flags=re.MULTILINE):
+    # A .ko only loads on the exact kernel it was built against (vermagic +
+    # symbol CRCs). The default updateJson advertises the upstream prebuilt
+    # for this KMI, which is correct for a stock GKI kernel and actively wrong
+    # for a module built against a custom tree: the manager would offer an
+    # "update" that replaces a matching .ko with one that cannot insmod. Pass
+    # --update-json none (or UPDATE_JSON_URL=none) for those builds.
+    update_json_url = update_json
+    if update_json_url is None:
+        update_json_url = os.environ.get("UPDATE_JSON_URL")
+    if update_json_url is None:
+        update_json_url = (
+            f"https://raw.githubusercontent.com/okhsunrog/vpnhide/main/update-json/"
+            f"update-kmod-{kmi}.json"
+        )
+
+    if update_json_url == "none":
+        content = re.sub(r"^updateJson=.*\n?", "", content, flags=re.MULTILINE)
+    elif re.search(r"^updateJson=", content, flags=re.MULTILINE):
         content = re.sub(
             r"^updateJson=.*", f"updateJson={update_json_url}", content, flags=re.MULTILINE
         )
     else:
         content = content.rstrip() + f"\nupdateJson={update_json_url}\n"
     module_prop.write_text(content, encoding="utf-8")
-    print(f"[{kmi}] stamped module.prop version=v{build_version} gkiVariant={kmi}")
+    print(
+        f"[{kmi}] stamped module.prop version=v{build_version} gkiVariant={kmi} "
+        f"updateJson={'(none)' if update_json_url == 'none' else update_json_url}"
+    )
 
     out_zip = out if out else kmod_dir.parent / f"vpnhide-kmod-{kmi}.zip"
     if out_zip.exists():
@@ -186,6 +212,18 @@ def run_native_mode(args: argparse.Namespace, kmod_dir: Path) -> int:
 
     explicit_kdir = args.kdir or os.environ.get("KDIR") or os.environ.get("KERNEL_SRC")
     explicit_clang = args.clang_dir or os.environ.get("CLANG_DIR")
+    explicit_kout = args.kout or os.environ.get("KERNEL_OUT") or os.environ.get("KBUILD_OUTPUT")
+    # kbuild resolves a relative O= against the kernel source dir, so a
+    # relative --kout would build against the wrong tree instead of failing.
+    kout = str(Path(explicit_kout).resolve()) if explicit_kout else None
+
+    if kout and not explicit_kdir:
+        print(
+            "error: --kout / KERNEL_OUT names a kbuild output directory and only "
+            "means anything alongside a kernel source tree. Pass --kdir too.",
+            file=sys.stderr,
+        )
+        return 2
 
     if explicit_kdir and len(kmis) > 1:
         print(
@@ -209,7 +247,7 @@ def run_native_mode(args: argparse.Namespace, kmod_dir: Path) -> int:
             )
             return 1
         clang_dir = explicit_clang or detect_clang_dir()
-        rc = native_build_one(kmod_dir, kmi, kdir, clang_dir, args.out)
+        rc = native_build_one(kmod_dir, kmi, kdir, clang_dir, args.out, kout, args.update_json)
         if rc:
             return rc
     return 0
@@ -269,13 +307,14 @@ def container_build_one(runtime: str, is_podman: bool, repo_root: Path, kmi: str
 
 
 def run_container_mode(args: argparse.Namespace, repo_root: Path) -> int:
-    if args.kdir or args.clang_dir or args.out:
+    if args.kdir or args.clang_dir or args.out or args.kout or args.update_json:
         # These flags only make sense in native mode — refusing here is
         # better than silently dropping them after a 2-minute container
         # spin-up.
         print(
-            "error: --kdir / --clang-dir / --out are only valid with native "
-            "builds (pass --inside-container or run inside the DDK image).",
+            "error: --kdir / --kout / --clang-dir / --out / --update-json are "
+            "only valid with native builds (pass --inside-container or run "
+            "inside the DDK image).",
             file=sys.stderr,
         )
         return 2
@@ -339,11 +378,32 @@ def main() -> int:
         help=("Kernel source directory (overrides KDIR/KERNEL_SRC). Implies native mode."),
     )
     parser.add_argument(
+        "--kout",
+        type=str,
+        help=(
+            "Kbuild output directory of an out-of-tree kernel build "
+            "(`make O=<dir>`), e.g. a kernel builder's `common/out`. "
+            "Overrides KERNEL_OUT/KBUILD_OUTPUT. Requires --kdir. Omit for "
+            "trees built in place, including the DDK images."
+        ),
+    )
+    parser.add_argument(
         "--clang-dir",
         type=str,
         help=(
             "Clang binaries directory (overrides CLANG_DIR; auto-detected "
             "from /opt/ddk/clang/clang-r* in DDK images)."
+        ),
+    )
+    parser.add_argument(
+        "--update-json",
+        type=str,
+        metavar="URL|none",
+        help=(
+            "updateJson value stamped into module.prop (overrides "
+            "UPDATE_JSON_URL). Use 'none' to omit it entirely — correct "
+            "for a .ko built against a custom kernel, where the upstream "
+            "prebuilt would not load."
         ),
     )
     parser.add_argument(
@@ -361,11 +421,17 @@ def main() -> int:
 
     # Native conditions: explicit flag, explicit kernel source, or we're
     # already in a DDK image.
+    # KERNEL_OUT counts, so setting only that in the environment reaches the
+    # "pass --kdir too" error instead of spinning up a container that would
+    # quietly ignore it. KBUILD_OUTPUT deliberately does not: it's a generic
+    # kbuild variable that may be set for unrelated reasons.
     native = (
         args.inside_container
         or bool(args.kdir)
+        or bool(args.kout)
         or "KDIR" in os.environ
         or "KERNEL_SRC" in os.environ
+        or "KERNEL_OUT" in os.environ
         or detect_clang_dir() is not None
     )
     if native:
