@@ -264,11 +264,13 @@ pub struct PackageUidMap {
 
 impl PackageUidMap {
     pub fn from_pm() -> Result<Self> {
-        Self::from_pm_with_wait(PmReadyWait::Bounded(PM_READY_ATTEMPTS))
+        Self::from_pm_with_wait(PmReadyWait::Bounded(PM_READY_ATTEMPTS), &BTreeSet::new())
     }
 
-    fn from_pm_with_wait(wait: PmReadyWait) -> Result<Self> {
-        wait_for_pm_ready(wait)?;
+    /// `wanted` is the set of packages the caller is about to resolve; the
+    /// readiness wait keys on those rather than on a sentinel package.
+    fn from_pm_with_wait(wait: PmReadyWait, wanted: &BTreeSet<String>) -> Result<Self> {
+        wait_for_pm_ready(wait, wanted)?;
         let users_output = pm_list_users()?;
         let user_ids = parse_pm_user_ids(&users_output);
         if user_ids.is_empty() {
@@ -390,7 +392,7 @@ pub(crate) fn project_native_with_pm_wait(
     if !has_native_targets(&cfg, family) {
         return Ok(format_config(cfg.debug, NO_DEFAULT_MASK, &[]));
     }
-    let resolver = PackageUidMap::from_pm_with_wait(wait)?;
+    let resolver = PackageUidMap::from_pm_with_wait(wait, &cfg.apps.keys().cloned().collect())?;
     Ok(project_native_with_resolver_for_family(
         &cfg, &resolver, family,
     ))
@@ -521,7 +523,7 @@ pub(crate) fn project_ports_with_pm_wait(json: &str, wait: PmReadyWait) -> Resul
     if !has_ports_targets(&cfg) {
         return Ok(project_ports_with_resolver(&cfg, &PackageUidMap::default()));
     }
-    let resolver = PackageUidMap::from_pm_with_wait(wait)?;
+    let resolver = PackageUidMap::from_pm_with_wait(wait, &cfg.apps.keys().cloned().collect())?;
     Ok(project_ports_with_resolver(&cfg, &resolver))
 }
 

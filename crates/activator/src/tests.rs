@@ -82,6 +82,30 @@ fn merges_repeated_per_user_rows_and_accepts_apk_paths() {
     assert_eq!(map.uids_for("com.example"), &[10123, 1010123]);
 }
 
+/// PackageManager readiness is judged by whether the listing carries real uids,
+/// not by whether one particular package is in it. Configured from the module's
+/// WebUI there is no app installed to wait for, and keying on one made every
+/// apply fail after burning the whole timeout.
+#[test]
+fn pm_readiness_is_judged_by_real_uids_not_by_one_package() {
+    assert!(pm_output_has_any_uid("package:com.example uid:10123\n"));
+    assert!(pm_output_has_any_uid(
+        "package:com.other uid:10001,1010001\n"
+    ));
+    // A listing without our app is still a ready PackageManager.
+    assert!(pm_output_has_any_uid(
+        "package:com.a uid:10001\npackage:com.b uid:10002\n"
+    ));
+
+    // Not ready: no answer, or an answer carrying no uid at all.
+    assert!(!pm_output_has_any_uid(""));
+    assert!(!pm_output_has_any_uid("\n \n"));
+    assert!(!pm_output_has_any_uid("package:com.example\n"));
+    assert!(!pm_output_has_any_uid(
+        "Error: cannot connect to package manager"
+    ));
+}
+
 /// The kmod module's WebUI writes this same canonical file, so its output has to
 /// stay parseable by the activator that reads it moments later. This is the exact
 /// shape it produces after a round of ticking and unticking: an app it turned off

@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fs;
 use std::io::{ErrorKind, Write};
@@ -446,22 +447,57 @@ fn empty_canonical_json() -> &'static str {
     "{\"version\":1,\"debug\":false,\"apps\":{},\"settings\":{\"rememberSuperkey\":false}}\n"
 }
 
-fn wait_for_pm_ready(wait: PmReadyWait) -> Result<()> {
+/// Block until PackageManager can answer for the packages we are about to look
+/// up, then let the caller resolve them.
+///
+/// The probe used to be "has our own app package appeared yet". That is a sound
+/// readiness signal only while the app is guaranteed to be installed, and it no
+/// longer is: the kernel module ships a WebUI and is configured from the root
+/// manager with no APK on the device at all. There the old probe could only ever
+/// run out its budget and fail the whole apply — the module stayed loaded and
+/// hooked, and hid nothing, with an error naming a package the user had
+/// deliberately not installed.
+///
+/// Waiting on the packages the config actually targets is both independent of
+/// the app and a stronger guarantee: it is exactly the set the caller is about
+/// to resolve, rather than a sentinel that stands in for it.
+fn wait_for_pm_ready(wait: PmReadyWait, wanted: &BTreeSet<String>) -> Result<()> {
     let mut attempts = 0;
     loop {
         attempts += 1;
-        if let Ok(stdout) = pm_list_packages(&["list", "packages", "-U"])
-            && pm_output_has_package(&stdout, APP_PACKAGE)
+        let listing = pm_list_packages(&["list", "packages", "-U"]).ok();
+        // Before PackageManager has come up it either fails outright or answers
+        // with nothing usable, so a listing carrying real uids is the floor.
+        let answering = listing.as_deref().is_some_and(pm_output_has_any_uid);
+
+        if answering
+            && let Some(stdout) = listing.as_deref()
+            && wanted.iter().all(|pkg| pm_output_has_package(stdout, pkg))
         {
             return Ok(());
         }
+
         if matches!(wait, PmReadyWait::Bounded(max) if attempts >= max) {
-            return Err(
-                format!("PackageManager did not expose {APP_PACKAGE} within {attempts}s").into(),
-            );
+            // Out of budget while PackageManager is answering: a target that has
+            // still not appeared is not loading late, it is not installed.
+            // Resolving what we do have is right — failing every other target
+            // over one stale config entry is not.
+            return if answering {
+                Ok(())
+            } else {
+                Err(format!("PackageManager was not ready within {attempts}s").into())
+            };
         }
         thread::sleep(Duration::from_secs(1));
     }
+}
+
+/// True when the listing carries at least one real `uid:` — i.e. PackageManager
+/// is answering with data rather than an empty or half-built reply.
+fn pm_output_has_any_uid(output: &str) -> bool {
+    output
+        .lines()
+        .any(|line| line.split_whitespace().any(|t| t.starts_with("uid:")))
 }
 
 fn wait_for_path(path: &str) {
