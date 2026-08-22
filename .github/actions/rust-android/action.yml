@@ -1,0 +1,82 @@
+name: 'Rust for Android'
+description: >-
+  Prepares a stock runner to cross-compile this repo's Rust for Android:
+  rustup targets, cargo-ndk, and an ANDROID_NDK_HOME every build script here
+  agrees on. Exists so the fork's pipeline needs no purpose-built container
+  image — upstream's CI bakes all of this into ghcr.io/<owner>/vpnhide/ci,
+  which a fork would have to publish for itself first.
+
+inputs:
+  targets:
+    description: 'Space-separated rustup targets to install.'
+    required: false
+    default: 'aarch64-linux-android'
+  ndk-version:
+    description: >-
+      Exact NDK to install via sdkmanager, e.g. 28.2.13676358. Empty uses the
+      NDK already on the runner, which is right for plain cargo-ndk builds and
+      wrong for Gradle, where android.ndkVersion pins an exact one.
+    required: false
+    default: ''
+  cache-key:
+    description: 'Suffix distinguishing this job''s cargo cache from the others.'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Add rustup targets
+      shell: bash
+      run: |
+        set -euo pipefail
+        for t in ${{ inputs.targets }}; do
+          echo "rustup target add $t"
+          rustup target add "$t"
+        done
+
+    - name: Cache cargo
+      uses: actions/cache@v6
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          ~/.cargo/bin/cargo-ndk
+        key: cargo-${{ runner.os }}-${{ inputs.cache-key }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: cargo-${{ runner.os }}-${{ inputs.cache-key }}-
+
+    - name: Install cargo-ndk
+      shell: bash
+      run: |
+        set -euo pipefail
+        command -v cargo-ndk >/dev/null || cargo install cargo-ndk --locked
+        cargo ndk --version
+
+    - name: Resolve the NDK
+      shell: bash
+      env:
+        WANT: ${{ inputs.ndk-version }}
+      run: |
+        set -euo pipefail
+
+        if [ -n "$WANT" ]; then
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          [ -n "$SDK" ] || { echo "::error::No Android SDK on this runner"; exit 1; }
+          NDK="$SDK/ndk/$WANT"
+          if [ ! -d "$NDK" ]; then
+            # Gradle pins android.ndkVersion exactly, so "whatever the runner
+            # ships" is not interchangeable here — fetch the pinned one.
+            echo "Installing NDK $WANT via sdkmanager"
+            yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$WANT" >/dev/null
+          fi
+          [ -d "$NDK" ] || { echo "::error::NDK $WANT still missing at $NDK"; exit 1; }
+        else
+          NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_ROOT:-}}}"
+          [ -n "$NDK" ] && [ -d "$NDK" ] || { echo "::error::No Android NDK on this runner"; exit 1; }
+        fi
+
+        echo "Using NDK: $NDK"
+        {
+          echo "ANDROID_NDK_HOME=$NDK"
+          echo "ANDROID_NDK_ROOT=$NDK"
+          echo "NDK_HOME=$NDK"
+        } >> "$GITHUB_ENV"

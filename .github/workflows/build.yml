@@ -1,0 +1,521 @@
+# The fork's own release pipeline: builds every shipped artifact here, so using
+# this fork never means downloading anything from upstream.
+#
+# Upstream's `ci.yml` cannot serve that purpose in a fork. Every one of its build
+# jobs runs inside `ghcr.io/<this repo>/ci:latest`, an image `ci-image.yml`
+# publishes under whoever owns the repo, so a fork has to publish its own copy
+# before a single job can start; the QEMU gates additionally want `ddk-qemu` and
+# `kpm-qemu-legacy` images from the same place. This workflow needs none of them:
+# stock runners plus the one public upstream DDK image the kernel module has to
+# be compiled in.
+#
+# Nothing here is a substitute for upstream's QEMU runtime gates. This builds and
+# packages; it does not prove the hooks still hide anything.
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifacts:
+        description: 'What to build'
+        required: true
+        type: choice
+        default: kernel module only
+        options:
+          - kernel module only
+          - everything
+      kmi:
+        description: 'GKI generation for the kernel module (see: adb shell uname -r). "all" builds every one.'
+        required: true
+        type: choice
+        default: android16-6.12
+        options:
+          - all
+          - android12-5.10
+          - android13-5.10
+          - android13-5.15
+          - android14-5.15
+          - android14-6.1
+          - android15-6.6
+          - android16-6.12
+      publish_release:
+        description: 'Publish the results as a release on this fork'
+        required: false
+        type: boolean
+        default: false
+      release_tag:
+        description: 'Tag for that release. Empty = v<VERSION>-<run number>'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      kmis: ${{ steps.plan.outputs.kmis }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      everything: ${{ steps.plan.outputs.everything }}
+      update_base: ${{ steps.plan.outputs.update_base }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: plan
+        env:
+          KMI_INPUT: ${{ inputs.kmi }}
+          TAG_INPUT: ${{ inputs.release_tag }}
+          ARTIFACTS: ${{ inputs.artifacts }}
+          RUN_NUMBER: ${{ github.run_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # The matrix comes from build.py's own GKI_VARIANTS instead of being
+          # repeated here, so a rebase that adds or drops a generation upstream
+          # can't leave this workflow building a stale set.
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import ast, json, os, pathlib, sys
+
+          src = pathlib.Path("kmod/build.py").read_text(encoding="utf-8")
+          variants = None
+          for node in ast.parse(src).body:
+              if isinstance(node, ast.Assign) and any(
+                  getattr(t, "id", None) == "GKI_VARIANTS" for t in node.targets
+              ):
+                  variants = list(ast.literal_eval(node.value))
+                  break
+          if not variants:
+              sys.exit("GKI_VARIANTS not found in kmod/build.py")
+
+          want = os.environ["KMI_INPUT"]
+          if want == "all":
+              kmis = variants
+          elif want in variants:
+              kmis = [want]
+          else:
+              sys.exit(f"kmod/build.py does not support KMI {want}; it supports {variants}")
+
+          version = pathlib.Path("VERSION").read_text(encoding="utf-8").strip()
+          tag = os.environ.get("TAG_INPUT") or f"v{version}-{os.environ['RUN_NUMBER']}"
+          repo = os.environ["REPO"]
+
+          print(f"kmis={json.dumps(kmis)}")
+          print(f"version={version}")
+          print(f"tag={tag}")
+          print(f"everything={str(os.environ['ARTIFACTS'] == 'everything').lower()}")
+          # Every module's updateJson points here, at THIS fork. The files it
+          # names are produced by scripts/update-json.sh — see the release job.
+          print(f"update_base=https://raw.githubusercontent.com/{repo}/main/update-json")
+          print(f"Building {kmis} for vpnhide {version}", file=sys.stderr)
+          PY
+
+  # The activator is the userspace half of every module: it turns the app's JSON
+  # config into each backend's wire format and loads the backend at boot. One
+  # build feeds the kmod job, which runs in a container with no Rust toolchain.
+  activator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/rust-android
+        with:
+          cache-key: activator
+
+      - name: Build kmod activator
+        run: |
+          set -euo pipefail
+          # --locked for the same reason scripts/build_lib.py passes it: a
+          # rewritten Cargo.lock dirties the tree and stamps every artifact
+          # "X.Y.Z-dirty" via git describe --dirty.
+          cargo ndk -t arm64-v8a build --release --locked -p vpnhide_activator --bin kmod
+
+      - name: Check the binary is Android arm64
+        run: |
+          set -euo pipefail
+          python3 - target/aarch64-linux-android/release/kmod <<'PY'
+          import sys
+
+          data = open(sys.argv[1], "rb").read()
+          if data[:4] != b"\x7fELF":
+              sys.exit("activator is not an ELF binary")
+          machine = int.from_bytes(data[18:20], "little")
+          if machine != 183:  # EM_AARCH64
+              sys.exit(f"activator is not aarch64 (e_machine={machine})")
+          print(f"activator ok: aarch64 ELF, {len(data)} bytes")
+          PY
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-activator
+          path: target/aarch64-linux-android/release/kmod
+          if-no-files-found: error
+
+  kmod:
+    needs: [plan, activator]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        kmi: ${{ fromJSON(needs.plan.outputs.kmis) }}
+    # Public upstream image — no credentials, nothing this fork must publish
+    # first. The tag mirrors DDK_IMAGE_TAG in kmod/build.py; bump both together.
+    container:
+      image: ghcr.io/ylarod/ddk-min:${{ matrix.kmi }}-20260313
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Mark workspace safe
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: build-activator
+          path: .artifacts/activator
+
+      - name: Build and package module
+        env:
+          KMI: ${{ matrix.kmi }}
+          VPNHIDE_KMOD_ACTIVATOR: ${{ github.workspace }}/.artifacts/activator/kmod
+          UPDATE_JSON_URL: ${{ needs.plan.outputs.update_base }}/update-kmod-${{ matrix.kmi }}.json
+        run: python3 kmod/build.py --kmi "$KMI" --inside-container
+
+      - name: Inspect the packaged module
+        env:
+          KMI: ${{ matrix.kmi }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ZIP="vpnhide-kmod-${KMI}.zip"
+          WORK="$(mktemp -d)"
+          unzip -o -q "$ZIP" -d "$WORK"
+
+          for f in vpnhide_kmod.ko activator module.prop post-fs-data.sh service.sh customize.sh; do
+            [ -f "$WORK/$f" ] || { echo "::error::$ZIP is missing $f"; exit 1; }
+          done
+
+          # A module advertising someone else's releases would offer this fork's
+          # users an upstream zip as an "update".
+          grep -q "^updateJson=.*/${REPO}/" "$WORK/module.prop" \
+            || { echo "::error::updateJson does not point at ${REPO}"; cat "$WORK/module.prop"; exit 1; }
+
+          # vermagic is reported for the flasher's benefit, not asserted: with
+          # CONFIG_MODVERSIONS the kernel skips the release prefix and compares
+          # only the trailing flags plus per-symbol CRCs, so a version string
+          # that differs from the target kernel does not by itself mean the
+          # module won't load.
+          VM="$(tr -c '[:print:]' '\n' < "$WORK/vpnhide_kmod.ko" | sed -n 's/^vermagic=//p' | head -n1)"
+
+          {
+            echo "### kmod ${KMI}"
+            echo ""
+            echo '| field | value |'
+            echo '|---|---|'
+            echo "| zip | \`${ZIP}\` |"
+            echo "| size | $(du -h "$ZIP" | cut -f1) |"
+            echo "| vermagic | \`${VM:-unreadable}\` |"
+            echo "| sha256 | \`$(sha256sum "$ZIP" | cut -d' ' -f1)\` |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "--- module.prop ---"
+          cat "$WORK/module.prop"
+          rm -rf "$WORK"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vpnhide-kmod-${{ matrix.kmi }}
+          path: vpnhide-kmod-${{ matrix.kmi }}.zip
+          if-no-files-found: error
+
+  kpm:
+    needs: plan
+    if: ${{ needs.plan.outputs.everything == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive # KernelPatch headers needed by `make kpm`
+          fetch-depth: 0
+
+      - uses: ./.github/actions/rust-android
+        with:
+          cache-key: kpm
+
+      - name: Install clang and lld
+        run: |
+          set -euo pipefail
+          # The .kpm is a freestanding relocatable aarch64 object; the `-r` link
+          # needs lld specifically (see kmod/Makefile).
+          command -v clang >/dev/null && command -v ld.lld >/dev/null && exit 0
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang lld
+
+      - name: Build KPM module zip
+        env:
+          UPDATE_JSON_URL: ${{ needs.plan.outputs.update_base }}/update-kpm.json
+        run: python3 kmod/kpm/build.py
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vpnhide-kpm
+          path: vpnhide-kpm.zip
+          if-no-files-found: error
+
+  zygisk:
+    needs: plan
+    if: ${{ needs.plan.outputs.everything == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: ./.github/actions/rust-android
+        with:
+          # 32-bit too: zygisk is injected into both ABIs' zygote.
+          targets: aarch64-linux-android armv7-linux-androideabi
+          cache-key: zygisk
+
+      - name: Build module zip
+        env:
+          UPDATE_JSON_URL: ${{ needs.plan.outputs.update_base }}/update-zygisk.json
+        run: cd zygisk && python3 ./build.py
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vpnhide-zygisk
+          path: zygisk/target/vpnhide-zygisk.zip
+          if-no-files-found: error
+
+  portshide:
+    needs: plan
+    if: ${{ needs.plan.outputs.everything == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/rust-android
+        with:
+          cache-key: portshide
+
+      - name: Package ports module zip
+        env:
+          UPDATE_JSON_URL: ${{ needs.plan.outputs.update_base }}/update-ports.json
+        run: |
+          set -euo pipefail
+          cd portshide
+          python3 ./build-zip.py
+          mv vpnhide-ports.zip "$GITHUB_WORKSPACE/vpnhide-ports.zip"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vpnhide-ports
+          path: vpnhide-ports.zip
+          if-no-files-found: error
+
+  app:
+    needs: plan
+    if: ${{ needs.plan.outputs.everything == 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      signed: ${{ steps.keystore.outputs.signed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: ./.github/actions/rust-android
+        with:
+          # Gradle pins android.ndkVersion, so the runner's default NDK is not
+          # interchangeable here — keep this equal to lsposed/app/build.gradle.kts.
+          ndk-version: 28.2.13676358
+          cache-key: app
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Set up keystore
+        id: keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          KEYSTORE_PATH="$GITHUB_WORKSPACE/lsposed/release.jks"
+
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+            echo "signed=real" >> "$GITHUB_OUTPUT"
+          else
+            # Android identifies an app by its signing key. A fresh key each run
+            # means every build is a different app: no in-place update, and
+            # installing one over another fails outright. Fine for a smoke test,
+            # never for something people install — the release job refuses it.
+            echo "::warning::ANDROID_KEYSTORE_BASE64 is not set — signing with a throwaway key. This APK cannot update an existing install."
+            KEYSTORE_PASSWORD=ephemeral
+            KEY_ALIAS=ephemeral
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_PATH" \
+              -storepass "$KEYSTORE_PASSWORD" \
+              -keypass "$KEYSTORE_PASSWORD" \
+              -alias "$KEY_ALIAS" \
+              -keyalg RSA -keysize 4096 -validity 365 \
+              -dname "CN=vpnhide-fork-ci, O=vpnhide, C=US"
+            echo "signed=ephemeral" >> "$GITHUB_OUTPUT"
+          fi
+
+          # printf '%s' takes the value verbatim — no expansion of $, backticks,
+          # backslashes or `!` from a secret that happens to contain them.
+          {
+            printf 'password=%s\n' "$KEYSTORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'storeFile=%s\n' "$KEYSTORE_PATH"
+          } > "$GITHUB_WORKSPACE/lsposed/keystore.properties"
+
+      - name: Build APK
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/lsposed"
+          ./gradlew assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/vpnhide.apk"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vpnhide-apk
+          path: vpnhide.apk
+          if-no-files-found: error
+
+  release:
+    needs: [plan, kmod, kpm, zygisk, portshide, app]
+    # `always()` so a "kernel module only" run still reaches this job with the
+    # four optional builds skipped; the guard below still fails it if something
+    # that actually ran did not succeed.
+    if: ${{ always() && inputs.publish_release }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Refuse to publish a broken set
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+          APK_SIGNING: ${{ needs.app.outputs.signed }}
+          EVERYTHING: ${{ needs.plan.outputs.everything }}
+        run: |
+          set -euo pipefail
+          echo "job results: $RESULTS"
+          case "$RESULTS" in
+            *failure*|*cancelled*)
+              echo "::error::A build job failed or was cancelled — not publishing a partial release."
+              exit 1
+              ;;
+          esac
+          if [ "$EVERYTHING" = "true" ] && [ "$APK_SIGNING" != "real" ]; then
+            echo "::error::The APK was signed with a throwaway key, so nobody could ever update it in place."
+            echo "::error::Create a keystore and add ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS to this repo's secrets:"
+            echo "::error::  keytool -genkeypair -keystore release.jks -alias vpnhide -keyalg RSA -keysize 4096 -validity 10000"
+            echo "::error::  gh secret set ANDROID_KEYSTORE_BASE64 < <(base64 -w0 release.jks)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist/
+          pattern: vpnhide-*
+          merge-multiple: true
+
+      - name: Regenerate update-json for this release
+        env:
+          VPNHIDE_REPO_SLUG: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # These are what every module's updateJson resolves to. They are NOT
+          # pushed from CI — publishing a release should not also rewrite main
+          # behind your back. Commit them yourself after the release exists; the
+          # summary below says how.
+          bash scripts/update-json.sh
+          mkdir -p update-json-out && cp update-json/*.json update-json-out/
+
+      - name: Describe the release
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          EVERYTHING: ${{ needs.plan.outputs.everything }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ls -l dist/
+
+          {
+            echo "Built from this fork at \`${TAG}\` — vpnhide **${VERSION}**."
+            echo ""
+            echo "Flash the kernel-module zip matching \`adb shell uname -r\`, reboot, then"
+            if [ "$EVERYTHING" = "true" ]; then
+              echo "install \`vpnhide.apk\` from this release, enable it in LSPosed with"
+              echo "**System Framework** scope, and pick your targets there."
+            else
+              echo "install the app and pick your targets there — the module hides nothing"
+              echo "until it has a target list."
+            fi
+            echo ""
+            echo '```'
+            echo 'adb shell "su -c '"'"'lsmod | grep vpnhide'"'"'"'
+            echo 'adb shell "su -c '"'"'dmesg | grep vpnhide'"'"'"'
+            echo '```'
+            echo ""
+            echo "\`insmod: Exec format error\` means this build's symbol CRCs don't match the"
+            echo "running kernel — expected on a kernel that changed the KMI. Build the module"
+            echo "against that kernel's own tree instead (see \`kmod/BUILDING.md\`)."
+          } > notes.md
+          cat notes.md
+
+          {
+            echo "## Release ${TAG}"
+            echo ""
+            echo "Update metadata was regenerated for \`${REPO}\` but **not** committed."
+            echo "After the release is published, commit it so every module's updateJson resolves:"
+            echo ""
+            echo '```bash'
+            echo "VPNHIDE_REPO_SLUG=${REPO} ./scripts/update-json.sh && git add update-json && git commit -m 'chore: update-json for ${TAG}'"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-json
+          path: update-json-out/
+          if-no-files-found: error
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.plan.outputs.tag }}
+          name: ${{ needs.plan.outputs.tag }}
+          body_path: notes.md
+          draft: false
+          prerelease: true
+          files: |
+            dist/*.zip
+            dist/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
