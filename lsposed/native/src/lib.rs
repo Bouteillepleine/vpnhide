@@ -369,6 +369,51 @@ fn check_setsockopt_bindtodevice() -> CheckOutput {
     }
 }
 
+/// First `max_bytes` bytes of `line`, backed off to the nearest char boundary.
+///
+/// Interface names are arbitrary bytes, so a `/proc/net` line can legitimately
+/// carry multi-byte UTF-8. Slicing straight at `max_bytes` panics when that byte
+/// lands mid-character, and this crate builds with `panic = "abort"` — the app
+/// would die running its own diagnostics. (Truncation itself is not an edge
+/// case: `/proc/net/route` lines routinely run past 80 bytes.)
+fn truncate_on_char_boundary(line: &str, max_bytes: usize) -> &str {
+    let mut end = line.len().min(max_bytes);
+    while end > 0 && !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    &line[..end]
+}
+
+#[cfg(test)]
+mod truncate_tests {
+    use super::truncate_on_char_boundary;
+
+    #[test]
+    fn keeps_short_lines_whole() {
+        assert_eq!(truncate_on_char_boundary("tun0 up", 80), "tun0 up");
+    }
+
+    #[test]
+    fn cuts_ascii_at_the_byte_budget() {
+        let line = "a".repeat(100);
+        assert_eq!(truncate_on_char_boundary(&line, 80).len(), 80);
+    }
+
+    #[test]
+    fn backs_off_when_the_budget_splits_a_character() {
+        // 'я' is two bytes: byte 80 falls inside the 40th one.
+        let line = "я".repeat(60);
+        let truncated = truncate_on_char_boundary(&line, 81);
+        assert_eq!(truncated.len(), 80);
+        assert!(line.starts_with(truncated));
+    }
+
+    #[test]
+    fn yields_nothing_when_the_first_character_does_not_fit() {
+        assert_eq!(truncate_on_char_boundary("я", 1), "");
+    }
+}
+
 fn check_proc_file(path: &str) -> CheckOutput {
     match fs::read_to_string(path) {
         Err(e) => {
@@ -388,7 +433,7 @@ fn check_proc_file(path: &str) -> CheckOutput {
                 }
                 total += 1;
                 if line.split_ascii_whitespace().any(is_vpn_iface) {
-                    vpn_lines.push(line[..line.len().min(80)].to_string());
+                    vpn_lines.push(truncate_on_char_boundary(line, 80).to_string());
                 }
             }
             if vpn_lines.is_empty() {
