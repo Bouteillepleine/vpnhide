@@ -345,11 +345,15 @@ internal fun buildDebugShellSnapshotCommand(): String =
         RUN=0
         printf "%s\n" "${'$'}PLAIN" | grep "UserInfo{${'$'}U:" | grep -qw running && RUN=1
         ERR=${'$'}(pm list packages -U -f --user "${'$'}U" 2>&1 1>/dev/null | head -2 | tr "\n" " ")
-        # Stage pm's stdout in a temp file rather than a shell variable: a very
-        # large app list (bloatware-heavy MIUI/HyperOS) exceeds the kernel's
+        # NOTE: never write an apostrophe inside this single-quoted block. It is
+        # not a comment to the shell (# only starts one outside quotes), so the
+        # apostrophe closes the quoting and the whole snapshot command stops
+        # parsing.
+        # Stage the pm output in a temp file rather than a shell variable: a very
+        # large app list (bloatware-heavy MIUI/HyperOS) exceeds the kernel
         # single-argument limit, so `printf "%s\n" "${'$'}OUT"` would fail with
         # "Argument list too long" and count zero packages. A file never hits
-        # ARG_MAX. pm is the only command on its line, so ${'$'}? is pm's status.
+        # ARG_MAX. pm is the only command on its line, so ${'$'}? is its status.
         OUT_FILE=/data/local/tmp/vpnhide_app_scan.${'$'}${'$'}.${'$'}U
         pm list packages -U -f --user "${'$'}U" >"${'$'}OUT_FILE" 2>/dev/null
         EX=${'$'}?
