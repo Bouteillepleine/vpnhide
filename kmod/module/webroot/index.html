@@ -377,11 +377,18 @@ function setHideAll(on) {
   setFeature(HIDE_ALL_FEATURE, on);
 }
 
-// With the blanket default on, a listed app means the opposite: it is the one
-// still allowed to see the VPN.
+// Under the blanket default every app is hidden from, so an entry only means
+// something here when it explicitly opts back OUT — `native:false`. An app
+// listed for its Java role alone is not an exemption.
 function isExempt(pkg) {
   const entry = config.apps[pkg];
-  return !!entry && !nativeOn(entry);
+  return !!entry && entry.native !== undefined && !nativeOn(entry);
+}
+
+// The one question the checkbox answers, in either mode: is the VPN hidden
+// from this app? Under the blanket default that is true unless exempted.
+function hiddenFrom(pkg) {
+  return hideAll() ? !isExempt(pkg) : nativeOn(config.apps[pkg]);
 }
 
 // `java` is a bool for all-hooks, or an array when the app made a per-hook
@@ -411,18 +418,19 @@ function renderApps() {
     return;
   }
   const all = hideAll();
-  const ticked = (pkg) => (all ? isExempt(pkg) : nativeOn(config.apps[pkg]));
+  const ticked = (pkg) => hiddenFrom(pkg);
   const count = () => {
     const n = packages.filter((p) => ticked(p.pkg)).length;
+    const exempt = packages.length - n;
     $("app-count").textContent = all
-      ? `${n} still allowed to see the VPN · ${shown.length} of ${packages.length} shown`
-      : `${n} selected · ${shown.length} of ${packages.length} shown`;
+      ? `${n} hidden from, ${exempt} excluded · ${shown.length} of ${packages.length} shown`
+      : `${n} hidden from · ${shown.length} of ${packages.length} shown`;
   };
 
   $("hideall").checked = all;
   $("hideall-note").textContent = all
-    ? "Every app is hidden from. Tick an app below to let it keep seeing the VPN — your VPN client almost certainly belongs there."
-    : "Off: only the apps you tick below are hidden from.";
+    ? "On: every app starts ticked. Untick one to let it keep seeing the VPN — your VPN client belongs there."
+    : "Off: only the apps you tick are hidden from.";
 
   const shown = packages.filter((p) => !q || p.pkg.toLowerCase().includes(q));
   count();
@@ -457,9 +465,9 @@ async function renderStatus() {
     if (parsed.status.hooks) html += statusRow("Hook mask", parsed.status.hooks);
   }
   if (config !== null && hideAll()) {
-    const exempt = Object.keys(config.apps).filter((p) => !nativeOn(config.apps[p])).length;
+    const exempt = packages.filter((p) => isExempt(p.pkg)).length;
     html += statusRow("Mode", "hidden from every app", "ok");
-    html += statusRow("Exempted", String(exempt), exempt ? "warn" : "ok");
+    html += statusRow("Excluded", String(exempt), exempt ? "warn" : "ok");
   } else {
     const targeted = config && config.apps
       ? Object.keys(config.apps).filter((p) => nativeOn(config.apps[p])).length : 0;
@@ -506,21 +514,24 @@ function applyTick(cb) {
     // The LSPosed hook self-reads this file from system_server and re-reads it
     // on change, so setting the flag is the whole handoff.
     entry.java = cb.checked;
+  } else if (all) {
+    // Blanket default: ticked is the resting state, so unticking is the only
+    // thing that needs recording — as an explicit native:false, which the
+    // projection turns into a zero mask outranking the default. Re-ticking
+    // simply drops that back under the default.
+    if (cb.checked) delete entry.native;
+    else entry.native = false;
   } else {
-    // Same checkbox, opposite meaning per mode: normally "hide from this app",
-    // and under the blanket default "leave this app alone". An exemption has to
-    // stay as an explicit native:false — that is what becomes a zero mask
-    // outranking the default.
-    entry.native = all ? false : cb.checked;
+    entry.native = cb.checked;
   }
 
-  const kernelTick = cb.dataset.layer === "native" ? cb.checked
-    : (all ? isExempt(pkg) : nativeOn(entry));
   // Keep the entry while it still says something — including roles this UI does
   // not manage (ports / app hiding), which must never be dropped on its behalf.
+  // Under the blanket default the only kernel-side thing worth storing is an
+  // exemption; a ticked app is already covered and needs no entry at all.
   const meaningful =
     entry.java || entry.ports || entry.appHiding ||
-    (all ? kernelTick : nativeOn(entry));
+    (all ? entry.native === false : nativeOn(entry));
   if (meaningful) config.apps[pkg] = entry;
   else delete config.apps[pkg];
 
@@ -617,8 +628,7 @@ async function renderScan() {
 
   const all = hideAll();
   const row = (e, layer) => {
-    const on = layer === "java" ? javaOn(config.apps[e.pkg])
-             : (all ? isExempt(e.pkg) : nativeOn(config.apps[e.pkg]));
+    const on = layer === "java" ? javaOn(config.apps[e.pkg]) : hiddenFrom(e.pkg);
     return `<label class="app"><span class="cols">` +
       `<input type="checkbox" class="${layer === "java" ? "j" : "k"}" data-pkg="${esc(e.pkg)}" data-layer="${layer}"${on ? " checked" : ""}>` +
       `</span><span><span class="pkg">${esc(e.pkg)}</span><br>` +
@@ -640,7 +650,7 @@ async function renderScan() {
   if (keep.length) {
     html += `<div class="grp">Keep visible · ${keep.length}</div>` +
       `<div class="note" style="margin:0 2px 8px">` +
-      (all ? "Tick to exempt from the blanket default." : "Not targeted in this mode.") + `</div>` +
+      (all ? "Untick these so they keep seeing the VPN." : "Leave these unticked.") + `</div>` +
       `<div class="card">${keep.map((e) => row(e, "native")).join("")}</div>`;
   }
   box.innerHTML = html || '<div class="card"><div class="row"><span class="k">Nothing to propose yet.</span></div></div>';
